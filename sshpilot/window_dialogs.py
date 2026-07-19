@@ -2149,3 +2149,482 @@ class WindowConfigDialogsMixin:
             error_dialog.add_response('ok', _('OK'))
             error_dialog.present()
 
+    # --- Group management dialogs (create / edit / rename tag / assign) -----
+
+    def _group_form_dialog(self, *, title, label, confirm_label, on_confirm,
+                           initial_name='', placeholder='', select_text=False,
+                           with_color=True, initial_color=None):
+        """Small Adw.Dialog form: name entry plus an optional color row.
+
+        ``on_confirm(name, color)`` runs on the confirm button; return True to
+        close the dialog, False to keep it open (e.g. validation failed).
+        ``color`` is an RGBA string, or None when unset/cleared.
+        """
+        dialog = Adw.Dialog()
+        dialog.set_title(title)
+        dialog.set_content_width(400)
+
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(False)
+        header.set_show_end_title_buttons(False)
+
+        cancel_button = Gtk.Button(label=_('Cancel'))
+        header.pack_start(cancel_button)
+
+        confirm_button = Gtk.Button(label=confirm_label)
+        confirm_button.add_css_class('suggested-action')
+        header.pack_end(confirm_button)
+
+        content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content_area.set_margin_start(20)
+        content_area.set_margin_end(20)
+        content_area.set_margin_top(20)
+        content_area.set_margin_bottom(20)
+        content_area.set_spacing(12)
+
+        toolbar_view = Adw.ToolbarView()
+        toolbar_view.add_top_bar(header)
+        toolbar_view.set_content(content_area)
+        dialog.set_child(toolbar_view)
+
+        form_label = Gtk.Label(label=label)
+        form_label.set_wrap(True)
+        form_label.set_xalign(0)
+        content_area.append(form_label)
+
+        entry = Gtk.Entry()
+        if initial_name:
+            entry.set_text(initial_name)
+        if placeholder:
+            entry.set_placeholder_text(placeholder)
+        entry.set_activates_default(True)
+        entry.set_hexpand(True)
+        content_area.append(entry)
+
+        color_button = None
+        color_selected = False
+        if with_color:
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+            rgba = Gdk.RGBA()
+            if initial_color:
+                try:
+                    if rgba.parse(initial_color):
+                        color_selected = True
+                    else:
+                        rgba.red = rgba.green = rgba.blue = 0
+                        rgba.alpha = 0
+                except Exception:
+                    rgba.red = rgba.green = rgba.blue = 0
+                    rgba.alpha = 0
+            else:
+                rgba.red = rgba.green = rgba.blue = 0
+                rgba.alpha = 0
+            color_button.set_rgba(rgba)
+
+            def on_color_set(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', on_color_set)
+            color_controls.append(color_button)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+
+            def on_clear_color(_button):
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button.connect('clicked', on_clear_color)
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            content_area.append(color_row)
+
+        def on_confirm_clicked(_button):
+            name = entry.get_text().strip()
+            color = None
+            if color_button is not None:
+                rgba_value = color_button.get_rgba()
+                if color_selected and rgba_value.alpha > 0:
+                    color = rgba_value.to_string()
+            if on_confirm(name, color):
+                dialog.close()
+
+        cancel_button.connect('clicked', lambda _b: dialog.close())
+        confirm_button.connect('clicked', on_confirm_clicked)
+        dialog.set_default_widget(confirm_button)
+        dialog.present(self)
+
+        def focus_entry():
+            entry.grab_focus()
+            if select_text:
+                entry.select_region(0, -1)
+            return False
+
+        GLib.idle_add(focus_entry)
+
+    def on_create_group_action(self, action, param=None):
+        """Handle create group action"""
+        try:
+            def create(name, color):
+                if not name:
+                    self._simple_dialog(_("Error"), _("Please enter a group name."))
+                    return False
+                self.group_manager.create_group(name, color=color)
+                self.rebuild_connection_list()
+                return True
+
+            self._group_form_dialog(
+                title=_("Create New Group"),
+                label=_("Enter a name for the new group:"),
+                confirm_label=_('Create'),
+                on_confirm=create,
+                placeholder=_("e.g., Production Servers"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to show create group dialog: {e}")
+
+    def on_edit_group_action(self, action, param=None):
+        """Handle edit group action"""
+        try:
+            logger.debug("Edit group action triggered")
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
+                logger.debug("No selected row")
+                return
+            if not hasattr(selected_row, 'group_id'):
+                logger.debug("Selected row is not a group row")
+                return
+
+            group_id = selected_row.group_id
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info:
+                logger.debug(f"Group info not found for ID: {group_id}")
+                return
+
+            def save(name, color):
+                if not name:
+                    self._simple_dialog(_("Error"), _("Please enter a group name."))
+                    return False
+                self.group_manager.rename_group(group_id, name)
+                self.group_manager.set_group_color(group_id, color)
+                self.rebuild_connection_list()
+                return True
+
+            self._group_form_dialog(
+                title=_("Edit Group"),
+                label=_("Enter a new name for the group:"),
+                confirm_label=_('Save'),
+                on_confirm=save,
+                initial_name=group_info['name'],
+                select_text=True,
+                initial_color=group_info.get('color'),
+            )
+        except Exception as e:
+            logger.error(f"Failed to show edit group dialog: {e}")
+
+    def on_rename_tag_action(self, tag_row):
+        """Rename a virtual tag group: rewrite the tag on all tagged connections."""
+        try:
+            if not getattr(tag_row, 'is_tag_group', False):
+                return
+            if tag_row.group_info.get('untagged'):
+                return  # the Untagged section is not a real tag
+            old_name = str(tag_row.group_info.get('name', ''))
+            old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
+
+            def save(name, _color):
+                if not name:
+                    self._simple_dialog(_("Error"), _("Please enter a tag name."))
+                    return False
+                if ',' in name:
+                    # Tags are entered comma-separated in the connection
+                    # dialog, so a comma in a tag name could not round-trip.
+                    self._simple_dialog(_("Error"), _("Tag names cannot contain commas."))
+                    return False
+                if name != old_name:
+                    from .tag_groups import migrate_expanded_state
+                    self.config.rename_tag(old_name, name)
+                    try:
+                        state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                        self.config.set_setting(
+                            'ui.tag_groups_expanded',
+                            migrate_expanded_state(state, old_key, name.casefold()),
+                        )
+                    except Exception:
+                        logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                    self.rebuild_connection_list()
+                return True
+
+            self._group_form_dialog(
+                title=_("Rename Tag"),
+                label=_("Enter a new name for the tag:"),
+                confirm_label=_('Save'),
+                on_confirm=save,
+                initial_name=old_name,
+                select_text=True,
+                with_color=False,
+            )
+        except Exception as e:
+            logger.error(f"Failed to show rename tag dialog: {e}")
+
+
+    def on_move_to_group_action(self, action, param=None):
+        """Handle move to group action"""
+        self._open_group_assignment_dialog('move')
+
+    def on_copy_to_group_action(self, action, param=None):
+        """Handle copy to group action (keeps existing memberships)"""
+        self._open_group_assignment_dialog('copy')
+
+    def _open_group_assignment_dialog(self, mode: str = 'move'):
+        """Show the dialog used by both 'Move to Group' and 'Copy to Group'.
+
+        ``mode`` is either ``'move'`` (relocate the connection to the chosen
+        group) or ``'copy'`` (add it to the chosen group while keeping it in any
+        group it already belongs to).
+        """
+        is_copy = mode == 'copy'
+        try:
+            connections = self._get_target_connections(prefer_context=True)
+            if not connections:
+                return
+
+            connection_nicknames = [
+                conn.nickname for conn in connections if hasattr(conn, 'nickname')
+            ]
+            if not connection_nicknames:
+                return
+
+            def assign(nickname: str, target_group_id) -> None:
+                if is_copy:
+                    if target_group_id:
+                        self.group_manager.copy_connection_to_group(nickname, target_group_id)
+                else:
+                    self.group_manager.move_connection(nickname, target_group_id)
+
+            available_groups = self.get_available_groups()
+            logger.debug(f"Available groups for {mode} dialog: {len(available_groups)} groups")
+
+            from sshpilot import icon_utils
+
+            title_text = _("Copy to Group") if is_copy else _("Move to Group")
+            confirm_label = _("Copy") if is_copy else _("Move")
+
+            # Adwaita dialog scaffold (GNOME HIG): Adw.Dialog + ToolbarView/HeaderBar
+            # with a PreferencesPage body (provides insets and grouped row styling).
+            dialog = Adw.Dialog()
+            dialog.set_title(title_text)
+            dialog.set_content_width(420)
+            dialog.set_follows_content_size(True)
+
+            toolbar_view = Adw.ToolbarView()
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_("Cancel"))
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            header.pack_start(cancel_button)
+
+            confirm_button = Gtk.Button(label=confirm_label)
+            confirm_button.add_css_class('suggested-action')
+            header.pack_end(confirm_button)
+
+            toolbar_view.add_top_bar(header)
+
+            page = Adw.PreferencesPage()
+            body_scroller = Gtk.ScrolledWindow()
+            body_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            body_scroller.set_propagate_natural_height(True)
+            body_scroller.set_max_content_height(420)
+            body_scroller.set_child(page)
+            toolbar_view.set_content(body_scroller)
+            dialog.set_child(toolbar_view)
+
+            # --- Create new group -------------------------------------------
+            create_group = Adw.PreferencesGroup()
+            create_group.set_title(_("Create New Group"))
+            if len(connection_nicknames) == 1:
+                create_group.set_description(
+                    _("Copy the connection to a new group") if is_copy
+                    else _("Move the connection to a new group")
+                )
+            else:
+                create_group.set_description(
+                    _("Copy the selected connections to a new group") if is_copy
+                    else _("Move the selected connections to a new group")
+                )
+
+            create_group_entry = Adw.EntryRow()
+            create_group_entry.set_title(_("Group name"))
+            create_group.add(create_group_entry)
+
+            color_row = Adw.ActionRow()
+            color_row.set_title(_("Color"))
+            color_row.set_subtitle(_("Optional"))
+
+            color_button = Gtk.ColorButton()
+            color_button.set_valign(Gtk.Align.CENTER)
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+            initial_rgba = Gdk.RGBA()
+            initial_rgba.red = initial_rgba.green = initial_rgba.blue = 0
+            initial_rgba.alpha = 0
+            color_button.set_rgba(initial_rgba)
+
+            color_selected = False
+
+            def mark_color_selected(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', mark_color_selected)
+
+            def reset_color_selection() -> None:
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.set_valign(Gtk.Align.CENTER)
+            clear_color_button.add_css_class('flat')
+            clear_color_button.connect('clicked', lambda _btn: reset_color_selection())
+
+            color_row.add_suffix(color_button)
+            color_row.add_suffix(clear_color_button)
+            create_group.add(color_row)
+            page.add(create_group)
+
+            # --- Existing groups (single selection via a checkmark) ---------
+            existing_group = Adw.PreferencesGroup()
+            existing_group.set_title(_("Existing Groups"))
+
+            selected_group_id = None
+            selected_row_ref = None
+
+            def has_valid_target() -> bool:
+                if create_group_entry.get_text().strip():
+                    return True
+                return selected_group_id is not None
+
+            def update_confirm_state(*_args):
+                confirm_button.set_sensitive(has_valid_target())
+
+            def select_group_row(row) -> None:
+                nonlocal selected_group_id, selected_row_ref
+                if selected_row_ref is row:
+                    return
+                if selected_row_ref is not None:
+                    selected_row_ref._check.set_visible(False)
+                selected_row_ref = row
+                selected_group_id = row.group_id
+                row._check.set_visible(True)
+                update_confirm_state()
+
+            if available_groups:
+                for group in available_groups:
+                    row = Adw.ActionRow()
+                    row.set_title(group['name'])
+                    row.set_activatable(True)
+                    icon = icon_utils.new_image_from_icon_name('folder-symbolic')
+                    row.add_prefix(icon)
+                    check = Gtk.Image.new_from_icon_name('object-select-symbolic')
+                    check.set_visible(False)
+                    row.add_suffix(check)
+                    row._check = check
+                    row.group_id = group['id']
+                    row.connect('activated', select_group_row)
+                    existing_group.add(row)
+            else:
+                existing_group.set_description(_("No groups yet — create one above."))
+
+            page.add(existing_group)
+
+            # --- Validation + actions (business logic preserved) ------------
+            def find_existing_group_id(name: str):
+                lowered = name.lower()
+                for group in available_groups:
+                    if group['name'].lower() == lowered:
+                        return group['id']
+                return None
+
+            def show_group_exists_error(message: str) -> None:
+                error = Adw.AlertDialog(
+                    heading=_("Group Already Exists"),
+                    body=message,
+                )
+                error.add_response('ok', _("OK"))
+                error.set_default_response('ok')
+                error.set_close_response('ok')
+                error.present(dialog)
+
+            create_group_entry.connect('changed', update_confirm_state)
+            update_confirm_state()
+
+            def perform_move() -> bool:
+                group_name = create_group_entry.get_text().strip()
+                if group_name:
+                    existing_group_id = find_existing_group_id(group_name)
+                    if existing_group_id:
+                        for nickname in connection_nicknames:
+                            assign(nickname, existing_group_id)
+                        self.rebuild_connection_list()
+                        return True
+                    try:
+                        selected_color = None
+                        rgba_value = color_button.get_rgba()
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        new_group_id = self.group_manager.create_group(group_name, color=selected_color)
+                        for nickname in connection_nicknames:
+                            assign(nickname, new_group_id)
+                        self.rebuild_connection_list()
+                        return True
+                    except ValueError as e:
+                        show_group_exists_error(str(e))
+                        create_group_entry.set_text("")
+                        reset_color_selection()
+                        create_group_entry.grab_focus()
+                        update_confirm_state()
+                        return False
+
+                if selected_group_id is not None:
+                    for nickname in connection_nicknames:
+                        assign(nickname, selected_group_id)
+                    self.rebuild_connection_list()
+                    return True
+                return False
+
+            def on_confirm(*_args):
+                if has_valid_target() and perform_move():
+                    dialog.close()
+
+            confirm_button.connect('clicked', on_confirm)
+            create_group_entry.connect('entry-activated', lambda _e: on_confirm())
+
+            dialog.present(self)
+
+        except Exception as e:
+            logger.error(f"Failed to show move to group dialog: {e}")

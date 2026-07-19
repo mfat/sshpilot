@@ -15,11 +15,13 @@ local imports are kept as-is.
 """
 
 import logging
+from typing import Optional
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
 from gettext import gettext as _
 
 from sshpilot import icon_utils
+from .connection_manager import Connection
 from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 from .terminal import TerminalWidget
 from .plugins.api import Capability
@@ -1274,3 +1276,352 @@ class WindowTabsMixin:
             self.tab_overview.set_open(not is_open)
         except Exception as e:
             logger.error(f"Failed to toggle tab overview: {e}")
+
+    def _page_for_child(self, child):
+        """Return the Adw.TabPage for ``child`` in the main tab_view, or None.
+
+        Unlike ``tab_view.get_page(child)``, this never emits the
+        ``child_belongs_to_this_view`` CRITICAL assertion when ``child`` isn't in
+        the main view — e.g. a terminal that has been embedded in a split-view
+        pane (which lives in that pane's own inner tab view, not tab_view).
+        """
+        try:
+            pages = self.tab_view.get_pages()
+            for i in range(pages.get_n_items()):
+                page = pages.get_item(i)
+                if page is not None and page.get_child() is child:
+                    return page
+        except Exception:
+            pass
+        return None
+
+    def _select_tab_relative(self, delta: int):
+        """Select tab relative to current index, wrapping around."""
+        self._return_to_tab_view_if_welcome()
+        try:
+            n = self.tab_view.get_n_pages()
+            if n <= 0:
+                return
+            current = self.tab_view.get_selected_page()
+            # If no current selection, pick first
+            if not current:
+                page = self.tab_view.get_nth_page(0)
+                if page:
+                    self.tab_view.set_selected_page(page)
+                return
+            # Find current index
+            idx = 0
+            for i in range(n):
+                if self.tab_view.get_nth_page(i) == current:
+                    idx = i
+                    break
+            new_index = (idx + delta) % n
+            page = self.tab_view.get_nth_page(new_index)
+            if page:
+                self.tab_view.set_selected_page(page)
+        except Exception:
+            pass
+
+    def _move_tab_relative(self, delta: int):
+        """Reorder the selected tab one position left (-1) or right (+1)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            if delta < 0:
+                self.tab_view.reorder_backward(page)
+            elif delta > 0:
+                self.tab_view.reorder_forward(page)
+        except Exception:
+            pass
+
+    def _close_active_tab_or_pane(self):
+        """Close the current tab — but in a split-view tab, close the focused
+        pane instead (Ctrl+Shift+W is context-dependent)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None or self._is_start_tab_page(page):
+                return
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab) and hasattr(child, 'close_focused_pane'):
+                child.close_focused_pane()
+                return
+            self.tab_view.close_page(page)
+        except Exception:
+            pass
+
+    def _focus_most_recent_tab(self, connection: Connection) -> None:
+        """Focus the most recent tab for a connection if one exists.
+
+        Does nothing if the connection has no open tabs.
+        """
+        try:
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if not terms_for_conn:
+                return
+
+            target_term = self.active_terminals.get(connection)
+            if target_term not in terms_for_conn:
+                target_term = terms_for_conn[0]
+
+            page = self._page_for_child(target_term)
+            if page is None:
+                return
+
+            if self.tab_view.get_selected_page() != page:
+                self.tab_view.set_selected_page(page)
+
+            self.active_terminals[connection] = target_term
+            self._focus_terminal_widget(target_term)
+        except Exception as e:
+            logger.error(f"Failed to focus most recent tab for {getattr(connection, 'nickname', '')}: {e}")
+
+
+    def _focus_most_recent_tab_or_open_new(self, connection: Connection):
+        """If there are open tabs for this server, focus the most recent one.
+        Otherwise open a new tab for the server.
+        """
+        self._return_to_tab_view_if_welcome()
+        try:
+            # Check if there are open tabs for this connection
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if terms_for_conn:
+                # Focus the most recent tab for this connection
+                most_recent_term = self.active_terminals.get(connection)
+                if most_recent_term and most_recent_term in terms_for_conn:
+                    # Use the most recent terminal
+                    target_term = most_recent_term
+                else:
+                    # Fallback to the first tab for this connection
+                    target_term = terms_for_conn[0]
+                
+                page = self._page_for_child(target_term)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    # Update most-recent mapping
+                    self.active_terminals[connection] = target_term
+                    # Give focus to the VTE terminal so user can start typing immediately
+                    self._focus_terminal_widget(target_term)
+                    return
+
+            # No existing tabs for this connection -> open a new one
+            self.terminal_manager.connect_to_host(connection, force_new=False)
+        except Exception as e:
+            logger.error(f"Failed to focus most recent tab or open new for {getattr(connection, 'nickname', '')}: {e}")
+
+    def _cycle_connection_tabs_or_open(self, connection: Connection):
+        """If there are open tabs for this server, cycle to the next one (wrap).
+        Otherwise open a new tab for the server.
+        """
+        self._return_to_tab_view_if_welcome()
+        try:
+            # Collect current pages in visual/tab order
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if terms_for_conn:
+                # Determine current index among this connection's tabs
+                selected = self.tab_view.get_selected_page()
+                current_idx = -1
+                if selected is not None:
+                    current_child = selected.get_child()
+                    for i, t in enumerate(terms_for_conn):
+                        if t == current_child:
+                            current_idx = i
+                            break
+                # Compute next index (wrap)
+                next_idx = (current_idx + 1) % len(terms_for_conn) if current_idx >= 0 else 0
+                next_term = terms_for_conn[next_idx]
+                page = self._page_for_child(next_term)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    # Update most-recent mapping
+                    self.active_terminals[connection] = next_term
+                    self._focus_terminal_widget(next_term)
+                    return
+
+            # No existing tabs for this connection -> open a new one
+            self.terminal_manager.connect_to_host(connection, force_new=False)
+            try:
+                self._focus_most_recent_tab(connection)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
+
+    def _focus_terminal_widget(self, terminal: TerminalWidget) -> None:
+        """Request focus for a terminal widget, retrying on idle if needed."""
+
+        if terminal is None:
+            return
+
+        def _focus_attempt(_source=None) -> bool:
+            try:
+                # Use backend's grab_focus method if available (works for both VTE and PyXterm.js)
+                if hasattr(terminal, 'backend') and terminal.backend:
+                    terminal.backend.grab_focus()
+                # Fallback to vte for backwards compatibility
+                elif hasattr(terminal, 'vte') and terminal.vte:
+                    terminal.vte.grab_focus()
+                elif hasattr(terminal, 'grab_focus'):
+                    terminal.grab_focus()
+            except Exception as focus_error:
+                logger.debug(f"Deferred terminal focus failed: {focus_error}")
+            return GLib.SOURCE_REMOVE
+
+        # Try immediate focus
+        try:
+            if hasattr(terminal, 'backend') and terminal.backend:
+                terminal.backend.grab_focus()
+            elif hasattr(terminal, 'vte') and terminal.vte:
+                terminal.vte.grab_focus()
+            elif hasattr(terminal, 'grab_focus'):
+                terminal.grab_focus()
+        except Exception:
+            pass
+
+        # Schedule retries for delayed focus (useful when widget is still being created)
+        GLib.idle_add(_focus_attempt, priority=GLib.PRIORITY_DEFAULT_IDLE)
+        GLib.timeout_add(150, _focus_attempt)
+        GLib.timeout_add(350, _focus_attempt)
+
+    def _get_active_terminal_widget(self) -> Optional[TerminalWidget]:
+        """Return the TerminalWidget for the currently selected tab, if any."""
+        terminal_manager = getattr(self, 'terminal_manager', None)
+        if terminal_manager is not None:
+            return terminal_manager.get_focused_terminal()
+        return None
+
+    def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
+        """Update active terminal mapping when the user switches tabs."""
+        self._update_content_theme_for_selected_tab()
+        self._update_layout_toggle_state()
+        try:
+            page = tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child() if hasattr(page, 'get_child') else None
+            if child is None:
+                return
+
+            if self._is_start_tab_page(page):
+                GLib.idle_add(self._focus_connection_list_first_row)
+                try:
+                    if (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
+                            and not self.has_user_tabs()):
+                        self._apply_sidebar_visible(True)
+                except Exception:
+                    pass
+                return
+            
+            # Focus the terminal when tab is selected
+            if _is_terminal_widget(child):
+                # Use a small delay to ensure the widget is fully visible
+                def _focus_on_tab_switch():
+                    try:
+                        self._focus_terminal_widget(child)
+                    except Exception as e:
+                        logger.debug(f"Failed to focus terminal on tab switch: {e}")
+                GLib.timeout_add(50, _focus_on_tab_switch)
+
+            # Split-view tabs have no single connection — clear sidebar selection
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                try:
+                    if hasattr(self.connection_list, 'unselect_all'):
+                        self.connection_list.unselect_all()
+                    else:
+                        current = self.connection_list.get_selected_row()
+                        if current is not None:
+                            self.connection_list.unselect_row(current)
+                except Exception:
+                    pass
+                return
+
+            connection = self.terminal_to_connection.get(child)
+            if connection:
+                # Check if this is a local terminal
+                host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+                if host_value == 'localhost':
+                    # Local terminal - clear selection
+                    try:
+                        if hasattr(self.connection_list, 'unselect_all'):
+                            self.connection_list.unselect_all()
+                        else:
+                            current = self.connection_list.get_selected_row()
+                            if current is not None:
+                                self.connection_list.unselect_row(current)
+                    except Exception:
+                        pass
+                else:
+                    # Regular connection terminal - select the corresponding row
+                    self.active_terminals[connection] = child
+                    conn_rows = self._rows_for_connection(connection)
+                    if conn_rows:
+                        selected_rows = []
+                        try:
+                            selected_rows = list(self.connection_list.get_selected_rows())
+                        except Exception:
+                            current = self.connection_list.get_selected_row()
+                            if current:
+                                selected_rows = [current]
+                        # Leave the selection alone if any row for this
+                        # connection is already selected; otherwise select the first.
+                        if not any(r in selected_rows for r in conn_rows):
+                            self._select_only_row(conn_rows[0])
+            else:
+                # Other non-connection terminal - clear selection
+                try:
+                    if hasattr(self.connection_list, 'unselect_all'):
+                        self.connection_list.unselect_all()
+                    else:
+                        current = self.connection_list.get_selected_row()
+                        if current is not None:
+                            self.connection_list.unselect_row(current)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"Failed to sync tab selection: {e}")
+
+    def _update_tab_titles(self):
+        """Update tab titles"""
+        for page in self.tab_view.get_pages():
+            if self._is_start_tab_page(page):
+                continue
+            child = page.get_child()
+            if hasattr(child, 'connection'):
+                page.set_title(child.connection.nickname)
+
+
+def _is_terminal_widget(widget) -> bool:
+    from .terminal import TerminalWidget
+    return isinstance(widget, TerminalWidget)

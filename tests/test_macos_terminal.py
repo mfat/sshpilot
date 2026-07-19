@@ -1,118 +1,10 @@
-import types
+"""Tests for macOS external-terminal discovery (platform_utils)."""
+
 import subprocess
+
 import pytest
 
-import sys
-
-# Stub out gi modules so window.py can be imported without GTK
-gi_module = types.ModuleType("gi")
-gi_module.require_version = lambda *args, **kwargs: None
-
-
-class Module(types.SimpleNamespace):
-    def __getattr__(self, name):
-        return Module()
-
-    def __call__(self, *args, **kwargs):
-        return Module()
-
-
-repo = Module()
-repo.Gtk = Module(Button=type("Button", (), {}), Dialog=type("Dialog", (), {}), Label=type("Label", (), {}), CssProvider=type("CssProvider", (), {}))
-repo.Adw = Module(ApplicationWindow=type("ApplicationWindow", (), {}), MessageDialog=type("MessageDialog", (), {}))
-repo.Gio = Module(SimpleAction=type("SimpleAction", (), {}), ThemedIcon=type("ThemedIcon", (), {}))
-repo.GLib = Module(idle_add=lambda *a, **k: None)
-repo.GObject = Module(Object=type("Object", (), {}))
-repo.Gdk = Module(Display=Module(get_default=lambda: None), RGBA=type("RGBA", (), {}))
-repo.Pango = Module()
-repo.PangoFT2 = Module()
-repo.Vte = Module()
-
-gi_module.repository = repo
-original_gi = {name: sys.modules.get(name) for name in ["gi", "gi.repository"] + [f"gi.repository.{n}" for n in ["Gtk", "Adw", "Gio", "GLib", "GObject", "Gdk", "Pango", "PangoFT2", "Vte"]]}
-sys.modules["gi"] = gi_module
-sys.modules["gi.repository"] = repo
-for name in ["Gtk", "Adw", "Gio", "GLib", "GObject", "Gdk", "Pango", "PangoFT2", "Vte"]:
-    sys.modules[f"gi.repository.{name}"] = getattr(repo, name)
-
-# Stub internal modules referenced by window.py that aren't needed for these tests
-stub_modules = {
-    "sshpilot.connection_manager": types.SimpleNamespace(
-        ConnectionManager=object,
-        Connection=object,
-        ConnectionState=object,
-    ),
-    "sshpilot.terminal": types.SimpleNamespace(TerminalWidget=object),
-    "sshpilot.terminal_manager": types.SimpleNamespace(TerminalManager=object),
-    "sshpilot.config": types.SimpleNamespace(Config=object),
-    "sshpilot.key_manager": types.SimpleNamespace(KeyManager=object, SSHKey=object),
-    "sshpilot.connection_dialog": types.SimpleNamespace(ConnectionDialog=object),
-    "sshpilot.askpass_utils": types.SimpleNamespace(
-        ensure_askpass_script=lambda: None,
-        get_ssh_env_with_askpass=lambda *a, **k: {},
-        ensure_key_in_agent=lambda *a, **k: None,
-        lookup_passphrase=lambda *a, **k: None,
-    ),
-    "sshpilot.preferences": types.SimpleNamespace(
-        PreferencesWindow=object,
-        should_hide_external_terminal_options=lambda: False,
-        should_hide_file_manager_options=lambda: False,
-    ),
-    "sshpilot.sshcopyid_window": types.SimpleNamespace(
-        SshCopyIdWindow=object,
-        SshCopyIdRunner=object,
-    ),
-    "sshpilot.groups": types.SimpleNamespace(GroupManager=object),
-    "sshpilot.sidebar": types.SimpleNamespace(GroupRow=object, ConnectionRow=object, build_sidebar=lambda *a, **k: None),
-    "sshpilot.sftp_utils": types.SimpleNamespace(
-        open_remote_in_file_manager=lambda *a, **k: None,
-        should_use_in_app_file_manager=lambda *a, **k: False,
-    ),
-    "sshpilot.welcome_page": types.SimpleNamespace(WelcomePage=object),
-    "sshpilot.actions": types.SimpleNamespace(WindowActions=object, register_window_actions=lambda *a, **k: None),
-    "sshpilot.shutdown": types.SimpleNamespace(),
-    "sshpilot.search_utils": types.SimpleNamespace(connection_matches=lambda *a, **k: False),
-    "sshpilot.shortcut_utils": types.SimpleNamespace(get_primary_modifier_label=lambda: "Ctrl"),
-}
-
-original_stubs = {}
-for name, module in stub_modules.items():
-    original_stubs[name] = sys.modules.get(name)
-    sys.modules[name] = module
-
-# Import the window module while the stubs are installed. Use try/finally so
-# the stubs are always restored even if the import fails, otherwise the partial
-# stubs would leak into sys.modules and break unrelated tests in the same run.
-#
-# The stub list above has to mirror window.py's imports — it bit-rots every
-# time window.py grows a new internal import. When that mismatch happens we
-# skip the whole module cleanly so CI keeps moving; see #985.
-_skip_reason = None
-try:
-    import sshpilot.window as window_mod
-    from sshpilot.window import MainWindow
-except (ImportError, TypeError) as exc:
-    # ImportError: a name the stub list doesn't provide. TypeError
-    # (``__mro_entries__ must return a tuple``): window.py grew an import chain
-    # that subclasses a gi type the stub exposes as a plain instance rather than
-    # a class (e.g. ``class ...(Adw.Window)``). Either way the shim has bit-rotted
-    # against window.py's imports, so skip the module cleanly to keep CI moving.
-    _skip_reason = f"sshpilot.window import shim is out of date: {exc}"
-finally:
-    # Restore original modules so other tests see real implementations
-    for name, mod in original_stubs.items():
-        if mod is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = mod
-    for name, mod in original_gi.items():
-        if mod is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = mod
-
-if _skip_reason is not None:
-    pytest.skip(_skip_reason, allow_module_level=True)
+platform_utils = pytest.importorskip("sshpilot.platform_utils")
 
 
 class DummyConfig:
@@ -123,34 +15,20 @@ class DummyConfig:
         return self.settings.get(key, default)
 
 
-class DummyWindow:
-    def __init__(self, settings=None):
-        self.config = DummyConfig(settings)
-
-    _get_user_preferred_terminal = MainWindow._get_user_preferred_terminal
-    _get_default_terminal_command = MainWindow._get_default_terminal_command
-    _open_connection_in_external_terminal = MainWindow._open_connection_in_external_terminal
-    _open_system_terminal = MainWindow._open_system_terminal
-
-    def _show_terminal_error_dialog(self):
-        raise AssertionError("error dialog not expected")
-
-
 def test_get_user_preferred_terminal_macos(monkeypatch):
-    monkeypatch.setattr(window_mod, "is_macos", lambda: True)
-    win = DummyWindow({"external-terminal": "iTerm"})
-    assert win._get_user_preferred_terminal() == ["open", "-a", "iTerm"]
+    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
+    config = DummyConfig({"external-terminal": "iTerm"})
+    assert platform_utils.get_user_preferred_terminal(config) == ["open", "-a", "iTerm"]
 
 
 def test_get_user_preferred_terminal_macos_with_command(monkeypatch):
-    monkeypatch.setattr(window_mod, "is_macos", lambda: True)
-    win = DummyWindow({"external-terminal": "open -a Ghostty"})
-    assert win._get_user_preferred_terminal() == ["open", "-a", "Ghostty"]
-
+    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
+    config = DummyConfig({"external-terminal": "open -a Ghostty"})
+    assert platform_utils.get_user_preferred_terminal(config) == ["open", "-a", "Ghostty"]
 
 
 def test_get_default_terminal_command_macos(monkeypatch):
-    monkeypatch.setattr(window_mod, "is_macos", lambda: True)
+    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
 
     def fake_run(cmd, capture_output=False, text=False, timeout=None):
         class R:
@@ -169,12 +47,11 @@ def test_get_default_terminal_command_macos(monkeypatch):
         return r
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    win = DummyWindow()
-    assert win._get_default_terminal_command() == ["open", "-a", "Terminal"]
+    assert platform_utils.get_default_terminal_command() == ["open", "-a", "Terminal"]
 
 
 def test_get_default_terminal_command_iterm(monkeypatch):
-    monkeypatch.setattr(window_mod, "is_macos", lambda: True)
+    monkeypatch.setattr(platform_utils, "is_macos", lambda: True)
 
     def fake_run(cmd, capture_output=False, text=False, timeout=None):
         class R:
@@ -199,5 +76,4 @@ def test_get_default_terminal_command_iterm(monkeypatch):
         return r
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    win = DummyWindow()
-    assert win._get_default_terminal_command() == ["open", "-a", "iTerm"]
+    assert platform_utils.get_default_terminal_command() == ["open", "-a", "iTerm"]

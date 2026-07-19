@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GObject, GLib, Graphene, Gsk, Pango
+from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Adw
 
 from gettext import gettext as _
 
@@ -24,7 +24,21 @@ from .connection_display import (
     get_connection_host as _get_connection_host,
     format_connection_host_display as _format_connection_host_display,
 )
+from .context_menu import IconContextMenu
+from .file_manager_integration import (
+    should_hide_external_terminal_options,
+    should_hide_file_manager_options,
+)
 from .groups import GroupManager
+from .platform_utils import is_macos
+from .plugins.api import Capability
+from .plugins.registry import capabilities_for
+from .shortcut_utils import get_primary_modifier_label
+from .tag_groups import compute_tag_groups
+
+# Feature detection for libadwaita versions across distros
+HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
+HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +108,185 @@ def _install_sidebar_color_css():
         _COLOR_CSS_INSTALLED = True
     except Exception:
         logger.debug("Failed to install sidebar color CSS", exc_info=True)
+
+
+def install_sidebar_css():
+    """Install sidebar focus CSS"""
+    try:
+        # Install CSS for sidebar focus highlighting once per display
+        display = Gdk.Display.get_default()
+        if not display:
+            logger.warning("No display available for CSS installation")
+            return
+        # Use an attribute on the display to avoid re-adding provider
+        if getattr(display, '_sidebar_css_installed', False):
+            return
+        provider = Gtk.CssProvider()
+        css = """
+
+        /* optional: a subtle focus ring while the list is focused */
+        row:selected:focus-within {
+          /* box-shadow: 0 0 8px 2px @accent_bg_color inset; */
+          /* border: 2px solid @accent_bg_color;  Adds a solid border of 2px thickness */
+          border-radius: 8px;
+        }
+        
+        /* Group styling */
+        .group-expand-button {
+          min-width: 16px;
+          min-height: 16px;
+          padding: 2px;
+          border-radius: 4px;
+        }
+        
+        .group-expand-button:hover {
+          background: alpha(@accent_bg_color, 0.1);
+        }
+        
+        /* Smooth drag indicator transitions */
+        .drag-indicator {
+          opacity: 0;
+          transition: opacity 0.15s ease-in-out;
+        }
+        
+        .drag-indicator.visible {
+          opacity: 1;
+        }
+        
+        /* Smooth transitions for connection rows during drag */
+        .navigation-sidebar {
+          transition: transform 0.1s ease-out, opacity 0.1s ease-out;
+        }
+        
+        .navigation-sidebar.dragging {
+          opacity: 0.7;
+          transform: scale(0.98);
+        }
+
+        /* Gap between sidebar list rows (GtkListBox has no spacing property) */
+        .navigation-sidebar row {
+          margin: 4px 8px;
+        }
+
+        /* Selected sidebar row: always use the accent so selection is
+           visible in dark mode by default. libadwaita's default
+           navigation-sidebar selection is a neutral shade that is nearly
+           invisible against the dark card background; this rule (which the
+           accent-override path already emits, but only when an override is
+           set) makes selection clear unconditionally.
+           @accent_bg_color / @accent_fg_color follow the system accent and
+           any user override. The more specific .tinted:selected rule below
+           keeps the identical color for grouped rows. */
+        .navigation-sidebar row:selected {
+          background-color: @accent_bg_color;
+          color: @accent_fg_color;
+        }
+
+        .navigation-sidebar row.tinted {
+          margin: 4px 8px;
+          border-radius: 10px;
+          transition: background-color 0s ease;
+        }
+
+        .navigation-sidebar row.tinted:not(:selected) {
+          background-color: alpha(@accent_bg_color, 0.18);
+        }
+
+        .navigation-sidebar row.tinted:hover:not(:selected) {
+          background-color: alpha(@accent_bg_color, 0.24);
+        }
+
+        .navigation-sidebar row.tinted:active:not(:selected) {
+          background-color: alpha(@accent_bg_color, 0.30);
+        }
+
+        .navigation-sidebar row.tinted:selected {
+          background-color: @accent_bg_color;
+          color: @accent_fg_color;
+          box-shadow: inset 0 0 0 1px @accent_bg_color;
+        }
+
+        .navigation-sidebar row.tinted:selected:hover {
+          background-color: shade(@accent_bg_color, 0.95);
+        }
+
+        .navigation-sidebar row.tinted:selected:active {
+          background-color: shade(@accent_bg_color, 0.90);
+        }
+
+        /* Accent-bar mode: the coloured left bar is the highlight, so a
+           selected row uses a neutral overlay instead of the accent fill
+           (which would swamp the bar). Every bar-mode row carries
+           .color-bar, and this out-specifies the accent `row:selected`
+           rule above at the same provider priority. */
+        .navigation-sidebar row.color-bar:selected {
+          background-color: alpha(@window_fg_color, 0.10);
+          color: @window_fg_color;
+          box-shadow: none;
+        }
+
+        .navigation-sidebar row.color-bar:selected:hover {
+          background-color: alpha(@window_fg_color, 0.13);
+        }
+
+        .navigation-sidebar row.color-bar:selected:active {
+          background-color: alpha(@window_fg_color, 0.16);
+        }
+
+        /* Reorder placeholder: a slim transparent gap row whose child
+           DragIndicator draws the accent bar; the list parts around it. */
+        .drop-placeholder-row {
+          background: transparent;
+          min-height: 0;
+          padding: 0;
+        }
+
+        /* Group drop target highlight */
+        .drop-target-group {
+          background: alpha(@accent_bg_color, 0.25);
+          border-radius: 8px;
+          box-shadow: 0 0 0 2px @accent_bg_color inset,
+                      0 2px 8px alpha(@accent_bg_color, 0.4);
+          transition: background-color 0.15s ease-in-out,
+                      box-shadow 0.15s ease-in-out;
+        }
+        
+        /* Drop target indicator styling */
+        .drop-target-indicator {
+          background: alpha(@accent_bg_color, 0.9);
+          color: white;
+          border-radius: 12px;
+          padding: 4px 12px;
+          margin: 4px 8px;
+          font-weight: bold;
+          font-size: 0.9em;
+          animation: drop-indicator-bounce 0.6s ease-in-out;
+        }
+
+        @keyframes drop-indicator-bounce {
+          0% {
+            transform: translateY(-10px) scale(0.8);
+            opacity: 0;
+          }
+          60% {
+            transform: translateY(2px) scale(1.05);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(0) scale(1);
+            opacity: 1;
+          }
+        }
+
+        """
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        setattr(display, '_sidebar_css_installed', True)
+        logger.debug("Sidebar CSS installed successfully")
+    except Exception as e:
+        logger.error(f"Failed to install sidebar CSS: {e}")
+        import traceback
+        logger.debug(f"CSS installation traceback: {traceback.format_exc()}")
 
 
 def _use_flat_sidebar_rows(config) -> bool:
@@ -3245,11 +3438,806 @@ def _connection_autoscroll_step(window):
 # ---------------------------------------------------------------------------
 
 
-def build_sidebar(window):
-    """Set up sidebar behaviour for ``window``."""
+def _expand_toolbar_button(button: Gtk.Widget) -> Gtk.Widget:
+    """Give a sidebar toolbar control an equal share of the row width."""
+    button.set_hexpand(True)
+    button.set_halign(Gtk.Align.FILL)
+    return button
 
+
+def build_sidebar(window):
+    """Set up the sidebar with connection list"""
+    sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    # Ensure sidebar box expands to use full allocated width from NavigationSplitView
+    sidebar_box.set_hexpand(True)
+    sidebar_box.set_vexpand(True)
+    
+    # Sidebar header
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    header.set_hexpand(True)
+    header.set_homogeneous(True)
+    header.set_margin_start(12)
+    header.set_margin_end(12)
+    header.set_margin_top(12)
+    header.set_margin_bottom(6)
+    
+    # # Title
+    # title_label = Gtk.Label()
+    # title_label.set_markup('<b>Connections</b>')
+    # title_label.set_halign(Gtk.Align.START)
+    # title_label.set_hexpand(True)
+    # header.append(title_label)
+    
+    # Add connection button
+    from sshpilot import icon_utils
+    add_button = icon_utils.new_button_from_icon_name('list-add-symbolic')
+    add_button.add_css_class('flat')
+    _expand_toolbar_button(add_button)
+    add_button.set_tooltip_text(
+        f'Add Connection ({get_primary_modifier_label()}+Shift+N)'
+    )
+    add_button.connect('clicked', window.on_add_connection_clicked)
+    try:
+        add_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.append(add_button)
+
+    # Search button
+    window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
+    window.search_button.add_css_class('flat')
+    _expand_toolbar_button(window.search_button)
+    # Platform-aware shortcut in tooltip
+    shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
+    window.search_button.set_tooltip_text(f'Search Connections ({shortcut})')
+    window.search_button.connect('clicked', lambda *_: window.focus_search_entry())
+    try:
+        window.search_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.append(window.search_button)
+
+    # Hide/Show hostnames button (eye icon)
+    def _update_eye_icon(btn):
+        try:
+            icon = 'view-conceal-symbolic' if window._hide_hosts else 'view-reveal-symbolic'
+            icon_utils.set_button_icon(btn, icon)
+            btn.set_tooltip_text('Show hostnames' if window._hide_hosts else 'Hide hostnames')
+        except Exception:
+            pass
+
+    hide_button = icon_utils.new_button_from_icon_name('view-reveal-symbolic')
+    hide_button.add_css_class('flat')
+    _expand_toolbar_button(hide_button)
+    _update_eye_icon(hide_button)
+    def _on_toggle_hide(btn):
+        try:
+            window._hide_hosts = not window._hide_hosts
+            # Persist setting
+            try:
+                window.config.set_setting('ui.hide_hosts', window._hide_hosts)
+            except Exception:
+                pass
+            # Update all rows
+            for rows in window.connection_rows.values():
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, 'apply_hide_hosts'):
+                        row.apply_hide_hosts(window._hide_hosts)
+            # Update icon/tooltip
+            _update_eye_icon(btn)
+        except Exception:
+            pass
+    hide_button.connect('clicked', _on_toggle_hide)
+    try:
+        hide_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.append(hide_button)
+
+    # Tag filter dropdown: pick a tag to show only connections carrying it.
+    tag_button = Gtk.MenuButton()
+    tag_button.add_css_class('flat')
+    _expand_toolbar_button(tag_button)
+    tag_button.set_icon_name('tag-symbolic')
+    tag_button.set_tooltip_text(_('Filter by tag'))
+
+    filter_action = Gio.SimpleAction.new_stateful(
+        'filter-tag', GLib.VariantType.new('s'), GLib.Variant('s', '')
+    )
+
+    def _on_filter_tag(action, param):
+        try:
+            action.set_state(param)
+            window._tag_filter = param.get_string() or None
+            window.rebuild_connection_list()
+        except Exception:
+            logger.error("Failed to apply tag filter", exc_info=True)
+
+    filter_action.connect('activate', _on_filter_tag)
+    window.add_action(filter_action)
+
+    def _build_tag_menu(btn):
+        # Rebuilt on every popup so new/renamed tags always show.
+        try:
+            menu = Gio.Menu()
+            all_item = Gio.MenuItem.new(_('All Connections'), None)
+            all_item.set_action_and_target_value(
+                'win.filter-tag', GLib.Variant('s', '')
+            )
+            menu.append_item(all_item)
+
+            tag_map = {}
+            for conn in window.connection_manager.get_connections():
+                try:
+                    tag_map[conn.nickname] = window.config.get_connection_tags(conn.nickname)
+                except Exception:
+                    pass
+            tags_section = Gio.Menu()
+            for display_tag, nicknames in compute_tag_groups(tag_map):
+                item = Gio.MenuItem.new(
+                    f'{display_tag} ({len(nicknames)})', None
+                )
+                item.set_action_and_target_value(
+                    'win.filter-tag', GLib.Variant('s', display_tag.casefold())
+                )
+                tags_section.append_item(item)
+            menu.append_section(None, tags_section)
+            btn.set_menu_model(menu)
+        except Exception:
+            logger.error("Failed to build tag filter menu", exc_info=True)
+
+    tag_button.set_create_popup_func(_build_tag_menu)
+    try:
+        tag_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.append(tag_button)
+
+    sort_button = window._build_sort_button()
+    _expand_toolbar_button(sort_button)
+    header.append(sort_button)
+
+    preferences_button = window._build_preferences_button()
+    _expand_toolbar_button(preferences_button)
+    header.append(preferences_button)
+
+    # Menu button (packed on content header bar in setup_content_area)
+    window.menu_button = Gtk.MenuButton()
+    window.menu_button.add_css_class('flat')
+    window.menu_button.set_can_focus(False)
+    # MenuButton uses set_icon_name() which goes through icon theme
+    # We'll use set_icon_name() - the icon theme should find our bundled icon
+    window.menu_button.set_icon_name('open-menu-symbolic')
+    window.menu_button.set_tooltip_text('Menu')
+    window.menu_button.set_menu_model(window.create_menu())
+
+    header_handle = Gtk.WindowHandle()
+    header_handle.set_hexpand(True)
+    header_handle.set_child(header)
+    sidebar_box.append(header_handle)
+
+    # Search container
+    search_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    search_container.add_css_class('search-container')
+    search_container.set_margin_start(2)
+    search_container.set_margin_end(2)
+    search_container.set_margin_bottom(6)
+    
+    # Search entry for filtering connections
+    window.search_entry = Gtk.SearchEntry()
+    window.search_entry.set_placeholder_text(_('Search connections'))
+    window.search_entry.connect('search-changed', window.on_search_changed)
+    window.search_entry.connect('stop-search', window.on_search_stopped)
+    search_key = Gtk.EventControllerKey()
+    # Use the capture phase so Down/Up/Enter are handled before the
+    # SearchEntry's internal text widget consumes them (otherwise arrow
+    # keys move the cursor and Enter triggers default activation).
+    search_key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    search_key.connect('key-pressed', window._on_search_entry_key_pressed)
+    window.search_entry.add_controller(search_key)
+    # Prevent search entry from being the default focus widget
+    window.search_entry.set_can_focus(True)
+    window.search_entry.set_focus_on_click(False)
+    search_container.append(window.search_entry)
+    
+    # Store reference to search container for showing/hiding
+    window.search_container = search_container
+    
+    # Hide search container by default
+    search_container.set_visible(False)
+    
+    sidebar_box.append(search_container)
+
+    # Connection list
+    window.connection_scrolled = Gtk.ScrolledWindow()
+    window.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    window.connection_scrolled.set_vexpand(True)
+    window.connection_scrolled.set_hexpand(True)
+    
+    window.connection_list = Gtk.ListBox()
+    window.connection_list.add_css_class("navigation-sidebar")
+    window.connection_list.set_hexpand(True)
+    window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+    try:
+        window.connection_list.set_can_focus(True)
+    except Exception:
+        pass
+    
+    
+    # Connect signals
+    window.connection_list.connect('row-selected', window.on_connection_selected)  # For button sensitivity
+    window.connection_list.connect('row-activated', window.on_connection_activated)  # For Enter key/double-click
+
+    # GTK auto-hides the window's focus-visible state after a few seconds of
+    # keyboard inactivity, which makes a keyboard-selected connection row
+    # look deselected (the focus ring vanishes) even though it still holds
+    # focus and selection. Re-assert it while focus stays in the list.
+    window.connect('notify::focus-visible', window._on_focus_visible_changed)
+
+    # Arrow Up from the first row hops back to the search entry (capture
+    # phase so we intercept before the ListBox's own boundary handling).
+    nav_key = Gtk.EventControllerKey()
+    nav_key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    nav_key.connect('key-pressed', window._on_connection_list_nav_key)
+    window.connection_list.add_controller(nav_key)
+    
+    # Make sure the connection list is focusable and can receive key events
+    window.connection_list.set_focusable(True)
+    window.connection_list.set_can_focus(True)
+    # Manage focus manually so double-click activation can hand control to the terminal
+    window.connection_list.set_focus_on_click(False)
+    window.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
+    
+    # Set connection list as the default focus widget for the sidebar
+    # Queue this operation to avoid race conditions during startup
+    def _set_sidebar_focus():
+        if window.connection_list.get_parent() == sidebar_box:
+            sidebar_box.set_focus_child(window.connection_list)
+    
+    window._queue_focus_operation(_set_sidebar_focus)
+    
+    # Set up drag and drop for reordering
     setup_connection_list_dnd(window)
-    return window.connection_list
+
+    # Right-click context menu using simple gesture without coordinate detection
+    try:
+        # Use a simple gesture but avoid all coordinate-based operations
+        context_click = Gtk.GestureClick()
+        context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
+        # Capture phase so this gesture handles the right-click before the
+        # ListBox's own row handling.
+        context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def _build_and_show_menu(row):
+            # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
+            # Reset any batch-target snapshot from a previous menu.
+            window._context_menu_connections = None
+            menu = IconContextMenu()
+
+            def _on_popover_closed(popover, *_):
+                # Only clear context state if this is still the active
+                # popover — a newer right-click may have already replaced
+                # it. Always unparent so popovers don't accumulate.
+                if getattr(window, '_context_menu_popover', None) is popover:
+                    window._context_menu_popover = None
+                    window._context_menu_row = None
+                    window._context_menu_connection = None
+                    window._context_menu_connections = None
+                try:
+                    popover.unparent()
+                except Exception:
+                    pass
+
+            if getattr(row, 'is_tag_group', False):
+                # Virtual tag groups: rename the tag or open members in
+                # split view — no edit/delete/run (nothing to mutate).
+                # The Untagged section is not a real tag: no rename.
+                untagged = bool(getattr(row, 'group_info', {}).get('untagged'))
+                menu.add_section(
+                    None if untagged else menu.add_item('document-edit-symbolic', _('Rename Tag…'), lambda: window.on_rename_tag_action(row)),
+                    menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window._open_tag_group_split(row)),
+                )
+            elif hasattr(row, 'group_id'):
+                menu.add_section(
+                    menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: window.on_edit_group_action(None, None)),
+                    menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_group_in_split_view_action(None, None)),
+                    menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: window.on_run_command_action()),
+                    menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: window.on_delete_group_action(None, None)),
+                )
+            else:
+                conn = getattr(row, 'connection', None)
+                # The right-click gesture has already collapsed the
+                # selection to the clicked row unless it was part of a
+                # multi-selection, so the selection reflects intent here.
+                # Dedupe by connection: the same connection may be selected
+                # through several rows (real group + tag group).
+                try:
+                    selected_conns = window._connections_from_rows(
+                        window._get_selected_connection_rows()
+                    )
+                except Exception:
+                    selected_conns = [conn] if conn else []
+                multi = len(selected_conns) > 1
+                # Snapshot the targets for the lifetime of this menu so
+                # batch actions operate on exactly what was selected when
+                # the menu opened, even if the selection changes before
+                # the item callback runs.
+                window._context_menu_connections = list(selected_conns) if multi else None
+
+                # Protocol capabilities decide which per-host actions make
+                # sense (all-capable for SSH, narrower for plugin protocols).
+                conn_caps = capabilities_for(conn) if conn else frozenset()
+                all_remote_command = bool(selected_conns) and all(
+                    Capability.REMOTE_COMMAND in capabilities_for(c)
+                    for c in selected_conns
+                )
+
+                if multi:
+                    # Multi-selection: only actions that operate on all
+                    # selected connections; per-host dialogs are hidden.
+                    menu.add_section(
+                        menu.add_item('list-add-symbolic', _('Open New Connections'), lambda: window.on_open_new_connection_action(None, None)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_in_split_view_action(None, None)),
+                        menu.add_item('utilities-terminal-symbolic', _('Run Command on Hosts…'), lambda: window.on_run_command_action()) if all_remote_command else None,
+                    )
+                else:
+                    menu.add_section(
+                        menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: window.on_open_new_connection_action(None, None)),
+                        menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: window.on_edit_connection_action(None, None)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_in_split_view_action(None, None)),
+                        menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: window.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
+                        menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: window.on_duplicate_connection_action(None, None)),
+                        menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()),
+                    )
+
+                def _has_wol_mac(c):
+                    try:
+                        meta = window.config.get_connection_meta(c.nickname) if c else {}
+                        return bool((meta or {}).get('wol_mac', '').strip())
+                    except Exception:
+                        return False
+
+                wol_item = None
+                if any(_has_wol_mac(c) for c in (selected_conns or [conn])):
+                    wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: window.on_wake_on_lan_action(None, None))
+                if multi:
+                    menu.add_section(wol_item)
+                else:
+                    menu.add_section(
+                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: window.on_manage_files_action(None, None)) if (Capability.FILE_TRANSFER in conn_caps and not should_hide_file_manager_options()) else None,
+                        menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: window.on_copy_key_to_server_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
+                        menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: window.on_manage_authorized_keys_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
+                        wol_item,
+                        # System terminal rides build_native_command(), an SSH-only path.
+                        menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: window.on_open_in_system_terminal_action(None, None)) if (getattr(conn, 'protocol', 'ssh') == 'ssh' and not should_hide_external_terminal_options()) else None,
+                    )
+
+                def _conn_groups(c):
+                    try:
+                        return window.group_manager.get_connection_groups(c.nickname) if c else []
+                    except Exception:
+                        return []
+
+                current_groups = _conn_groups(conn)
+                any_grouped = any(_conn_groups(c) for c in selected_conns) if multi else bool(current_groups)
+                row_group_id = getattr(row, '_group_id', None)
+                ungroup_label = _('Remove from Group') if (not multi and row_group_id and len(current_groups) > 1) else _('Ungroup')
+                menu.add_section(
+                    menu.add_item('folder-symbolic', _('Move to Group'), lambda: window.on_move_to_group_action(None, None)),
+                    menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: window.on_copy_to_group_action(None, None)),
+                    menu.add_item('edit-undo-symbolic', ungroup_label, lambda: window.on_move_to_ungrouped_action(None, None)) if any_grouped else None,
+                )
+
+                try:
+                    pin_targets = selected_conns if multi else ([conn] if conn else [])
+                    all_pinned = bool(pin_targets) and all(
+                        window.config.is_pinned(c.nickname) for c in pin_targets
+                    )
+                    if all_pinned:
+                        menu.add_section(
+                            menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: window._toggle_pin_connections(pin_targets)),
+                        )
+                    else:
+                        menu.add_section(
+                            menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: window._toggle_pin_connections(pin_targets)),
+                        )
+                except Exception:
+                    pass
+
+                # Plugin-contributed connection actions (single SSH host),
+                # e.g. "Docker Console". The menu is rebuilt per right-click,
+                # so actions registered at activate time appear here.
+                try:
+                    if not multi and conn and getattr(conn, 'protocol', 'ssh') == 'ssh':
+                        ph = getattr(window, 'plugin_host', None)
+                        actions = ph.ui.connection_actions() if ph is not None else []
+                        if actions:
+                            nick = getattr(conn, 'nickname', '')
+                            menu.add_section(*[
+                                menu.add_item(
+                                    a.icon_name or 'application-x-executable-symbolic',
+                                    a.label,
+                                    lambda cb=a.callback, nk=nick: cb(nk),
+                                )
+                                for a in actions
+                            ])
+                except Exception:
+                    logger.debug("Failed to add plugin connection actions", exc_info=True)
+
+                menu.add_section(
+                    menu.add_item('user-trash-symbolic', _('Delete'), lambda: window.on_delete_connection_action(None, None)),
+                )
+
+            popover = menu.show(row, on_closed=_on_popover_closed)
+            window._context_menu_popover = popover
+
+            # Disable the autohide modal grab. An autohide popover grabs all
+            # input while open, so the next right-click on another row is
+            # swallowed to dismiss this popover and never reaches our gesture
+            # (a "dead click"). Without the grab, every right-click reaches the
+            # handler, which closes this menu and opens the next one in a
+            # single click. We handle dismissal ourselves (see below).
+            try:
+                popover.set_autohide(False)
+            except Exception:
+                pass
+
+            # Escape closes the menu (autohide normally provides this).
+            try:
+                key_ctrl = Gtk.EventControllerKey()
+
+                def _on_menu_key(_c, keyval, _code, _state):
+                    if keyval == Gdk.KEY_Escape:
+                        popover.popdown()
+                        return True
+                    return False
+
+                key_ctrl.connect('key-pressed', _on_menu_key)
+                popover.add_controller(key_ctrl)
+            except Exception:
+                pass
+
+        def _on_right_click(gesture, n_press, x, y):
+            try:
+                logger.debug("Simple right-click detected - showing context menu for selected row")
+
+                # Try to detect the clicked row, but fall back to selected row if detection fails
+                row = window._pick_connection_list_row(x, y)
+                if row is not None:
+                    logger.debug("Using clicked row for context menu")
+
+                # Fallback to selected row if click detection failed
+                if not row:
+                    try:
+                        row = window.connection_list.get_selected_row()
+                        if row:
+                            logger.debug("Using currently selected row for context menu (fallback)")
+                        else:
+                            # If no selection, use first row
+                            first_visible = window.connection_list.get_row_at_index(0)
+                            if first_visible:
+                                row = first_visible
+                                logger.debug("Using first row for context menu (no selection)")
+                    except Exception as e:
+                        logger.debug(f"Failed to get selected row: {e}")
+
+                if not row:
+                    logger.debug("No row available for context menu")
+                    return
+
+                # Claim the event sequence so the right-click stops here and
+                # is not also processed by the ListBox's own handling.
+                try:
+                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                except Exception:
+                    pass
+
+                # Dismiss and detach any context menu still open from a
+                # previous right-click before showing the new one. The menu is
+                # non-autohide, so this right-click reaches us instead of being
+                # swallowed to close the old popover, letting us replace it in a
+                # single click.
+                prev_popover = getattr(window, '_context_menu_popover', None)
+                if prev_popover is not None:
+                    window._context_menu_popover = None
+                    try:
+                        prev_popover.popdown()
+                    except Exception:
+                        pass
+                    try:
+                        if prev_popover.get_parent() is not None:
+                            prev_popover.unparent()
+                    except Exception:
+                        pass
+
+                # Highlight the right-clicked row so the UI reflects which
+                # connection the context menu applies to. Mirror standard
+                # file-manager behavior: right-clicking a row that isn't part
+                # of the current selection selects just that row; right-
+                # clicking within an existing multi-selection preserves it.
+                try:
+                    already_selected = row in window.connection_list.get_selected_rows()
+                except Exception:
+                    already_selected = False
+                if not already_selected:
+                    window._select_only_row(row)
+
+                # Move the keyboard focus (focus ring) to the right-clicked row
+                # too, otherwise it stays on a previously keyboard-focused row.
+                try:
+                    row.grab_focus()
+                except Exception:
+                    pass
+
+                # Set context menu data
+                window._context_menu_row = row
+                window._context_menu_connection = getattr(row, 'connection', None)
+                # Safe for tag rows too: the only consumer that acts on a
+                # synthetic tag id is split view (which we want); edit/
+                # delete/run all bail on groups.get('tag::…') -> None.
+                window._context_menu_group_row = row if hasattr(row, 'group_id') else None
+
+                _build_and_show_menu(row)
+
+            except Exception as e:
+                logger.error(f"Failed to create context menu: {e}")
+        
+        context_click.connect('pressed', _on_right_click)
+        window.connection_list.add_controller(context_click)
+
+        # Because the context menu is non-autohide (see _build_and_show_menu),
+        # it no longer dismisses itself when the user clicks away. Close it on
+        # any primary/middle press elsewhere in the window so it behaves like a
+        # normal context menu. Presses on the popover's own menu items land on
+        # a separate surface and do not reach this controller, so selecting an
+        # item still works. Runs in the capture phase but never claims the
+        # event, so normal click handling proceeds.
+        def _dismiss_context_menu_on_press(gesture, n_press, x, y):
+            pop = getattr(window, '_context_menu_popover', None)
+            if pop is None:
+                return
+            window._context_menu_popover = None
+            try:
+                pop.popdown()
+            except Exception:
+                pass
+            try:
+                if pop.get_parent() is not None:
+                    pop.unparent()
+            except Exception:
+                pass
+
+        dismiss_click = Gtk.GestureClick()
+        dismiss_click.set_button(0)  # any button
+        dismiss_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def _on_dismiss_press(gesture, n_press, x, y):
+            # The right-click handler manages replacing the menu itself; only
+            # dismiss here for non-secondary buttons.
+            try:
+                if gesture.get_current_button() == Gdk.BUTTON_SECONDARY:
+                    return
+            except Exception:
+                pass
+            _dismiss_context_menu_on_press(gesture, n_press, x, y)
+
+        dismiss_click.connect('pressed', _on_dismiss_press)
+        window.add_controller(dismiss_click)
+
+        middle_click = Gtk.GestureClick()
+        middle_click.set_button(Gdk.BUTTON_MIDDLE)
+
+        def _on_middle_click(gesture, n_press, x, y):
+            if n_press != 1:
+                return
+
+
+            row = window._pick_connection_list_row(x, y)
+
+            if not row:
+                try:
+                    row = window.connection_list.get_selected_row()
+                except Exception:
+                    row = None
+
+            if not row or not hasattr(row, 'connection'):
+                return
+
+            previous_row = getattr(window, '_context_menu_row', None)
+            previous_connection = getattr(window, '_context_menu_connection', None)
+            previous_connections = getattr(window, '_context_menu_connections', None)
+
+            try:
+                window._context_menu_row = row
+                window._context_menu_connection = row.connection
+                # Middle-click targets only the clicked row; a multi-select
+                # snapshot from a still-open context menu must not win.
+                window._context_menu_connections = None
+                window.on_open_new_connection_action(None, None)
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            finally:
+                window._context_menu_row = previous_row
+                window._context_menu_connection = previous_connection
+                window._context_menu_connections = previous_connections
+
+        middle_click.connect('pressed', _on_middle_click)
+        window.connection_list.add_controller(middle_click)
+    except Exception:
+        pass
+    
+    # Add keyboard controller for Ctrl/⌘+Enter to open new connection
+    try:
+        key_controller = Gtk.ShortcutController()
+        key_controller.set_scope(Gtk.ShortcutScope.LOCAL)
+        
+        def _on_ctrl_enter(widget, *args):
+            try:
+                window._open_new_connection_tabs(
+                    window._connections_from_rows(
+                        window._get_selected_connection_rows()
+                    )
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to open new connection with {get_primary_modifier_label()}+Enter: {e}"
+                )
+            return True
+        
+        trigger = '<Meta>Return' if is_macos() else '<Primary>Return'
+        
+        key_controller.add_shortcut(Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string(trigger),
+            Gtk.CallbackAction.new(_on_ctrl_enter)
+        ))
+        
+        window.connection_list.add_controller(key_controller)
+    except Exception as e:
+        logger.debug(
+            f"Failed to add {get_primary_modifier_label()}+Enter shortcut: {e}"
+        )
+    
+    window.connection_scrolled.set_child(window.connection_list)
+    sidebar_box.append(window.connection_scrolled)
+    
+    # Sidebar toolbar
+    toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    toolbar.set_hexpand(True)
+    toolbar.set_margin_start(6)
+    toolbar.set_margin_end(6)
+    toolbar.set_margin_top(6)
+    toolbar.set_margin_bottom(6)
+    toolbar.add_css_class('toolbar')
+    try:
+        # Expose the computed visual height so terminal banners can match
+        min_h, nat_h, min_baseline, nat_baseline = toolbar.measure(Gtk.Orientation.VERTICAL, -1)
+        window._toolbar_row_height = max(min_h, nat_h)
+        # Also track the real allocated height dynamically
+        def _on_toolbar_alloc(widget, allocation):
+            try:
+                window._toolbar_row_height = allocation.height
+            except Exception:
+                pass
+        toolbar.connect('size-allocate', _on_toolbar_alloc)
+    except Exception:
+        window._toolbar_row_height = 36
+    
+    # Import icon_utils for toolbar buttons
+    from sshpilot import icon_utils
+    
+    # Connection toolbar buttons
+    window.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    window.connection_toolbar.set_hexpand(True)
+    window.connection_toolbar.set_homogeneous(True)
+    
+    # Edit button
+    window.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
+    window.edit_button.add_css_class('flat')
+    _expand_toolbar_button(window.edit_button)
+    window.edit_button.set_tooltip_text('Edit Connection')
+    window.edit_button.set_sensitive(False)
+    window.edit_button.connect('clicked', window.on_edit_connection_clicked)
+    window.connection_toolbar.append(window.edit_button)
+
+    # Copy key to server button (ssh-copy-id)
+    window.copy_key_button = icon_utils.new_button_from_icon_name('dialog-password-symbolic')
+    window.copy_key_button.add_css_class('flat')
+    _expand_toolbar_button(window.copy_key_button)
+    window.copy_key_button.set_tooltip_text(
+        f'Copy public key to server for passwordless login ({get_primary_modifier_label()}+Shift+K)'
+    )
+    window.copy_key_button.set_sensitive(False)
+    window.copy_key_button.connect('clicked', window.on_copy_key_to_server_clicked)
+    window.connection_toolbar.append(window.copy_key_button)
+
+    # SCP transfer button
+    window.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
+    window.scp_button.add_css_class('flat')
+    _expand_toolbar_button(window.scp_button)
+    window.scp_button.set_tooltip_text('Transfer files with scp')
+    window.scp_button.set_sensitive(False)
+    window.scp_button.connect('clicked', window.on_scp_button_clicked)
+    window.connection_toolbar.append(window.scp_button)
+
+    # Manage files button (visibility controlled dynamically)
+    window.manage_files_button = icon_utils.new_button_from_icon_name('folder-symbolic')
+    window.manage_files_button.add_css_class('flat')
+    _expand_toolbar_button(window.manage_files_button)
+    primary_label = get_primary_modifier_label()
+    window.manage_files_button.set_tooltip_text(
+        f"Open file manager for remote server ({primary_label}+Shift+O)"
+    )
+    window.manage_files_button.set_sensitive(False)
+    window.manage_files_button.connect('clicked', window.on_manage_files_button_clicked)
+    window.manage_files_button.set_visible(not should_hide_file_manager_options())
+    window.connection_toolbar.append(window.manage_files_button)
+    
+    # System terminal button (only when external terminals are available)
+    if not should_hide_external_terminal_options():
+        window.system_terminal_button = icon_utils.new_button_from_icon_name('utilities-terminal-symbolic')
+        window.system_terminal_button.add_css_class('flat')
+        _expand_toolbar_button(window.system_terminal_button)
+        window.system_terminal_button.set_tooltip_text('Open connection in system terminal')
+        window.system_terminal_button.set_sensitive(False)
+        window.system_terminal_button.connect('clicked', window.on_system_terminal_button_clicked)
+        window.connection_toolbar.append(window.system_terminal_button)
+    
+    # Delete button
+    window.delete_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
+    window.delete_button.add_css_class('flat')
+    _expand_toolbar_button(window.delete_button)
+    window.delete_button.set_tooltip_text('Delete Connection')
+    window.delete_button.set_sensitive(False)
+    window.delete_button.connect('clicked', window.on_delete_connection_clicked)
+    window.connection_toolbar.append(window.delete_button)
+    
+    # Group toolbar buttons
+    window.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    window.group_toolbar.set_hexpand(True)
+    window.group_toolbar.set_homogeneous(True)
+    
+    # Rename group button
+    window.rename_group_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
+    window.rename_group_button.add_css_class('flat')
+    _expand_toolbar_button(window.rename_group_button)
+    window.rename_group_button.set_tooltip_text('Rename Group')
+    window.rename_group_button.set_sensitive(False)
+    window.rename_group_button.connect('clicked', window.on_rename_group_clicked)
+    window.group_toolbar.append(window.rename_group_button)
+    
+    # Delete group button
+    window.delete_group_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
+    window.delete_group_button.add_css_class('flat')
+    _expand_toolbar_button(window.delete_group_button)
+    window.delete_group_button.set_tooltip_text('Delete Group')
+    window.delete_group_button.set_sensitive(False)
+    window.delete_group_button.connect('clicked', window.on_delete_group_clicked)
+    window.group_toolbar.append(window.delete_group_button)
+    
+    # Add both toolbars to main toolbar
+    toolbar.append(window.connection_toolbar)
+    toolbar.append(window.group_toolbar)
+    
+    sidebar_box.append(toolbar)
+
+    # Sidebar header: title + window controls (GNOME split-view pattern)
+    window.sidebar_header_bar = Adw.HeaderBar()
+    window.sidebar_header_bar.add_css_class('flat')
+    if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+        window.sidebar_header_bar.set_show_start_title_buttons(True)
+        window.sidebar_header_bar.set_show_end_title_buttons(True)
+
+    sidebar_title_label = Gtk.Label(label='SSH Pilot')
+    sidebar_title_label.add_css_class('title')
+    sidebar_title_label.set_xalign(0.0)
+    window.sidebar_header_bar.set_title_widget(sidebar_title_label)
+
+    sidebar_toolbar_view = Adw.ToolbarView()
+    sidebar_toolbar_view.add_css_class('sidebar')
+    sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)
+    sidebar_toolbar_view.set_content(sidebar_box)
+
+    window._set_sidebar_widget(sidebar_toolbar_view)
+    logger.debug("Set sidebar widget")
 
 
 __all__ = ["ConnectionRow", "GroupRow", "build_sidebar"]
