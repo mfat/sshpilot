@@ -12,6 +12,12 @@ from gi.repository import Gtk, Gdk, Gio, GObject, GLib, Graphene, Gsk, Pango, Ad
 
 from gettext import gettext as _
 
+from .dnd_payload import (
+    content_provider_for_payload,
+    decode_dnd_payload,
+    new_internal_drop_target,
+)
+from .platform_utils import is_macos
 from .connection_manager import Connection
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
@@ -889,19 +895,22 @@ class GroupRow(Gtk.ListBoxRow):
         self._drag_source = drag_source
 
     def _on_drag_prepare(self, source, x, y):
-        data = {"type": "group", "group_id": self.group_id}
-        return Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_PYOBJECT, data)
+        # JSON string — TYPE_PYOBJECT crashes macOS pasteboard (issues #704/#876).
+        return content_provider_for_payload(
+            {"type": "group", "group_id": self.group_id}
         )
 
     def _on_drag_begin(self, source, drag):
-        try:
-            icon = Gtk.DragIcon.get_for_drag(drag)
-            image = Gtk.Image.new_from_icon_name("folder-symbolic")
-            image.set_icon_size(Gtk.IconSize.LARGE)
-            icon.set_child(image)
-        except Exception as e:
-            logger.debug(f"Could not set group drag icon: {e}")
+        # macOS supplies its own drag preview; custom DragIcon can also trip
+        # AppKit during beginDraggingSessionWithItems.
+        if not is_macos():
+            try:
+                icon = Gtk.DragIcon.get_for_drag(drag)
+                image = Gtk.Image.new_from_icon_name("folder-symbolic")
+                image.set_icon_size(Gtk.IconSize.LARGE)
+                icon.set_child(image)
+            except Exception as e:
+                logger.debug(f"Could not set group drag icon: {e}")
         try:
             window = self.get_root()
             if window:
@@ -1707,18 +1716,18 @@ class ConnectionRow(Gtk.ListBoxRow):
         if window:
             window._dragged_connections = ordered_nicknames
 
-        return Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_PYOBJECT, data)
-        )
+        # JSON string — TYPE_PYOBJECT crashes macOS pasteboard (issues #704/#876).
+        return content_provider_for_payload(data)
 
     def _on_drag_begin(self, source, drag):
-        try:
-            icon = Gtk.DragIcon.get_for_drag(drag)
-            image = Gtk.Image.new_from_icon_name("computer-symbolic")
-            image.set_icon_size(Gtk.IconSize.LARGE)
-            icon.set_child(image)
-        except Exception as e:
-            logger.debug(f"Could not set drag icon: {e}")
+        if not is_macos():
+            try:
+                icon = Gtk.DragIcon.get_for_drag(drag)
+                image = Gtk.Image.new_from_icon_name("computer-symbolic")
+                image.set_icon_size(Gtk.IconSize.LARGE)
+                icon.set_child(image)
+            except Exception as e:
+                logger.debug(f"Could not set drag icon: {e}")
         try:
             window = self.get_root()
             if window:
@@ -1998,7 +2007,7 @@ def reset_connection_list_drag_session(window) -> None:
 def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
 
-    drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+    drop_target = new_internal_drop_target()
     drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
     drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
     drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
@@ -3047,19 +3056,8 @@ def _on_connection_list_drop(window, target, value, x, y):
             window._drag_in_progress = False
             window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
 
-        # Extract Python object from GObject.Value drops
-        if isinstance(value, GObject.Value):
-            extracted = None
-            for getter in ("get_boxed", "get_object", "get"):
-                try:
-                    extracted = getattr(value, getter)()
-                    if extracted is not None:
-                        break
-                except Exception:
-                    continue
-            value = extracted
-
-
+        # Pasteboard-safe JSON string (or bare dict in tests).
+        value = decode_dnd_payload(value)
         if not isinstance(value, dict):
             return False
 

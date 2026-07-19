@@ -22,6 +22,15 @@ def test_payload_non_dict_returns_empty():
     assert _connections_from_drop_payload(42) == []
 
 
+def test_payload_json_string_is_decoded():
+    from sshpilot.dnd_payload import encode_dnd_payload
+
+    encoded = encode_dnd_payload(
+        {"type": "connection", "connection_nicknames": ["a", "b"]}
+    )
+    assert _connections_from_drop_payload(encoded) == ["a", "b"]
+
+
 def test_payload_wrong_or_missing_type_returns_empty():
     assert _connections_from_drop_payload({"connection_nicknames": ["a"]}) == []
     assert _connections_from_drop_payload({"type": "group", "connection_nicknames": ["a"]}) == []
