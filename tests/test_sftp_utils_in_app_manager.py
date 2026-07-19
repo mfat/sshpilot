@@ -159,6 +159,31 @@ def setup_gi(monkeypatch):
     gtk.Application = types.SimpleNamespace(get_default=lambda: DummyWidget())
     gtk.Orientation = types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1)
     gtk.Align = types.SimpleNamespace(START=0, CENTER=1)
+
+    # Blueprint-templated widgets use @Gtk.Template / Gtk.Template.Child /
+    # @Gtk.Template.Callback; make them no-ops so those classes import here.
+    class _TemplateStub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __call__(self, cls):
+            return cls
+
+        class Child:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        @staticmethod
+        def Callback(*args, **kwargs):
+            if len(args) == 1 and callable(args[0]) and not kwargs:
+                return args[0]
+
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+    gtk.Template = _TemplateStub
     repository.Gtk = gtk
     monkeypatch.setitem(sys.modules, "gi.repository.Gtk", gtk)
 
