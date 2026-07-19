@@ -149,5 +149,7 @@
     <file alias="file_manager_window.ui" preprocess="xml-stripblanks">ui/file_manager_window.ui</file>
     <file alias="preferences_window.ui" preprocess="xml-stripblanks">ui/preferences_window.ui</file>
     <file alias="window.ui" preprocess="xml-stripblanks">ui/window.ui</file>
+    <file alias="mount_progress_dialog.ui" preprocess="xml-stripblanks">ui/mount_progress_dialog.ui</file>
+    <file alias="sftp_connection_dialog.ui" preprocess="xml-stripblanks">ui/sftp_connection_dialog.ui</file>
   </gresource>
 </gresources>

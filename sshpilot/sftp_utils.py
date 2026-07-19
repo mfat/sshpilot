@@ -1249,8 +1249,16 @@ def _create_mount_progress_dialog(user: str, host: str):
     return MountProgressDialog(user, host)
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/mount_progress_dialog.ui")
 class MountProgressDialog(Adw.Window):
     """Progress dialog for SFTP mount operations"""
+
+    __gtype_name__ = "SshPilotMountProgressDialog"
+
+    header_label = Gtk.Template.Child()
+    progress_bar = Gtk.Template.Child()
+    status_label = Gtk.Template.Child()
+    cancel_button = Gtk.Template.Child()
 
     def __init__(self, user: str, host: str, parent_window=None):
         super().__init__()
@@ -1260,45 +1268,13 @@ class MountProgressDialog(Adw.Window):
         self.is_cancelled = False
         self.progress_timer = None
 
-        self.set_title("Mounting SFTP Connection")
-        self.set_default_size(500, 200)
-        self.set_resizable(False)
-        self.set_modal(True)
-
         # Set as transient for parent window if provided
         if parent_window:
             self.set_transient_for(parent_window)
 
-        # Main container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        main_box.set_margin_start(20)
-        main_box.set_margin_end(20)
-        main_box.set_margin_top(20)
-        main_box.set_margin_bottom(20)
-
-        # Header
-        header_label = Gtk.Label()
-        header_label.set_markup(f"<b>Connecting to {user}@{host}</b>")
-        main_box.append(header_label)
-
-        # Progress bar
-        self.progress_bar = Gtk.ProgressBar()
-        self.progress_bar.set_show_text(True)
-        self.progress_bar.set_text("Initializing connection...")
-        main_box.append(self.progress_bar)
-
-        # Status label
-        self.status_label = Gtk.Label()
-        self.status_label.set_text("Preparing SFTP mount...")
-        main_box.append(self.status_label)
-
-        # Cancel button
-        self.cancel_button = Gtk.Button.new_with_label("Cancel")
+        # Dynamic header text (static shell is in the template).
+        self.header_label.set_markup(f"<b>Connecting to {user}@{host}</b>")
         self.cancel_button.connect("clicked", self._on_cancel)
-        self.cancel_button.set_halign(Gtk.Align.CENTER)
-        main_box.append(self.cancel_button)
-
-        self.set_content(main_box)
 
     def _on_cancel(self, button):
         """Cancel mount operation"""
@@ -1346,8 +1322,15 @@ class MountProgressDialog(Adw.Window):
         self.destroy()
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/sftp_connection_dialog.ui")
 class SftpConnectionDialog(Adw.Window):
     """Dialog showing manual connection options for SFTP"""
+
+    __gtype_name__ = "SshPilotSftpConnectionDialog"
+
+    subtitle_label = Gtk.Template.Child()
+    options_box = Gtk.Template.Child()
+    close_button = Gtk.Template.Child()
 
     def __init__(self, user: str, host: str, port: Optional[int], uri: str):
         super().__init__()
@@ -1356,89 +1339,30 @@ class SftpConnectionDialog(Adw.Window):
         self.port = port
         self.uri = uri
 
-        self.set_title("SFTP Connection")
-        self.set_default_size(600, 400)
-        self.set_modal(True)
+        # Dynamic subtitle (static shell + header/instructions are in the template).
+        self.subtitle_label.set_text(f"Connect to {user}@{host}")
 
-        # Main container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        main_box.set_margin_start(24)
-        main_box.set_margin_end(24)
-        main_box.set_margin_top(24)
-        main_box.set_margin_bottom(24)
-
-        # Header
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-
-        from sshpilot import icon_utils
-        icon = icon_utils.new_image_from_icon_name("folder-remote-symbolic")
-        icon.set_pixel_size(48)
-        header_box.append(icon)
-
-        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        title_label = Gtk.Label()
-        title_label.set_markup("<b>SFTP Connection Options</b>")
-        title_label.set_halign(Gtk.Align.START)
-        title_box.append(title_label)
-
-        subtitle_label = Gtk.Label()
-        subtitle_label.set_text(f"Connect to {user}@{host}")
-        subtitle_label.add_css_class("dim-label")
-        subtitle_label.set_halign(Gtk.Align.START)
-        title_box.append(subtitle_label)
-
-        header_box.append(title_box)
-        main_box.append(header_box)
-
-        # Instructions
-        instructions = Gtk.Label()
-        instructions.set_markup(
-            "Due to Flatpak security restrictions, direct SFTP mounting is limited.\n"
-            "Please choose one of the following options:"
-        )
-        instructions.set_wrap(True)
-        instructions.set_halign(Gtk.Align.START)
-        main_box.append(instructions)
-
-        # Options list
-        options_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-
-        # Option 1: File Manager
-        option1_box = self._create_option_box(
+        # Option cards are data-driven; append them into the template's options box.
+        self.options_box.append(self._create_option_box(
             "Open in File Manager",
             "Try opening the SFTP location directly in your system's file manager",
             "folder-symbolic",
             lambda: self._try_file_manager(),
-        )
-        options_box.append(option1_box)
-
-        # Option 2: Copy URI
-        option2_box = self._create_option_box(
+        ))
+        self.options_box.append(self._create_option_box(
             "Copy SFTP URI",
             f"Copy the SFTP URI to clipboard: {uri}",
             "edit-copy-symbolic",
             lambda: self._copy_uri(),
-        )
-        options_box.append(option2_box)
-
-        # Option 3: Terminal
-        option3_box = self._create_option_box(
+        ))
+        self.options_box.append(self._create_option_box(
             "Open in Terminal",
             "Open an SFTP connection in terminal",
             "utilities-terminal-symbolic",
             lambda: self._open_terminal(),
-        )
-        options_box.append(option3_box)
+        ))
 
-        main_box.append(options_box)
-
-        # Close button
-        close_button = Gtk.Button.new_with_label("Close")
-        close_button.connect("clicked", lambda b: self.close())
-        close_button.set_halign(Gtk.Align.END)
-        main_box.append(close_button)
-
-        self.set_content(main_box)
+        self.close_button.connect("clicked", lambda b: self.close())
 
     def _create_option_box(
         self, title: str, description: str, icon_name: str, callback: Callable
