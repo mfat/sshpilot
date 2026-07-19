@@ -464,11 +464,12 @@ class WelcomePage(Gtk.Overlay):
 
     def _prompt_enable_plugin(self, plugin_name):
         """Tell the user the plugin is off and offer to open Settings."""
-        dialog = Adw.MessageDialog(
-            transient_for=self.window,
-            modal=True,
+        dialog = Adw.AlertDialog(
             heading=_('Plugin Disabled'),
-            body=_('The %s plugin is disabled. Enable it from Settings ▸ Plugins to use this feature.') % plugin_name,
+            body=_(
+                'The %s plugin is disabled. Enable it from Settings ▸ Plugins, '
+                'then restart SSH Pilot to use this feature.'
+            ) % plugin_name,
         )
         dialog.add_response('close', _('Close'))
         dialog.add_response('open', _('Open Settings'))
@@ -479,7 +480,7 @@ class WelcomePage(Gtk.Overlay):
             'response',
             lambda _d, resp: self.window.show_preferences() if resp == 'open' else None,
         )
-        dialog.present()
+        dialog.present(self.window)
 
     def _open_file_manager(self, anchor):
         """Same behavior as the Manage Files menu item: selected connection,
