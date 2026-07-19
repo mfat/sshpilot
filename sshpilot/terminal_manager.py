@@ -1022,3 +1022,156 @@ class TerminalManager:
             })
 
         return statuses
+
+    # --- Controlled reconnect after a connection edit ----------------------
+
+    def prompt_reconnect(self, connection):
+        """Ask whether to reconnect *connection* with its updated settings."""
+        dialog = Adw.AlertDialog(
+            heading=_("Settings Changed"),
+            body=_("The connection settings have been updated.\n"
+                   "Would you like to reconnect with the new settings?"),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('reconnect', _("Reconnect"))
+        dialog.set_response_appearance('reconnect', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('reconnect')
+        dialog.set_close_response('cancel')
+        dialog.connect('response', self._on_reconnect_response, connection)
+        dialog.present(self.window)
+
+    def _on_reconnect_response(self, dialog, response, connection):
+        """Handle response from the reconnect prompt."""
+        window = self.window
+        # Only proceed if the user confirmed and the connection is still active
+        if response != 'reconnect' or connection not in window.active_terminals:
+            # Clean up the stored terminal instance if it exists
+            if hasattr(connection, '_terminal_instance'):
+                delattr(connection, '_terminal_instance')
+            return
+
+        # Get the terminal instance either from active_terminals or the stored instance
+        terminal = window.active_terminals.get(connection) or getattr(connection, '_terminal_instance', None)
+        if not terminal:
+            logger.warning("No terminal instance found for reconnection")
+            return
+
+        # Ensure the tab for this connection is focused so the user can
+        # observe the reconnection process even if another tab was
+        # previously active.
+        try:
+            window._focus_most_recent_tab(connection)
+        except Exception:
+            pass
+
+        # Set controlled reconnect flag (read by terminal.py via the root window)
+        window._is_controlled_reconnect = True
+
+        try:
+            # Disconnect first (defer to avoid blocking)
+            logger.debug("Disconnecting terminal before reconnection")
+
+            def _safe_disconnect():
+                try:
+                    terminal.disconnect()
+                    logger.debug("Terminal disconnected, scheduling reconnect")
+                    # Store the connection temporarily in active_terminals if not present
+                    if connection not in window.active_terminals:
+                        window.active_terminals[connection] = terminal
+                    # Reconnect after disconnect completes
+                    GLib.timeout_add(1000, self._reconnect_terminal, connection)
+                except Exception as e:
+                    logger.error(f"Error during disconnect: {e}")
+                    GLib.idle_add(self._show_reconnect_error, connection, str(e))
+                return False
+
+            # Defer disconnect to avoid blocking the UI thread
+            GLib.idle_add(_safe_disconnect)
+
+        except Exception as e:
+            logger.error(f"Error during reconnection: {e}")
+            # Remove from active terminals if reconnection fails
+            if connection in window.active_terminals:
+                del window.active_terminals[connection]
+            window._error_dialog(
+                _("Reconnection Failed"),
+                _("Failed to reconnect with the new settings. Please try connecting again manually."),
+            )
+
+        finally:
+            # Clean up the stored terminal instance
+            if hasattr(connection, '_terminal_instance'):
+                delattr(connection, '_terminal_instance')
+
+            # Reset the flag after a delay to ensure it's not set during normal operations
+            GLib.timeout_add(1000, self._reset_controlled_reconnect)
+
+    def _reset_controlled_reconnect(self):
+        """Reset the controlled reconnect flag"""
+        self.window._is_controlled_reconnect = False
+
+    def _reconnect_terminal(self, connection):
+        """Reconnect a terminal with updated connection settings"""
+        window = self.window
+        if connection not in window.active_terminals:
+            logger.warning(f"Connection {connection.nickname} not found in active terminals")
+            return False  # Don't repeat the timeout
+
+        terminal = window.active_terminals[connection]
+
+        try:
+            logger.debug(f"Attempting to reconnect terminal for {connection.nickname}")
+
+            # Rebuild the SSH command using the latest configuration so that
+            # options resolved via ssh -G are honored for the reconnect.
+            # Plugin protocols rebuild statelessly in build_spawn() instead.
+            if getattr(connection, 'protocol', 'ssh') == 'ssh':
+                try:
+                    loop = asyncio.get_event_loop()
+                    # Native-only (connect() delegates to native_connect()).
+                    if hasattr(connection, 'native_connect'):
+                        connect_coro = connection.native_connect()
+                    else:
+                        connect_coro = connection.connect()
+                    if loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
+                        future.result()
+                    else:
+                        loop.run_until_complete(connect_coro)
+                except Exception as prep_err:
+                    logger.error(
+                        "Failed to prepare SSH command before reconnect: %s",
+                        prep_err,
+                    )
+                    GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
+                    return False
+
+            # Reconnect with new settings
+            if not terminal._connect_ssh():
+                logger.error("Failed to reconnect with new settings")
+                GLib.idle_add(self._show_reconnect_error, connection)
+                return False
+
+            logger.info(f"Successfully reconnected terminal for {connection.nickname}")
+
+        except Exception as e:
+            logger.error(f"Error reconnecting terminal: {e}", exc_info=True)
+            GLib.idle_add(self._show_reconnect_error, connection, str(e))
+
+        return False  # Don't repeat the timeout
+
+    def _show_reconnect_error(self, connection, error_message=None):
+        """Show an error message when reconnection fails"""
+        window = self.window
+        # Remove from active terminals if reconnection fails
+        if connection in window.active_terminals:
+            del window.active_terminals[connection]
+
+        # Update UI to show disconnected state
+        for row in window._rows_for_connection(connection):
+            row.update_status()
+
+        window._error_dialog(
+            _("Reconnection Failed"),
+            error_message or _("Failed to reconnect with the new settings. Please try connecting again manually."),
+        )
