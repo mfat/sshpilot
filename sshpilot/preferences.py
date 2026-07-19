@@ -220,9 +220,19 @@ def _detect_pyxterm_backend():
     return True, None
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/preferences_window.ui")
 class PreferencesWindow(Adw.Window):
     """Preferences dialog window"""
-    
+
+    __gtype_name__ = "SshPilotPreferencesWindow"
+
+    overlay_split_view = Gtk.Template.Child()
+    sidebar_header_bar = Gtk.Template.Child()
+    sidebar = Gtk.Template.Child()
+    header_bar = Gtk.Template.Child()
+    header_title_label = Gtk.Template.Child()
+    content_stack = Gtk.Template.Child()
+
     def __init__(self, parent_window, config):
         super().__init__(transient_for=parent_window)
         self.parent_window = parent_window
@@ -283,116 +293,22 @@ class PreferencesWindow(Adw.Window):
         self.connect('map', self._on_preferences_map)
     
     def setup_navigation_layout(self):
-        """Configure split view layout using OverlaySplitView."""
-        # Adw.Window doesn't have a default titlebar, so no need to hide it
-        # The headerbar with controls is in the ToolbarView below
-
-        # Main split view container using OverlaySplitView
-        self.overlay_split_view = Adw.OverlaySplitView()
-        
-        # Configure sidebar width properties according to OverlaySplitView API
-        # Defaults: 25% fraction, 180sp min, 280sp max (using SP units by default)
+        """Configure the split-view layout (skeleton lives in the template)."""
+        # Sidebar width sizing stays in Python: the SP length unit is only set
+        # when the Adw.LengthUnit enum exists on this libadwaita version.
         try:
             self.overlay_split_view.set_sidebar_width_fraction(0.25)
             self.overlay_split_view.set_min_sidebar_width(180)
             self.overlay_split_view.set_max_sidebar_width(280)
-            # Set length unit to SP (scale-independent pixels) for responsive sizing
             if hasattr(Adw, 'LengthUnit'):
                 self.overlay_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
         except Exception as e:
             logger.debug(f"Failed to set OverlaySplitView sidebar width properties: {e}")
-        
-        # Show the sidebar by default
+
         try:
             self.overlay_split_view.set_show_sidebar(True)
         except Exception as e:
             logger.debug(f"Failed to set OverlaySplitView show_sidebar: {e}")
-        
-        self.set_content(self.overlay_split_view)
-        
-        # Add breakpoint for responsive design: collapse on small widths
-        # This follows the OverlaySplitView API recommendation
-        # See: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.4/class.OverlaySplitView.html
-        try:
-            if hasattr(Adw, 'Breakpoint') and hasattr(Adw, 'breakpoint_condition_parse'):
-                condition = Adw.breakpoint_condition_parse("max-width: 400sp")
-                breakpoint = Adw.Breakpoint.new(condition)
-                breakpoint.add_setter(self.overlay_split_view, "collapsed", True)
-                self.add_breakpoint(breakpoint)
-        except Exception as e:
-            logger.debug(f"Failed to add OverlaySplitView breakpoint: {e}")
-
-        # Sidebar list with navigation styling
-        self.sidebar = Gtk.ListBox()
-        self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.sidebar.set_activate_on_single_click(True)
-        self.sidebar.add_css_class("navigation-sidebar")
-
-        sidebar_scroller = Gtk.ScrolledWindow()
-        sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        sidebar_scroller.set_child(self.sidebar)
-        
-        # Header bar for sidebar with window controls
-        # Note: OverlaySplitView automatically hides window buttons in the middle of HeaderBars
-        # See: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.4/class.OverlaySplitView.html
-        self.sidebar_header_bar = Adw.HeaderBar()
-        self.sidebar_header_bar.add_css_class("flat")
-        
-        # Sidebar title always shows "Preferences" (like GNOME Settings)
-        sidebar_title_label = Gtk.Label.new(self._base_header_title)
-        sidebar_title_label.add_css_class("title")
-        sidebar_title_label.set_single_line_mode(True)
-        sidebar_title_label.set_xalign(0.0)
-        self.sidebar_header_bar.set_title_widget(sidebar_title_label)
-        
-        # Enable window controls on both sides - OverlaySplitView will automatically
-        # hide middle buttons. This ensures close button is visible for users with
-        # window controls on either left or right side.
-        self.sidebar_header_bar.set_show_start_title_buttons(True)
-        self.sidebar_header_bar.set_show_end_title_buttons(True)
-        
-        # ToolbarView with HeaderBar for sidebar
-        sidebar_toolbar_view = Adw.ToolbarView()
-        sidebar_toolbar_view.add_top_bar(self.sidebar_header_bar)
-        sidebar_toolbar_view.set_content(sidebar_scroller)
-        
-        # OverlaySplitView doesn't use NavigationPage - set widget directly
-        self.overlay_split_view.set_sidebar(sidebar_toolbar_view)
-
-        # Stack for page content
-        self.content_stack = Gtk.Stack()
-        self.content_stack.set_hexpand(True)
-        self.content_stack.set_vexpand(True)
-        self.content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-
-        content_scroller = Gtk.ScrolledWindow()
-        content_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        content_scroller.set_child(self.content_stack)
-        # Header bar for content area with window controls
-        # Note: OverlaySplitView automatically hides window buttons in the middle of HeaderBars
-        # See: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.4/class.OverlaySplitView.html
-        self.header_bar = Adw.HeaderBar()
-        self.header_bar.add_css_class("flat")
-        
-        self.header_title_label = Gtk.Label.new("")
-        self.header_title_label.add_css_class("title")
-        self.header_title_label.set_single_line_mode(True)
-        self.header_title_label.set_xalign(0.0)
-        self.header_bar.set_title_widget(self.header_title_label)
-        
-        # Enable window controls on both sides - OverlaySplitView will automatically
-        # hide middle buttons. This ensures close button is visible for users with
-        # window controls on either left or right side.
-        self.header_bar.set_show_start_title_buttons(True)
-        self.header_bar.set_show_end_title_buttons(True)
-
-        # ToolbarView with HeaderBar (matching pattern used in file_manager_window.py)
-        self.content_toolbar_view = Adw.ToolbarView()
-        self.content_toolbar_view.add_top_bar(self.header_bar)
-        self.content_toolbar_view.set_content(content_scroller)
-
-        # OverlaySplitView doesn't use NavigationPage - set widget directly
-        self.overlay_split_view.set_content(self.content_toolbar_view)
 
         # Connect sidebar selection to content stack
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)

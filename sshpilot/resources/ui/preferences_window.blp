@@ -1,0 +1,91 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Layout skeleton only. The sidebar navigation rows and the content stack's
+// preference pages are built dynamically in Python (preferences.py,
+// add_page_to_layout); this file owns the OverlaySplitView / ToolbarView /
+// HeaderBar / ScrolledWindow container structure and the responsive breakpoint.
+template $SshPilotPreferencesWindow: Adw.Window {
+  title: "Settings";
+  default-width: 820;
+  default-height: 600;
+
+  Adw.Breakpoint {
+    condition ("max-width: 400sp")
+
+    setters {
+      overlay_split_view.collapsed: true;
+    }
+  }
+
+  content: Adw.OverlaySplitView overlay_split_view {
+    sidebar: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar sidebar_header_bar {
+        show-start-title-buttons: true;
+        show-end-title-buttons: true;
+
+        styles [
+          "flat",
+        ]
+
+        title-widget: Gtk.Label {
+          label: "Settings";
+          single-line-mode: true;
+          xalign: 0;
+
+          styles [
+            "title",
+          ]
+        };
+      }
+
+      content: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vscrollbar-policy: automatic;
+
+        Gtk.ListBox sidebar {
+          selection-mode: single;
+          activate-on-single-click: true;
+
+          styles [
+            "navigation-sidebar",
+          ]
+        }
+      };
+    };
+
+    content: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar header_bar {
+        show-start-title-buttons: true;
+        show-end-title-buttons: true;
+
+        styles [
+          "flat",
+        ]
+
+        title-widget: Gtk.Label header_title_label {
+          label: "";
+          single-line-mode: true;
+          xalign: 0;
+
+          styles [
+            "title",
+          ]
+        };
+      }
+
+      content: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vscrollbar-policy: automatic;
+
+        Gtk.Stack content_stack {
+          hexpand: true;
+          vexpand: true;
+          transition-type: crossfade;
+        }
+      };
+    };
+  };
+}
