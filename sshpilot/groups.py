@@ -130,6 +130,13 @@ class GroupManager:
         self.groups[group_id]['color'] = color or None
         self._save_groups()
 
+    def rename_group(self, group_id: str, new_name: str):
+        """Rename a group and persist the change."""
+        if group_id not in self.groups:
+            return
+        self.groups[group_id]['name'] = new_name
+        self._save_groups()
+
     def delete_group(self, group_id: str):
         """Delete a group and move its contents to parent or root"""
         if group_id not in self.groups:
