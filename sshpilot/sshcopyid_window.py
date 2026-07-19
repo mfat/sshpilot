@@ -120,6 +120,7 @@ def _ssh_key_from_public_path(path: str) -> SSHKey:
     return key
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/sshcopyid_window.ui")
 class SshCopyIdWindow(Adw.Window):
     """
     Full Adwaita-styled window for installing a public key on a server.
@@ -135,6 +136,12 @@ class SshCopyIdWindow(Adw.Window):
         parent._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
     """
 
+    __gtype_name__ = "SshPilotSshCopyIdWindow"
+
+    cancel_button = Gtk.Template.Child()
+    btn_ok = Gtk.Template.Child()
+    content_box = Gtk.Template.Child()
+
     #: Trailing dropdown entry that opens the file chooser instead of selecting a key.
     _BROWSE_LABEL = _("Browse for a key file…")
 
@@ -145,76 +152,20 @@ class SshCopyIdWindow(Adw.Window):
         logger.debug(f"SshCopyIdWindow: Key manager type: {type(key_manager)}")
         logger.debug(f"SshCopyIdWindow: Connection manager type: {type(connection_manager)}")
 
-        # Title for the window and header bar
-        title = _("Copy key to Server")
+        super().__init__()
+        self.set_transient_for(parent)
 
-        try:
-            super().__init__()
-            self.set_transient_for(parent)
-            self.set_modal(True)
-            self.set_resizable(False)
-            self.set_default_size(500, 400)
-            # Set window title so desktop environments show it
-            self.set_title(title)
-            logger.debug("SshCopyIdWindow: Base window initialized")
+        self._parent = parent
+        self._conn = connection
+        self._km = key_manager
+        self._cm = connection_manager
 
-            self._parent = parent
-            self._conn = connection
-            self._km = key_manager
-            self._cm = connection_manager
-            logger.debug("SshCopyIdWindow: Instance variables set")
-            
-            logger.info(f"SshCopyIdWindow: Window initialized for connection {getattr(connection, 'nickname', 'unknown')}")
-        except Exception as e:
-            logger.error(f"SshCopyIdWindow: Failed to initialize window: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
-            raise
-
-        # ---------- Outer layout ----------
-        logger.info("SshCopyIdWindow: Creating outer layout")
-        try:
-            tv = Adw.ToolbarView()
-            self.set_content(tv)
-            
-            # ---------- Header Bar ----------
-            logger.info("SshCopyIdWindow: Creating header bar")
-            hb = Adw.HeaderBar()
-            tv.add_top_bar(hb)
-            # Show title in the header bar
-            hb.set_title_widget(Gtk.Label(label=title))
-
-            # Cancel button
-            btn_cancel = Gtk.Button(label="Cancel")
-            btn_cancel.connect("clicked", self._on_close_clicked)
-            hb.pack_start(btn_cancel)
-
-            self.btn_ok = Gtk.Button(label="OK")
-            self.btn_ok.add_css_class("suggested-action")
-            self.btn_ok.connect("clicked", self._on_ok_clicked)
-            hb.pack_end(self.btn_ok)
-            logger.info("SshCopyIdWindow: Header bar created successfully")
-
-            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            content.set_margin_top(18); content.set_margin_bottom(18)
-            content.set_margin_start(18); content.set_margin_end(18)
-            tv.set_content(content)
-
-            try:
-                illustration = Gtk.Image.new_from_resource(
-                    '/io/github/mfat/sshpilot/keychain.png'
-                )
-                illustration.set_pixel_size(160)
-                illustration.set_halign(Gtk.Align.CENTER)
-                illustration.set_vexpand(False)
-                illustration.set_margin_bottom(12)
-                content.append(illustration)
-            except GLib.Error as exc:
-                logger.debug(
-                    "ssh-copy-id dialog illustration unavailable: %s", exc
-                )
-        except Exception as e:
-            logger.error(f"SshCopyIdWindow: Failed to create outer layout: {e}")
-            raise
+        # Static chrome (header Cancel/OK, keychain illustration) lives in the
+        # template; the server picker, key mode, and generator form are built
+        # below and appended to the template's content box.
+        self.cancel_button.connect("clicked", self._on_close_clicked)
+        self.btn_ok.connect("clicked", self._on_ok_clicked)
+        content = self.content_box
 
         # ---------- Server picker ----------
         try:
