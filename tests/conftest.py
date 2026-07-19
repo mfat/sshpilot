@@ -157,6 +157,34 @@ if not _USE_REAL_GTK and 'gi' not in sys.modules:
         setattr(repository, name, submodule)
         sys.modules[f'gi.repository.{name}'] = submodule
 
+    # Widgets converted to Blueprint use ``@Gtk.Template`` / ``Gtk.Template.Child``
+    # / ``@Gtk.Template.Callback``. Under the stubbed ``gi`` (no real GTK) these
+    # must behave as no-ops so the classes still import: the decorators return the
+    # class/function unchanged and ``Child()`` yields a placeholder. Real GTK
+    # (SSHPILOT_GUI_TESTS=1) uses the genuine Template machinery instead.
+    class _TemplateStub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __call__(self, cls):
+            return cls
+
+        class Child:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        @staticmethod
+        def Callback(*args, **kwargs):
+            if len(args) == 1 and callable(args[0]) and not kwargs:
+                return args[0]  # bare @Gtk.Template.Callback
+
+            def _decorator(func):
+                return func
+
+            return _decorator  # @Gtk.Template.Callback(...)
+
+    setattr(sys.modules['gi.repository.Gtk'], 'Template', _TemplateStub)
+
 
 # ``terminal_manager.py`` does a hard top-level ``import cairo``; the slim/no-GTK
 # CI image ships ``gi`` (or the stub above) but not the ``cairo`` package, so any

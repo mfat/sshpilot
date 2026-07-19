@@ -4,6 +4,11 @@ Extracted verbatim from preferences.py into its own module to shrink that
 god-object. This is a self-contained Adw.Window for picking a monospace terminal
 font; it depends only on GTK/Pango (no preferences state), so it stands alone and
 preferences.py imports it back.
+
+The widget tree is defined declaratively in
+``resources/ui/monospace_font_dialog.blp`` (compiled to ``.ui`` and loaded via
+``Gtk.Template``); only the dynamic font model, selection wiring, and preview
+CSS remain in Python.
 """
 
 import gi
@@ -13,14 +18,19 @@ gi.require_version('PangoFT2', '1.0')
 from gi.repository import Gtk, Adw, Pango, PangoFT2
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/monospace_font_dialog.ui")
 class MonospaceFontDialog(Adw.Window):
+    __gtype_name__ = "MonospaceFontDialog"
+
+    search_entry = Gtk.Template.Child()
+    font_view = Gtk.Template.Child()
+    size_spin = Gtk.Template.Child()
+    preview_label = Gtk.Template.Child()
+
     def __init__(self, parent=None, current_font="Monospace 12"):
         super().__init__()
 
-        self.set_title("Select Terminal Font")
-        self.set_default_size(500, 600)
         self.set_transient_for(parent)
-        self.set_modal(True)
 
         # Store callback
         self.callback = None
@@ -28,109 +38,23 @@ class MonospaceFontDialog(Adw.Window):
         # Parse current font
         self.current_font_desc = Pango.FontDescription.from_string(current_font)
 
-        # Create main content
-        self.setup_ui()
-        self.populate_fonts()
-
-    def setup_ui(self):
-        # Main box
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        main_box.set_margin_top(12)
-        main_box.set_margin_bottom(12)
-        main_box.set_margin_start(12)
-        main_box.set_margin_end(12)
-
-        # Header
-        header = Adw.HeaderBar()
-        header.set_show_start_title_buttons(False)
-        header.set_show_end_title_buttons(False)
-
-        # Cancel button
-        cancel_btn = Gtk.Button(label="Cancel")
-        cancel_btn.connect("clicked", self.on_cancel)
-        header.pack_start(cancel_btn)
-
-        # Select button
-        select_btn = Gtk.Button(label="Select")
-        select_btn.add_css_class("suggested-action")
-        select_btn.connect("clicked", self.on_select)
-        header.pack_end(select_btn)
-
-        # Create search entry
-        self.search_entry = Gtk.SearchEntry()
-        self.search_entry.set_placeholder_text("Search fonts...")
-        self.search_entry.connect("search-changed", self.on_search_changed)
-
-        # Create font list
+        # Font list model (non-widget state — built imperatively)
         self.font_model = Gtk.ListStore(str, str, object)  # display_name, family, font_desc
         self.font_filter = Gtk.TreeModelFilter(child_model=self.font_model)
         self.font_filter.set_visible_func(self.filter_fonts)
+        self.font_view.set_model(self.font_filter)
 
-        self.font_view = Gtk.TreeView(model=self.font_filter)
-        self.font_view.set_headers_visible(False)
-
-        # Font name column
         name_renderer = Gtk.CellRendererText()
         name_column = Gtk.TreeViewColumn("Font", name_renderer, text=0)
         self.font_view.append_column(name_column)
 
-        # Selection handling
+        # The TreeSelection isn't a template object, so wire it here.
         selection = self.font_view.get_selection()
         selection.connect("changed", self.on_selection_changed)
 
-        # Scrolled window for font list
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(self.font_view)
-        scrolled.set_vexpand(True)
-
-        # Size selection
-        size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        size_label = Gtk.Label(label="Size:")
-        size_label.set_halign(Gtk.Align.START)
-
-        self.size_spin = Gtk.SpinButton.new_with_range(6, 72, 1)
         self.size_spin.set_value(self.current_font_desc.get_size() / Pango.SCALE)
-        self.size_spin.connect("value-changed", self.on_size_changed)
 
-        size_box.append(size_label)
-        size_box.append(self.size_spin)
-
-        # Preview text
-        preview_frame = Gtk.Frame()
-        preview_frame.set_label("Preview")
-
-        self.preview_label = Gtk.Label()
-        self.preview_label.set_text(
-            "The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?"
-        )
-        self.preview_label.set_margin_top(12)
-        self.preview_label.set_margin_bottom(12)
-        self.preview_label.set_margin_start(12)
-        self.preview_label.set_margin_end(12)
-        self.preview_label.set_selectable(True)
-        self.preview_label.set_wrap(True)
-        self.preview_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        self.preview_label.set_xalign(0.0)
-
-        preview_scroller = Gtk.ScrolledWindow()
-        preview_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        preview_scroller.set_min_content_height(140)
-        preview_scroller.set_max_content_height(140)
-        preview_scroller.set_hexpand(True)
-        preview_scroller.set_vexpand(False)
-        preview_scroller.set_child(self.preview_label)
-
-        preview_frame.set_child(preview_scroller)
-
-        # Add everything to main box
-        main_box.append(header)
-        main_box.append(self.search_entry)
-        main_box.append(scrolled)
-        main_box.append(size_box)
-        main_box.append(preview_frame)
-
-        self.set_content(main_box)
+        self.populate_fonts()
 
     def populate_fonts(self):
         # Get font map
@@ -206,6 +130,7 @@ class MonospaceFontDialog(Adw.Window):
         font_name = model.get_value(iter, 0).lower()
         return search_text in font_name
 
+    @Gtk.Template.Callback()
     def on_search_changed(self, entry):
         self.font_filter.refilter()
 
@@ -216,6 +141,7 @@ class MonospaceFontDialog(Adw.Window):
             font_desc.set_size(int(self.size_spin.get_value()) * Pango.SCALE)
             self.update_preview(font_desc)
 
+    @Gtk.Template.Callback()
     def on_size_changed(self, spin):
         selection = self.font_view.get_selection()
         model, iter = selection.get_selected()
@@ -257,9 +183,11 @@ class MonospaceFontDialog(Adw.Window):
         if not context.has_class("preview-font"):
             context.add_class("preview-font")
 
+    @Gtk.Template.Callback()
     def on_cancel(self, button):
         self.close()
 
+    @Gtk.Template.Callback()
     def on_select(self, button):
         selection = self.font_view.get_selection()
         model, iter = selection.get_selected()

@@ -23,6 +23,8 @@ def test_reexported_from_preferences_for_back_compat():
 
 
 def test_public_method_surface_intact():
+    # setup_ui() was replaced by the Blueprint template
+    # (resources/ui/monospace_font_dialog.blp) loaded via Gtk.Template.
     expected = {
         "filter_fonts",
         "on_cancel",
@@ -33,7 +35,6 @@ def test_public_method_surface_intact():
         "populate_fonts",
         "select_current_font",
         "set_callback",
-        "setup_ui",
         "update_preview",
     }
     actual = {n for n in vars(MonospaceFontDialog) if not n.startswith("__")}

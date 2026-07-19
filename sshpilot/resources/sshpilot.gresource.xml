@@ -134,4 +134,8 @@
     <file alias="x-office-spreadsheet-template.svg">icons/scalable/mimetypes/x-office-spreadsheet-template.svg</file>
     <file alias="x-package-repository.svg">icons/scalable/mimetypes/x-package-repository.svg</file>
   </gresource>
+
+  <gresource prefix="/io/github/mfat/sshpilot/ui">
+    <file alias="monospace_font_dialog.ui" preprocess="xml-stripblanks">ui/monospace_font_dialog.ui</file>
+  </gresource>
 </gresources>
