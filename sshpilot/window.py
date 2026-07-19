@@ -9,7 +9,6 @@ import asyncio
 import copy
 import os
 import logging
-import re
 import shlex
 import sys
 import time
@@ -1675,52 +1674,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
 
     
-    def _generate_duplicate_nickname(self, base_nickname: str) -> str:
-        """Generate a unique nickname for a duplicated connection."""
-        try:
-            existing_names = {
-                str(getattr(conn, 'nickname', '')).strip()
-                for conn in self.connection_manager.get_connections()
-                if getattr(conn, 'nickname', None)
-            }
-        except Exception:
-            existing_names = set()
-        existing_lower = {name.lower() for name in existing_names if name}
-
-        base = (base_nickname or '').strip()
-        if not base:
-            base = _('Connection')
-
-        copy_label = _('Copy')
-        # The nickname is used verbatim as the ssh Host alias, and the app's own
-        # validator rejects whitespace (and parens make an invalid host token —
-        # see #953). So the suffix must be whitespace/paren-free: use a hyphen
-        # separator and a whitespace-free copy token, e.g. "Name-Copy",
-        # "Name-Copy-2".
-        copy_token = re.sub(r"\s+", "-", copy_label.strip()) or "Copy"
-        # Strip an existing copy suffix in either the legacy " (Copy[ N])" form
-        # or the new "-Copy[-N]" form so re-duplicating doesn't stack suffixes.
-        pattern = re.compile(
-            r"(?:\s*\(\s*" + re.escape(copy_label) + r"(?:\s+\d+)?\s*\)"
-            r"|[-_]+" + re.escape(copy_token) + r"(?:[-_]+\d+)?)\s*$",
-            re.IGNORECASE,
-        )
-        base_clean = pattern.sub('', base).strip() or base
-
-        def is_unique(name: str) -> bool:
-            return name.lower() not in existing_lower
-
-        candidate = f"{base_clean}-{copy_token}"
-        if is_unique(candidate):
-            return candidate
-
-        index = 2
-        while True:
-            candidate = f"{base_clean}-{copy_token}-{index}"
-            if is_unique(candidate):
-                return candidate
-            index += 1
-
     def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
         """Display an error dialog when duplication fails."""
         try:
@@ -1746,188 +1699,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Duplicate an existing connection, persist it, and select the new entry."""
         if connection is None:
             return None
-
         try:
-            try:
-                base_data = getattr(connection, 'data', None)
-                new_data = copy.deepcopy(base_data) if isinstance(base_data, dict) else {}
-            except Exception:
-                new_data = {}
-            if not isinstance(new_data, dict):
-                new_data = {}
-
-            for key in list(new_data.keys()):
-                if key.startswith('__') or key in {'aliases', 'password_changed'}:
-                    new_data.pop(key, None)
-
-            new_nickname = self._generate_duplicate_nickname(getattr(connection, 'nickname', ''))
-            new_data['nickname'] = new_nickname
-
-            # Plugin protocols: the data dict is authoritative (no ssh_config
-            # attribute fixups apply); persist through the non-SSH store.
-            if getattr(connection, 'protocol', 'ssh') != 'ssh':
-                new_connection = Connection(new_data)
-                if not self.connection_manager.update_connection(new_connection, dict(new_data)):
-                    raise RuntimeError(_('Failed to save duplicated connection.'))
-                original_groups = self.group_manager.get_connection_groups(connection.nickname)
-                original_group_id = original_groups[0] if original_groups else None
-                if original_group_id and original_group_id in getattr(self.group_manager, 'groups', {}):
-                    try:
-                        self.group_manager.move_connection(new_nickname, original_group_id)
-                    except Exception:
-                        pass
-                self.rebuild_connection_list()
-                return new_connection
-
-            host_value = (
-                getattr(connection, 'hostname', '')
-                or getattr(connection, 'host', '')
-                or new_data.get('hostname', '')
-                or new_data.get('host', '')
-            )
-            host_value = str(host_value).strip()
-            if not host_value:
-                host_value = new_nickname
-            new_data['hostname'] = host_value
-            new_data.pop('host', None)
-
-            new_data['username'] = str(getattr(connection, 'username', new_data.get('username', '')) or '')
-
-            try:
-                new_data['port'] = int(getattr(connection, 'port', new_data.get('port', 22)) or 22)
-            except Exception:
-                new_data['port'] = 22
-
-            try:
-                new_data['auth_method'] = int(getattr(connection, 'auth_method', new_data.get('auth_method', 0)) or 0)
-            except Exception:
-                new_data['auth_method'] = 0
-
-            keyfile_value = getattr(connection, 'keyfile', new_data.get('keyfile', '')) or ''
-            if isinstance(keyfile_value, str) and keyfile_value.strip().lower().startswith('select key file'):
-                keyfile_value = ''
-            new_data['keyfile'] = keyfile_value
-
-            certificate_value = getattr(connection, 'certificate', new_data.get('certificate', '')) or ''
-            if isinstance(certificate_value, str) and certificate_value.strip().lower().startswith('select certificate'):
-                certificate_value = ''
-            new_data['certificate'] = certificate_value
-
-            new_data['key_passphrase'] = getattr(connection, 'key_passphrase', new_data.get('key_passphrase', '')) or ''
-
-            try:
-                new_data['key_select_mode'] = int(getattr(connection, 'key_select_mode', new_data.get('key_select_mode', 0)) or 0)
-            except Exception:
-                new_data['key_select_mode'] = 0
-
-            new_data['password'] = getattr(connection, 'password', new_data.get('password', '')) or ''
-            new_data['x11_forwarding'] = bool(getattr(connection, 'x11_forwarding', new_data.get('x11_forwarding', False)))
-            new_data['pubkey_auth_no'] = bool(getattr(connection, 'pubkey_auth_no', new_data.get('pubkey_auth_no', False)))
-            new_data['forward_agent'] = bool(getattr(connection, 'forward_agent', new_data.get('forward_agent', False)))
-
-            proxy_jump_value = getattr(connection, 'proxy_jump', new_data.get('proxy_jump', []))
-            if isinstance(proxy_jump_value, str):
-                proxy_jump_value = [h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()]
-            else:
-                proxy_jump_value = list(proxy_jump_value or [])
-            new_data['proxy_jump'] = proxy_jump_value
-
-            new_data['proxy_command'] = getattr(connection, 'proxy_command', new_data.get('proxy_command', '')) or ''
-            new_data['pre_command'] = getattr(connection, 'pre_command', new_data.get('pre_command', '')) or ''
-            new_data['local_command'] = getattr(connection, 'local_command', new_data.get('local_command', '')) or ''
-            new_data['remote_command'] = getattr(connection, 'remote_command', new_data.get('remote_command', '')) or ''
-            new_data['extra_ssh_config'] = getattr(connection, 'extra_ssh_config', new_data.get('extra_ssh_config', '')) or ''
-
-            forwarding_rules = getattr(connection, 'forwarding_rules', new_data.get('forwarding_rules', []))
-            try:
-                new_data['forwarding_rules'] = copy.deepcopy(list(forwarding_rules or []))
-            except Exception:
-                new_data['forwarding_rules'] = []
-
-            source_path = getattr(connection, 'source', new_data.get('source'))
-            if source_path:
-                new_data['source'] = source_path
-            else:
-                new_data.pop('source', None)
-
-            new_connection = Connection(new_data)
-            if self.connection_manager.isolated_mode:
-                new_connection.isolated_config = True
-                new_connection.config_root = self.connection_manager.ssh_config_path
-                new_connection.data['isolated_mode'] = True
-                if self.connection_manager.ssh_config_path:
-                    new_connection.data['config_root'] = self.connection_manager.ssh_config_path
-            try:
-                new_connection.auth_method = int(new_data.get('auth_method', 0) or 0)
-            except Exception:
-                new_connection.auth_method = 0
-            try:
-                new_connection.key_select_mode = int(new_data.get('key_select_mode', 0) or 0)
-            except Exception:
-                new_connection.key_select_mode = 0
-            new_connection.forwarding_rules = list(new_data.get('forwarding_rules', []))
-            new_connection.proxy_jump = list(new_data.get('proxy_jump', []))
-            new_connection.forward_agent = bool(new_data.get('forward_agent', False))
-            new_connection.extra_ssh_config = new_data.get('extra_ssh_config', '')
-            new_connection.certificate = new_data.get('certificate', '')
-
-            original_groups = self.group_manager.get_connection_groups(connection.nickname)
-            original_group_id = original_groups[0] if original_groups else None
-
-            self.connection_manager.connections.append(new_connection)
-            try:
-                if not self.connection_manager.update_connection(new_connection, new_data):
-                    raise RuntimeError(_('Failed to save duplicated connection.'))
-            except Exception:
-                try:
-                    self.connection_manager.connections.remove(new_connection)
-                except ValueError:
-                    pass
-                raise
-
-            self.connection_manager.load_ssh_config()
-
-            if original_group_id and original_group_id in getattr(self.group_manager, 'groups', {}):
-                self.group_manager.move_connection(new_nickname, original_group_id)
-                try:
-                    self.group_manager.reorder_connection_in_group(new_nickname, connection.nickname, 'below')
-                except Exception:
-                    pass
-                # Mirror any additional group memberships of the original
-                for extra_group_id in original_groups[1:]:
-                    if extra_group_id in getattr(self.group_manager, 'groups', {}):
-                        self.group_manager.copy_connection_to_group(new_nickname, extra_group_id)
-            else:
-                self.group_manager.move_connection(new_nickname, None)
-                try:
-                    root_connections = self.group_manager.root_connections
-                    if new_nickname in root_connections and connection.nickname in root_connections:
-                        root_connections.remove(new_nickname)
-                        insert_at = root_connections.index(connection.nickname) + 1
-                        root_connections.insert(insert_at, new_nickname)
-                        self.group_manager._save_groups()
-                except Exception:
-                    pass
-
-            self.rebuild_connection_list()
-
-            duplicated = self.connection_manager.find_connection_by_nickname(new_nickname)
-            row = self._primary_row_for_connection(duplicated) if duplicated else None
-            if row is not None:
-                self._select_only_row(row)
-                try:
-                    self.connection_list.scroll_to_row(row)
-                except Exception:
-                    pass
-                try:
-                    self.connection_list.grab_focus()
-                except Exception:
-                    pass
-            return duplicated
+            duplicated = self.connection_manager.duplicate_connection(connection, self.group_manager)
         except Exception as error:
             self._show_duplicate_connection_error(connection, error)
             logger.error(f"Failed to duplicate connection: {error}", exc_info=True)
             return None
+
+        self.rebuild_connection_list()
+        row = self._primary_row_for_connection(duplicated)
+        if row is not None:
+            self._select_only_row(row)
+            try:
+                self.connection_list.scroll_to_row(row)
+            except Exception:
+                pass
+            try:
+                self.connection_list.grab_focus()
+            except Exception:
+                pass
+        return duplicated
 
     def setup_sidebar(self):
         """Build the sidebar UI (implementation in sidebar.build_sidebar)."""
@@ -6437,69 +6228,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Update existing connection
                 old_connection = dialog.connection
                 is_connected = old_connection in self.active_terminals
-                
+
                 # Store the current terminal instance if connected
                 terminal = self.active_terminals.get(old_connection) if is_connected else None
-                
+                original_nickname = old_connection.nickname
+
                 try:
                     logger.info(
                         "Window.on_connection_saved(edit): saving '%s' with %d forwarding rules",
-                        old_connection.nickname, len(connection_data.get('forwarding_rules', []) or [])
+                        original_nickname, len(connection_data.get('forwarding_rules', []) or [])
                     )
                 except Exception:
                     pass
-                
-                # Detect if anything actually changed; avoid unnecessary writes/prompts
-                def _norm_str(v):
-                    try:
-                        s = ('' if v is None else str(v)).strip()
-                        # Treat keyfile placeholders as empty
-                        if s.lower().startswith('select key file') or 'select key file or leave empty' in s.lower():
-                            return ''
-                        return s
-                    except Exception:
-                        return ''
-                def _norm_rules(rules):
-                    try:
-                        return list(rules or [])
-                    except Exception:
-                        return []
-                existing = {
-                    'nickname': _norm_str(getattr(old_connection, 'nickname', '')),
-                    'hostname': _norm_str(getattr(old_connection, 'hostname', getattr(old_connection, 'host', ''))),
-                    'username': _norm_str(getattr(old_connection, 'username', '')),
-                    'port': int(getattr(old_connection, 'port', 22) or 22),
-                    'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
-                    'keyfile': _norm_str(getattr(old_connection, 'keyfile', '')),
-                    'certificate': _norm_str(getattr(old_connection, 'certificate', '')),
-                    'key_select_mode': int(getattr(old_connection, 'key_select_mode', 0) or 0),
-                    'password': _norm_str(getattr(old_connection, 'password', '')),
-                    'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
-                    'x11_forwarding': bool(getattr(old_connection, 'x11_forwarding', False)),
-                    'forwarding_rules': _norm_rules(getattr(old_connection, 'forwarding_rules', [])),
-                    'pre_command': _norm_str(getattr(old_connection, 'pre_command', '') or (getattr(old_connection, 'data', {}).get('pre_command') if hasattr(old_connection, 'data') else '')),
-                    'local_command': _norm_str(getattr(old_connection, 'local_command', '') or (getattr(old_connection, 'data', {}).get('local_command') if hasattr(old_connection, 'data') else '')),
-                    'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
-                    'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
-                }
-                # Editing always forces an update so forwarding rules stay synced;
-                # change detection was intentionally removed (it could skip needed
-                # updates), so no diff between old and new values is computed here.
-                # Always force update when editing connections - skip change detection entirely for forwarding rules
-                logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 
-                logger.debug(f"Updating connection '{old_connection.nickname}'")
-
-                # Ensure auth_method always present and normalized
-                try:
-                    connection_data['auth_method'] = int(connection_data.get('auth_method', getattr(old_connection, 'auth_method', 0)) or 0)
-                except Exception:
-                    connection_data['auth_method'] = 0
-
-                original_nickname = old_connection.nickname
-
-                # Update connection in manager first
-                if not self.connection_manager.update_connection(old_connection, connection_data):
+                # Persist + sync the live instance (connection_manager owns this)
+                if not self.connection_manager.apply_connection_update(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     _complete_save(False)
                     return
@@ -6526,88 +6269,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     except Exception:
                         logger.debug("Failed to migrate connection meta on rename", exc_info=True)
 
-                # Update connection attributes in memory (ensure forwarding rules kept)
-                old_connection.nickname = connection_data['nickname']
-                old_connection.hostname = connection_data['hostname']
-                old_connection.host = old_connection.hostname
-                old_connection.username = connection_data['username']
-                old_connection.port = connection_data['port']
-                old_connection.keyfile = connection_data['keyfile']
-                old_connection.certificate = connection_data.get('certificate', '')
-                old_connection.password = connection_data['password']
-                old_connection.key_passphrase = connection_data.get('key_passphrase', getattr(old_connection, 'key_passphrase', '')) or ''
-                old_connection.auth_method = connection_data['auth_method']
-                # Persist key selection mode in-memory so the dialog reflects it without restart
-                try:
-                    old_connection.key_select_mode = int(connection_data.get('key_select_mode', getattr(old_connection, 'key_select_mode', 0)) or 0)
-                except Exception:
-                    pass
-                old_connection.x11_forwarding = connection_data['x11_forwarding']
-                old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
-                # Ensure proxy settings are refreshed in-memory so new connections
-                # immediately pick up the updated directives without needing a
-                # full application restart. The connection manager updates the
-                # serialized data, but the active Connection instance used by
-                # terminals/file manager must also reflect the new values.
-                try:
-                    proxy_jump_value = connection_data.get('proxy_jump', [])
-                    if isinstance(proxy_jump_value, str):
-                        proxy_jump_value = [
-                            h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()
-                        ]
-                    else:
-                        proxy_jump_value = [
-                            str(h).strip() for h in (proxy_jump_value or []) if str(h).strip()
-                        ]
-                    old_connection.proxy_jump = proxy_jump_value
-                except Exception:
-                    proxy_jump_value = []
-                    old_connection.proxy_jump = []
-
-                proxy_command_value = connection_data.get('proxy_command', '') or ''
-                forward_agent_value = bool(connection_data.get('forward_agent', False))
-
-                old_connection.proxy_command = proxy_command_value
-                old_connection.forward_agent = forward_agent_value
-
-                # Keep the backing data dict synchronized so any downstream
-                # consumers that still read from connection.data see the new
-                # directives without waiting for another reload cycle.
-                try:
-                    if hasattr(old_connection, 'data') and isinstance(old_connection.data, dict):
-                        old_connection.data['proxy_jump'] = list(proxy_jump_value)
-                        old_connection.data['proxy_command'] = proxy_command_value
-                        old_connection.data['forward_agent'] = forward_agent_value
-                except Exception:
-                    pass
-
-                # Invalidate any prepared SSH command so future connection
-                # attempts rebuild the argument list using the refreshed proxy
-                # settings. Otherwise terminals reuse the cached command and
-                # continue using the previous ProxyJump chain until restart.
-                try:
-                    if hasattr(old_connection, 'ssh_cmd'):
-                        old_connection.ssh_cmd = []
-                except Exception:
-                    try:
-                        delattr(old_connection, 'ssh_cmd')
-                    except Exception:
-                        pass
-
-                # Update commands
-                try:
-                    old_connection.pre_command = connection_data.get('pre_command', '')
-                    old_connection.local_command = connection_data.get('local_command', '')
-                    old_connection.remote_command = connection_data.get('remote_command', '')
-                    old_connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
-                except Exception:
-                    pass
-                
-                # The connection has already been updated in-place, so we don't need to reload from disk
-                # The forwarding rules are already updated in the connection_data
-                
-
-
                 # Update UI. The tag-filtered list is derived during rebuilds,
                 # so a tag change needs a full rebuild while a tag filter is
                 # active — update_display() alone leaves it stale.
@@ -6629,95 +6290,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 else:
                     # If the connection is not in the rows, rebuild the list
                     self.rebuild_connection_list()
-                
+
                 logger.info(f"Updated connection: {old_connection.nickname}")
-                
+
                 # If the connection is active, ask if user wants to reconnect
                 if is_connected and terminal is not None:
                     # Store the terminal in the connection for later use
                     old_connection._terminal_instance = terminal
                     self._prompt_reconnect(old_connection)
                 _complete_save(True)
-                
+
             else:
-                # Create new connection
-                connection = Connection(connection_data)
-                if self.connection_manager.isolated_mode:
-                    connection.isolated_config = True
-                    connection.config_root = self.connection_manager.ssh_config_path
-                    connection.data['isolated_mode'] = True
-                    if self.connection_manager.ssh_config_path:
-                        connection.data['config_root'] = self.connection_manager.ssh_config_path
-                # Ensure the in-memory object has the chosen auth_method immediately
-                try:
-                    connection.auth_method = int(connection_data.get('auth_method', 0))
-                except Exception:
-                    connection.auth_method = 0
-                # Ensure key selection mode is applied immediately
-                try:
-                    connection.key_select_mode = int(connection_data.get('key_select_mode', 0) or 0)
-                except Exception:
-                    connection.key_select_mode = 0
-                # Ensure certificate is applied immediately
-                try:
-                    connection.certificate = connection_data.get('certificate', '')
-                except Exception:
-                    connection.certificate = ''
-                # Ensure extra SSH config settings are applied immediately
-                try:
-                    connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
-                except Exception:
-                    connection.extra_ssh_config = ''
-                # Add the new connection to the manager's connections list
-                self.connection_manager.connections.append(connection)
-                
-
-                
-                # Save the connection to SSH config and emit the connection-added signal
-                if self.connection_manager.update_connection(connection, connection_data):
-                    # Reload from SSH config and rebuild list immediately
-                    try:
-                        self.connection_manager.load_ssh_config()
-                        self.rebuild_connection_list()
-                    except Exception:
-                        pass
-                    # Reload config after saving
-                    try:
-
-                        self.connection_manager.load_ssh_config()
-                        self.rebuild_connection_list()
-
-                    except Exception:
-                        pass
-                    # Sync forwarding rules from a fresh reload to ensure UI matches disk
-                    try:
-                        reloaded_new = self.connection_manager.find_connection_by_nickname(connection.nickname)
-                        if reloaded_new:
-                            connection.forwarding_rules = list(reloaded_new.forwarding_rules or [])
-                            logger.info("New connection '%s' has %d rules after write", connection.nickname, len(connection.forwarding_rules))
-                    except Exception:
-                        pass
-                    # Manually add the connection to the UI since we're not using the signal
-                    # Row list was rebuilt from config; no manual add required
+                # Create new connection (connection_manager owns persistence)
+                connection = self.connection_manager.create_connection(connection_data)
+                if connection is not None:
+                    self.rebuild_connection_list()
                     logger.info(f"Created new connection: {connection_data['nickname']}")
                     _complete_save(True)
                 else:
                     logger.error("Failed to save connection to SSH config")
                     _complete_save(False)
-                
+
         except Exception as e:
             logger.error(f"Failed to save connection: {e}")
             _complete_save(False)
-            # Show error dialog
-            error_dialog = Gtk.MessageDialog(
-                transient_for=self,
-                modal=True,
-                message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK,
-                text=_("Failed to save connection"),
-                secondary_text=str(e)
-            )
-            error_dialog.present()
+            self._error_dialog(_("Failed to save connection"), str(e))
     
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
