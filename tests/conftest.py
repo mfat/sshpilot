@@ -25,6 +25,24 @@ _KNOWN_FAILING_NODEIDS = {
 }
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _pin_english_ui():
+    """Run the suite in English regardless of the developer's locale.
+
+    A compiled catalogue now ships inside the package (src/sshpilot/locale, for
+    runs that never see Meson), so gettext will happily translate at test time.
+    Every assertion here that compares user-visible text assumes English, so a
+    German-locale developer would otherwise see dozens of spurious failures.
+    """
+    previous = os.environ.get("LANGUAGE")
+    os.environ["LANGUAGE"] = "en"
+    yield
+    if previous is None:
+        os.environ.pop("LANGUAGE", None)
+    else:
+        os.environ["LANGUAGE"] = previous
+
+
 def pytest_ignore_collect(collection_path, config):
     """In GUI mode, collect only ``test_gui_*`` modules.
 

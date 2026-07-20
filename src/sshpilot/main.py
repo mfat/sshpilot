@@ -56,7 +56,17 @@ def _init_gettext():
     translations. Uses the Meson-configured localedir when available, else the
     system default. Harmless when no catalogs are installed (``_()`` is identity)."""
     import gettext as _gettext
+    # Preferences ▸ Interface ▸ Language, exported before the first lookup:
+    # gettext caches the catalogue it resolves, so this cannot be moved later.
     localedir = _LOCALEDIR if (_LOCALEDIR and os.path.isdir(_LOCALEDIR)) else None
+    try:
+        from .i18n import apply_language, get_localedir
+        apply_language()
+        # Meson writes LOCALEDIR; every other way of running the app (the
+        # checkout, a pip install) needs the catalogues bundled in the package.
+        localedir = localedir or get_localedir()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("language preference not applied: %s", exc)
     try:
         _gettext.bindtextdomain('sshpilot', localedir)
         _gettext.textdomain('sshpilot')

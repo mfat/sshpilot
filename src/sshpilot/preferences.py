@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
 from .platform_utils import get_config_dir, is_macos
+from .i18n import N_, available_languages
 from .file_manager_integration import (
     has_internal_file_manager,
 )
@@ -277,7 +278,7 @@ class PreferencesWindow(Adw.Dialog):
         self.connect('destroy', self._on_destroy)
 
         # Use a consistent title for the window and header regardless of parent
-        self._base_header_title = "Settings"
+        self._base_header_title = _("Settings")
 
         # Set window properties with modern Adwaita structure
         self.set_title(self._base_header_title)
@@ -379,7 +380,7 @@ class PreferencesWindow(Adw.Dialog):
             row.set_use_markup(False)
         except Exception:
             pass
-        row.set_title(title)
+        row.set_title(_(title))
         page_id = self._page_id(title)
         row.set_name(page_id)
         
@@ -908,6 +909,32 @@ class PreferencesWindow(Adw.Dialog):
             interface_page = Adw.PreferencesPage()
             interface_page.set_title(_("Interface"))
             interface_page.set_icon_name("applications-graphics-symbolic")
+
+            # Language — first group on the page. Always shown: "System Default"
+            # plus every catalogue that can actually be loaded (English included,
+            # it being the source language and the way back from a translation).
+            language_group = Adw.PreferencesGroup(title=_("Language"))
+
+            self.language_row = Adw.ComboRow()
+            self.language_row.set_title(_("Interface Language"))
+            self.language_row.set_subtitle(_("Takes effect after restarting SSH Pilot"))
+
+            language_names = Gtk.StringList()
+            language_names.append(_("System Default"))
+            self._language_codes = ['']
+            for code, display_name in available_languages():
+                language_names.append(display_name)
+                self._language_codes.append(code)
+            self.language_row.set_model(language_names)
+
+            saved_language = self.config.get_setting('ui.language', '')
+            self.language_row.set_selected(
+                self._language_codes.index(saved_language)
+                if saved_language in self._language_codes else 0)
+
+            self.language_row.connect('notify::selected', self.on_language_changed)
+            language_group.add(self.language_row)
+            interface_page.add(language_group)
 
             # App startup behavior
             startup_group = Adw.PreferencesGroup(title=_("App Startup"))
@@ -2056,19 +2083,19 @@ class PreferencesWindow(Adw.Dialog):
             updates_page.add(updates_group)
 
             # Add pages to the custom layout
-            self.add_page_to_layout("Interface", "applications-graphics-symbolic", interface_page)
-            self.add_page_to_layout("Terminal", "utilities-terminal-symbolic", terminal_page)
-            self.add_page_to_layout("File Management", "folder-symbolic", file_management_page)
-            self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
-            self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
-            self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
-            self.add_page_to_layout("Security & Credentials", "dialog-password-symbolic", security_page)
-            self.add_page_to_layout("Updates", "software-update-available-symbolic", updates_page)
+            self.add_page_to_layout(N_("Interface"), "applications-graphics-symbolic", interface_page)
+            self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", terminal_page)
+            self.add_page_to_layout(N_("File Management"), "folder-symbolic", file_management_page)
+            self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
+            self.add_page_to_layout(N_("Groups"), "folder-open-symbolic", groups_page)
+            self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", ssh_settings_page)
+            self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", security_page)
+            self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", updates_page)
             plugins_page = self._create_plugins_page()
-            self.add_page_to_layout("Plugins", "application-x-addon-symbolic", plugins_page)
+            self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", plugins_page)
             command_blocks_page = self._create_command_blocks_page()
-            self.add_page_to_layout("Command Blocks", "view-list-symbolic", command_blocks_page)
-            self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
+            self.add_page_to_layout(N_("Command Blocks"), "view-list-symbolic", command_blocks_page)
+            self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
         except Exception as e:
@@ -3027,6 +3054,24 @@ class PreferencesWindow(Adw.Dialog):
         except Exception as e:
             logger.error(f"Failed to apply font to terminals: {e}")
     
+    def on_language_changed(self, combo_row, param):
+        """Persist the interface language and offer a restart.
+
+        gettext resolved its catalogue at startup and every existing widget
+        already holds translated text, so there is nothing to switch live.
+        """
+        selected = combo_row.get_selected()
+        if selected >= len(self._language_codes):
+            return
+        code = self._language_codes[selected]
+        if code == self.config.get_setting('ui.language', ''):
+            return
+
+        self.config.set_setting('ui.language', code)
+        logger.info("Interface language set to %r", code or 'system default')
+        self._prompt_restart_required(
+            _("The interface language changes the next time SSH Pilot starts."))
+
     def on_theme_changed(self, combo_row, param):
         """Handle theme selection change"""
         selected = combo_row.get_selected()

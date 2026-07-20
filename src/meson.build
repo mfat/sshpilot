@@ -67,7 +67,11 @@ configure_file(
 # plugin registry), matching the setuptools exclude in pyproject.toml.
 install_subdir('sshpilot',
   install_dir: moduledir,
-  exclude_directories: ['resources/ui', 'plugins/examples'],
+  # 'locale' holds the catalogues compiled by scripts/build_gresource.sh for
+  # runs that never see Meson (the checkout, pip). Meson builds and installs
+  # its own from po/ into localedir, so shipping these too would be a second,
+  # staler copy of the same thing.
+  exclude_directories: ['resources/ui', 'plugins/examples', 'locale'],
 )
 
 # Generated launcher installed as `sshpilot` in bindir.
