@@ -143,8 +143,8 @@ jobs:
           install -D -m 755 sshpilot-wrapper %{buildroot}%{_bindir}/sshpilot
 
           # Install desktop file, appstream metadata and icon
-          install -D -m 644 data/io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-          install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
+          install -D -m 644 data/io.github.mfat.sshpilot.desktop.in %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+          install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml.in %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
           # Install icon to hicolor theme (per AppStream guidelines)
           install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
           install -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
@@ -173,9 +173,9 @@ jobs:
         run: |
           echo "=== Checking required project files ==="
           ls -la run.py || echo "run.py missing"
-          ls -la sshpilot/ || echo "sshpilot/ missing"
-          ls -la data/io.github.mfat.sshpilot.desktop || echo "desktop file missing"
-          ls -la data/io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
+          ls -la src/sshpilot/ || echo "src/sshpilot/ missing"
+          ls -la data/io.github.mfat.sshpilot.desktop.in || echo "desktop file missing"
+          ls -la data/io.github.mfat.sshpilot.metainfo.xml.in || echo "metainfo file missing"
           ls -la data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg || echo "icon missing"
           ls -la src/sshpilot/vendor/pyxtermjs/ || echo "vendor/pyxtermjs/ missing"
           

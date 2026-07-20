@@ -117,9 +117,9 @@ jobs:
             echo -e "\trm -rf \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/plugins/examples"
             echo -e "\tfind \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +"
           echo -e "\t# Install desktop file and icon"
-          echo -e "\tinstall -D -m 644 data/io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
+          echo -e "\tinstall -D -m 644 data/io.github.mfat.sshpilot.desktop.in \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
           echo -e "\t# Install appstream metadata"
-          echo -e "\tinstall -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
+          echo -e "\tinstall -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml.in \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
           echo -e "\t# Install icon to hicolor theme (per AppStream guidelines)"
           echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps"
           echo -e "\tinstall -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg"
@@ -175,14 +175,18 @@ jobs:
         run: |
           echo "=== Checking required project files ==="
           ls -la run.py || echo "run.py missing"
-          ls -la sshpilot/ || echo "sshpilot/ missing"
-          ls -la data/io.github.mfat.sshpilot.desktop || echo "desktop file missing"
-          ls -la data/io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
+          ls -la src/sshpilot/ || echo "src/sshpilot/ missing"
+          ls -la data/io.github.mfat.sshpilot.desktop.in || echo "desktop file missing"
+          ls -la data/io.github.mfat.sshpilot.metainfo.xml.in || echo "metainfo file missing"
           ls -la data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg || echo "icon missing"
 
           echo "=== Validating desktop and AppStream metadata ==="
-          desktop-file-validate data/io.github.mfat.sshpilot.desktop
-          appstream-util validate-relax --nonet data/io.github.mfat.sshpilot.metainfo.xml
+          # The .in templates are valid final files (no intltool markers); validate
+          # them under a proper extension, since the validators check the filename.
+          install -Dm644 data/io.github.mfat.sshpilot.desktop.in /tmp/validate/io.github.mfat.sshpilot.desktop
+          install -Dm644 data/io.github.mfat.sshpilot.metainfo.xml.in /tmp/validate/io.github.mfat.sshpilot.metainfo.xml
+          desktop-file-validate /tmp/validate/io.github.mfat.sshpilot.desktop
+          appstream-util validate-relax --nonet /tmp/validate/io.github.mfat.sshpilot.metainfo.xml
 
           echo "=== Debian packaging files created ==="
           ls -la debian/

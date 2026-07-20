@@ -63,8 +63,8 @@ modules:
       - install -Dm755 sshpilot-launcher.sh /app/bin/sshpilot
       - install -Dm755 sshpilot-agent /app/bin/sshpilot-agent
       - install -Dm644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg /app/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
-      - install -Dm644 data/io.github.mfat.sshpilot.desktop /app/share/applications/io.github.mfat.sshpilot.desktop
-      - install -Dm644 data/io.github.mfat.sshpilot.metainfo.xml /app/share/metainfo/io.github.mfat.sshpilot.metainfo.xml
+      - install -Dm644 data/io.github.mfat.sshpilot.desktop.in /app/share/applications/io.github.mfat.sshpilot.desktop
+      - install -Dm644 data/io.github.mfat.sshpilot.metainfo.xml.in /app/share/metainfo/io.github.mfat.sshpilot.metainfo.xml
     sources:
       - type: dir
         path: .

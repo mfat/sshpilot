@@ -49,7 +49,7 @@ package() {
 	# Install the main executable (runner)
 	install -D -m 755 'run.py' "${pkgdir}/usr/bin/sshpilot"
 	# Install desktop file and icon
-	install -D -m 644 'data/io.github.mfat.sshpilot.desktop' -t "${pkgdir}/usr/share/applications"
+	install -D -m 644 'data/io.github.mfat.sshpilot.desktop.in' "${pkgdir}/usr/share/applications/io.github.mfat.sshpilot.desktop"
 	install -D -m 644 'data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg' "${pkgdir}/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
-	install -D -m 644 'data/io.github.mfat.sshpilot.metainfo.xml' -t "${pkgdir}/usr/share/metainfo"
+	install -D -m 644 'data/io.github.mfat.sshpilot.metainfo.xml.in' "${pkgdir}/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
 }

@@ -19,9 +19,9 @@ override_dh_auto_test:
 # them here for the .deb.
 override_dh_install:
 	dh_install
-	install -D -m0644 data/io.github.mfat.sshpilot.desktop \
+	install -D -m0644 data/io.github.mfat.sshpilot.desktop.in \
 	  debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
-	install -D -m0644 data/io.github.mfat.sshpilot.metainfo.xml \
+	install -D -m0644 data/io.github.mfat.sshpilot.metainfo.xml.in \
 	  debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml
 	install -D -m0644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \
 	  debian/sshpilot/usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg

@@ -65,8 +65,8 @@ rm -rf %{buildroot}%{python3_sitelib}/sshpilot/plugins/examples
 find %{buildroot}%{python3_sitelib}/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # Install desktop file and icon
-install -D -m 644 data/io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
+install -D -m 644 data/io.github.mfat.sshpilot.desktop.in %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml.in %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 # Install icon to hicolor theme (per AppStream guidelines)
 install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
 install -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg

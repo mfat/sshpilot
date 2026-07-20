@@ -14,7 +14,7 @@ DEFAULT_DEV_BRANCH="dev"
 DEFAULT_MAIN_BRANCH="main"
 INIT_FILE="src/sshpilot/__init__.py"
 RPM_SPEC_FILE="packaging/fedora/rpm.spec"
-METAINFO_FILE="data/io.github.mfat.sshpilot.metainfo.xml"
+METAINFO_FILE="data/io.github.mfat.sshpilot.metainfo.xml.in"
 DEB_CHANGELOG="debian/changelog"
 # Series named in the committed changelog entry. Informational only: the
 # Launchpad recipe re-targets each build to its actual series, but the
