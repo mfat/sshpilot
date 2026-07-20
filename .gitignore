@@ -25,8 +25,16 @@ io.github.mfat.sshpilot.yaml
 python3-deps.yml
 sshpilot-launcher.sh
 
-# Debian build artifacts (debian/ packaging itself is tracked for the PPA)
+# Debian build artifacts (debian/ packaging itself is tracked for the PPA).
+# dpkg-buildpackage builds in obj-<arch> and stages into debian/<package>/.
 build-deb-local.sh
+/obj-*
+/debian/.debhelper/
+/debian/files
+/debian/sshpilot/
+/debian/*.substvars
+/debian/*.debhelper
+/debian/debhelper-build-stamp
 
 # Test output
 *.log
