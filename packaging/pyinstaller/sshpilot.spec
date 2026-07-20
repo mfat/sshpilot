@@ -270,7 +270,13 @@ app = BUNDLE(
     bundle_identifier="io.github.mfat.sshpilot",
     info_plist={
         "NSHighResolutionCapable": True,
-        "LSMinimumSystemVersion": "12.0",
+        # Matches the GTK stack actually inside the bundle, not the oldest macOS
+        # PyInstaller could target: the Homebrew dylibs collected by
+        # gtk_bundle.py carry `minos 14.0` (LC_BUILD_VERSION), so 12 and 13 hit
+        # a dyld failure at launch. Declaring 14.0 turns that crash into the
+        # Finder's "requires a newer version of macOS" dialog. Raise this
+        # whenever the build runners move to a newer macOS.
+        "LSMinimumSystemVersion": "14.0",
     },
 )
 

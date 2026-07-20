@@ -19,8 +19,8 @@
 - [Download](#download)
   - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
   - [Debian/Ubuntu (Manual Install)](#--debianubuntu-manual-install)
-  - [Fedora/RHEL/openSUSE COPR Repository](#-fedorarhelopensuse-copr-repository)
-  - [Fedora/RHEL/openSUSE (Manual Install)](#-fedorarhelopensuse-manual-install)
+  - [Fedora/RHEL COPR Repository](#-fedorarhel-copr-repository)
+  - [Fedora/RHEL (Manual Install)](#-fedorarhel-manual-install)
   - [Flatpak](#-flatpak)
   - [Arch Linux](#-arch-linux)
   - [Homebrew (macOS + Linux)](#-homebrew-macos--linux)
@@ -87,7 +87,7 @@ curl -fsSL https://mfat.github.io/sshpilot-ppa/pubkey.gpg | sudo gpg --dearmor -
 
 2. Add the repository:
 ```bash
-echo "deb [signed-by=/usr/share/keyrings/sshpilot-ppa.gpg arch=amd64] https://mfat.github.io/sshpilot-ppa any main" | sudo tee /etc/apt/sources.list.d/sshpilot-ppa.list
+echo "deb [signed-by=/usr/share/keyrings/sshpilot-ppa.gpg] https://mfat.github.io/sshpilot-ppa any main" | sudo tee /etc/apt/sources.list.d/sshpilot-ppa.list
 ```
 
 3. Update and install:
@@ -101,7 +101,7 @@ For more information, visit: https://mfat.github.io/sshpilot-ppa/
 ### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Debian/Ubuntu (Manual Install)
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL/openSUSE COPR Repository
+### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL COPR Repository
 
 This repository provides automatic updates for SSH Pilot on RPM-based distributions.
 
@@ -112,7 +112,7 @@ dnf install sshpilot
 
 [![Copr build status](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/)
 
-### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL/openSUSE (Manual Install)
+### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL (Manual Install)
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
 ### <img src="https://flathub.org/favicon.svg" width="24" height="24"/> Flatpak
@@ -190,9 +190,10 @@ Pop!_OS 24.04, Zorin 18 and elementary OS 8 are all Ubuntu 24.04.
 | Any distro, via Flatpak | — | self-contained on the GNOME 50 runtime |
 | macOS | 14 (Sonoma) | both DMGs; Apple Silicon and Intel |
 
-The `.app` bundles declare `LSMinimumSystemVersion 12.0`, but the GTK libraries
-inside them are built against the macOS 14 SDK (`minos 14.0`), so 12 and 13 will
-not run them.
+DMGs up to and including v5.6.0 declare `LSMinimumSystemVersion 12.0`, but the
+GTK libraries inside them are built against the macOS 14 SDK (`minos 14.0`), so
+on 12 and 13 they fail at launch instead of refusing to install. Later builds
+declare 14.0 and are turned away cleanly.
 
 The Launchpad PPA builds for noble, questing and resolute; the GitHub-Pages APT
 repo publishes one `Architecture: all` package (amd64 and arm64 indexes) that
