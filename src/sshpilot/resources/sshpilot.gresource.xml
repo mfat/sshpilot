@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
   <gresource prefix="/io/github/mfat/sshpilot">
+    <file>style.css</file>
     <file>sshpilot.svg</file>
     <file>file-manager-choice.png</file>
     <file>keychain.png</file>

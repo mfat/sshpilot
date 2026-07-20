@@ -226,16 +226,9 @@ class TerminalWidget(Gtk.Box):
         self.connecting_bg = Gtk.Box()
         self.connecting_bg.set_hexpand(True)
         self.connecting_bg.set_vexpand(True)
-        try:
-            provider = Gtk.CssProvider()
-            provider.load_from_data(b".connecting-bg { background-color: #000000; }")
-            display = Gdk.Display.get_default()
-            if display:
-                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-            if hasattr(self.connecting_bg, 'add_css_class'):
-                self.connecting_bg.add_css_class('connecting-bg')
-        except Exception:
-            pass
+        # .connecting-bg is defined in the bundled style.css (loaded once at startup).
+        if hasattr(self.connecting_bg, 'add_css_class'):
+            self.connecting_bg.add_css_class('connecting-bg')
 
         self.connecting_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.connecting_box.set_halign(Gtk.Align.CENTER)

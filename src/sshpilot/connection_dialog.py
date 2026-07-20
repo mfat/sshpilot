@@ -689,38 +689,9 @@ _KEY_BADGE_CSS_REGISTERED = False
 
 
 def _ensure_key_badge_css():
-    """Register the circular order-badge style once for the whole display."""
-    global _KEY_BADGE_CSS_REGISTERED
-    if _KEY_BADGE_CSS_REGISTERED:
-        return
-    display = Gdk.Display.get_default()
-    if display is None:
-        return
-    provider = Gtk.CssProvider()
-    provider.load_from_data(b"""
-    .key-order-badge {
-        min-width: 24px;
-        min-height: 24px;
-        border-radius: 999px;
-        background-color: @accent_bg_color;
-        color: @accent_fg_color;
-        font-weight: bold;
-        padding: 0;
-    }
-    .key-type-pill {
-        background-color: alpha(@accent_color, 0.15);
-        color: @accent_color;
-        border-radius: 6px;
-        padding: 1px 7px;
-        font-size: 0.8em;
-        font-weight: bold;
-        min-width: 72px;
-    }
-    """)
-    Gtk.StyleContext.add_provider_for_display(
-        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
-    _KEY_BADGE_CSS_REGISTERED = True
+    """The .key-order-badge / .key-type-pill styles now live in the bundled
+    style.css (loaded once at startup); nothing to register here."""
+    return
 
 
 def _accent_hex():

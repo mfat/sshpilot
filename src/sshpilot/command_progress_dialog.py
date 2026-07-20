@@ -19,7 +19,7 @@ try:
     gi.require_version('Gdk', '4.0')
 except Exception:
     pass
-from gi.repository import Gdk, Gtk
+from gi.repository import Gtk
 
 try:
     gi.require_version('Vte', '3.91')
@@ -51,23 +51,9 @@ _PROMPT_INLINE_MARKERS = (
 
 
 def _ensure_terminal_card_css() -> None:
-    global _TERMINAL_CARD_CSS
-    if _TERMINAL_CARD_CSS:
-        return
-    try:
-        display = Gdk.Display.get_default()
-        if display is None:
-            return
-        provider = Gtk.CssProvider()
-        provider.load_from_data(
-            b'.command-progress-terminal-card { overflow: hidden; }'
-        )
-        Gtk.StyleContext.add_provider_for_display(
-            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        _TERMINAL_CARD_CSS = True
-    except Exception:
-        logger.debug('command progress terminal card CSS unavailable', exc_info=True)
+    # .command-progress-terminal-card is now defined in the bundled style.css
+    # (loaded once at startup); nothing to install here.
+    return
 
 
 def normalize_child_exit_status(status) -> int:

@@ -15,64 +15,12 @@ from . import icon_utils
 
 logger = logging.getLogger(__name__)
 
-_CSS = b"""
-.startpage-hero {
-    background-color: alpha(@accent_bg_color, 0.15);
-    border: 1px solid alpha(@accent_color, 0.3);
-    border-radius: 16px;
-    min-width: 64px;
-    min-height: 64px;
-}
-.startpage-hero image { color: @accent_color; }
-.startpage-chip {
-    padding: 7px 16px;
-    border-radius: 9999px;
-    min-height: 0;
-    background: transparent;
-    border: 1px solid alpha(@window_fg_color, 0.18);
-    box-shadow: none;
-}
-.startpage-chip:hover { background: alpha(@window_fg_color, 0.08); }
-.startpage-chip:active { background: alpha(@window_fg_color, 0.14); }
-.startpage-mono {
-    font-family: monospace;
-    font-size: 0.85em;
-}
-.startpage-recent-head {
-    font-size: 0.8em;
-    font-weight: normal;
-    opacity: 0.55;
-    padding-bottom: 8px;
-    border-bottom: 1px solid alpha(@window_fg_color, 0.12);
-}
-.startpage-recent-row, .startpage-recent-row label { font-weight: normal; }
-.startpage-recent-row {
-    padding: 9px 2px;
-    background: transparent;
-    box-shadow: none;
-    border-radius: 0;
-    min-height: 0;
-    border-bottom: 1px solid alpha(@window_fg_color, 0.08);
-}
-.startpage-recent-row:hover { background: alpha(@window_fg_color, 0.06); }
-"""
-
-_css_loaded = False
 
 
 def _ensure_css():
-    global _css_loaded
-    if _css_loaded:
-        return
-    display = Gdk.Display.get_default()
-    if display is None:
-        return
-    provider = Gtk.CssProvider()
-    provider.load_from_data(_CSS)
-    Gtk.StyleContext.add_provider_for_display(
-        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
-    _css_loaded = True
+    # The .startpage-* styles now live in the bundled style.css (loaded once at
+    # startup); nothing to install here.
+    return
 
 
 class WelcomePage(Gtk.Overlay):

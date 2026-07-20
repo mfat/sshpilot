@@ -386,8 +386,23 @@ class SshPilotApplication(Adw.Application):
 
         logger.info("sshPilot application initialized")
     
+    def _load_app_style(self):
+        """Load the bundled application stylesheet once, at APPLICATION priority."""
+        display = Gdk.Display.get_default()
+        if display is None or getattr(display, '_sshpilot_app_style_loaded', False):
+            return
+        try:
+            provider = Gtk.CssProvider()
+            provider.load_from_resource('/io/github/mfat/sshpilot/style.css')
+            Gtk.StyleContext.add_provider_for_display(
+                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            display._sshpilot_app_style_loaded = True
+        except Exception as exc:
+            logger.warning("Failed to load application stylesheet: %s", exc)
+
     def on_activate(self, app):
         """Handle application activation"""
+        self._load_app_style()
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
             from .window import MainWindow

@@ -1754,26 +1754,9 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     @staticmethod
     def _install_pf_css():
-        try:
-            display = Gdk.Display.get_default()
-            if not display:
-                return
-            if getattr(display, "_pf_css_installed", False):
-                return
-            provider = Gtk.CssProvider()
-            css = """
-            .pf-indicator {}
-            .pf-local { color: #E01B24; }
-            .pf-remote { color: #2EC27E; }
-            .pf-dynamic { color: #3584E4; }
-            """
-            provider.load_from_data(css.encode("utf-8"))
-            Gtk.StyleContext.add_provider_for_display(
-                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-            )
-            setattr(display, "_pf_css_installed", True)
-        except Exception:
-            pass
+        # The .pf-* indicator styles now live in the bundled style.css (loaded
+        # once at startup); nothing to install here.
+        return
 
     @staticmethod
     def _install_status_css():
