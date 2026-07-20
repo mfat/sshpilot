@@ -7,9 +7,15 @@ pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed inte
 url='https://github.com/mfat/sshpilot'
 license=('GPL-3.0-only')
 arch=('any')
-depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography' 'python-matplotlib'
-         'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0'
-         'python-flask' 'python-flask-socketio')
+# python-keyring is the secret backend the code imports (secret_storage.py);
+# python-psutil backs port_utils.py and wol.py; openssh provides the ssh/scp/
+# ssh-keygen/ssh-copy-id binaries every connection spawns.
+# Dropped: python-matplotlib (never imported) and python-flask/-socketio, which
+# went with the old pyxtermjs server -- the terminal now uses an in-process PTY
+# bridge.
+depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography'
+         'python-keyring' 'python-psutil' 'openssh'
+         'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0')
 # Meson is the upstream build system: it compiles the Blueprint .blp sources into
 # the bundled GResource and installs the launcher, the Python package, the desktop
 # entry, the AppStream metainfo, the icon and sshpilot-agent.
