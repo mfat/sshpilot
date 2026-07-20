@@ -107,7 +107,7 @@ jobs:
           set -euo pipefail
           # release.sh creates the GitHub release right after pushing the tag, so
           # this is usually available immediately; retry briefly for the rare race.
-          PRE=false
+          PRE=""
           for _ in 1 2 3 4 5 6 7 8 9 10; do
             PRE=$(gh api "repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}" --jq .prerelease 2>/dev/null || echo "")
             if [ -n "$PRE" ]; then
@@ -115,7 +115,12 @@ jobs:
             fi
             sleep 3
           done
-          PRE=${PRE:-false}
+          if [ -z "$PRE" ]; then
+            # Fail closed: APT is the least reversible of the three distro
+            # channels — do not publish if we cannot tell release from pre-release.
+            echo "No GitHub release found for ${{ github.ref_name }}; skipping APT publish"
+            PRE=true
+          fi
           echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
           echo "Release ${{ github.ref_name }} prerelease=$PRE"
 
