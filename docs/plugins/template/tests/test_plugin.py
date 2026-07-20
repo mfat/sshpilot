@@ -6,7 +6,6 @@ has no GTK dependency)."""
 
 import importlib.util
 import os
-import sys
 
 import pytest
 
