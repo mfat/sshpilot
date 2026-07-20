@@ -1,0 +1,148 @@
+name: Release
+
+# Manual, non-interactive twin of scripts/release.sh: bump the version on the
+# dev branch, merge it into main, tag, and push. The tag push is what makes the
+# existing build-deb / build-rpm / macOS / flathub workflows run.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New version, e.g. 5.5.8'
+        required: true
+        type: string
+      changelog:
+        description: 'Release notes, one per line. Leave empty to derive them from the commits since the last release.'
+        required: false
+        type: string
+      dev_branch:
+        description: 'Branch to release from'
+        default: dev
+        type: string
+      main_branch:
+        description: 'Branch to merge into and tag'
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # A tag pushed with the default GITHUB_TOKEN does NOT trigger the
+      # `on: push: tags` workflows, so the release would build nothing. Check out
+      # (and therefore push) with a PAT instead.
+      - name: Check the release token
+        env:
+          TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.PPA_TRIGGER_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No RELEASE_TOKEN (or PPA_TRIGGER_TOKEN) secret is set."
+            echo "::error::A PAT is required: tags pushed with GITHUB_TOKEN do not trigger the build workflows."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || secrets.PPA_TRIGGER_TOKEN }}
+          ref: ${{ inputs.dev_branch }}
+          fetch-depth: 0
+
+      # dch writes debian/changelog, which is the version of record for the PPA.
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y devscripts
+
+      - name: Configure git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Validate the version
+        id: check
+        run: |
+          set -eu
+          VERSION='${{ inputs.version }}'
+          VERSION=${VERSION#v}
+          # Same semver + must-increase rules the interactive helper applies.
+          CURRENT=$(scripts/bump-version.sh --check "$VERSION")
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag v$VERSION already exists."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "previous=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "Releasing $CURRENT -> $VERSION"
+
+      - name: Assemble the changelog
+        id: changelog
+        env:
+          INPUT_CHANGELOG: ${{ inputs.changelog }}
+          PREVIOUS: ${{ steps.check.outputs.previous }}
+        run: |
+          set -eu
+          if [ -n "${INPUT_CHANGELOG//[[:space:]]/}" ]; then
+            printf '%s\n' "$INPUT_CHANGELOG" > ${RUNNER_TEMP}/changelog.txt
+          else
+            # Fall back to the commit subjects since the previous release, minus
+            # the housekeeping ones nobody wants in GNOME Software.
+            git log --no-merges --pretty=%s "v${PREVIOUS}..HEAD" \
+              | grep -vEi '^(chore|ci|test|docs|refactor)[(:]|^Bump version to |^Merge ' \
+              > ${RUNNER_TEMP}/changelog.txt || true
+          fi
+          if [ ! -s ${RUNNER_TEMP}/changelog.txt ]; then
+            echo "::error::Changelog is empty and nothing could be derived from the commits."
+            exit 1
+          fi
+          echo "--- release notes ---"
+          cat "$RUNNER_TEMP/changelog.txt"
+
+      - name: Bump the version
+        run: scripts/bump-version.sh '${{ steps.check.outputs.version }}' < ${RUNNER_TEMP}/changelog.txt
+
+      - name: Push the bump to ${{ inputs.dev_branch }}
+        run: |
+          set -eu
+          git commit -am "Bump version to ${{ steps.check.outputs.version }}"
+          git push origin '${{ inputs.dev_branch }}'
+
+      - name: Merge into ${{ inputs.main_branch }} and tag
+        run: |
+          set -eu
+          VERSION='${{ steps.check.outputs.version }}'
+          git checkout '${{ inputs.main_branch }}'
+          git pull --ff-only origin '${{ inputs.main_branch }}'
+          # Unlike the interactive helper there is nobody here to judge a
+          # conflict, so fail rather than guess which side is right.
+          git merge --no-ff '${{ inputs.dev_branch }}' \
+            -m "Merge ${{ inputs.dev_branch }} into ${{ inputs.main_branch }} for v$VERSION"
+          git tag -a "v$VERSION" -m "SSH Pilot v$VERSION" -F ${RUNNER_TEMP}/changelog.txt
+          git push origin '${{ inputs.main_branch }}'
+          git push origin "v$VERSION"
+
+      # Runs after the tag is pushed: the PKGBUILD checksum covers the tarball
+      # GitHub generates for the tag. main-only, so the merge above can never
+      # conflict over it.
+      - name: Update the Arch PKGBUILD
+        run: |
+          set -eu
+          VERSION='${{ steps.check.outputs.version }}'
+          scripts/update-arch-pkgbuild.sh "$VERSION"
+          git commit -am "Update Arch PKGBUILD for v$VERSION"
+          git push origin '${{ inputs.main_branch }}'
+
+      - name: Summary
+        run: |
+          VERSION='${{ steps.check.outputs.version }}'
+          {
+            echo "### Released v$VERSION"
+            echo
+            echo "Tag \`v$VERSION\` pushed — the .deb, .rpm, macOS and Flathub workflows build from it."
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/changelog.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
