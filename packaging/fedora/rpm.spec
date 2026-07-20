@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.5.9}
+Version:        %{?version}%{!?version:5.6.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -143,6 +143,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Tue Jul 21 2026 mFat <newmfat@gmail.com> - 5.6.0-1
+- German translation
+- Various bug fixes and improvements
+
 * Mon Jul 20 2026 mFat <newmfat@gmail.com> - 5.5.9-1
 - Meson build system
 - Migrated to GNOME rcommended project structure
