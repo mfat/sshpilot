@@ -20,10 +20,17 @@ INIT_FILE="src/sshpilot/__init__.py"
 RPM_SPEC_FILE="packaging/fedora/rpm.spec"
 METAINFO_FILE="data/io.github.mfat.sshpilot.metainfo.xml.in"
 DEB_CHANGELOG="debian/changelog"
-# Series named in the committed changelog entry. Informational only: the
-# Launchpad recipe re-targets each build to its actual series, but the
-# version ({VERSION}-0ubuntu1) is what the recipe's {debupstream} reads.
-DEB_SERIES="resolute"
+# Distribution named in the committed changelog entry. Informational only: the
+# Launchpad recipe re-targets each build to its actual series, and its
+# deb-version template reads {debupstream} -- the upstream part of this version
+# -- so the Debian revision below is never part of a PPA version.
+#
+# The revision is a plain -1, not -0ubuntu1. The .deb built from this changelog
+# is the one published to the GitHub-Pages apt repo, which installs on Debian 13
+# and Ubuntu 24.04 alike; an Ubuntu revision on a distro-agnostic package is a
+# claim it does not make, and it is what made lintian complain about a
+# non-Ubuntu maintainer address.
+DEB_SERIES="unstable"
 
 CHECK_ONLY=0
 if [[ "${1:-}" == "--check" ]]; then
@@ -228,7 +235,7 @@ done
 
 echo "Updating $DEB_CHANGELOG..."
 export DEBFULLNAME="${DEBFULLNAME:-Mehdi}" DEBEMAIL="${DEBEMAIL:-mah.fat@gmail.com}"
-dch -c "$DEB_CHANGELOG" -v "${VERSION}-0ubuntu1" -D "$DEB_SERIES" \
+dch -c "$DEB_CHANGELOG" -v "${VERSION}-1" -D "$DEB_SERIES" \
   --force-distribution "Release v${VERSION}."
 while IFS= read -r line; do
   line="$(sed 's/^[[:space:]]*[-*]*[[:space:]]*//' <<<"$line")"
