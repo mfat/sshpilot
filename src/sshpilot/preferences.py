@@ -2759,7 +2759,7 @@ class PreferencesWindow(Adw.Dialog):
                 except Exception:
                     pass  # user cancelled / no selection
 
-            dialog.select_folder(self, None, _picked)
+            dialog.select_folder(self.get_root(), None, _picked)
         except Exception as exc:
             logger.debug("bw profile browse failed: %s", exc)
 
@@ -2811,7 +2811,7 @@ class PreferencesWindow(Adw.Dialog):
                 except Exception:
                     pass  # cancelled / no selection
 
-            dialog.open(self, None, _picked)
+            dialog.open(self.get_root(), None, _picked)
         except Exception as exc:
             logger.debug("KDBX file browse failed: %s", exc)
 
@@ -2860,7 +2860,7 @@ class PreferencesWindow(Adw.Dialog):
                     return
                 self._prompt_new_kdbx_password(path)
 
-            dialog.save(self, None, _picked)
+            dialog.save(self.get_root(), None, _picked)
         except Exception as exc:
             logger.error("KDBX create dialog failed: %s", exc)
 
@@ -3751,7 +3751,7 @@ class PreferencesWindow(Adw.Dialog):
                 return
             if gfile and gfile.get_path():
                 self._install_plugin_from_dir(Path(gfile.get_path()))
-        dialog.select_folder(self, None, _done)
+        dialog.select_folder(self.get_root(), None, _done)
 
     def _install_from_zip(self):
         dialog = Gtk.FileDialog()
@@ -3773,7 +3773,7 @@ class PreferencesWindow(Adw.Dialog):
                 return
             if gfile and gfile.get_path():
                 self._install_plugin_from_zip(Path(gfile.get_path()))
-        dialog.open(self, None, _done)
+        dialog.open(self.get_root(), None, _done)
 
     @staticmethod
     def _locate_manifest_dir(root: Path):

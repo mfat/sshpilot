@@ -30,6 +30,10 @@ class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
         super().__init__()
 
+        # Callers may pass a widget (Preferences is an Adw.Dialog); a
+        # transient parent must be the window it lives in.
+        if parent is not None and not isinstance(parent, Gtk.Window):
+            parent = parent.get_root()
         self.set_transient_for(parent)
 
         # Store callback

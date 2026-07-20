@@ -318,6 +318,21 @@ def probe_bitwarden_status(bw=None, *, force_refresh: bool = False) -> Bitwarden
     return status
 
 
+def _parent_window(parent):
+    """Return a ``Gtk.Window`` for APIs that require one (``transient_for``).
+
+    Callers may hand us a widget rather than a window — Preferences is an
+    ``Adw.Dialog``, which lives *inside* its parent window — so resolve the
+    widget's root in that case.
+    """
+    if parent is None or isinstance(parent, Gtk.Window):
+        return parent
+    try:
+        return parent.get_root()
+    except Exception:
+        return None
+
+
 def progress_dialog(parent, heading, message, *, on_cancel=None):
     """Spinner dialog; returns ``(set_status, close)``."""
     win = Adw.Window()
@@ -689,7 +704,7 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
     """Bitwarden server selection before sign-in (US / EU / self-hosted)."""
     parent = _modal_parent(window)
     dlg = Adw.MessageDialog(
-        transient_for=parent, modal=True,
+        transient_for=_parent_window(parent), modal=True,
         heading=_("Bitwarden server"),
         body=_(
             "Choose which Bitwarden server to use before signing in. "
@@ -770,6 +785,7 @@ def _modal_parent(window):
     try:
         from .window import present_for_modal_dialog, resolve_app_modal_parent
 
+        window = _parent_window(window)
         if isinstance(window, Gtk.Window):
             try:
                 visible = window.get_visible()
@@ -829,7 +845,7 @@ def _signin_page(
     response.
     """
     dlg = Adw.MessageDialog(
-        transient_for=parent, modal=True, heading=heading, body=body,
+        transient_for=_parent_window(parent), modal=True, heading=heading, body=body,
     )
     form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     for label, widget in rows:

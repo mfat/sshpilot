@@ -57,3 +57,30 @@ def test_preferences_content_size_is_set(gui):
     # Adw.Dialog sizes its content; default-width/height do not apply.
     assert prefs.get_content_width() == 820
     assert prefs.get_content_height() == 600
+
+
+def test_dialogs_parented_to_preferences_get_a_window(gui):
+    """Anything that takes Preferences as a parent must still resolve a window.
+
+    Preferences is an Adw.Dialog (a widget), so `transient_for=<prefs>` and
+    Gtk.FileDialog's parent argument raise TypeError. The helpers on that path
+    resolve the widget's root instead — and they must, because most of these
+    call sites sit inside try/except and would otherwise fail silently.
+    """
+    from gi.repository import Gtk
+    from sshpilot import bitwarden_setup, rbw_setup, secret_unlock_dialog
+
+    prefs = _open_preferences(gui)
+    assert prefs is not None
+
+    for mod in (bitwarden_setup, rbw_setup, secret_unlock_dialog):
+        resolved = mod._parent_window(prefs)
+        assert isinstance(resolved, Gtk.Window), f'{mod.__name__} resolved {type(resolved)}'
+        assert resolved is gui.window
+        # A real window passes through untouched, None stays None.
+        assert mod._parent_window(gui.window) is gui.window
+        assert mod._parent_window(None) is None
+
+    # Gtk.FileDialog rejects a non-window parent outright.
+    assert isinstance(prefs.get_root(), Gtk.Window)
+    Gtk.FileDialog().open(prefs.get_root(), None, lambda *a: None)

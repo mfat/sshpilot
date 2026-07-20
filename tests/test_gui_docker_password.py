@@ -108,5 +108,6 @@ def test_cancelled_password_stops_probe_and_polling(gui, monkeypatch):
     assert "web" in page._ssh_auth_blocked
     assert page._tick() is True
     assert probes == []
-    assert "SSH password required" in (
-        page._containers_placeholder._label.get_text())
+    # The placeholder is an Adw.StatusPage: its user-visible text is the title.
+    # (It was a Gtk.Box with a `_label` child when this test was written.)
+    assert "SSH password required" in page._containers_placeholder.get_title()
