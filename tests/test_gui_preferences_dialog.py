@@ -155,3 +155,47 @@ def test_collapsed_sidebar_can_be_reopened(gui):
     prefs.sidebar.select_row(other)
     gui.pump(200)
     assert not split.get_show_sidebar(), 'choosing a page did not dismiss the sidebar'
+
+
+def test_dialog_presented_on_the_window_stacks_over_preferences(gui):
+    """A dialog parented to MainWindow still appears above an open Preferences.
+
+    This is why parent_window() may unwrap before Adw.Dialog.present(): per the
+    libadwaita docs the parent "can be any widget within a window, not just the
+    window itself" — it only locates the toplevel. Dialogs presented into the
+    same window stack, newest on top, so the Bitwarden unlock prompt reached via
+    bitwarden_setup._modal_parent() (which resolves to MainWindow) is not buried
+    behind Settings.
+    """
+    from gi.repository import Adw
+
+    prefs = _open_preferences(gui)
+    assert prefs.get_visible()
+
+    alert = Adw.AlertDialog(heading='Unlock', body='parented to the window')
+    alert.add_response('ok', 'OK')
+    alert.present(gui.window)          # the unwrapped parent, not the dialog
+    gui.pump(300)
+
+    assert alert.get_visible()
+    assert prefs.get_visible(), 'presenting the alert should not close Preferences'
+    assert alert.get_root() is gui.window
+
+    # Focus lands inside the newest dialog, i.e. it is on top and interactive.
+    # Poll: focus moves on a later frame, so a single-frame check is racy.
+    def focus_inside_alert():
+        widget = gui.window.get_focus()
+        while widget is not None:
+            if widget is alert:
+                return True
+            widget = widget.get_parent()
+        return False
+
+    for _ in range(20):
+        if focus_inside_alert():
+            break
+        gui.pump(100)
+    assert focus_inside_alert(), 'the alert is not the focused (topmost) dialog'
+
+    alert.close()
+    gui.pump(200)
