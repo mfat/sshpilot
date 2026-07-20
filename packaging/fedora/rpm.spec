@@ -71,18 +71,21 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %install
 %meson_install
 
-# po/LINGUAS is still empty, so nothing is installed under %%{_datadir}/locale and
-# %%find_lang fails; the fallback keeps the build green until the first
-# translation lands, at which point the .mo files get packaged automatically
-# instead of tripping unpackaged-files.
-%find_lang %{name} || touch %{name}.lang
+# No %%find_lang here: po/LINGUAS is still empty, so Meson installs nothing under
+# %%{_datadir}/locale and the generated file list comes out empty -- which rpm
+# rejects outright ("Empty %%files file"), so the `|| touch` fallback this
+# replaced turned a non-problem into a build failure.
+#
+# Restore both this and the `-f %%{name}.lang` on %%files when the first
+# translation lands. Forgetting cannot ship a broken package: the unpackaged
+# .mo files fail the build with an explicit list of what is missing.
 
 # Runs the desktop-entry and AppStream validators defined in data/meson.build.
 %check
 %meson_test
 
 
-%files -f %{name}.lang
+%files
 %license LICENSE*
 %doc README*
 %{_bindir}/sshpilot
