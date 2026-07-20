@@ -10,7 +10,8 @@
 # (tests/conftest.py), so the image stays small. The repo is mounted at run
 # time (-v "$PWD":/work), not COPYed, so code edits don't rebuild the image.
 #
-# Build:  docker build -f test-environment.Dockerfile -t sshpilot-test-env .
+# Build context is the repo root, not this directory -- note the trailing dot.
+# Build:  docker build -f tests/test-environment.Dockerfile -t sshpilot-test-env .
 # Run:    docker run --rm -v "$PWD":/work -w /work \
 #                 -v /var/run/docker.sock:/var/run/docker.sock \
 #                 sshpilot-test-env pytest -ra

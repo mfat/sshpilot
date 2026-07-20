@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build test environment image
-        run: docker build -f test-environment.Dockerfile -t sshpilot-test-env .
+        run: docker build -f tests/test-environment.Dockerfile -t sshpilot-test-env .
 
       - name: Run pytest (incl. real-tool integration) in the container
         # Mount the repo at /work and the host docker socket so the docker-exec
