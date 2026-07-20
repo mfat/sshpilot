@@ -43,6 +43,15 @@ def validate_mac(mac: str) -> bool:
     return bool(_MAC_RE.match(s))
 
 
+def _is_ipv4_literal(value: str) -> bool:
+    """Return True if *value* is a dotted-quad IPv4 address (not a hostname)."""
+    try:
+        socket.inet_pton(socket.AF_INET, value)
+    except OSError:
+        return False
+    return True
+
+
 def send_wol(
     mac: str,
     broadcast_ip: Optional[str] = None,
@@ -61,7 +70,13 @@ def send_wol(
     mac_norm = normalize_mac(mac)
     if not validate_mac(mac_norm):
         return False, "Invalid MAC address."
-    target = broadcast_ip
+    target = (broadcast_ip or "").strip() or None
+    if target and not _is_ipv4_literal(target):
+        # sendto() would happily resolve a hostname here, which blocks on DNS
+        # and unicasts the packet (and the MAC it carries) wherever that
+        # resolves. The other two sources of `target` below are already
+        # literals, so this is the only one that needs checking.
+        return False, "Invalid broadcast address."
     if not target and host:
         ip = _resolve_host_to_ip(host, port=port)
         if ip:
@@ -120,11 +135,8 @@ def _resolve_host_to_ip(host: str, port: int = 22) -> Optional[str]:
         return None
     host = host.strip()
     # If it's already an IPv4 address, return as-is
-    try:
-        socket.inet_pton(socket.AF_INET, host)  # validates; raises OSError if not an IPv4 literal
+    if _is_ipv4_literal(host):
         return host
-    except OSError:
-        pass
     try:
         results = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
         for _fam, _typ, _proto, _canon, sockaddr in results:

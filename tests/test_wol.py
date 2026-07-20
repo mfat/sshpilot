@@ -65,6 +65,20 @@ def test_send_wol_broadcasts_to_the_derived_address():
     assert addr == ("192.168.1.255", 9)
 
 
+def test_send_wol_rejects_a_non_literal_broadcast_address():
+    """A hostname would make sendto() resolve and unicast the packet somewhere."""
+    with patch("socket.socket") as mk:
+        ok, msg = send_wol("aa:bb:cc:dd:ee:ff", broadcast_ip="attacker.example.com")
+    assert ok is False
+    assert "broadcast" in msg.lower()
+    mk.assert_not_called()
+
+    with patch("socket.socket") as mk:
+        ok, _ = send_wol("aa:bb:cc:dd:ee:ff", broadcast_ip="192.168.1.999")
+    assert ok is False
+    mk.assert_not_called()
+
+
 def test_get_subnet_broadcast_uses_interface_mask():
     """get_subnet_broadcast should use the real interface netmask, not hardcode /24."""
     snic = MagicMock()

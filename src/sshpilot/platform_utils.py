@@ -659,8 +659,28 @@ def find_any_terminal() -> Optional[List[str]]:
     return None
 
 
+def _applescript_string(value: str) -> str:
+    """Render *value* as an AppleScript string literal, escapes included.
+
+    osascript takes the script as one argument, so anything interpolated into it
+    must be escaped or a quote in the value ends the literal and the rest is
+    executed as AppleScript.
+    """
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
 def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
-    """Launch a terminal emulator running *ssh_command*. Returns False on failure."""
+    """Launch a terminal emulator running *ssh_command*.
+
+    *ssh_command* is a shell command line (built with ``shlex.join``, so its own
+    arguments are already quoted). Terminals that take an argv get it as a
+    separate ``bash -c`` argument; the few that only accept a single string get
+    it quoted with ``shlex.quote`` / ``_applescript_string`` rather than
+    interpolated, so a Host alias containing a quote or backtick cannot break
+    out. Returns False on failure.
+    """
+    # Keep the shell reading input after ssh exits, so errors stay on screen.
+    keep_open = f'{ssh_command}; exec bash'
     try:
         if is_macos():
             app = None
@@ -671,7 +691,10 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
             if app:
                 app_lower = app.lower()
                 if app_lower in ['terminal', 'terminal.app']:
-                    script = f'tell app "Terminal" to do script "{ssh_command}"\ntell app "Terminal" to activate'
+                    script = (
+                        f'tell app "Terminal" to do script {_applescript_string(ssh_command)}\n'
+                        'tell app "Terminal" to activate'
+                    )
                     cmd = ['osascript', '-e', script]
                 elif app_lower in ['iterm', 'iterm2', 'iterm.app']:
                     script = (
@@ -681,7 +704,7 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                         '    end if\n'
                         '    tell current window\n'
                         '        create tab with default profile\n'
-                        f'        tell current session to write text "{ssh_command}"\n'
+                        f'        tell current session to write text {_applescript_string(ssh_command)}\n'
                         '    end tell\n'
                         '    activate\n'
                         'end tell'
@@ -691,7 +714,7 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                     cmd = ['open', f'warp://{ssh_command}']
                     # Warp handles focus automatically via URL scheme
                 elif app_lower in ['alacritty', 'kitty']:
-                    cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', f'{ssh_command}; exec bash']
+                    cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', keep_open]
                     # Launch terminal and then activate it
                     subprocess.Popen(cmd, start_new_session=True)
                     time.sleep(0.5)  # Give the app time to launch
@@ -707,7 +730,7 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                     subprocess.Popen(['osascript', '-e', activate_script])
                     return True
                 else:
-                    cmd = ['open', '-a', app, '--args', 'bash', '-lc', f'{ssh_command}; exec bash']
+                    cmd = ['open', '-a', app, '--args', 'bash', '-lc', keep_open]
                     # Launch terminal and then activate it
                     subprocess.Popen(cmd, start_new_session=True)
                     time.sleep(0.5)  # Give the app time to launch
@@ -715,25 +738,25 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                     subprocess.Popen(['osascript', '-e', activate_script])
                     return True
             else:
-                cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
+                cmd = terminal_command + ['--args', 'bash', '-lc', keep_open]
         else:
             terminal_basename = os.path.basename(terminal_command[0])
             if terminal_basename == 'ptyxis':
                 # Use --standalone with -- to start fresh instance with only our command
                 # This prevents opening a default window when ptyxis isn't running
-                cmd = terminal_command + ['--standalone', '--', 'bash', '-c', f'{ssh_command}; exec bash']
+                cmd = terminal_command + ['--standalone', '--', 'bash', '-c', keep_open]
             elif terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
-                cmd = terminal_command + ['--', 'bash', '-c', f'{ssh_command}; exec bash']
+                cmd = terminal_command + ['--', 'bash', '-c', keep_open]
             elif terminal_basename in ['konsole', 'terminator', 'guake']:
-                cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
+                cmd = terminal_command + ['-e', f'bash -c {shlex.quote(keep_open)}']
             elif terminal_basename in ['alacritty', 'kitty']:
-                cmd = terminal_command + ['-e', 'bash', '-c', f'{ssh_command}; exec bash']
+                cmd = terminal_command + ['-e', 'bash', '-c', keep_open]
             elif terminal_basename == 'xterm':
-                cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
+                cmd = terminal_command + ['-e', f'bash -c {shlex.quote(keep_open)}']
             elif terminal_basename == 'xdg-terminal':
                 cmd = terminal_command + [ssh_command]
             elif terminal_basename in ['ghostty']:
-                cmd = terminal_command + ['+new-window', '-e', 'bash', '-c', f'{ssh_command}; exec bash']
+                cmd = terminal_command + ['+new-window', '-e', 'bash', '-c', keep_open]
             else:
                 cmd = terminal_command + [ssh_command]
 

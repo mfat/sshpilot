@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import os
 import logging
+import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
 from datetime import datetime
@@ -4527,36 +4528,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection,
                 self.config if hasattr(self, 'config') else None,
             )
-            # Skip 'ssh' and join the rest, handling options properly
-            ssh_command_parts = []
-            i = 0
-            while i < len(ssh_cmd_parts):
-                if ssh_cmd_parts[i] == 'ssh':
-                    i += 1
-                    continue
-                elif ssh_cmd_parts[i] == '-o' and i + 1 < len(ssh_cmd_parts):
-                    # Quote option values that contain spaces
-                    opt_val = ssh_cmd_parts[i + 1]
-                    if ' ' in opt_val:
-                        ssh_command_parts.append(f"-o '{opt_val}'")
-                    else:
-                        ssh_command_parts.append(f"-o {opt_val}")
-                    i += 2
-                elif ssh_cmd_parts[i].startswith('-'):
-                    ssh_command_parts.append(ssh_cmd_parts[i])
-                    i += 1
-                else:
-                    # Host or command - quote if needed
-                    part = ssh_cmd_parts[i]
-                    if ' ' in part:
-                        ssh_command_parts.append(f"'{part}'")
-                    else:
-                        ssh_command_parts.append(part)
-                    i += 1
-
-            ssh_command = ' '.join(ssh_command_parts)
-            # Prepend 'ssh' since we skipped it when building the command parts
-            ssh_command = f'ssh {ssh_command}'
+            # The terminal emulators take a shell command line, so the argv has
+            # to be flattened. shlex.join quotes every argument correctly --
+            # never hand-roll this: a Host alias from ~/.ssh/config containing a
+            # quote or backtick would otherwise break out of the command.
+            ssh_command = shlex.join(ssh_cmd_parts)
 
             use_external = self.config.get_setting('use-external-terminal', False)
             if use_external:
@@ -4591,7 +4567,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not host_value:
                 host_value = _get_connection_host(connection) or _get_connection_alias(connection)
 
-            ssh_command = f"ssh {host_value}" if host_value else "ssh"
+            # Quoted, not interpolated: host_value comes from ~/.ssh/config.
+            ssh_command = shlex.join(['ssh', host_value]) if host_value else 'ssh'
 
             terminal = get_user_preferred_terminal(self.config)
             if not terminal:
