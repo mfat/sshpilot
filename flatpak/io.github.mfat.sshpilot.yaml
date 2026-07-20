@@ -57,14 +57,23 @@ modules:
   - python3-deps.yml
 
   - name: sshpilot
-    buildsystem: simple
-    build-commands:
-      - pip3 install --verbose --exists-action=i --no-build-isolation --no-deps --prefix=${FLATPAK_DEST} .
-      - install -Dm755 sshpilot-launcher.sh /app/bin/sshpilot
-      - install -Dm755 sshpilot-agent /app/bin/sshpilot-agent
-      - install -Dm644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg /app/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
-      - install -Dm644 data/io.github.mfat.sshpilot.desktop.in /app/share/applications/io.github.mfat.sshpilot.desktop
-      - install -Dm644 data/io.github.mfat.sshpilot.metainfo.xml.in /app/share/metainfo/io.github.mfat.sshpilot.metainfo.xml
+    # Meson installs everything the hand-written build-commands used to: the
+    # launcher, the Python package, the compiled gresource, the desktop entry and
+    # metainfo (merged from the .in templates), the icon and sshpilot-agent.
+    # Runtime Python deps come from python3-deps.yml above; the GNOME SDK
+    # provides meson and blueprint-compiler.
+    buildsystem: meson
     sources:
       - type: dir
         path: .
+        # Flathub builds from `type: git`, so it only ever sees tracked files.
+        # This manifest copies the working tree, so skip the local build junk to
+        # keep the test build close to a clean checkout (and fast).
+        skip:
+          - .flatpak-builder
+          - .git
+          - .venv
+          - venv
+          - builddir
+          - repo
+          - .history
