@@ -181,10 +181,11 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 | VTE (GTK4)    | 0.70           |
 | PyGObject     | 3.42           |
 | pycairo       | 1.20.0         |
-| Paramiko      | 3.4            |
 | cryptography  | 42.0           |
 | keyring       | 24.3           |
 | psutil        | 5.9.0          |
+| pykeepass     | 4.0            |
+| certifi       | 2023.7.22      |
 | GtkSourceView | 5.0            |
 
 ---
