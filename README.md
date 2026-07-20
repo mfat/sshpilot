@@ -1,14 +1,4 @@
-**SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS.
-
-
-| Getting started | [Install](#download) | Project |
-| --- | --- | --- |
-| [Features](#features) | [Ubuntu PPA](#-ubuntu-ppa) | [Documentation](#documentation) |
-| [Minimum Requirements](#minimum-requirements) | [Debian APT repo](#-debian-apt-repository) | [Telegram Channel](#telegram-channel) |
-| [Run from Source](#-run-from-source) | Fedora / RHEL — [COPR](#-fedorarhel-copr-repository) · [manual](#-fedorarhel-manual-install) | [Third-Party Libraries](#third-party-libraries) |
-| | [Flatpak](#-flatpak) · [Arch Linux](#-arch-linux) | [Special Thanks](#special-thanks) |
-| | [Homebrew](#-homebrew-macos--linux) · [macOS](#-macos-aarch64) | [Support Development](#support-development) |
-| | [Debian / Ubuntu manual install](#--debianubuntu-manual-install) | |
+**SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS
 
 
 
@@ -28,6 +18,8 @@
 - Extensible via plugins
 
 ## Download
+
+You can download directly from the [Releases](https://github.com/mfat/sshpilot/releases/) section, but we recomment adding below repositories for automatic updates:
 
 ### <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Ubuntu PPA
 
