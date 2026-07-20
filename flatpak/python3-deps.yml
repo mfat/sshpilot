@@ -246,15 +246,6 @@ modules:
         sha256: b0726cecd84f9474419d67252add4ac0cd9811b04d61123054b9fb6f57df6e9e
         only-arches: [aarch64]
 
-  - name: python3-wakeonlan
-    buildsystem: simple
-    build-commands:
-      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "wakeonlan==3.3.0" --no-build-isolation
-    sources:
-      - type: file
-        url: https://files.pythonhosted.org/packages/a6/ab/d1a60da2f2c46a022ef15caaabe5bc468519c05dc855a0a40a83cb656c26/wakeonlan-3.3.0-py3-none-any.whl
-        sha256: 969d4e1f30add1a79790c99350e91c46ed45588770416257a3f806ca0314b17a
-
   # --- KeePass (.kdbx) credential adapter: pykeepass + its tree -----------------
   # cffi & pycparser (argon2 build deps) are already vendored above. Dependency order:
   # construct, lxml, pycryptodomex, argon2-cffi-bindings, argon2-cffi, pykeepass.

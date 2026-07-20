@@ -159,6 +159,9 @@ def setup_gi(monkeypatch):
     gtk.Application = types.SimpleNamespace(get_default=lambda: DummyWidget())
     gtk.Orientation = types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1)
     gtk.Align = types.SimpleNamespace(START=0, CENTER=1)
+
+    from gtk_template_stub import install_template_stub
+    install_template_stub(gtk)
     repository.Gtk = gtk
     monkeypatch.setitem(sys.modules, "gi.repository.Gtk", gtk)
 

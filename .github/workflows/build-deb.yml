@@ -18,207 +18,69 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build deps come from debian/control itself via mk-build-deps, so this
+      # workflow can never drift from what the packaging actually declares.
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            devscripts \
-            debhelper \
-            build-essential \
-            python3 \
-            python3-dev \
-            fakeroot \
-            lintian \
-            desktop-file-utils \
-            appstream \
-            appstream-util
+          sudo apt-get install -y devscripts equivs lintian
+          sudo mk-build-deps --install --remove \
+            --tool 'apt-get -y --no-install-recommends' debian/control
 
+      # debian/changelog is the version of record for the .deb; scripts/release.sh
+      # keeps it in step with src/sshpilot/__init__.py and meson.build.
       - name: Extract version
         id: version
         run: |
-          VERSION=$(python3 -c '
-          import re
-          import pathlib
-          
-          content = pathlib.Path("sshpilot/__init__.py").read_text()
-          match = re.search(r"__version__\s*=\s*[\"'"'"']([^\"'"'"']*)[\"'"'"']", content)
-          if match:
-              print(match.group(1))
-          else:
-              print("0.0.0")
-          ')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION"
+          VERSION=$(dpkg-parsechangelog -S Version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building sshpilot $VERSION"
 
-      - name: Create debian files
-        run: |
-          mkdir -p debian/source
-          
-          # Create control file
-          echo "Source: sshpilot" > debian/control
-          echo "Section: utils" >> debian/control
-          echo "Priority: optional" >> debian/control
-          echo "Maintainer: mFat <newmfat@gmail.com>" >> debian/control
-          echo "Build-Depends: debhelper-compat (= 13)" >> debian/control
-          echo "Standards-Version: 4.6.2" >> debian/control
-          echo "Homepage: https://github.com/mfat/sshpilot" >> debian/control
-          echo "Rules-Requires-Root: no" >> debian/control
-          echo "" >> debian/control
-          echo "Package: sshpilot" >> debian/control
-          echo "Architecture: all" >> debian/control
-          {
-            echo "Depends: \${misc:Depends}, \${python3:Depends},"
-            echo "         python3,"
-            echo "         python3-gi,"
-            echo "         python3-gi-cairo,"
-            echo "         libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),"
-            echo "         libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),"
-            echo "         libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),"
-            echo "         libgtksourceview-5-0 (>= 5.0), gir1.2-gtksource-5 (>= 5.0),"
-            echo "         python3-cryptography,"
-            echo "         python3-secretstorage,"
-            echo "         gir1.2-webkit-6.0,"
-            echo "         libjs-xterm,"
-            echo "         ssh-askpass,"
-            echo "         sshpass"
-          } >> debian/control
-          # Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
-          echo "Recommends: python3-pykeepass" >> debian/control
-          echo "Description: Manage your servers with ease" >> debian/control
-          echo " SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed" >> debian/control
-          echo " terminal, remote file management, key transfer, port forwarding and more." >> debian/control
-          echo " It's an alternative to Putty, Termius and Mobaxterm." >> debian/control
-
-      - name: Create debian/changelog
-        run: |
-          echo "sshpilot (${{ steps.version.outputs.version }}-1) unstable; urgency=medium" > debian/changelog
-          echo "" >> debian/changelog
-          echo "  * Automated build from GitHub Actions" >> debian/changelog
-          echo "" >> debian/changelog
-          echo " -- mFat <newmfat@gmail.com>  $(date -R)" >> debian/changelog
-
-      - name: Create debian/rules
-        run: |
-          {
-            echo "#!/usr/bin/make -f"
-            echo "%:"
-            echo -e "\tdh \$@"
-            echo "override_dh_auto_build:"
-            echo -e "\t# No build step needed - standalone Python application"
-            echo "override_dh_auto_install:"
-            echo -e "\t# Install the main executable (runner)"
-            echo -e "\tinstall -D -m 755 run.py \$(CURDIR)/debian/sshpilot/usr/bin/sshpilot"
-            echo -e "\t# Install the whole sshpilot package into site-packages. Copy the"
-            echo -e "\t# entire tree (not 'sshpilot/*.py') so every subpackage ships:"
-            echo -e "\t# file_manager/, plugins/, vendor/ (incl. pyxtermjs html/LICENSE)"
-            echo -e "\t# and resources/. Then drop the dev-only example plugins + caches."
-            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot"
-            echo -e "\tcp -a sshpilot/. \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/"
-            echo -e "\trm -rf \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/plugins/examples"
-            echo -e "\tfind \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +"
-          echo -e "\t# Install desktop file and icon"
-          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
-          echo -e "\t# Install appstream metadata"
-          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
-          echo -e "\t# Install icon to hicolor theme (per AppStream guidelines)"
-          echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps"
-          echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg"
-            echo "override_dh_auto_test:"
-            echo -e "\t# Skip tests for now (can be enabled later)"
-            echo "override_dh_auto_clean:"
-            echo -e "\t# Nothing to clean"
-          } > debian/rules
-          chmod +x debian/rules
-
-      - name: Create other debian files
-        run: |
-          # Create source format
-          echo "3.0 (quilt)" > debian/source/format
-          
-          # Create copyright file
-          {
-            echo "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/"
-            echo "Upstream-Name: sshpilot"
-            echo "Source: https://github.com/mfat/sshpilot"
-            echo ""
-            echo "Files: *"
-            echo "Copyright: 2025 mFat <newmfat@gmail.com>"
-            echo "License: GPL-3+"
-            echo ""
-            echo "Files: debian/*"
-            echo "Copyright: 2025 mFat <newmfat@gmail.com>"
-            echo "License: GPL-3+"
-            echo ""
-            echo "Files: sshpilot/vendor/pyxtermjs/*"
-            echo "Copyright: 2018-2022 Chad Smith"
-            echo "License: MIT"
-            echo ""
-            echo "License: GPL-3+"
-            echo " This program is free software: you can redistribute it and/or modify"
-            echo " it under the terms of the GNU General Public License as published by"
-            echo " the Free Software Foundation, either version 3 of the License, or"
-            echo " (at your option) any later version."
-            echo " ."
-            echo " This package is distributed in the hope that it will be useful,"
-            echo " but WITHOUT ANY WARRANTY; without even the implied warranty of"
-            echo " MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the"
-            echo " GNU General Public License for more details."
-            echo " ."
-            echo " You should have received a copy of the GNU General Public License"
-            echo " along with this program. If not, see <https://www.gnu.org/licenses/>."
-            echo " ."
-            echo " On Debian systems, the complete text of the GNU General"
-            echo " Public License version 3 can be found in \"/usr/share/common-licenses/GPL-3\"."
-          } > debian/copyright
-
-      - name: Validate debian files
-        run: |
-          echo "=== Checking required project files ==="
-          ls -la run.py || echo "run.py missing"
-          ls -la sshpilot/ || echo "sshpilot/ missing"
-          ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
-          ls -la io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
-          ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
-
-          echo "=== Validating desktop and AppStream metadata ==="
-          desktop-file-validate io.github.mfat.sshpilot.desktop
-          appstream-util validate-relax --nonet io.github.mfat.sshpilot.metainfo.xml
-
-          echo "=== Debian packaging files created ==="
-          ls -la debian/
-          
-          echo "=== Control file content ==="
-          cat debian/control
-
+      # Builds with Meson via dh --buildsystem=meson (see debian/rules). Meson
+      # installs the launcher, package, gresource, desktop entry, metainfo, icon
+      # and sshpilot-agent, and its desktop/AppStream validators run as the
+      # build-time test suite.
       - name: Build package
-        run: |
-          # Build the package
-          dpkg-buildpackage -us -uc -b
-          
-          # Create artifacts directory and collect packages
-          mkdir -p artifacts
-          
-          # Find and move .deb files
-          find .. -maxdepth 1 -name "*.deb" -exec mv {} artifacts/ \;
-          
-          # Also check current directory just in case
-          find . -maxdepth 1 -name "*.deb" -exec mv {} artifacts/ \;
+        run: dpkg-buildpackage -us -uc -b
 
-      - name: List built packages
+      - name: Collect packages
         run: |
-          echo "=== Built packages ==="
+          mkdir -p artifacts
+          find .. -maxdepth 1 -name '*.deb' -exec mv {} artifacts/ \;
           ls -la artifacts/
-          
-          # Show package information
-          for deb in artifacts/*.deb; do
-            if [ -f "$deb" ]; then
-              echo "=== Package: $deb ==="
-              dpkg-deb --info "$deb"
-              echo ""
-              echo "=== Contents: ==="
-              dpkg-deb --contents "$deb" | head -20
-              echo ""
+
+      - name: Verify package contents
+        run: |
+          set -eu
+          DEB=$(ls artifacts/*.deb | head -1)
+          contents=$(dpkg-deb --contents "$DEB")
+          # Everything the app needs at runtime must be present...
+          for path in \
+            ./usr/bin/sshpilot \
+            ./usr/bin/sshpilot-agent \
+            ./usr/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource \
+            ./usr/share/applications/io.github.mfat.sshpilot.desktop \
+            ./usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml \
+            ./usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \
+          ; do
+            grep -q " $path\$" <<<"$contents" || { echo "::error::missing $path"; exit 1; }
+          done
+          # ...and the build-time-only files must not be.
+          for pattern in '[.]blp$' 'plugins/examples' 'vendor/pyxtermjs/xterm/' '__pycache__'; do
+            if grep -qE "$pattern" <<<"$contents"; then
+              echo "::error::$pattern should not ship in the .deb"; exit 1
             fi
+          done
+          echo "package contents verified"
+
+      - name: Lintian
+        run: lintian --tag-display-limit 0 artifacts/*.deb
+
+      - name: Show package info
+        run: |
+          for deb in artifacts/*.deb; do
+            echo "=== $deb ==="
+            dpkg-deb --info "$deb"
           done
 
       - name: Upload artifacts
@@ -233,12 +95,37 @@ jobs:
         with:
           files: artifacts/*.deb
           generate_release_notes: false
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger APT repository publish
+      - name: Check for pre-release
         if: startsWith(github.ref, 'refs/tags/')
+        id: release_meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # release.sh creates the GitHub release right after pushing the tag, so
+          # this is usually available immediately; retry briefly for the rare race.
+          PRE=""
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            PRE=$(gh api "repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}" --jq .prerelease 2>/dev/null || echo "")
+            if [ -n "$PRE" ]; then
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$PRE" ]; then
+            # Fail closed: APT is the least reversible of the three distro
+            # channels — do not publish if we cannot tell release from pre-release.
+            echo "No GitHub release found for ${{ github.ref_name }}; skipping APT publish"
+            PRE=true
+          fi
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Release ${{ github.ref_name }} prerelease=$PRE"
+
+      - name: Trigger APT repository publish
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_meta.outputs.prerelease != 'true'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.PPA_TRIGGER_TOKEN }}

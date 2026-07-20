@@ -4,4 +4,4 @@ repos:
     hooks:
       - id: ruff-check
         name: ruff (sshpilot, tests)
-        files: ^(sshpilot|tests)/.*\.py$
+        files: ^(src/sshpilot|tests)/.*\.py$

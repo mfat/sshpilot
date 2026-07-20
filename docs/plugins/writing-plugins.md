@@ -13,9 +13,9 @@ repo ("Use this template") — also mirrored at [`template/`](template/) for a
 plugin; publish via the [discovery index](registry.md)
 ([mfat/sshpilot-plugins](https://github.com/mfat/sshpilot-plugins)). For worked
 examples read the built-in
-`sshpilot/plugins/builtin/telnet_protocol/` (a tiny protocol), the shipped
-examples `sshpilot/plugins/examples/mock_vps/` and `easyenv_workspaces/`, and the
-official non-protocol plugins in [`plugins/`](../../plugins/) (auto-group, notes,
+`src/sshpilot/plugins/builtin/telnet_protocol/` (a tiny protocol), the shipped
+examples `src/sshpilot/plugins/examples/mock_vps/` and `easyenv_workspaces/`, and the
+official non-protocol plugins in [the plugins repo](https://github.com/mfat/sshpilot-plugins) (auto-group, notes,
 health).
 
 ## Quickstart
@@ -52,7 +52,7 @@ cd ~/my-plugin && pip install pytest \
 ### Developing & iterating
 
 There is **no hot-reload**: the loader imports enabled user plugins once at
-startup ([loader.py](../../sshpilot/plugins/loader.py)). The dev loop is therefore
+startup ([loader.py](../../src/sshpilot/plugins/loader.py)). The dev loop is therefore
 **edit → copy into the plugin dir → restart sshPilot**. Keep your pure logic in
 module-level functions/classes (no `gi` import there) and import `gi` lazily
 inside the page factory — then `pytest` covers most changes without a restart, and
@@ -64,7 +64,7 @@ skipped (it won't crash the app).
 
 | | Built-in | User / third-party |
 |---|---|---|
-| Location | `sshpilot/plugins/builtin/<id>/` (in the app) | `$XDG_DATA_HOME/sshpilot/plugins/<id>/` |
+| Location | `src/sshpilot/plugins/builtin/<id>/` (in the app) | `$XDG_DATA_HOME/sshpilot/plugins/<id>/` |
 | Loading | auto-loaded; disable in Preferences | **opt-in**: must be enabled in Preferences |
 | Audience | first-party, broadly useful, reviewed | provider/community plugins |
 | Ships in | the app package | published/installed by the author/user |
@@ -269,7 +269,7 @@ create, open connections).
 ## Event-driven & UI plugins
 
 A plugin doesn't have to add a protocol. It can react to what happens in the app
-and contribute pages. The official plugins in [`plugins/`](../../plugins/) are the
+and contribute pages. The official plugins in [the plugins repo](https://github.com/mfat/sshpilot-plugins) are the
 worked examples for this section:
 
 | Plugin | Shows |
@@ -285,7 +285,7 @@ worked examples for this section:
 | `hetzner` | stdlib `urllib` HTTPS API; token in `ctx.secrets`; sign-in → list → add |
 
 For a **protocol** plugin (not event/UI), see `aws-ssm` in
-[`plugins/`](../../plugins/) (a `ProtocolBackend` that runs `aws ssm
+[the plugins repo](https://github.com/mfat/sshpilot-plugins) (a `ProtocolBackend` that runs `aws ssm
 start-session`) alongside the built-in `telnet_protocol` and the protocol
 [`template/`](template/).
 
@@ -338,7 +338,7 @@ sensitive strings (tokens, passwords); never put secrets in `settings`.
 
 If your plugin needs to ask the user for an **SSH login password** in the GUI
 (do not build a custom password dialog — it will stack incorrectly on Wayland),
-use the shared helper documented in **[PLUGIN_SDK.md § Advanced UI — credential dialogs](../../PLUGIN_SDK.md#advanced-ui--credential-dialogs)**:
+use the shared helper documented in **[PLUGIN_SDK.md § Advanced UI — credential dialogs](../PLUGIN_SDK.md#advanced-ui--credential-dialogs)**:
 
 `from sshpilot.window import show_ssh_password_dialog` — call on the **UI thread
 only** (or inside `ctx.run_on_ui_thread`). Pass `from_widget=your_page_widget`
@@ -377,7 +377,7 @@ logic without a display (see each plugin's `tests/`).
 
 ## API versioning & stability
 
-`API_VERSION = (major, minor)` in `sshpilot/plugins/api.py`.
+`API_VERSION = (major, minor)` in `src/sshpilot/plugins/api.py`.
 
 - **Minor** bumps are additive (new methods/fields) — existing plugins keep
   working.

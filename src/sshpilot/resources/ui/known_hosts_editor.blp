@@ -1,0 +1,63 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $KnownHostsEditorWindow: Adw.Window {
+  title: _("Known Hosts Editor");
+  modal: true;
+  default-width: 700;
+  default-height: 500;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Gtk.Label {
+        label: _("Known Hosts Editor");
+      };
+
+      [start]
+      Gtk.Button {
+        label: _("Cancel");
+        clicked => $_on_cancel_clicked();
+      }
+
+      [end]
+      Gtk.Button {
+        label: _("Save");
+
+        styles [
+          "suggested-action",
+        ]
+
+        clicked => $_on_save_clicked();
+      }
+    }
+
+    content: Gtk.Box {
+      orientation: vertical;
+      spacing: 0;
+
+      Gtk.SearchEntry search_entry {
+        placeholder-text: _("Search known hosts...");
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 6;
+        margin-bottom: 3;
+        search-changed => $_on_search_changed();
+      }
+
+      Gtk.Separator {
+        orientation: horizontal;
+      }
+
+      Gtk.ScrolledWindow {
+        hscrollbar-policy: automatic;
+        vscrollbar-policy: automatic;
+        vexpand: true;
+
+        Gtk.ListBox listbox {
+          selection-mode: none;
+        }
+      }
+    };
+  };
+}

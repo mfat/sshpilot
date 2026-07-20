@@ -44,7 +44,7 @@ test = [
 # - WebKit 6.0 (for PyXterm.js backend, optional but recommended on Linux only)
 #   Note: webkitgtk is Linux-only; PyXterm.js backend not available on macOS
 # - GtkSourceView 5.0, libsecret
-# See README.md or AGENTS.md for complete system dependency list.
+# See README.md or docs/running-from-source.md for the full system dependency list.
 
 [tool.setuptools.dynamic]
 version = {attr = "sshpilot.__version__"}
@@ -60,7 +60,7 @@ unresolved-import = "ignore"
 unresolved-attribute = "ignore"
 
 [tool.setuptools.packages.find]
-where = [""]
+where = ["src"]
 include = ["sshpilot*"]
 # Example plugins are developer references only — never shipped. Users get them
 # from the plugin registry instead.
@@ -73,6 +73,10 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 # and the app fails at startup with "can't load gresource".
 "sshpilot" = ["resources/**/*", "resources/*"]
 # PyXterm.js web-terminal backend: HTML template + bundled xterm.js assets
+#
+# (Blueprint .blp sources are excluded below — they are build-time inputs
+# compiled to .ui and bundled in sshpilot.gresource; the running app never
+# reads them.)
 # (the latter is a fallback; Debian prefers the system libjs-xterm at runtime).
 "sshpilot.vendor.pyxtermjs" = ["xterm/**/*"]
 # Built-in plugin manifests are read from disk by the plugin loader.
@@ -85,6 +89,12 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 "sshpilot.plugins.builtin.mosh_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.docker_manager" = ["plugin.json"]
 
+[tool.setuptools.exclude-package-data]
+# Blueprint sources are build-time only: they compile to resources/ui/*.ui,
+# which are bundled into sshpilot.gresource. The installed app never reads the
+# .blp, so keep them out of the wheel.
+"sshpilot" = ["resources/ui/*.blp"]
+
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"
 Issues = "https://github.com/mfat/sshpilot/issues"
@@ -93,8 +103,7 @@ Issues = "https://github.com/mfat/sshpilot/issues"
 target-version = "py39"
 line-length = 100
 extend-exclude = [
-    "src",
-    "sshpilot/vendor",
+    "src/sshpilot/vendor",
     "tests/manual",
     "tests_e2e",
     "build",

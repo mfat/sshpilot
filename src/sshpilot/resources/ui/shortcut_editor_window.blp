@@ -1,0 +1,40 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotShortcutEditorWindow: Adw.Window {
+  title: _("Shortcut Editor");
+  modal: true;
+  default-width: 600;
+  default-height: 600;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Adw.WindowTitle {
+        title: _("Shortcut Editor");
+        subtitle: _("Customize keyboard shortcuts");
+      };
+
+      [end]
+      Gtk.Box {
+        orientation: horizontal;
+        spacing: 6;
+
+        Gtk.Label {
+          label: _("Pass-through");
+          halign: end;
+          valign: center;
+        }
+
+        Gtk.Switch pass_through_switch {
+          valign: center;
+        }
+      }
+    }
+
+    content: Gtk.ScrolledWindow editor_scrolled {
+      hscrollbar-policy: never;
+      vscrollbar-policy: automatic;
+    };
+  };
+}

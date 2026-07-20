@@ -32,7 +32,7 @@
     },
     "builtin": {
       "type": "boolean",
-      "description": "True only for plugins shipped inside the app under sshpilot/plugins/builtin/. Third-party/user plugins omit this or set false."
+      "description": "True only for plugins shipped inside the app under src/sshpilot/plugins/builtin/. Third-party/user plugins omit this or set false."
     },
     "required": {
       "type": "boolean",

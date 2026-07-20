@@ -1,0 +1,50 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotSshCopyIdWindow: Adw.Window {
+  title: _("Copy key to Server");
+  modal: true;
+  resizable: false;
+  default-width: 500;
+  default-height: 400;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Gtk.Label {
+        label: _("Copy key to Server");
+      };
+
+      [start]
+      Gtk.Button cancel_button {
+        label: "Cancel";
+      }
+
+      [end]
+      Gtk.Button btn_ok {
+        label: "OK";
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Gtk.Box content_box {
+      orientation: vertical;
+      spacing: 12;
+      margin-top: 18;
+      margin-bottom: 18;
+      margin-start: 18;
+      margin-end: 18;
+
+      Gtk.Image {
+        resource: "/io/github/mfat/sshpilot/keychain.png";
+        pixel-size: 160;
+        halign: center;
+        vexpand: false;
+        margin-bottom: 12;
+      }
+    };
+  };
+}

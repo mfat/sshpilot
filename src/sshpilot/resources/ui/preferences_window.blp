@@ -1,0 +1,116 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Layout skeleton only. The sidebar navigation rows and the content stack's
+// preference pages are built dynamically in Python (preferences.py,
+// add_page_to_layout); this file owns the OverlaySplitView / ToolbarView /
+// HeaderBar / ScrolledWindow container structure and the responsive breakpoint.
+//
+// An Adw.Dialog rather than a window: libadwaita presents preferences over the
+// parent window, so it inherits the parent's stacking and adaptiveness instead
+// of being a second top-level.
+template $SshPilotPreferencesWindow: Adw.Dialog {
+  title: "Settings";
+  content-width: 820;
+  content-height: 600;
+
+  // A widget holding breakpoints has no minimum size of its own, so libadwaita
+  // requires the smallest size we support (it warns otherwise). These are
+  // measured, not guessed: the content pane's own minimum is 448px, so the
+  // collapsed split view cannot go narrower. Claiming less makes libadwaita
+  // warn that the child overflows.
+  width-request: 448;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    // Sidebar + content need 628px side by side; below that, collapse the
+    // sidebar into an overlay rather than overflowing.
+    condition ("max-width: 628sp")
+
+    setters {
+      overlay_split_view.collapsed: true;
+    }
+  }
+
+  child: Adw.OverlaySplitView overlay_split_view {
+    sidebar: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar sidebar_header_bar {
+        show-start-title-buttons: false;
+        show-end-title-buttons: false;
+
+        styles [
+          "flat",
+        ]
+
+        title-widget: Gtk.Label {
+          label: "Settings";
+          single-line-mode: true;
+          xalign: 0;
+
+          styles [
+            "title",
+          ]
+        };
+      }
+
+      content: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vscrollbar-policy: automatic;
+
+        Gtk.ListBox sidebar {
+          selection-mode: single;
+          activate-on-single-click: true;
+
+          styles [
+            "navigation-sidebar",
+          ]
+        }
+      };
+    };
+
+    content: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar header_bar {
+        show-start-title-buttons: true;
+        show-end-title-buttons: true;
+
+        styles [
+          "flat",
+        ]
+
+        // Only route back to the page list once the sidebar is collapsed —
+        // without it the collapsed dialog is a dead end on whichever page
+        // happened to be selected.
+        [start]
+        ToggleButton show_sidebar_button {
+          icon-name: "sidebar-show-symbolic";
+          tooltip-text: _("Show Sidebar");
+          visible: bind overlay_split_view.collapsed;
+          active: bind overlay_split_view.show-sidebar bidirectional;
+        }
+
+        title-widget: Gtk.Label header_title_label {
+          label: "";
+          single-line-mode: true;
+          xalign: 0;
+
+          styles [
+            "title",
+          ]
+        };
+      }
+
+      content: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vscrollbar-policy: automatic;
+
+        Gtk.Stack content_stack {
+          hexpand: true;
+          vexpand: true;
+          transition-type: crossfade;
+        }
+      };
+    };
+  };
+}

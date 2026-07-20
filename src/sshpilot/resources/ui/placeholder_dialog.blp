@@ -1,0 +1,43 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotPlaceholderDialog: Adw.Window {
+  modal: true;
+  default-width: 420;
+  title: _("Fill Placeholders");
+
+  content: Gtk.Box {
+    orientation: vertical;
+
+    Adw.HeaderBar {
+      [start]
+      Gtk.Button cancel_btn {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button send_btn {
+        label: _("Send");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    Gtk.ScrolledWindow {
+      hscrollbar-policy: never;
+      vscrollbar-policy: automatic;
+      propagate-natural-height: true;
+
+      Gtk.Box body {
+        orientation: vertical;
+        spacing: 12;
+        margin-start: 16;
+        margin-end: 16;
+        margin-top: 12;
+        margin-bottom: 16;
+      }
+    }
+  };
+}

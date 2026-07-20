@@ -17,7 +17,9 @@ from sshpilot.plugins import registry as registry_mod
 from sshpilot.plugins.api import PluginContext
 from sshpilot.plugins.host import PluginHost
 
-EXAMPLE = os.path.join(os.path.dirname(__file__), '..', 'sshpilot', 'plugins',
+# Derive from the imported package so this works regardless of whether the
+# source lives at repo-root sshpilot/ or src/sshpilot/.
+EXAMPLE = os.path.join(os.path.dirname(registry_mod.__file__),
                        'examples', 'easyenv_workspaces', '__init__.py')
 
 

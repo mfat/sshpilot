@@ -1,0 +1,43 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotAddFolderDialog: Adw.Window {
+  modal: true;
+  default-width: 360;
+  title: _("New Folder");
+
+  content: Gtk.Box {
+    orientation: vertical;
+
+    Adw.HeaderBar {
+      [start]
+      Gtk.Button cancel_btn {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button create_btn {
+        label: _("Create");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    Gtk.Box {
+      orientation: vertical;
+      spacing: 12;
+      margin-start: 16;
+      margin-end: 16;
+      margin-top: 12;
+      margin-bottom: 16;
+
+      Adw.PreferencesGroup {
+        Adw.EntryRow name_row {
+          title: _("Folder Name");
+        }
+      }
+    }
+  };
+}

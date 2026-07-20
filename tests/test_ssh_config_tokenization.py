@@ -43,6 +43,11 @@ def _ensure_gi_stub():
     repository.GLib = glib_module
     repository.GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 
+    # Blueprint-templated widgets (e.g. ConnectionDialog) use @Gtk.Template /
+    # Gtk.Template.Child; make them no-ops so the class imports under the stub.
+    from gtk_template_stub import install_template_stub
+    install_template_stub(sys.modules["gi.repository.Gtk"])
+
 
 _ORIGINAL_GI_MODULES = {
     name: sys.modules.get(name)

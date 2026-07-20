@@ -12,7 +12,51 @@ on:
         type: string
 
 jobs:
+  check-prerelease:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      prerelease: ${{ steps.check.outputs.prerelease }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: Resolve tag and pre-release flag
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.release_tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          PRE=""
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            PRE=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq .prerelease 2>/dev/null || echo "")
+            if [ -n "$PRE" ]; then
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$PRE" ]; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              PRE=false
+            else
+              # Fail closed: release.sh creates the GitHub release right after the
+              # tag push. If it is not visible yet, do not bump Flathub in case
+              # this was meant to be a pre-release.
+              echo "No GitHub release found for $TAG; skipping Flathub update"
+              PRE=true
+            fi
+          fi
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Tag $TAG prerelease=$PRE"
+
   update-flathub:
+    needs: check-prerelease
+    if: needs.check-prerelease.outputs.prerelease != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,11 +64,7 @@ jobs:
       - name: Determine release tag
         id: release
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.release_tag }}"
-          else
-            TAG="${{ github.ref_name }}"
-          fi
+          TAG="${{ needs.check-prerelease.outputs.tag }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Using tag: $TAG"
 

@@ -1,0 +1,64 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotSftpConnectionDialog: Adw.Window {
+  title: "SFTP Connection";
+  default-width: 600;
+  default-height: 400;
+  modal: true;
+
+  content: Gtk.Box {
+    orientation: vertical;
+    spacing: 16;
+    margin-start: 24;
+    margin-end: 24;
+    margin-top: 24;
+    margin-bottom: 24;
+
+    Gtk.Box {
+      orientation: horizontal;
+      spacing: 16;
+
+      Gtk.Image {
+        icon-name: "folder-remote-symbolic";
+        pixel-size: 48;
+      }
+
+      Gtk.Box {
+        orientation: vertical;
+        spacing: 4;
+
+        Gtk.Label {
+          label: "<b>SFTP Connection Options</b>";
+          use-markup: true;
+          halign: start;
+        }
+
+        Gtk.Label subtitle_label {
+          halign: start;
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+    }
+
+    Gtk.Label {
+      label: "Due to Flatpak security restrictions, direct SFTP mounting is limited.\nPlease choose one of the following options:";
+      use-markup: true;
+      wrap: true;
+      halign: start;
+    }
+
+    Gtk.Box options_box {
+      orientation: vertical;
+      spacing: 12;
+    }
+
+    Gtk.Button close_button {
+      label: "Close";
+      halign: end;
+    }
+  };
+}

@@ -1,7 +1,6 @@
 """Askpass login-password autofill, MFA, and FIDO presence hints."""
 import os
 
-import pytest
 
 from sshpilot.askpass_utils import (
     classify_prompt,
@@ -25,6 +24,22 @@ def test_classify_prompt_markers_need_word_boundaries():
     # Real OTP/PIN prompts still classify as interactive.
     assert classify_prompt("OTP for alice:") == "interactive"
     assert classify_prompt("Enter one-time password:") == "interactive"
+
+
+def test_classify_prompt_mfa_password_not_login_password():
+    # MFA challenges that contain the word "password" must not classify as
+    # login passwords (askpass would autofill the stored SSH secret).
+    assert classify_prompt("Enter one-time password:") == "interactive"
+    assert classify_prompt("Enter one time password:") == "interactive"
+    assert classify_prompt("TOTP password:") == "interactive"
+    assert classify_prompt("MFA password:") == "interactive"
+    assert classify_prompt("2FA password:") == "interactive"
+    assert classify_prompt("two-factor password:") == "interactive"
+    assert classify_prompt("two factor password:") == "interactive"
+    # Ordinary login passwords are unchanged.
+    assert classify_prompt("Password:") == "password"
+    assert classify_prompt("Password for alice@host:") == "password"
+    assert classify_prompt("user@alpine's password:") == "password"
 
 
 def test_classify_prompt_fido_presence_and_pin():
@@ -286,6 +301,30 @@ def test_askpass_prompts_user_for_otp(monkeypatch):
         lambda prompt, _log: (True, "123456"),
     )
     assert handle_askpass_cli("Verification code:") == "123456"
+
+
+def test_askpass_does_not_autofill_mfa_password_prompt(monkeypatch):
+    # "one time password" / "TOTP password" contain "password" but are MFA —
+    # must not return the vaulted SSH login password.
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSWORD_FILE", raising=False)
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSWORD_ID", raising=False)
+    monkeypatch.setenv("SSHPILOT_PASSWORD_USER", "alice")
+    monkeypatch.setenv("SSHPILOT_PASSWORD_HOSTS", "example.com")
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils.lookup_ssh_password",
+        lambda host, user: "vaulted-ssh-password",
+    )
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_challenge_to_main_app",
+        lambda prompt, _log: (True, "654321"),
+    )
+    for prompt in (
+        "Enter one time password:",
+        "Enter one-time password:",
+        "TOTP password:",
+        "MFA password:",
+    ):
+        assert handle_askpass_cli(prompt) == "654321", prompt
 
 
 def test_askpass_otp_cancel(monkeypatch):

@@ -1,0 +1,16 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Outer skeleton only. The split view (whose type is chosen at runtime from the
+// libadwaita version: OverlaySplitView / NavigationSplitView / Gtk.Paned), the
+// header bar, the update/tips banners, the sidebar, and the tab content are all
+// built in Python (window.py) and appended into main_box at runtime.
+template $SshPilotMainWindow: Adw.ApplicationWindow {
+  content: Adw.ToastOverlay toast_overlay {
+    child: Gtk.Box main_box {
+      orientation: vertical;
+      hexpand: true;
+      vexpand: true;
+    };
+  };
+}

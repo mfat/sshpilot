@@ -11,19 +11,17 @@ from types import SimpleNamespace
 
 import pytest
 
-# Importing the window module needs GTK typelibs (incl. GdkPixbuf); skip cleanly
+# Importing these modules needs GTK typelibs (incl. GdkPixbuf); skip cleanly
 # where they aren't available (e.g. headless CI without the full stack).
-window = pytest.importorskip("sshpilot.window")
+connection_manager = pytest.importorskip("sshpilot.connection_manager")
 from sshpilot.connection_dialog import SSHConnectionValidator
 
 
 def _generate(existing_names, base):
-    win = SimpleNamespace(
-        connection_manager=SimpleNamespace(
-            get_connections=lambda: [SimpleNamespace(nickname=n) for n in existing_names]
-        )
+    manager = SimpleNamespace(
+        get_connections=lambda: [SimpleNamespace(nickname=n) for n in existing_names]
     )
-    return window.MainWindow._generate_duplicate_nickname(win, base)
+    return connection_manager.ConnectionManager.generate_duplicate_nickname(manager, base)
 
 
 @pytest.mark.parametrize(

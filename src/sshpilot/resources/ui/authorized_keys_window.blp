@@ -1,0 +1,73 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotAuthorizedKeysWindow: Adw.Window {
+  modal: false;
+  default-width: 720;
+  default-height: 560;
+
+  content: Adw.ToastOverlay toast_overlay {
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {
+        title-widget: Gtk.Label title_label {};
+
+        [start]
+        Gtk.MenuButton add_button {
+          icon-name: "list-add-symbolic";
+          tooltip-text: _("Add key");
+        }
+
+        [start]
+        Gtk.Button reload_button {
+          icon-name: "view-refresh-symbolic";
+          tooltip-text: _("Reload from server");
+        }
+
+        [start]
+        Gtk.Button raw_button {
+          icon-name: "text-x-generic-symbolic";
+          tooltip-text: _("Open raw editor…");
+        }
+
+        [end]
+        Gtk.Button save_button {
+          label: _("Save");
+          sensitive: false;
+
+          styles [
+            "suggested-action",
+          ]
+        }
+      }
+
+      content: Gtk.Box {
+        orientation: vertical;
+        spacing: 0;
+
+        Gtk.Label status_label {
+          label: _("Loading…");
+          margin-top: 8;
+          margin-bottom: 8;
+        }
+
+        Gtk.ScrolledWindow {
+          vexpand: true;
+          hexpand: true;
+
+          Gtk.ListBox list_box {
+            selection-mode: none;
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            styles [
+              "boxed-list",
+            ]
+          }
+        }
+      };
+    };
+  };
+}

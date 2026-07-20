@@ -5,8 +5,17 @@ Maintainer: Mehdi <mah.fat@gmail.com>
 Build-Depends: debhelper-compat (= 13),
                dh-python,
                python3-all,
-               python3-setuptools,
-               pybuild-plugin-pyproject
+               meson (>= 0.59),
+               ninja-build,
+               blueprint-compiler,
+               libgtk-4-dev,
+               libadwaita-1-dev,
+               libglib2.0-dev-bin,
+               libglib2.0-bin,
+               gettext,
+               desktop-file-utils,
+               appstream,
+               libgtk-4-bin
 Standards-Version: 4.7.0
 Homepage: https://github.com/mfat/sshpilot
 Rules-Requires-Root: no
@@ -20,7 +29,7 @@ Depends: ${python3:Depends},
          python3-gi,
          python3-gi-cairo,
          gir1.2-gtk-4.0,
-         gir1.2-adw-1,
+         gir1.2-adw-1 (>= 1.5),
          gir1.2-vte-3.91,
          gir1.2-gtksource-5,
          gir1.2-secret-1,

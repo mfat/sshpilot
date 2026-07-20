@@ -1,6 +1,8 @@
 #!/bin/bash
-# Test Flatpak build script
-# Copies files from flatpak/ directory and runs flatpak build
+# Test Flatpak build: builds the in-tree manifest against the working tree.
+#
+# The manifest lives at the repo root (where GNOME Builder looks for it) and
+# its `path: .` source is the working tree, so it builds in place.
 
 set -e
 
@@ -8,21 +10,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "=== Test Flatpak Build ==="
-
-# Copy all 3 files from flatpak/ directory to current directory
-echo "Copying files from flatpak/ to current directory..."
-cp flatpak/io.github.mfat.sshpilot.yaml .
-cp flatpak/python3-deps.yml .
-cp flatpak/sshpilot-launcher.sh .
-
-echo "Files copied:"
-ls -la io.github.mfat.sshpilot.yaml python3-deps.yml sshpilot-launcher.sh
-
-# Run flatpak build
-echo ""
-echo "=== Running Flatpak build ==="
 flatpak run --command=flathub-build org.flatpak.Builder --install --disable-rofiles-fuse --force-clean io.github.mfat.sshpilot.yaml
 
 echo ""
 echo "=== Build complete ==="
-

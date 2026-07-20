@@ -1,0 +1,33 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotShortcutCaptureDialog: Adw.Window {
+  title: _("Assign Shortcut");
+  modal: true;
+  default-width: 360;
+  default-height: 160;
+
+  content: Gtk.Box {
+    orientation: vertical;
+    spacing: 12;
+    margin-top: 24;
+    margin-bottom: 24;
+    margin-start: 24;
+    margin-end: 24;
+
+    Gtk.Label {
+      label: _("Press the new shortcut");
+      halign: center;
+
+      styles [
+        "title-3",
+      ]
+    }
+
+    Gtk.Label {
+      label: _("Press Esc to cancel. Shortcuts must include a key (modifiers optional).");
+      wrap: true;
+      justify: center;
+    }
+  };
+}

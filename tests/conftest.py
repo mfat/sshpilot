@@ -157,6 +157,12 @@ if not _USE_REAL_GTK and 'gi' not in sys.modules:
         setattr(repository, name, submodule)
         sys.modules[f'gi.repository.{name}'] = submodule
 
+    # Blueprint-migrated widgets need a no-op ``Gtk.Template`` under the stubbed
+    # gi so the classes still import (shared with the tests that build their own
+    # gi stub — see tests/gtk_template_stub.py).
+    from gtk_template_stub import install_template_stub
+    install_template_stub(sys.modules['gi.repository.Gtk'])
+
 
 # ``terminal_manager.py`` does a hard top-level ``import cairo``; the slim/no-GTK
 # CI image ships ``gi`` (or the stub above) but not the ``cairo`` package, so any

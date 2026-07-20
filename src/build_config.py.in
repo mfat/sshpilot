@@ -1,0 +1,8 @@
+"""Build-time configuration written by Meson at install time.
+
+This module only exists in a Meson install. Setuptools / editable runs import it
+via a guarded try/except and fall back to package-relative discovery.
+"""
+
+PKGDATADIR = '@PKGDATADIR@'
+LOCALEDIR = '@LOCALEDIR@'

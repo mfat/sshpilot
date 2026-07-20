@@ -1,6 +1,5 @@
 """Tests for Wake-on-LAN module."""
 
-import pytest
 from unittest.mock import patch, MagicMock
 import socket
 
@@ -8,7 +7,7 @@ from sshpilot.wol import (
     normalize_mac,
     validate_mac,
     send_wol,
-    is_wol_available,
+    build_magic_packet,
     get_subnet_broadcast,
 )
 
@@ -31,8 +30,6 @@ def test_validate_mac():
     assert validate_mac("1.2.3.4") is False
 
 
-@pytest.mark.skipif(not is_wol_available(),
-                    reason="wakeonlan not installed; send_wol short-circuits before MAC validation")
 def test_send_wol_invalid_mac():
     ok, msg = send_wol("invalid")
     assert ok is False
@@ -44,9 +41,42 @@ def test_send_wol_empty_mac():
     assert ok is False
 
 
-def test_is_wol_available():
-    # Just ensure it returns a bool (True if wakeonlan installed)
-    assert isinstance(is_wol_available(), bool)
+def test_build_magic_packet():
+    """6 sync bytes then the MAC 16 times -- 102 bytes, per the AMD magic packet spec."""
+    packet = build_magic_packet("aa:bb:cc:dd:ee:ff")
+    assert len(packet) == 6 + 6 * 16 == 102
+    assert packet[:6] == b"\xff" * 6
+    assert packet[6:] == bytes.fromhex("aabbccddeeff") * 16
+    # Accepts any format normalize_mac accepts
+    assert build_magic_packet("AA-BB-CC-DD-EE-FF") == packet
+    assert build_magic_packet("aabbccddeeff") == packet
+
+
+def test_send_wol_broadcasts_to_the_derived_address():
+    """The packet goes out on a broadcast-enabled UDP socket, to the given target."""
+    sock = MagicMock()
+    with patch("socket.socket") as mk:
+        mk.return_value.__enter__.return_value = sock
+        ok, msg = send_wol("aa:bb:cc:dd:ee:ff", broadcast_ip="192.168.1.255", port=9)
+    assert ok is True, msg
+    sock.setsockopt.assert_called_once_with(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    payload, addr = sock.sendto.call_args[0]
+    assert payload == build_magic_packet("aa:bb:cc:dd:ee:ff")
+    assert addr == ("192.168.1.255", 9)
+
+
+def test_send_wol_rejects_a_non_literal_broadcast_address():
+    """A hostname would make sendto() resolve and unicast the packet somewhere."""
+    with patch("socket.socket") as mk:
+        ok, msg = send_wol("aa:bb:cc:dd:ee:ff", broadcast_ip="attacker.example.com")
+    assert ok is False
+    assert "broadcast" in msg.lower()
+    mk.assert_not_called()
+
+    with patch("socket.socket") as mk:
+        ok, _ = send_wol("aa:bb:cc:dd:ee:ff", broadcast_ip="192.168.1.999")
+    assert ok is False
+    mk.assert_not_called()
 
 
 def test_get_subnet_broadcast_uses_interface_mask():

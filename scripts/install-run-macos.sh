@@ -12,7 +12,7 @@ REPO_URL="https://github.com/mfat/sshpilot.git"
 # If running from a local repo copy, prefer that instead of cloning
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [[ -f "$ROOT_DIR/sshpilot/main.py" ]]; then
+if [[ -f "$ROOT_DIR/src/sshpilot/main.py" ]]; then
   DEFAULT_DIR="$ROOT_DIR"
 else
   DEFAULT_DIR="$HOME/sshpilot"

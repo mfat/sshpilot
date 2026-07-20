@@ -1,3 +1,18 @@
+sshpilot (5.5.9-0ubuntu1) resolute; urgency=medium
+
+  * Release v5.5.9.
+  * Meson build system
+  * Migrated to GNOME rcommended project structure
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 20 Jul 2026 18:29:08 +0330
+
+sshpilot (5.5.8-0ubuntu1) resolute; urgency=medium
+
+  * Release v5.5.8.
+  * Migrated to meson build system
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 20 Jul 2026 18:24:28 +0330
+
 sshpilot (5.5.7-0ubuntu1) resolute; urgency=medium
 
   * Release v5.5.7.

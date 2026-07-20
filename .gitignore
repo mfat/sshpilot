@@ -15,25 +15,35 @@ venv/
 /build
 builddir/
 /artifacts
-/packaging/macos/build
 
-# Flatpak build
+# Flatpak build. scripts/test-flatpak.sh builds flatpak/ in place, so only the
+# build output is ignored -- the manifests there are tracked.
 /.flatpak-builder
 /repo
-/flatpak
-io.github.mfat.sshpilot.yaml
-python3-deps.yml
-sshpilot-launcher.sh
 
-# Debian build artifacts (debian/ packaging itself is tracked for the PPA)
+# Debian build artifacts (debian/ packaging itself is tracked for the PPA).
+# dpkg-buildpackage builds in obj-<arch> and stages into debian/<package>/.
 build-deb-local.sh
+/obj-*
+/debian/.debhelper/
+/debian/files
+/debian/sshpilot/
+/debian/*.substvars
+/debian/*.debhelper
+/debian/debhelper-build-stamp
 
 # Test output
 *.log
 .pytest_cache/
+.ruff_cache/
+
+# Local assistant/editor instructions (not published)
+CLAUDE.md
+AGENTS.md
 
 # Editors / tools
 .history/
+.cursor/
 .vscode/
 .claude/
 .DS_Store
@@ -50,3 +60,6 @@ sshpilot/vendor/pyxtermjs/index.html
 # the sshpilot/plugins/ code package.)
 /plugins/
 /.mimocode
+
+# Generated translation template
+po/*.pot

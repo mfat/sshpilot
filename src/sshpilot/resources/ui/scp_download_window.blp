@@ -1,0 +1,49 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Layout skeleton only. The controller (ScpWindowController._prompt_scp_download)
+// builds the dynamic content (remote file list, path navigation, destination
+// picker, status) into content_box and wires the Download button + refresh/picker
+// controls in Python.
+template $SshPilotScpDownloadWindow: Adw.Window {
+  modal: true;
+  default-width: 520;
+  default-height: 560;
+  title: _("Download files from server");
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Adw.WindowTitle window_title {
+        title: _("Download files");
+      };
+
+      [start]
+      Gtk.Button cancel_button {
+        label: _("Cancel");
+        clicked => $_on_cancel();
+      }
+
+      [end]
+      Gtk.Button download_button {
+        label: _("Download");
+        sensitive: false;
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Gtk.Box content_box {
+      orientation: vertical;
+      spacing: 12;
+      hexpand: true;
+      vexpand: true;
+      margin-top: 12;
+      margin-bottom: 12;
+      margin-start: 12;
+      margin-end: 12;
+    };
+  };
+}

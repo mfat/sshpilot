@@ -221,3 +221,101 @@ def test_resolve_bw_cli_path_flatpak_host_binary(monkeypatch):
     )
     assert platform_utils.resolve_bw_cli_path() == path
 
+
+
+# --- Shell/AppleScript quoting in open_system_terminal ----------------------
+#
+# ssh_command is a shell command line built from ~/.ssh/config, so a Host alias
+# carrying a quote or backtick must not be able to break out of the string the
+# terminal is handed.
+
+_HOSTILE = 'ssh \'srv"; touch /tmp/pwned; "\''
+
+
+def _launched_argv(monkeypatch, terminal_command, macos=False, command=_HOSTILE):
+    seen = []
+    monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
+    monkeypatch.setattr(
+        platform_utils.subprocess, "Popen",
+        lambda cmd, **kw: seen.append(cmd) or object(),
+    )
+    assert platform_utils.open_system_terminal(terminal_command, command) is True
+    return seen[0]
+
+
+@pytest.mark.parametrize("ctrl", ["\n", "\r", "\x00", "\x1b", "\x7f"])
+@pytest.mark.parametrize("macos", [False, True])
+def test_control_characters_refuse_to_launch(monkeypatch, ctrl, macos):
+    """`do script` types its argument at a shell, where a newline is Enter.
+
+    AppleScript's \\n escape yields a real newline in the string value, so
+    escaping does not help -- the command must be refused instead.
+    """
+    launched = []
+    monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
+    monkeypatch.setattr(
+        platform_utils.subprocess, "Popen",
+        lambda cmd, **kw: launched.append(cmd) or object(),
+    )
+    terminal = ["open", "-a", "Terminal"] if macos else ["/usr/bin/xterm"]
+    hostile = f"ssh srv{ctrl}touch /tmp/pwned"
+
+    assert platform_utils.open_system_terminal(terminal, hostile) is False
+    assert launched == []
+
+
+@pytest.mark.parametrize("terminal", ["konsole", "terminator", "guake", "xterm"])
+def test_single_string_terminals_quote_the_command(monkeypatch, terminal):
+    """These get one `bash -c <string>` argument; it must be shell-quoted."""
+    argv = _launched_argv(monkeypatch, [f"/usr/bin/{terminal}"])
+    inner = argv[-1]
+    assert inner.startswith("bash -c ")
+    # The whole payload is one quoted word, so the injected `;` is inert.
+    import shlex
+    assert shlex.split(inner)[2] == f"{_HOSTILE}; exec bash"
+
+
+@pytest.mark.parametrize("terminal", ["gnome-terminal", "alacritty", "kitty", "ptyxis"])
+def test_argv_terminals_pass_the_command_unwrapped(monkeypatch, terminal):
+    """argv-style terminals need no quoting -- the command is its own argument."""
+    argv = _launched_argv(monkeypatch, [f"/usr/bin/{terminal}"])
+    assert argv[-1] == f"{_HOSTILE}; exec bash"
+    assert argv[-2] == "-c"
+
+
+@pytest.mark.parametrize("terminal", ["xdg-terminal", "some-unknown-terminal"])
+def test_pass_through_terminals_send_one_argv_element(monkeypatch, terminal):
+    """These hand the command straight to the emulator; it stays one argument."""
+    argv = _launched_argv(monkeypatch, [f"/usr/bin/{terminal}"])
+    assert argv == [f"/usr/bin/{terminal}", _HOSTILE]
+
+
+@pytest.mark.parametrize("app", ["Ghostty", "Alacritty", "SomeOtherTerm"])
+def test_macos_argv_terminals_do_not_interpolate(monkeypatch, app):
+    """`open --args ...` takes an argv, so the command is passed, not spliced."""
+    argv = _launched_argv(monkeypatch, ["open", "-a", app], macos=True)
+    # Bare (ghostty) or with the keep-the-shell-open suffix -- either way it is
+    # the whole trailing element, not embedded in a larger string.
+    assert argv[-1] in (_HOSTILE, f"{_HOSTILE}; exec bash")
+
+
+def test_applescript_literal_escapes_quotes():
+    quoted = platform_utils._applescript_string('say "hi" \\ bye')
+    assert quoted == '"say \\"hi\\" \\\\ bye"'
+
+
+def test_applescript_literal_escapes_line_breaks():
+    """A raw newline inside an AppleScript string does not compile."""
+    quoted = platform_utils._applescript_string("one\ntwo\rthree")
+    assert "\n" not in quoted and "\r" not in quoted
+    assert quoted == '"one\\ntwo\\rthree"'
+
+
+def test_macos_terminal_app_escapes_the_command(monkeypatch):
+    argv = _launched_argv(monkeypatch, ["open", "-a", "Terminal"], macos=True)
+    script = argv[-1]
+    assert argv[0] == "osascript"
+    # Every quote from the command survives escaped, so none of it ends the
+    # AppleScript literal early.
+    assert '\\"' in script
+    assert 'do script "ssh \'srv\\"' in script

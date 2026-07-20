@@ -1,0 +1,22 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Layout skeleton only. The header bar (dynamic title + buttons) is added at
+// runtime, and the two FilePane widgets are built in Python and set as the
+// Paned's children. This file owns the ToolbarView/ToastOverlay/Paned
+// container structure.
+template $SshPilotFileManagerWindow: Adw.Window {
+  content: Adw.ToolbarView toolbar_view {
+    content: Adw.ToastOverlay toast_overlay {
+      child: Gtk.Paned panes {
+        orientation: horizontal;
+        wide-handle: false;
+        position: 500;
+        resize-start-child: true;
+        resize-end-child: true;
+        shrink-start-child: false;
+        shrink-end-child: false;
+      };
+    };
+  };
+}

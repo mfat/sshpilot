@@ -1,0 +1,51 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Layout skeleton only. The tabbed preferences content (content_mount) and the
+// validators/data loading are built in Python (connection_dialog.py); this file
+// owns the container structure and the pinned Cancel/Save buttons.
+template $ConnectionDialog: Adw.Window {
+  modal: true;
+  default-width: 600;
+  default-height: 700;
+
+  content: Gtk.Box {
+    orientation: vertical;
+    spacing: 0;
+
+    Adw.HeaderBar {
+      show-end-title-buttons: true;
+    }
+
+    Gtk.Box content_mount {
+      orientation: vertical;
+      vexpand: true;
+    }
+
+    Gtk.Separator {
+      orientation: horizontal;
+    }
+
+    Gtk.Box {
+      orientation: horizontal;
+      spacing: 12;
+      margin-start: 24;
+      margin-end: 24;
+      margin-top: 12;
+      margin-bottom: 12;
+      halign: end;
+
+      Gtk.Button cancel_button {
+        label: _("Cancel");
+      }
+
+      Gtk.Button save_button {
+        label: _("Save");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+  };
+}

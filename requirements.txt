@@ -1,3 +1,9 @@
+# Runtime dependencies for a source checkout.
+#
+# pyproject.toml [project.dependencies] is authoritative for packaging; this
+# file exists only because it must NOT list PyGObject/pycairo (see below).
+# Keep the two in sync when you add a runtime dependency.
+
 # Core GTK and bindings
 #
 # IMPORTANT: Do NOT install PyGObject or pycairo via pip. They are provided by
@@ -37,9 +43,6 @@ pykeepass>=4.0
 
 # System utilities
 psutil>=5.9.0
-
-# Wake-on-LAN
-wakeonlan>=3.0.0
 
 # Networking / TLS
 # Provides a CA bundle so HTTPS (the GitHub update check) can verify

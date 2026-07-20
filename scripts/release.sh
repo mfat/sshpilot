@@ -12,14 +12,12 @@ cd "$ROOT_DIR"
 
 DEFAULT_DEV_BRANCH="dev"
 DEFAULT_MAIN_BRANCH="main"
-INIT_FILE="sshpilot/__init__.py"
-RPM_SPEC_FILE="packaging/fedora/rpm.spec"
-METAINFO_FILE="io.github.mfat.sshpilot.metainfo.xml"
-DEB_CHANGELOG="debian/changelog"
-# Series named in the committed changelog entry. Informational only: the
-# Launchpad recipe re-targets each build to its actual series, but the
-# version ({VERSION}-0ubuntu1) is what the recipe's {debupstream} reads.
-DEB_SERIES="resolute"
+# The files carrying the version/changelog, and the rules for writing them,
+# live in scripts/bump-version.sh -- shared with the Release workflow.
+BUMP_SCRIPT="scripts/bump-version.sh"
+PKGBUILD_SCRIPT="scripts/update-arch-pkgbuild.sh"
+INIT_FILE="src/sshpilot/__init__.py"
+PKGBUILD_FILE="packaging/ArchLinux/PKGBUILD"
 
 echo "sshPilot release helper"
 echo
@@ -37,6 +35,12 @@ fi
 if ! command -v dch >/dev/null 2>&1; then
   echo "ERROR: dch is required to update debian/changelog (the Launchpad PPA" >&2
   echo "recipe reads its version from it). Install with: sudo apt install devscripts" >&2
+  exit 1
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh (GitHub CLI) is required to create the GitHub release" >&2
+  echo "(and mark it as a release vs pre-release). Install: https://cli.github.com/" >&2
   exit 1
 fi
 
@@ -85,17 +89,20 @@ if [[ ! -f "$INIT_FILE" ]]; then
   exit 1
 fi
 
-CURRENT_VERSION=$(python3 - "$INIT_FILE" <<'PY'
-import re
-import sys
-from pathlib import Path
+CURRENT_VERSION=$(sed -n "s/^__version__ *= *['\"]\\([^'\"]*\\)['\"].*/\\1/p" "$INIT_FILE")
+echo "Current version: ${CURRENT_VERSION:-unknown}"
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r"""__version__\s*=\s*['"]([^'"]+)['"]""", text)
-print(match.group(1) if match else "0.0.0")
-PY
-)
-echo "Current version: $CURRENT_VERSION"
+read -rp "Publish as [R]elease or [P]re-release? [R]: " RELEASE_KIND
+RELEASE_KIND=${RELEASE_KIND:-R}
+IS_PRERELEASE=0
+case "$RELEASE_KIND" in
+  [Rr]|[Rr]elease) IS_PRERELEASE=0 ;;
+  [Pp]|[Pp]re|[Pp]re-release|[Pp]rerelease) IS_PRERELEASE=1 ;;
+  *)
+    echo "ERROR: Enter R (release) or P (pre-release)." >&2
+    exit 1
+    ;;
+esac
 
 read -rp "New version (semver, e.g. 2.1.0): " VERSION
 VERSION=${VERSION#v}
@@ -104,32 +111,9 @@ if [[ -z "${VERSION}" ]]; then
   echo "ERROR: Version is required." >&2
   exit 1
 fi
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
-  echo "ERROR: '$VERSION' does not look like semver (X.Y.Z)." >&2
-  exit 1
-fi
-
-python3 - "$CURRENT_VERSION" "$VERSION" <<'PY'
-import re
-import sys
-
-
-def parse_version(value: str):
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:-.*)?$", value)
-    if not match:
-        return None
-    return tuple(int(part) for part in match.groups())
-
-
-current = parse_version(sys.argv[1])
-new = parse_version(sys.argv[2])
-if current is None or new is None:
-    raise SystemExit("ERROR: Could not parse version numbers for comparison.")
-if new <= current:
-    raise SystemExit(
-        f"ERROR: New version {sys.argv[2]} must be greater than current {sys.argv[1]}."
-    )
-PY
+# Validate before asking for the changelog, with the same rules that will be
+# applied to the files below.
+"$BUMP_SCRIPT" --check "$VERSION" >/dev/null
 
 if git rev-parse "v$VERSION" >/dev/null 2>&1; then
   echo "ERROR: Tag v$VERSION already exists." >&2
@@ -147,121 +131,17 @@ if [[ -z "${CHANGELOG}" ]]; then
   echo "WARNING: Empty changelog."
 fi
 
-python3 - "$INIT_FILE" "$VERSION" <<'PY'
-import re
-import sys
-from pathlib import Path
+printf '%s\n' "$CHANGELOG" | "$BUMP_SCRIPT" "$VERSION"
 
-path, version = sys.argv[1], sys.argv[2]
-text = Path(path).read_text(encoding="utf-8")
-pattern = re.compile(r"""^(__version__\s*=\s*['"])([^'"]+)(['"].*)$""", re.M)
-
-def repl(match):
-    return f"{match.group(1)}{version}{match.group(3)}"
-
-
-new_text = pattern.sub(repl, text)
-if new_text == text:
-    raise SystemExit(f"ERROR: Could not update __version__ in {path}")
-Path(path).write_text(new_text, encoding="utf-8")
-PY
-
-if [[ -f "$RPM_SPEC_FILE" ]]; then
-  echo "Updating version in $RPM_SPEC_FILE..."
-  python3 - "$RPM_SPEC_FILE" "$VERSION" "$CHANGELOG" <<'PY'
-import re
-import sys
-from datetime import datetime
-from pathlib import Path
-
-path, version, changelog = sys.argv[1], sys.argv[2], sys.argv[3]
-text = Path(path).read_text(encoding="utf-8")
-
-version_pattern = re.compile(r"^(Version:\s+%\{\?version\}%\{!\?version:)([^}]+)(\}.*)$", re.M)
-text = version_pattern.sub(lambda match: f"{match.group(1)}{version}{match.group(3)}", text)
-
-def normalize_bullet(line):
-    line = re.sub(r"^[-*]\s*", "", line.strip())
-    return f"- {line}" if line else None
-
-
-changelog_lines = [
-    item
-    for item in (normalize_bullet(line) for line in changelog.strip().split("\n"))
-    if item
-]
-today = datetime.now().strftime("%a %b %d %Y")
-new_entry = (
-    f"* {today} mFat <newmfat@gmail.com> - {version}\n"
-    + "\n".join(changelog_lines)
-    + "\n\n"
-)
-text = re.sub(r"(%changelog\s*\n)", r"\1" + new_entry, text, count=1, flags=re.M)
-Path(path).write_text(text, encoding="utf-8")
-PY
-else
-  echo "WARNING: $RPM_SPEC_FILE not found, skipping RPM spec update." >&2
+if ! grep -qE "from \. import __version__\s+as\s+APP_VERSION" src/sshpilot/window.py; then
+  echo "WARNING: About dialog may not reflect __version__ automatically. Please verify in src/sshpilot/window.py." >&2
 fi
 
-if [[ ! -f "$METAINFO_FILE" ]]; then
-  echo "ERROR: $METAINFO_FILE not found." >&2
-  exit 1
-fi
-
-python3 - "$METAINFO_FILE" "$VERSION" "$CHANGELOG" <<'PY'
-import html
-import re
-import sys
-from datetime import datetime
-from pathlib import Path
-
-path, version, changelog = sys.argv[1], sys.argv[2], sys.argv[3]
-text = Path(path).read_text(encoding="utf-8")
-
-
-def normalize_line(line):
-    line = re.sub(r"^[-*]\s*", "", line.strip())
-    return html.escape(line) if line else None
-
-
-changelog_lines = [
-    item
-    for item in (normalize_line(line) for line in changelog.strip().split("\n"))
-    if item
-]
-description_content = "\n".join(f"        <p>{line}</p>" for line in changelog_lines)
-today = datetime.now().strftime("%Y-%m-%d")
-new_release = (
-    f'    <release version="{version}" date="{today}">\n'
-    f"      <description>\n"
-    f"{description_content}\n"
-    f"      </description>\n"
-    f"    </release>\n"
-)
-text = re.sub(r"(<releases>\s*\n)", r"\1" + new_release, text, count=1, flags=re.M)
-Path(path).write_text(text, encoding="utf-8")
-PY
-
-echo "Updating $DEB_CHANGELOG..."
-export DEBFULLNAME="Mehdi" DEBEMAIL="mah.fat@gmail.com"
-dch -c "$DEB_CHANGELOG" -v "${VERSION}-0ubuntu1" -D "$DEB_SERIES" \
-  --force-distribution "Release v${VERSION}."
-while IFS= read -r line; do
-  line="$(sed 's/^[[:space:]]*[-*]*[[:space:]]*//' <<<"$line")"
-  [[ -n "$line" ]] && dch -c "$DEB_CHANGELOG" -a "$line"
-done <<<"$CHANGELOG"
-
-if ! grep -qE "from \. import __version__\s+as\s+APP_VERSION" sshpilot/window.py; then
-  echo "WARNING: About dialog may not reflect __version__ automatically. Please verify in sshpilot/window.py." >&2
-fi
-
-# -f: debian/ may still be ignored in older local checkouts; force-add is safe
-# for already-tracked packaging files and avoids set -e aborting on Git ≥2.25.
-git add -f "$INIT_FILE" "$METAINFO_FILE" "$DEB_CHANGELOG"
-if [[ -f "$RPM_SPEC_FILE" ]]; then
-  git add -f "$RPM_SPEC_FILE"
-fi
-git commit -m "Bump version to $VERSION"
+# bump-version.sh owns which files carry the version (it has grown meson.build
+# and the man pages since); -a commits whatever it touched rather than a second
+# list here that silently drifts. The clean-tree check at the top guarantees
+# nothing unrelated is swept in. Same as the Release workflow.
+git commit -am "Bump version to $VERSION"
 
 echo "Pushing version bump to origin/$DEV_BRANCH..."
 git push origin "$DEV_BRANCH"
@@ -284,14 +164,26 @@ fi
 
 git tag -a "v$VERSION" -m "SSH Pilot v$VERSION" -m "$CHANGELOG"
 
+if (( IS_PRERELEASE )); then
+  RELEASE_LABEL="pre-release"
+else
+  RELEASE_LABEL="release"
+fi
+
 echo
-echo "Ready to publish v$VERSION:"
+echo "Ready to publish v$VERSION ($RELEASE_LABEL):"
 echo "  Current version was: $CURRENT_VERSION"
 echo "  Dev branch pushed:   origin/$DEV_BRANCH"
 echo "  Merge commit on:     $MAIN_BRANCH"
 echo "  Tag to push:         v$VERSION"
-echo "  CI will build .deb/.rpm/DMG packages, publish the GitHub release, and update APT/Homebrew."
-echo "  A Flathub manifest-bump PR is opened automatically on flathub/io.github.mfat.sshpilot; merge it to publish to Flathub."
+echo "  GitHub release type: $RELEASE_LABEL"
+if (( IS_PRERELEASE )); then
+  echo "  CI will build .deb/.rpm/DMG packages and attach them to the pre-release."
+  echo "  APT / Homebrew / Flathub updates are skipped for pre-releases."
+else
+  echo "  CI will build .deb/.rpm/DMG packages, publish the GitHub release, and update APT/Homebrew."
+  echo "  A Flathub manifest-bump PR is opened automatically on flathub/io.github.mfat.sshpilot; merge it to publish to Flathub."
+fi
 echo
 read -rp "Push $MAIN_BRANCH and tag v$VERSION to origin? [y/N]: " CONFIRM_PUSH
 CONFIRM_PUSH=${CONFIRM_PUSH:-N}
@@ -300,12 +192,64 @@ if [[ ! "$CONFIRM_PUSH" =~ ^[Yy]$ ]]; then
   echo "Resume manually with:"
   echo "  git push origin $MAIN_BRANCH"
   echo "  git push origin v$VERSION"
+  if (( IS_PRERELEASE )); then
+    echo "  gh release create v$VERSION --verify-tag --notes-from-tag --title \"SSH Pilot v$VERSION\" --prerelease --latest=false"
+  else
+    echo "  gh release create v$VERSION --verify-tag --notes-from-tag --title \"SSH Pilot v$VERSION\""
+  fi
   exit 1
 fi
 
 git push origin "$MAIN_BRANCH"
 git push origin "v$VERSION"
 
+# Create the GitHub release immediately after the tag push so softprops/action-gh-release
+# only attaches assets (and keeps our release vs pre-release flag). If CI wins the race
+# and creates the release first, edit it into the right shape instead.
+NOTES_FILE="$(mktemp)"
+printf '%s\n' "$CHANGELOG" > "$NOTES_FILE"
+if gh release view "v$VERSION" >/dev/null 2>&1; then
+  EDIT_ARGS=(
+    release edit "v$VERSION"
+    --title "SSH Pilot v$VERSION"
+    --notes-file "$NOTES_FILE"
+  )
+  if (( IS_PRERELEASE )); then
+    EDIT_ARGS+=(--prerelease --latest=false)
+  else
+    EDIT_ARGS+=(--prerelease=false)
+  fi
+  gh "${EDIT_ARGS[@]}"
+else
+  CREATE_ARGS=(
+    release create "v$VERSION"
+    --verify-tag
+    --title "SSH Pilot v$VERSION"
+    --notes-file "$NOTES_FILE"
+  )
+  if (( IS_PRERELEASE )); then
+    CREATE_ARGS+=(--prerelease --latest=false)
+  fi
+  gh "${CREATE_ARGS[@]}"
+fi
+rm -f "$NOTES_FILE"
+
+# The Arch PKGBUILD is updated here, after the tag exists, because its
+# sha256sums cover GitHub's generated tag tarball — which cannot be hashed
+# before the tag is pushed. It is only ever touched on $MAIN_BRANCH (never on
+# $DEV_BRANCH) so the merge above can never conflict over it.
+if [[ -f "$PKGBUILD_FILE" ]]; then
+  echo
+  echo "Updating $PKGBUILD_FILE for v$VERSION..."
+  # Non-fatal: the tag is already pushed, so a transient download failure must
+  # not abort the run. The script prints how to finish it by hand.
+  if "$PKGBUILD_SCRIPT" "$VERSION"; then
+    git add "$PKGBUILD_FILE"
+    git commit -m "Update Arch PKGBUILD for v$VERSION"
+    git push origin "$MAIN_BRANCH"
+  fi
+fi
+
 echo
-echo "Release v$VERSION pushed."
+echo "Release v$VERSION pushed ($RELEASE_LABEL)."
 echo "Monitor GitHub Actions for build progress."

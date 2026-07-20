@@ -1,0 +1,158 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotLogViewerWindow: Adw.Window {
+  title: _("Application Log");
+  modal: false;
+  default-width: 900;
+  default-height: 640;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Gtk.Label {
+        label: _("Application Log");
+      };
+
+      [start]
+      Gtk.ToggleButton follow_toggle {
+        icon-name: "go-bottom-symbolic";
+        active: true;
+        tooltip-text: _("Follow new log entries as they are written");
+      }
+
+      [end]
+      Gtk.Button copy_btn {
+        label: _("Copy log output");
+        tooltip-text: _("Copy platform info and recent log lines to the clipboard, formatted for pasting into a bug report. Always uses the master log regardless of the current view selection.");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+
+      [end]
+      Gtk.MenuButton menu_button {
+        icon-name: "view-more-symbolic";
+        tooltip-text: _("More log actions");
+      }
+    }
+
+    content: Gtk.Box {
+      orientation: vertical;
+      spacing: 0;
+
+      Adw.Banner banner {
+        title: _("Log lines may contain hostnames, usernames, and file paths. Review before sharing.");
+        revealed: true;
+      }
+
+      Gtk.Box {
+        orientation: horizontal;
+        spacing: 6;
+        margin-top: 8;
+        margin-bottom: 4;
+        margin-start: 12;
+        margin-end: 12;
+
+        Gtk.Label {
+          label: _("Log file:");
+
+          styles [
+            "caption",
+            "dim-label",
+          ]
+        }
+
+        Gtk.Label path_label {
+          selectable: true;
+          ellipsize: middle;
+          hexpand: true;
+          xalign: 0;
+
+          styles [
+            "caption",
+          ]
+        }
+
+        Gtk.Label stats_label {
+          styles [
+            "caption",
+            "dim-label",
+          ]
+        }
+      }
+
+      Gtk.Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-top: 2;
+        margin-start: 12;
+        margin-end: 12;
+
+        Gtk.Label {
+          label: _("Category:");
+          valign: center;
+
+          styles [
+            "caption",
+            "dim-label",
+          ]
+        }
+
+        Gtk.DropDown category_dropdown {
+          tooltip-text: _("Which log file to view. The bug-report bundle always uses the complete master log regardless of this selection.");
+        }
+
+        Gtk.Box {
+          width-request: 16;
+        }
+
+        Gtk.Label {
+          label: _("Level:");
+          valign: center;
+
+          styles [
+            "caption",
+            "dim-label",
+          ]
+        }
+
+        Gtk.DropDown level_dropdown {
+          tooltip-text: _("Show lines at the selected level and above (display only). What is actually written to the log files is controlled in Preferences → Advanced → Logging.");
+        }
+      }
+
+      Gtk.Box {
+        orientation: horizontal;
+        spacing: 6;
+        margin-top: 2;
+        margin-bottom: 8;
+        margin-start: 12;
+        margin-end: 12;
+
+        Gtk.SearchEntry search_entry {
+          placeholder-text: _("Search visible lines (case-insensitive)");
+          hexpand: true;
+        }
+      }
+
+      Gtk.ScrolledWindow {
+        hscrollbar-policy: automatic;
+        vscrollbar-policy: automatic;
+        vexpand: true;
+
+        Gtk.TextView textview {
+          monospace: true;
+          editable: false;
+          cursor-visible: false;
+          wrap-mode: word_char;
+          top-margin: 8;
+          bottom-margin: 8;
+          left-margin: 12;
+          right-margin: 12;
+        }
+      }
+    };
+  };
+}

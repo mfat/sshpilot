@@ -404,7 +404,7 @@ def main():
     for i, t in enumerate(results, 1):
         note = t.error or f"{t.prompt_chars} chars"
         print(
-            f"{i:5d} {str(t.cold):>5} {_fmt(t.t_pty_ms)} {_fmt(t.t_ready_ms)} "
+            f"{i:5d} {t.cold!s:>5} {_fmt(t.t_pty_ms)} {_fmt(t.t_ready_ms)} "
             f"{_fmt(t.t_flush_ms)} {_fmt(t.t_paint_ms)}  {note}"
         )
 

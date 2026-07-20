@@ -273,8 +273,7 @@ def test_local_terminal_sets_pty_size_before_spawn(monkeypatch, caplog):
             'terminal.shell': '/bin/bash',
         }.get(key, default),
     )
-    
-    terminal._is_local_shell = True
+
     terminal.apply_theme = lambda *a, **k: None
     terminal._set_connecting_overlay_visible = lambda *a, **k: None
     terminal._set_disconnected_banner_visible = lambda *a, **k: None

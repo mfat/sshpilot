@@ -1,0 +1,78 @@
+/* SSH Pilot application stylesheet.
+ *
+ * Static, app-wide rules, bundled in the GResource and loaded once at
+ * APPLICATION priority from SshPilotApplication.do_startup(). Runtime/dynamic
+ * CSS (accent-colour overrides, per-group terminal colours, per-widget zoom)
+ * stays inline in the widgets that compute it. */
+
+/* Connecting overlay backdrop (terminal.py). */
+.connecting-bg {
+    background-color: #000000;
+}
+
+/* Key-order badge / key-type pill (connection_dialog.py). */
+.key-order-badge {
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 999px;
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+    font-weight: bold;
+    padding: 0;
+}
+.key-type-pill {
+    background-color: alpha(@accent_color, 0.15);
+    color: @accent_color;
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-size: 0.8em;
+    font-weight: bold;
+    min-width: 72px;
+}
+
+/* Port-forwarding indicators (sidebar.py). */
+.pf-indicator {}
+.pf-local { color: #E01B24; }
+.pf-remote { color: #2EC27E; }
+.pf-dynamic { color: #3584E4; }
+
+/* Start page (welcome_page.py). */
+.startpage-hero {
+    background-color: alpha(@accent_bg_color, 0.15);
+    border: 1px solid alpha(@accent_color, 0.3);
+    border-radius: 16px;
+    min-width: 64px;
+    min-height: 64px;
+}
+.startpage-hero image { color: @accent_color; }
+.startpage-chip {
+    padding: 7px 16px;
+    border-radius: 9999px;
+    min-height: 0;
+    background: transparent;
+    border: 1px solid alpha(@window_fg_color, 0.18);
+    box-shadow: none;
+}
+.startpage-chip:hover { background: alpha(@window_fg_color, 0.08); }
+.startpage-chip:active { background: alpha(@window_fg_color, 0.14); }
+.startpage-mono {
+    font-family: monospace;
+    font-size: 0.85em;
+}
+.startpage-recent-head {
+    font-size: 0.8em;
+    font-weight: normal;
+    opacity: 0.55;
+    padding-bottom: 8px;
+    border-bottom: 1px solid alpha(@window_fg_color, 0.12);
+}
+.startpage-recent-row, .startpage-recent-row label { font-weight: normal; }
+.startpage-recent-row {
+    padding: 9px 2px;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+    min-height: 0;
+    border-bottom: 1px solid alpha(@window_fg_color, 0.08);
+}
+.startpage-recent-row:hover { background: alpha(@window_fg_color, 0.06); }

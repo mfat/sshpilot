@@ -1,0 +1,822 @@
+"""Platform-related utility functions."""
+
+from __future__ import annotations
+
+import logging
+import os
+import platform
+import shlex
+import shutil
+import subprocess
+import time
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+from gi.repository import GLib
+
+logger = logging.getLogger(__name__)
+
+APP_ID = "io.github.mfat.sshpilot"
+APP_NAME = "sshpilot"
+
+
+def is_macos() -> bool:
+    """Return True if running on macOS."""
+    return platform.system() == "Darwin"
+
+
+def is_windows() -> bool:
+    """Return True if running on Windows."""
+    return platform.system() == "Windows"
+
+
+_BITWARDEN_DESKTOP_APP = "com.bitwarden.desktop"
+_BW_VERIFY_TIMEOUT = 20
+_bw_binding_cache: Optional[Tuple["BwCliBinding", float]] = None
+_bw_unverified_cache: Optional[Tuple[Optional[Tuple[str, ...]], float]] = None
+_BW_CACHE_TTL = 30.0
+_host_env_cache: dict[str, Optional[str]] = {}
+
+
+@dataclass(frozen=True)
+class BwCliBinding:
+    """A verified (or candidate) Bitwarden CLI invocation."""
+
+    argv_prefix: Tuple[str, ...]
+    source: str
+
+
+def _verify_bw_argv(argv_prefix: List[str]) -> bool:
+    """True when ``bw --version`` succeeds for this argv prefix."""
+    try:
+        result = subprocess.run(
+            argv_prefix + ["--version"],
+            capture_output=True, text=True, timeout=_BW_VERIFY_TIMEOUT, check=False,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _flatpak_bitwarden_cli_prefix(flatpak_argv: List[str]) -> Optional[List[str]]:
+    """Return argv prefix for ``bw`` bundled in the Bitwarden desktop Flatpak, if installed."""
+    try:
+        result = subprocess.run(
+            flatpak_argv + ["info", _BITWARDEN_DESKTOP_APP],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if result.returncode == 0:
+            return flatpak_argv + ["run", "--command=bw", _BITWARDEN_DESKTOP_APP]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def _host_env(name: str) -> Optional[str]:
+    """Read an environment variable from the Flatpak host, cached."""
+    if name in _host_env_cache:
+        return _host_env_cache[name]
+    value: Optional[str] = None
+    if is_flatpak():
+        spawn = shutil.which("flatpak-spawn")
+        if spawn:
+            try:
+                result = subprocess.run(
+                    [spawn, "--host", "printenv", name],
+                    capture_output=True, text=True, timeout=10, check=False,
+                )
+                if result.returncode == 0 and (result.stdout or "").strip():
+                    value = (result.stdout or "").strip()
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                pass
+    else:
+        value = os.environ.get(name) or None
+    _host_env_cache[name] = value
+    return value
+
+
+def get_managed_bw_cli_dir() -> str:
+    """Directory where sshPilot installs the Bitwarden CLI (``$XDG_DATA_HOME/sshpilot/bin``)."""
+    if is_flatpak():
+        home = _host_env("HOME")
+        if home:
+            data_home = _host_env("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+            return os.path.join(data_home, APP_NAME, "bin")
+    return os.path.join(get_data_dir(), "bin")
+
+
+def _legacy_managed_bw_cli_path() -> str:
+    """Previous install location (``$XDG_STATE_HOME/sshpilot/bin/bw``), for discovery only."""
+    if is_flatpak():
+        home = _host_env("HOME")
+        if home:
+            state_home = _host_env("XDG_STATE_HOME") or os.path.join(home, ".local", "state")
+            return os.path.join(state_home, APP_NAME, "bin", "bw")
+    return os.path.join(get_state_dir(), "bin", "bw")
+
+
+def get_managed_bw_cli_path() -> str:
+    """Absolute path where sshPilot installs the Bitwarden CLI binary."""
+    return os.path.join(get_managed_bw_cli_dir(), "bw")
+
+
+def _managed_bw_cli_argv(path: str) -> Optional[List[str]]:
+    """Return an argv prefix for a managed ``bw`` install at ``path``, if executable."""
+    if is_flatpak():
+        spawn = shutil.which("flatpak-spawn")
+        if not spawn:
+            return None
+        try:
+            result = subprocess.run(
+                [spawn, "--host", "test", "-x", path],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if result.returncode != 0:
+                return None
+            return [spawn, "--host", path]
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return None
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        return [path]
+    return None
+
+
+def _discover_bw_cli_bindings(*, path_only: bool = True) -> List[BwCliBinding]:
+    """Candidate ``bw`` sources without running them.
+
+    ``path_only`` (default): only ``bw`` on PATH (incl. Flatpak host spawn).
+    When False, also includes the Bitwarden desktop Flatpak CLI (not on PATH).
+    """
+    out: List[BwCliBinding] = []
+    found = resolve_host_binary("bw")
+    if found:
+        if found[0] == shutil.which("flatpak-spawn") or found[0].endswith("flatpak-spawn"):
+            out.append(BwCliBinding(tuple(found), "Host PATH (flatpak-spawn --host bw)"))
+        elif len(found) == 1 and os.path.isabs(found[0]):
+            out.append(BwCliBinding(tuple(found), f"PATH ({found[0]})"))
+        else:
+            out.append(BwCliBinding(tuple(found), "PATH (bw)"))
+    managed = get_managed_bw_cli_path()
+    managed_argv = _managed_bw_cli_argv(managed)
+    if managed_argv and not any(list(c.argv_prefix) == managed_argv for c in out):
+        out.append(BwCliBinding(tuple(managed_argv), f"sshPilot install ({managed})"))
+    elif not managed_argv:
+        legacy = _legacy_managed_bw_cli_path()
+        if legacy != managed:
+            legacy_argv = _managed_bw_cli_argv(legacy)
+            if legacy_argv and not any(list(c.argv_prefix) == legacy_argv for c in out):
+                out.append(BwCliBinding(tuple(legacy_argv), f"sshPilot install ({legacy})"))
+    if path_only:
+        return out
+    flatpak = shutil.which("flatpak")
+    if flatpak:
+        prefix = _flatpak_bitwarden_cli_prefix([flatpak])
+        if prefix:
+            out.append(BwCliBinding(
+                tuple(prefix),
+                f"Bitwarden desktop Flatpak ({_BITWARDEN_DESKTOP_APP})",
+            ))
+    if is_flatpak():
+        spawn = shutil.which("flatpak-spawn")
+        if spawn:
+            prefix = _flatpak_bitwarden_cli_prefix([spawn, "--host", "flatpak"])
+            if prefix:
+                out.append(BwCliBinding(
+                    tuple(prefix),
+                    f"Bitwarden desktop Flatpak on host ({_BITWARDEN_DESKTOP_APP})",
+                ))
+    return out
+
+
+def resolve_bw_cli_binding(
+    *,
+    verify: bool = True,
+    force_refresh: bool = False,
+    path_only: bool = True,
+) -> Optional[BwCliBinding]:
+    """Return the first usable Bitwarden CLI binding, verified with ``bw --version``.
+
+    By default only considers ``bw`` on PATH (``path_only=True``). The Bitwarden
+    desktop Flatpak bundles a ``bw`` command but it is not on PATH — use
+    ``path_only=False`` only when explicitly probing that fallback.
+    """
+    global _bw_binding_cache
+    now = time.monotonic()
+    # The shared cache holds a *verified* binding; only read/write it when
+    # verifying, so an unverified label lookup can't hand a stale/unverified
+    # binding to a verify=True caller.
+    use_cache = path_only and verify
+    if (
+        use_cache
+        and not force_refresh
+        and _bw_binding_cache is not None
+        and now - _bw_binding_cache[1] < _BW_CACHE_TTL
+    ):
+        return _bw_binding_cache[0]
+
+    binding: Optional[BwCliBinding] = None
+    for candidate in _discover_bw_cli_bindings(path_only=path_only):
+        verified = (not verify) or _verify_bw_argv(list(candidate.argv_prefix))
+        if verified:
+            binding = candidate
+            break
+    if use_cache:
+        _bw_binding_cache = (binding, now) if binding else None
+    return binding
+
+
+def invalidate_bw_cli_cache() -> None:
+    """Drop cached ``bw`` discovery (e.g. after install/uninstall)."""
+    global _bw_binding_cache, _bw_unverified_cache
+    _bw_binding_cache = None
+    _bw_unverified_cache = None
+
+
+def resolve_bw_cli_unverified() -> Optional[List[str]]:
+    """Argv prefix for ``bw`` discovered on PATH/managed **without** running ``bw
+    --version``.
+
+    Cheap (``shutil.which`` / file checks; under Flatpak a fast ``flatpak-spawn``
+    probe, cached below) — for command-building and UI availability checks that must
+    not block the GTK main thread on a Node cold start. The verifying resolver
+    (:func:`resolve_bw_cli`) stays for install/setup confirmation, which runs
+    off-thread. The discovered argv is identical; only the ``--version`` verification
+    is skipped, so a broken ``bw`` simply fails when actually run.
+    """
+    global _bw_unverified_cache
+    now = time.monotonic()
+    if (
+        _bw_unverified_cache is not None
+        and now - _bw_unverified_cache[1] < _BW_CACHE_TTL
+    ):
+        cached = _bw_unverified_cache[0]
+        return list(cached) if cached else None
+    try:
+        bindings = _discover_bw_cli_bindings(path_only=True)
+    except Exception:
+        bindings = []
+    argv = tuple(bindings[0].argv_prefix) if bindings else None
+    _bw_unverified_cache = (argv, now)
+    return list(argv) if argv else None
+
+
+def bw_cli_discoverable() -> bool:
+    """True when a ``bw`` binary is present on PATH/managed **without** running it.
+
+    For UI availability labels that must not block the GTK main thread on the Node
+    ``bw --version`` probe. See :func:`resolve_bw_cli_unverified`.
+    """
+    return resolve_bw_cli_unverified() is not None
+
+
+def resolve_bw_cli(*, force_refresh: bool = False) -> Optional[List[str]]:
+    """Return an argv prefix for the Bitwarden CLI (``bw``), verified when possible."""
+    binding = resolve_bw_cli_binding(force_refresh=force_refresh)
+    if binding is None:
+        return None
+    return list(binding.argv_prefix)
+
+
+def describe_bw_cli_source(
+    *, force_refresh: bool = False, verify: bool = True
+) -> Optional[str]:
+    """Human-readable label for the active ``bw`` source, if any.
+
+    Pass ``verify=False`` for UI labels that must not block the GTK main thread on
+    the Node ``bw --version`` probe (the source string is the same either way).
+    """
+    binding = resolve_bw_cli_binding(force_refresh=force_refresh, verify=verify)
+    return binding.source if binding else None
+
+
+def resolve_bw_cli_path(*, force_refresh: bool = False) -> Optional[str]:
+    """Absolute path to the ``bw`` executable sshPilot will run, if any."""
+    binding = resolve_bw_cli_binding(force_refresh=force_refresh)
+    if binding is None:
+        return None
+    argv = list(binding.argv_prefix)
+    if not argv:
+        return None
+    if argv[0].endswith("flatpak-spawn") and len(argv) >= 3:
+        candidate = argv[-1]
+        return candidate if os.path.isabs(candidate) else None
+    if len(argv) == 1 and os.path.isabs(argv[0]):
+        return argv[0]
+    return None
+
+
+def is_flatpak() -> bool:
+    """Return True if running inside a Flatpak sandbox."""
+    return os.environ.get("FLATPAK_ID") is not None or os.path.exists("/.flatpak-info")
+
+
+def resolve_host_binary(binary: str) -> Optional[List[str]]:
+    """Return an argv *prefix* that runs ``binary``:
+
+    * ``[<abs path>]`` when it is in the sandbox ``PATH``;
+    * ``[flatpak-spawn, --host, binary]`` when it exists only on the Flatpak host;
+    * ``None`` when it cannot be found either way.
+
+    Callers append their own arguments to the returned list.
+    """
+    found = shutil.which(binary)
+    if found:
+        return [found]
+    if is_flatpak():
+        spawn = shutil.which("flatpak-spawn")
+        if spawn:
+            try:
+                result = subprocess.run(
+                    [spawn, "--host", "which", binary],
+                    capture_output=True, text=True, timeout=10, check=False,
+                )
+                if result.returncode == 0 and (result.stdout or "").strip():
+                    return [spawn, "--host", binary]
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                pass
+    return None
+
+
+# Env vars the Bitwarden CLI (and related host tools) must see when spawned via
+# ``flatpak-spawn --host``. That path does **not** forward the sandbox process
+# environment — without forwarding, host ``bw unlock --passwordenv BW_PASSWORD``
+# always fails with "Master password is required."
+FLATPAK_HOST_BW_ENV_KEYS: Tuple[str, ...] = (
+    "BW_PASSWORD",
+    "BW_SESSION",
+    "BW_CLIENTID",
+    "BW_CLIENTSECRET",
+    "BITWARDENCLI_APPDATA_DIR",
+    "NODE_EXTRA_CA_CERTS",
+)
+
+
+def inject_flatpak_host_env(
+    argv: List[str],
+    env: Optional[dict],
+    *,
+    keys: Tuple[str, ...] = FLATPAK_HOST_BW_ENV_KEYS,
+) -> Tuple[List[str], Tuple[int, ...]]:
+    """Forward selected env vars into a ``flatpak-spawn --host …`` argv.
+
+    Returns ``(argv, pass_fds)``. When forwarding is needed, a ``--env-fd=N``
+    flag is inserted and ``pass_fds`` holds the memfd ``N`` carrying the
+    NUL-terminated ``KEY=VALUE`` assignments (``env -0`` format). ``--env-fd``
+    is used instead of ``--env=KEY=VALUE`` so secrets (master password, session
+    token) never appear in the world-readable ``/proc/<pid>/cmdline``.
+
+    The caller must spawn with ``pass_fds`` and close those fds afterwards.
+    No-op — ``(argv, ())`` — when ``argv`` is not a host spawn, no key has a
+    value, or a key already has an explicit ``--env=`` flag. Empty values are
+    skipped.
+    """
+    if not argv or not env or not keys:
+        return list(argv), ()
+    spawn = argv[0]
+    if not (spawn.endswith("flatpak-spawn") and len(argv) >= 3 and argv[1] == "--host"):
+        return list(argv), ()
+
+    # Options after ``--host`` come before the host command. Insert after any that
+    # are already present so we do not reorder caller-supplied flags.
+    insert_at = 2
+    existing: set[str] = set()
+    while insert_at < len(argv) and argv[insert_at].startswith("--"):
+        opt = argv[insert_at]
+        if opt.startswith("--env="):
+            existing.add(opt[6:].split("=", 1)[0])
+        insert_at += 1
+
+    payload = b""
+    for key in keys:
+        if key in existing:
+            continue
+        value = env.get(key)
+        if value is None or value == "":
+            continue
+        payload += f"{key}={value}".encode() + b"\0"
+    if not payload:
+        return list(argv), ()
+
+    # Linux-only, but so is flatpak-spawn. flatpak-spawn reads the fd via
+    # /proc/self/fd/N, so a memfd needs no rewind.
+    fd = os.memfd_create("sshpilot-host-env")
+    os.write(fd, payload)
+    os.lseek(fd, 0, os.SEEK_SET)
+    return (
+        list(argv[:insert_at]) + [f"--env-fd={fd}"] + list(argv[insert_at:]),
+        (fd,),
+    )
+
+
+def get_config_dir() -> str:
+    """Return the per-user configuration directory for sshPilot."""
+    return os.path.join(GLib.get_user_config_dir(), APP_NAME)
+
+
+def get_data_dir() -> str:
+    """Return the per-user data directory for sshPilot."""
+    return os.path.join(GLib.get_user_data_dir(), APP_NAME)
+
+
+def get_state_dir() -> str:
+    """Return the per-user state directory for sshPilot.
+
+    Per the XDG Base Directory specification, ``$XDG_STATE_HOME`` (default
+    ``~/.local/state``) is the right home for *state* that should survive
+    restarts but isn't important enough for ``$XDG_DATA_HOME`` — which the
+    spec explicitly lists as covering "actions history (logs, history,
+    recently used files, …)" and the current state of the application.
+
+    Prefers :func:`GLib.get_user_state_dir` when available (GLib ≥ 2.72)
+    so Flatpak and other portal-mediated environments stay consistent with
+    GLib's own resolution; otherwise resolves the spec by hand.
+    """
+    if hasattr(GLib, "get_user_state_dir"):
+        try:
+            return os.path.join(GLib.get_user_state_dir(), APP_NAME)
+        except Exception:
+            pass
+    state_home = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state"
+    )
+    return os.path.join(state_home, APP_NAME)
+
+
+def _build_restart_command(executable, argv, main_spec):
+    """Build the argv list to re-exec the app, preserving how it was launched.
+
+    ``main_spec`` is ``__main__.__spec__`` (or ``None``). When the app was
+    started with ``python -m <module>`` (Flatpak uses ``-m sshpilot.main``),
+    ``__spec__`` is set and ``argv[0]`` is just the module's file path — running
+    that path directly would execute it as a top-level script with no package
+    context, breaking the module-level relative imports. In that case re-exec via
+    ``-m <spec.name>`` so the package context is preserved. Otherwise (a plain
+    script like ``run.py`` or a console entry point, where ``__spec__`` is None)
+    re-exec the original argv unchanged.
+    """
+    name = getattr(main_spec, 'name', None) if main_spec is not None else None
+    if name:
+        return [executable, '-m', name] + list(argv[1:])
+    return [executable] + list(argv)
+
+
+def restart_app() -> None:
+    """Replace the current process with a fresh instance of the same app.
+
+    Works on Linux (including Flatpak) and macOS.  The setting must be
+    persisted before this is called — os.execv replaces the process
+    immediately with no further cleanup.
+    """
+    import sys
+    import __main__
+    # os.execv keeps the current environment (e.g. SSHPILOT_FLATPAK).
+    args = _build_restart_command(
+        sys.executable, sys.argv, getattr(__main__, '__spec__', None)
+    )
+    os.execv(sys.executable, args)
+
+
+_sshpass_path_cache: str | None = None
+_sshpass_checked: bool = False
+
+
+def get_sshpass_path() -> str | None:
+    """Return the path to the sshpass binary, or None if unavailable.
+
+    The result is cached after the first call so repeated lookups are free.
+    Checks the Flatpak-bundled location first, then falls back to PATH.
+    """
+    global _sshpass_path_cache, _sshpass_checked
+    if _sshpass_checked:
+        return _sshpass_path_cache
+
+    flatpak_path = "/app/bin/sshpass"
+    if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
+        _sshpass_path_cache = flatpak_path
+    else:
+        _sshpass_path_cache = shutil.which("sshpass")
+
+    _sshpass_checked = True
+    return _sshpass_path_cache
+
+
+def get_ssh_dir() -> str:
+    """Return the user's SSH directory.
+
+    By default this uses GLib's concept of the home directory and appends
+    ``.ssh``. The location can be overridden by setting the
+    ``SSHPILOT_SSH_DIR`` environment variable.
+    """
+    override = os.environ.get("SSHPILOT_SSH_DIR")
+    if override:
+        return os.path.expanduser(override)
+    return os.path.join(GLib.get_home_dir(), ".ssh")
+
+
+
+def get_default_terminal_command() -> Optional[List[str]]:
+    """Get the default terminal command from the desktop environment."""
+    try:
+        if is_macos():
+            # Map bundle identifiers to display names in preference order.
+            mac_terms = {
+                'com.apple.Terminal': 'Terminal',
+                'com.googlecode.iterm2': 'iTerm',
+
+                'dev.warp.Warp': 'Warp',
+                'io.alacritty': 'Alacritty',
+                'net.kovidgoyal.kitty': 'Kitty',
+                'com.mitmaro.ghostty': 'Ghostty',
+            }
+
+            for bundle_id, name in mac_terms.items():
+                # First try AppleScript lookup by app name
+                try:
+                    result = subprocess.run(
+                        ['osascript', '-e', f'id of app "{name}"'],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                    )
+                    if result.returncode == 0 and bundle_id in result.stdout:
+                        return ['open', '-a', name]
+                except Exception:
+                    pass
+
+                # Fallback to Spotlight metadata search by bundle identifier
+                try:
+                    result = subprocess.run(
+                        ['mdfind', f'kMDItemCFBundleIdentifier=={bundle_id}'],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        return ['open', '-a', name]
+                except Exception:
+                    pass
+
+            return None
+
+        desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+
+        if 'gnome' in desktop:
+            # Try gnome-terminal first, then ptyxis as fallback
+            for term in ('gnome-terminal', 'ptyxis'):
+                try:
+                    result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return [term]
+                except Exception:
+                    pass
+            return None
+        elif 'kde' in desktop or 'plasma' in desktop:
+            return ['konsole']
+        elif 'xfce' in desktop:
+            return ['xfce4-terminal']
+        elif 'cinnamon' in desktop:
+            return ['gnome-terminal']
+        elif 'mate' in desktop:
+            return ['mate-terminal']
+        elif 'lxqt' in desktop:
+            return ['qterminal']
+        elif 'lxde' in desktop:
+            return ['lxterminal']
+
+        common_terminals = [
+            'gnome-terminal', 'ptyxis', 'konsole', 'xfce4-terminal', 'alacritty',
+            'kitty', 'terminator', 'tilix', 'guake'
+        ]
+
+        for term in common_terminals:
+            try:
+                result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    return [term]
+            except Exception:
+                continue
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Failed to get default terminal: {e}")
+        return None
+
+
+def get_user_preferred_terminal(config) -> Optional[List[str]]:
+    """Get the user's preferred terminal from settings."""
+    try:
+        preferred_terminal = config.get_setting('external-terminal', 'gnome-terminal')
+
+        if preferred_terminal == 'custom':
+            custom_path = config.get_setting('custom-terminal-path', '')
+            if custom_path:
+                if is_macos():
+                    return ['open', '-a', custom_path]
+                return [custom_path]
+            else:
+                logger.warning("Custom terminal path is not set, falling back to built-in terminal")
+                return None
+
+        if is_macos():
+            # Preferences may store either an app name ("iTerm") or a full
+            # command ("open -a iTerm").  If the value already starts with
+            # "open" use it verbatim, otherwise build an "open -a" command
+            # for the specified app.
+            if preferred_terminal.startswith('open'):
+                return shlex.split(preferred_terminal)
+
+            return ['open', '-a', preferred_terminal]
+
+        try:
+            result = subprocess.run(['which', preferred_terminal], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                return [preferred_terminal]
+            else:
+                logger.warning(f"Preferred terminal '{preferred_terminal}' not found, falling back to built-in terminal")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to check preferred terminal '{preferred_terminal}': {e}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Failed to get user preferred terminal: {e}")
+        return None
+
+
+def find_any_terminal() -> Optional[List[str]]:
+    """Last-resort terminal discovery: probe common emulators, then xdg-terminal."""
+    for term in (
+        'gnome-terminal', 'ptyxis', 'konsole', 'xterm', 'alacritty',
+        'kitty', 'terminator', 'tilix', 'xfce4-terminal', 'xdg-terminal',
+    ):
+        try:
+            result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                return [term]
+        except Exception:
+            continue
+    return None
+
+
+# C0 controls and DEL. Rejected outright rather than escaped: `do script` and
+# `write text` type their argument into a shell, where a newline is Enter --
+# and AppleScript's \n escape produces a *real* newline in the string value, so
+# escaping it makes the script compile and then hands the shell two commands.
+# Escaping is the wrong tool here; refusing to launch is the right one.
+_CONTROL_CHARS = frozenset(chr(c) for c in range(0x20)) | {'\x7f'}
+
+
+def _applescript_string(value: str) -> str:
+    """Render *value* as an AppleScript string literal, escapes included.
+
+    osascript takes the script as one argument, so anything interpolated into it
+    must be escaped or a quote in the value ends the literal and the rest is
+    executed as AppleScript. Backslash goes first so the escapes added below
+    survive.
+
+    Line breaks are escaped so the literal compiles, but that is *not* what
+    makes them safe -- \\n in AppleScript source becomes an actual newline in
+    the string, which `do script` would pass straight to the shell. Control
+    characters are rejected upstream in open_system_terminal(); this escaping
+    only keeps the helper correct in isolation.
+    """
+    escaped = (
+        value.replace('\\', '\\\\')
+        .replace('"', '\\"')
+        .replace('\n', '\\n')
+        .replace('\r', '\\r')
+    )
+    return '"' + escaped + '"'
+
+
+def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
+    """Launch a terminal emulator running *ssh_command*.
+
+    *ssh_command* is a shell command line (built with ``shlex.join``, so its own
+    arguments are already quoted). Terminals that take an argv get it as a
+    separate ``bash -c`` argument; the few that only accept a single string get
+    it quoted with ``shlex.quote`` / ``_applescript_string`` rather than
+    interpolated, so a Host alias containing a quote or backtick cannot break
+    out. Returns False on failure.
+
+    Control characters are refused rather than quoted: the AppleScript branches
+    type their command into a shell, where a newline is Enter, and no amount of
+    escaping changes that. shlex.quote happens to single-quote newlines today,
+    but that is a property of a helper two layers away, not a guarantee this
+    function should rely on.
+    """
+    if _CONTROL_CHARS.intersection(ssh_command):
+        logger.error("Refusing to open a terminal: command contains control characters")
+        return False
+
+    # Keep the shell reading input after ssh exits, so errors stay on screen.
+    keep_open = f'{ssh_command}; exec bash'
+    try:
+        if is_macos():
+            app = None
+            if terminal_command and terminal_command[0] == 'open':
+                # handle commands like ['open', '-a', 'App']
+                if len(terminal_command) >= 3 and terminal_command[1] == '-a':
+                    app = os.path.basename(terminal_command[2])
+            if app:
+                app_lower = app.lower()
+                if app_lower in ['terminal', 'terminal.app']:
+                    script = (
+                        f'tell app "Terminal" to do script {_applescript_string(ssh_command)}\n'
+                        'tell app "Terminal" to activate'
+                    )
+                    cmd = ['osascript', '-e', script]
+                elif app_lower in ['iterm', 'iterm2', 'iterm.app']:
+                    script = (
+                        'tell application "iTerm"\n'
+                        '    if (count of windows) = 0 then\n'
+                        '        create window with default profile\n'
+                        '    end if\n'
+                        '    tell current window\n'
+                        '        create tab with default profile\n'
+                        f'        tell current session to write text {_applescript_string(ssh_command)}\n'
+                        '    end tell\n'
+                        '    activate\n'
+                        'end tell'
+                    )
+                    cmd = ['osascript', '-e', script]
+                elif app_lower == 'warp':
+                    cmd = ['open', f'warp://{ssh_command}']
+                    # Warp handles focus automatically via URL scheme
+                elif app_lower in ['alacritty', 'kitty']:
+                    cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', keep_open]
+                    # Launch terminal and then activate it
+                    subprocess.Popen(cmd, start_new_session=True)
+                    time.sleep(0.5)  # Give the app time to launch
+                    activate_script = f'tell application "{app}" to activate'
+                    subprocess.Popen(['osascript', '-e', activate_script])
+                    return True
+                elif app_lower == 'ghostty':
+                    cmd = ['open', '-na', app, '--args', '-e', ssh_command]
+                    # Launch terminal and then activate it
+                    subprocess.Popen(cmd, start_new_session=True)
+                    time.sleep(0.5)  # Give the app time to launch
+                    activate_script = f'tell application "{app}" to activate'
+                    subprocess.Popen(['osascript', '-e', activate_script])
+                    return True
+                else:
+                    cmd = ['open', '-a', app, '--args', 'bash', '-lc', keep_open]
+                    # Launch terminal and then activate it
+                    subprocess.Popen(cmd, start_new_session=True)
+                    time.sleep(0.5)  # Give the app time to launch
+                    activate_script = f'tell application "{app}" to activate'
+                    subprocess.Popen(['osascript', '-e', activate_script])
+                    return True
+            else:
+                cmd = terminal_command + ['--args', 'bash', '-lc', keep_open]
+        else:
+            terminal_basename = os.path.basename(terminal_command[0])
+            if terminal_basename == 'ptyxis':
+                # Use --standalone with -- to start fresh instance with only our command
+                # This prevents opening a default window when ptyxis isn't running
+                cmd = terminal_command + ['--standalone', '--', 'bash', '-c', keep_open]
+            elif terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
+                cmd = terminal_command + ['--', 'bash', '-c', keep_open]
+            elif terminal_basename in ['konsole', 'terminator', 'guake']:
+                cmd = terminal_command + ['-e', f'bash -c {shlex.quote(keep_open)}']
+            elif terminal_basename in ['alacritty', 'kitty']:
+                cmd = terminal_command + ['-e', 'bash', '-c', keep_open]
+            elif terminal_basename == 'xterm':
+                cmd = terminal_command + ['-e', f'bash -c {shlex.quote(keep_open)}']
+            elif terminal_basename == 'xdg-terminal':
+                cmd = terminal_command + [ssh_command]
+            elif terminal_basename in ['ghostty']:
+                cmd = terminal_command + ['+new-window', '-e', 'bash', '-c', keep_open]
+            else:
+                cmd = terminal_command + [ssh_command]
+
+        logger.info(f"Launching system terminal: {' '.join(cmd)}")
+        subprocess.Popen(cmd, start_new_session=True)
+
+        # Try to bring the terminal to front on Linux
+        if not is_macos():
+            try:
+                # Try wmctrl first (more reliable)
+                result = subprocess.run(['which', 'wmctrl'], capture_output=True, timeout=1)
+                terminal_basename = os.path.basename(terminal_command[0])
+                if result.returncode == 0:
+                    time.sleep(0.5)  # Give the terminal time to launch
+                    subprocess.Popen(['wmctrl', '-a', terminal_basename],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    # Fallback to xdotool
+                    result = subprocess.run(['which', 'xdotool'], capture_output=True, timeout=1)
+                    if result.returncode == 0:
+                        time.sleep(0.5)  # Give the terminal time to launch
+                        subprocess.Popen(['xdotool', 'search', '--name', terminal_basename, 'windowactivate'],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                # Ignore focus errors - terminal launching is more important
+                pass
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to open system terminal: {e}")
+        return False

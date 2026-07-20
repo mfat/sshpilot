@@ -25,7 +25,7 @@ def _plugin_dirs():
     """(package_key, has_plugin_json) for each plugin dir under builtin/examples."""
     out = []
     for tier in ("builtin", "examples"):
-        base = os.path.join(ROOT, "sshpilot", "plugins", tier)
+        base = os.path.join(ROOT, "src", "sshpilot", "plugins", tier)
         if not os.path.isdir(base):
             continue
         for name in sorted(os.listdir(base)):

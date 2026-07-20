@@ -1,0 +1,100 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $MonospaceFontDialog: Adw.Window {
+  title: _("Select Terminal Font");
+  default-width: 500;
+  default-height: 600;
+  modal: true;
+
+  content: Gtk.Box {
+    orientation: vertical;
+    spacing: 12;
+    margin-top: 12;
+    margin-bottom: 12;
+    margin-start: 12;
+    margin-end: 12;
+
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Gtk.Button {
+        label: _("Cancel");
+        clicked => $on_cancel();
+      }
+
+      [end]
+      Gtk.Button {
+        label: _("Select");
+
+        styles [
+          "suggested-action",
+        ]
+
+        clicked => $on_select();
+      }
+    }
+
+    Gtk.SearchEntry search_entry {
+      placeholder-text: _("Search fonts...");
+      search-changed => $on_search_changed();
+    }
+
+    Gtk.ScrolledWindow {
+      vexpand: true;
+      hscrollbar-policy: never;
+      vscrollbar-policy: automatic;
+
+      Gtk.TreeView font_view {
+        headers-visible: false;
+      }
+    }
+
+    Gtk.Box {
+      orientation: horizontal;
+      spacing: 6;
+
+      Gtk.Label {
+        label: _("Size:");
+        halign: start;
+      }
+
+      Gtk.SpinButton size_spin {
+        adjustment: Gtk.Adjustment {
+          lower: 6;
+          upper: 72;
+          step-increment: 1;
+        };
+
+        value-changed => $on_size_changed();
+      }
+    }
+
+    Gtk.Frame {
+      label: _("Preview");
+
+      Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vscrollbar-policy: automatic;
+        min-content-height: 140;
+        max-content-height: 140;
+        hexpand: true;
+        vexpand: false;
+
+        Gtk.Label preview_label {
+          label: "The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?";
+          selectable: true;
+          wrap: true;
+          wrap-mode: word_char;
+          xalign: 0;
+          margin-top: 12;
+          margin-bottom: 12;
+          margin-start: 12;
+          margin-end: 12;
+        }
+      }
+    }
+  };
+}

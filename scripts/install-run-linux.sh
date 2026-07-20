@@ -37,7 +37,7 @@ ok()    { printf '%s\n' "${C_GREEN}✓${C_RESET} $*"; }
 warn()  { printf '%s\n' "${C_YELLOW}!${C_RESET} $*" >&2; }
 die()   { printf '%s\n' "${C_RED}error:${C_RESET} $*" >&2; exit 1; }
 
-trap 'die "failed at line $LINENO. Re-run with the command shown above, or follow documentation/running-from-source.md."' ERR
+trap 'die "failed at line $LINENO. Re-run with the command shown above, or follow docs/running-from-source.md."' ERR
 
 usage() { sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
@@ -57,7 +57,7 @@ done
 DRYRUN="${SSHPILOT_DRYRUN:-0}"
 
 # --- platform guard ---------------------------------------------------------
-[[ "$(uname -s)" == "Linux" ]] || die "This script is for Linux. On macOS see documentation/INSTALL-macos.md."
+[[ "$(uname -s)" == "Linux" ]] || die "This script is for Linux. On macOS see docs/INSTALL-macos.md."
 
 # --- distro detection -------------------------------------------------------
 detect_ids() {
@@ -103,7 +103,7 @@ case " $ids " in
         cat >&2 <<EOF
 
 Install these manually, then create a --system-site-packages venv and
-'pip install -r requirements.txt' (see documentation/running-from-source.md):
+'pip install -r requirements.txt' (see docs/running-from-source.md):
 
   GTK4, libadwaita, VTE (GTK4 build), GtkSourceView 5, libsecret,
   PyGObject + pycairo, plus: python3-cryptography sshpass
@@ -147,7 +147,7 @@ fi
 # --- install system packages ------------------------------------------------
 info "Installing system dependencies (this may ask for your password)…"
 [[ ${#PREP[@]} -gt 0 ]] && { "${PREP[@]}" || die "package index update failed."; }
-"${INSTALL[@]}" || die "system package installation failed. Check the package names in documentation/running-from-source.md for your distro."
+"${INSTALL[@]}" || die "system package installation failed. Check the package names in docs/running-from-source.md for your distro."
 ok "System dependencies installed."
 
 # --- locate or clone the source tree ----------------------------------------

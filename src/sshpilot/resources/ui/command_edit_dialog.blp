@@ -1,0 +1,43 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotCommandEditDialog: Adw.Window {
+  modal: true;
+  default-width: 520;
+  default-height: 580;
+
+  content: Gtk.Box {
+    orientation: vertical;
+
+    Adw.HeaderBar {
+      [start]
+      Gtk.Button cancel_btn {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button save_btn {
+        label: _("Save");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    Gtk.ScrolledWindow {
+      hscrollbar-policy: never;
+      vscrollbar-policy: automatic;
+      vexpand: true;
+
+      Gtk.Box body {
+        orientation: vertical;
+        spacing: 16;
+        margin-start: 16;
+        margin-end: 16;
+        margin-top: 12;
+        margin-bottom: 16;
+      }
+    }
+  };
+}

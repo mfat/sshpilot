@@ -118,8 +118,8 @@ jobs:
         id: artifact-info
         run: |
           echo "=== DEBUG: Determining artifact names ==="
-          echo "=== DEBUG: Reading version from sshpilot/__init__.py ==="
-          VERSION=$(grep -o '__version__ = "[^"]*"' sshpilot/__init__.py | cut -d'"' -f2)
+          echo "=== DEBUG: Reading version from src/sshpilot/__init__.py ==="
+          VERSION=$(grep -o '__version__ = "[^"]*"' src/sshpilot/__init__.py | cut -d'"' -f2)
           echo "=== DEBUG: Extracted version: '$VERSION' ==="
           if [ -z "$VERSION" ]; then
             echo "=== DEBUG: Version is empty, using date ==="
@@ -242,6 +242,5 @@ jobs:
           files: |
             dist/${{ steps.artifact-info.outputs.dmg }}
           generate_release_notes: false
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

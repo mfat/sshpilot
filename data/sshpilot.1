@@ -1,0 +1,43 @@
+.TH SSHPILOT 1 "July 2026" "sshpilot 5.5.9" "User Commands"
+.SH NAME
+sshpilot \- SSH connection manager with integrated terminal
+.SH SYNOPSIS
+.B sshpilot
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B sshPilot
+is a GTK4/libadwaita SSH connection manager with an integrated VTE terminal,
+port forwarding and tunnelling, and an SFTP file manager. It stores connection
+profiles, integrates with the system keyring for credentials, and drives the
+native OpenSSH client for every connection.
+.SH OPTIONS
+.TP
+.BR \-\-verbose ", " \-v
+Verbose debug logging (overrides config).
+.TP
+.BR \-\-quiet ", " \-q
+Only show warnings and errors (overrides config).
+.TP
+.B \-\-isolated
+Use an isolated SSH configuration.
+.TP
+.B \-\-log\-gtk\-warnings
+Also capture lower-severity GTK/GLib info and debug messages.
+.TP
+.B \-\-fatal\-warnings
+Abort on the first GTK/GLib warning or critical, writing a full backtrace to
+crash.log.
+.TP
+.B \-\-diagnostics
+Shorthand for \fB\-\-verbose \-\-log\-gtk\-warnings\fR. Recommended when filing
+a bug report.
+.SH FILES
+.TP
+.I ~/.ssh/config
+The OpenSSH client configuration, which sshPilot treats as the source of truth
+for per-host settings.
+.SH SEE ALSO
+.BR ssh (1),
+.BR ssh_config (5)
+.SH AUTHOR
+mFat <newmfat@gmail.com>
