@@ -1,0 +1,5 @@
+option('python_install_dir',
+  type: 'string',
+  value: '',
+  description: 'Directory for the Python package. Empty (the default) uses the interpreter\'s site-packages, which is correct when the package is built once per Python version. Set an absolute or prefix-relative path for a build that must not encode the Python minor version in its payload paths -- see packaging/fedora/rpm.spec.',
+)

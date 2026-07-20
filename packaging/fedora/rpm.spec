@@ -29,13 +29,12 @@ BuildRequires:  appstream
 BuildRequires:  gtk-update-icon-cache
 
 
-# Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
-%global __requires_exclude ^python\\(abi\\)
-
 # Define _metainfodir for openSUSE compatibility (not defined by default on openSUSE)
 %{!?_metainfodir:%global _metainfodir %{_datadir}/metainfo}
 
-Requires:       python3
+# No explicit `Requires: python3`: the guidelines call for depending on the
+# interpreter through the generated /usr/bin/python3 dependency instead, and a
+# manual one would duplicate it.
 Requires:       python3-gobject
 Requires:       gtk4 >= 4.6
 # 1.5 for Adw.Dialog / Adw.AlertDialog, both used unguarded.
@@ -43,17 +42,28 @@ Requires:       libadwaita >= 1.5
 Requires:       vte291-gtk4 >= 0.70
 Requires:       gtksourceview5 >= 5.0
 Requires:       python3-cryptography
-Requires:       python3-secretstorage 
-Requires:       python3-flask
-Requires:       python3-flask-socketio
+# Secret storage. python3-keyring rather than python3-secretstorage: keyring is
+# what the code imports (secret_storage.py), and it pulls in whichever backend
+# the platform needs.
+Requires:       python3-keyring
+# port_utils.py and wol.py.
+Requires:       python3-psutil
 Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
+# Not optional: the embedded PyXterm terminal backend renders through a WebKit
+# WebView (xterm_shell.py builds the page, terminal_backends.py drives it over a
+# script-message handler). Without this the backend cannot start at all.
 Requires:       webkitgtk6.0
 # Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
 Recommends:     python3-pykeepass
 # For the built-in telnet protocol plugin (degrades gracefully if absent)
 Recommends:     telnet
+# Deliberately absent: python3-certifi is only consulted by builds with no
+# system CA store (the macOS bundle); update_checker.py falls back to the stdlib
+# default context, which is the correct one here. python3-flask and
+# python3-flask-socketio went with the old pyxtermjs server, replaced by the
+# in-process PTY bridge -- nothing imports them any more.
 
 %description
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
@@ -65,7 +75,14 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 # desktop entry and AppStream metainfo (merged from the .in templates), the icon
 # and sshpilot-agent. Nothing is replayed by hand here.
 %build
-%meson
+# -Dpython_install_dir: keep the payload out of %%{python3_sitelib}. That path
+# carries the Python minor version (…/python3.14/site-packages), so a noarch RPM
+# built once and installed on a distro with any other Python would put its files
+# where no interpreter looks -- installing cleanly and then failing to import.
+# The previous spec papered over this by filtering the python(abi) dependency,
+# which removed the error without removing the breakage. Both the launcher and
+# sshpilot-agent locate the package here.
+%meson -Dpython_install_dir=%{_datadir}/%{name}
 %meson_build
 
 # po/LINGUAS is still empty, so Meson installs nothing under %%{_datadir}/locale
@@ -98,7 +115,7 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %doc README*
 %{_bindir}/sshpilot
 %{_bindir}/sshpilot-agent
-%{python3_sitelib}/sshpilot/
+%{_datadir}/%{name}/
 %{_datadir}/io.github.mfat.sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml

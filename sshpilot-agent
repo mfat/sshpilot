@@ -7,6 +7,7 @@ system to provide proper PTY handling for local shells in Flatpak.
 """
 
 import glob
+import os
 import sys
 
 # Add sshpilot module to Python path. Covers Flatpak (/app), distro installs
@@ -15,6 +16,11 @@ import sys
 for base_path in ['/app', '/usr', '/usr/local']:
     for pkg_dir in ['site-packages', 'dist-packages']:
         for path in sorted(glob.glob(f'{base_path}/lib/python3*/{pkg_dir}')):
+            sys.path.insert(0, path)
+    # Builds that must not encode the Python minor version in their paths
+    # (the noarch RPM, via -Dpython_install_dir) land outside site-packages.
+    for path in (f'{base_path}/share/sshpilot', f'{base_path}/lib/sshpilot'):
+        if os.path.isdir(path):
             sys.path.insert(0, path)
 
 try:

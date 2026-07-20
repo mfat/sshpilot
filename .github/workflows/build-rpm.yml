@@ -76,7 +76,11 @@ jobs:
           set -eu
           RPM=$(ls artifacts/*.noarch.rpm | head -1)
           contents=$(rpm -qlp "$RPM")
-          # Everything the app needs at runtime must be present...
+          # Everything the app needs at runtime must be present. The two
+          # /usr/share/sshpilot entries are the Python payload and the bundled
+          # xterm.js the PyXterm backend falls back to when the distro has no
+          # system copy -- both moved out of site-packages, so assert them here
+          # rather than find out from a user that the app cannot import itself.
           for path in \
             /usr/bin/sshpilot \
             /usr/bin/sshpilot-agent \
@@ -84,6 +88,8 @@ jobs:
             /usr/share/applications/io.github.mfat.sshpilot.desktop \
             /usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml \
             /usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \
+            /usr/share/sshpilot/sshpilot/main.py \
+            /usr/share/sshpilot/sshpilot/vendor/pyxtermjs/xterm/xterm.js \
           ; do
             grep -qx "$path" <<<"$contents" || { echo "::error::missing $path"; exit 1; }
           done
