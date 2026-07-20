@@ -14,23 +14,13 @@
   </tr>
 </table>
 
-- [Features](#features)
-- [Download](#download)
-  - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
-  - [Debian/Ubuntu (Manual Install)](#--debianubuntu-manual-install)
-  - [Fedora/RHEL COPR Repository](#-fedorarhel-copr-repository)
-  - [Fedora/RHEL (Manual Install)](#-fedorarhel-manual-install)
-  - [Flatpak](#-flatpak)
-  - [Arch Linux](#-arch-linux)
-  - [Homebrew (macOS + Linux)](#-homebrew-macos--linux)
-  - [macOS](#-macos-aarch64)
-- [Minimum Requirements](#minimum-requirements)
-- [Run from Source](#-run-from-source)
-- [Documentation](#documentation)
-- [Telegram Channel](#telegram-channel)
-- [Third-Party Libraries](#third-party-libraries)
-- [Special Thanks](#special-thanks)
-- [Support Development](#support-development)
+| Getting started | [Install](#download) | Project |
+| --- | --- | --- |
+| [About](#about) | Debian / Ubuntu — [APT repo](#--debianubuntu-apt-repository) · [manual](#--debianubuntu-manual-install) | [Documentation](#documentation) |
+| [Features](#features) | Fedora / RHEL — [COPR](#-fedorarhel-copr-repository) · [manual](#-fedorarhel-manual-install) | [Telegram Channel](#telegram-channel) |
+| [Minimum Requirements](#minimum-requirements) | [Flatpak](#-flatpak) · [Arch Linux](#-arch-linux) | [Third-Party Libraries](#third-party-libraries) |
+| [Run from Source](#-run-from-source) | [Homebrew](#-homebrew-macos--linux) · [macOS](#-macos-aarch64) | [Special Thanks](#special-thanks) |
+| | | [Support Development](#support-development) |
 
 
 
