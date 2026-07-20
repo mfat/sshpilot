@@ -276,7 +276,7 @@ class WindowActions:
                     transient_for=self,
                     modal=True,
                     heading=_("Error"),
-                    body=_("Could not open the Copy Key window.\n\n{}").format(str(e))
+                    body=_("Could not open the Copy Key window.\n\n{error}").format(error=str(e))
                 )
                 error_dialog.add_response('ok', _('OK'))
                 error_dialog.present()
@@ -397,8 +397,8 @@ class WindowActions:
                     transient_for=self,
                     modal=True,
                     heading=_("Delete Group"),
-                    body=_("The group '{}' contains {} connection(s).\n\nWhat would you like to do with the connections?").format(
-                        group_info['name'], connection_count
+                    body=_("The group '{name}' contains {count} connection(s).\n\nWhat would you like to do with the connections?").format(
+                        name=group_info['name'], count=connection_count
                     )
                 )
                 
@@ -435,7 +435,7 @@ class WindowActions:
                     transient_for=self,
                     modal=True,
                     heading=_("Delete Group"),
-                    body=_("Are you sure you want to delete the empty group '{}'?").format(group_info['name'])
+                    body=_("Are you sure you want to delete the empty group '{name}'?").format(name=group_info['name'])
                 )
                 
                 dialog.add_response('cancel', _('Cancel'))
@@ -510,7 +510,7 @@ class WindowActions:
                     transient_for=self,
                     modal=True,
                     heading=_("Overwrite Session?"),
-                    body=_('A session named "{}" already exists. Overwrite it?').format(name),
+                    body=_('A session named "{name}" already exists. Overwrite it?').format(name=name),
                 )
                 confirm.add_response('cancel', _("Cancel"))
                 confirm.add_response('overwrite', _("Overwrite"))
@@ -603,7 +603,7 @@ class WindowActions:
             transient_for=self,
             modal=True,
             heading=_("Open Session"),
-            body=_('Replace the current tabs with session "{}", or add it to the current tabs?').format(name),
+            body=_('Replace the current tabs with session "{name}", or add it to the current tabs?').format(name=name),
         )
         dialog.add_response('cancel', _("Cancel"))
         dialog.add_response('add', _("Add to Current"))
@@ -742,7 +742,7 @@ class WindowActions:
             transient_for=parent,
             modal=True,
             heading=_("Rename Session"),
-            body=_('Enter a new name for "{}".').format(name),
+            body=_('Enter a new name for "{name}".').format(name=name),
         )
         entry = Gtk.Entry()
         entry.set_text(name)
@@ -778,7 +778,7 @@ class WindowActions:
             transient_for=parent,
             modal=True,
             heading=_("Delete Session?"),
-            body=_('The session "{}" will be permanently deleted.').format(name),
+            body=_('The session "{name}" will be permanently deleted.').format(name=name),
         )
         dialog.add_response('cancel', _("Cancel"))
         dialog.add_response('delete', _("Delete"))
@@ -843,7 +843,7 @@ class WindowActions:
             # No update available - tell the user (unless this was the silent
             # startup check) ...
             if not from_startup:
-                toast = Adw.Toast.new("You're running the latest version")
+                toast = Adw.Toast.new(_("You're running the latest version"))
                 toast.set_timeout(3)
                 if hasattr(self, 'toast_overlay'):
                     self.toast_overlay.add_toast(toast)
@@ -1003,7 +1003,7 @@ class WindowActions:
         """Render the current tip and toggle the Next button to match the list."""
         try:
             tip = self._terminal_tips[self._terminal_tip_index]
-            self.tips_label.set_label(f"\N{ELECTRIC LIGHT BULB} {tip}")
+            self.tips_label.set_label(_("\N{ELECTRIC LIGHT BULB} {tip}").format(tip=tip))
             # Make sure the container is visible before revealing so the
             # slide-in animation actually runs.
             if getattr(self, 'tips_banner_container', None) is not None:

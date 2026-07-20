@@ -15,6 +15,7 @@ import pathlib
 import posixpath
 import time
 from datetime import datetime
+from gettext import gettext as _
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
@@ -48,17 +49,17 @@ def present_error_alert(anchor: Gtk.Widget, text: str) -> None:
     """Show *text* in an alert dialog on *anchor*'s root window."""
     try:
         if hasattr(Adw, "AlertDialog"):
-            dialog = Adw.AlertDialog(heading="Error", body=text)
-            dialog.add_response("ok", "OK")
+            dialog = Adw.AlertDialog(heading=_("Error"), body=text)
+            dialog.add_response("ok", _("OK"))
             dialog.set_default_response("ok")
             dialog.set_close_response("ok")
             dialog.present(anchor)
         else:
             dialog = Adw.MessageDialog(
                 transient_for=anchor.get_root(), modal=True,
-                heading="Error", body=text,
+                heading=_("Error"), body=text,
             )
-            dialog.add_response("ok", "OK")
+            dialog.add_response("ok", _("OK"))
             dialog.set_default_response("ok")
             dialog.set_close_response("ok")
             dialog.present()
@@ -200,7 +201,7 @@ class FilePane(Gtk.Box):
         self._load_error_label.set_max_width_chars(48)
         self._load_error_label.set_justify(Gtk.Justification.CENTER)
         error_box.append(self._load_error_label)
-        retry_btn = Gtk.Button(label="Retry")
+        retry_btn = Gtk.Button(label=_("Retry"))
         retry_btn.add_css_class("pill")
         retry_btn.set_halign(Gtk.Align.CENTER)
         retry_btn.connect("clicked", self._on_retry_load_clicked)
@@ -353,7 +354,7 @@ class FilePane(Gtk.Box):
             # Use ButtonContent for this special button to make it more prominent
             content = Adw.ButtonContent()
             content.set_icon_name("folder-open-symbolic")
-            content.set_label("Request Access")
+            content.set_label(_("Request Access"))
             request_access_button.set_child(content)
             # Ensure the button uses the suggested-action styling with visible background
             request_access_button.set_has_frame(True)
@@ -1599,8 +1600,8 @@ class FilePane(Gtk.Box):
             "Request Folder Access",
             "You are using the app in a sandbox. Please grant access to your home folder to use the File Manager."
         )
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("ok", "OK")
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("OK"))
         dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("ok")
         dialog.set_close_response("cancel")
@@ -1626,7 +1627,7 @@ class FilePane(Gtk.Box):
     def _show_folder_picker(self) -> None:
         """Show a portal-aware folder picker for Flatpak with persistent access."""
         dlg = Gtk.FileChooserNative(
-            title="Select Folder to Grant Access",
+            title=_("Select Folder to Grant Access"),
             action=Gtk.FileChooserAction.SELECT_FOLDER,
             transient_for=self.get_root(),
             modal=True,
@@ -1735,7 +1736,7 @@ class FilePane(Gtk.Box):
             return False
         
         # Check mimetype
-        mimetype, _ = mimetypes.guess_type(entry.name)
+        mimetype, _unused = mimetypes.guess_type(entry.name)
         if mimetype:
             if mimetype.startswith('text/'):
                 return True
@@ -1990,7 +1991,7 @@ class FilePane(Gtk.Box):
                 heading=heading,
                 body=body_text
             )
-            dialog.add_response("ok", "OK")
+            dialog.add_response("ok", _("OK"))
             dialog.set_default_response("ok")
             dialog.connect("response", lambda d, *_: d.destroy())
             dialog.present()

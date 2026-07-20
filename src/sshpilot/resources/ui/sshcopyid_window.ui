@@ -23,12 +23,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </property>
             <child type="start">
               <object class="GtkButton" id="cancel_button">
-                <property name="label">Cancel</property>
+                <property name="label" translatable="yes">Cancel</property>
               </object>
             </child>
             <child type="end">
               <object class="GtkButton" id="btn_ok">
-                <property name="label">OK</property>
+                <property name="label" translatable="yes">OK</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>

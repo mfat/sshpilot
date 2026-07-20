@@ -239,11 +239,11 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         # Header
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        title = Gtk.Label(label="Advanced SSH Configuration")
-        title.set_markup("<b>Advanced SSH Configuration</b>")
+        title = Gtk.Label(label=_("Advanced SSH Configuration"))
+        title.set_markup(_("<b>Advanced SSH Configuration</b>"))
         title.set_halign(Gtk.Align.START)
         
-        subtitle = Gtk.Label(label="Add custom SSH configuration options")
+        subtitle = Gtk.Label(label=_("Add custom SSH configuration options"))
         subtitle.add_css_class("dim-label")
         subtitle.set_halign(Gtk.Align.START)
         
@@ -276,13 +276,13 @@ class SSHConfigAdvancedTab(Gtk.Box):
         header_grid.set_column_spacing(12)
         header_grid.set_margin_bottom(6)
         
-        key_header = Gtk.Label(label="SSH Option")
-        key_header.set_markup("<b>Keyword</b>")
+        key_header = Gtk.Label(label=_("SSH Option"))
+        key_header.set_markup(_("<b>Keyword</b>"))
         key_header.set_halign(Gtk.Align.START)
         key_header.set_hexpand(True)
         
-        value_header = Gtk.Label(label="Value")
-        value_header.set_markup("<b>Value</b>")
+        value_header = Gtk.Label(label=_("Value"))
+        value_header.set_markup(_("<b>Value</b>"))
         value_header.set_halign(Gtk.Align.START)
         value_header.set_hexpand(True)
         
@@ -292,7 +292,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.content_box.append(header_grid)
         
         # Empty state label
-        self.empty_label = Gtk.Label(label="No custom SSH options configured.\nClick 'Add' button to get started.")
+        self.empty_label = Gtk.Label(label=_("No custom SSH options configured.\nClick 'Add' button to get started."))
         self.empty_label.add_css_class("dim-label")
         self.empty_label.set_justify(Gtk.Justification.CENTER)
         self.empty_label.set_margin_top(24)
@@ -309,8 +309,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.preview_box.set_margin_top(12)
         
-        preview_title = Gtk.Label(label="Generated SSH Config")
-        preview_title.set_markup("<b>Generated SSH Config</b>")
+        preview_title = Gtk.Label(label=_("Generated SSH Config"))
+        preview_title.set_markup(_("<b>Generated SSH Config</b>"))
         preview_title.set_halign(Gtk.Align.START)
         
         # Text view for config preview
@@ -382,7 +382,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         # Value entry
         value_entry = Gtk.Entry()
-        value_entry.set_placeholder_text("Enter value...")
+        value_entry.set_placeholder_text(_("Enter value..."))
         value_entry.set_hexpand(True)
         value_entry.connect("activate", self.on_value_entry_activate, row_grid)
         
@@ -1427,7 +1427,7 @@ class ConnectionDialog(
         self._loading_connection_data = False
         self._active_key_path: Optional[str] = None
 
-        self.set_title('Edit Connection' if self.is_editing else 'New Connection')
+        self.set_title(_('Edit Connection') if self.is_editing else _('New Connection'))
         # Set modal and transient parent to ensure dialog stays on top
         self.set_modal(True)
         self.set_transient_for(parent)
@@ -2618,7 +2618,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         wol_group.add(self.wol_mac_row)
         self.wol_broadcast_row = Adw.EntryRow(title=_("Broadcast IP (optional)"))
         if self.wol_broadcast_row.get_child() and hasattr(self.wol_broadcast_row.get_child(), 'set_placeholder_text'):
-            self.wol_broadcast_row.get_child().set_placeholder_text("e.g. 192.168.1.255")
+            self.wol_broadcast_row.get_child().set_placeholder_text(_("e.g. 192.168.1.255"))
         wol_group.add(self.wol_broadcast_row)
         self.wol_port_row = Adw.EntryRow(title=_("WoL port (optional)"))
         try:

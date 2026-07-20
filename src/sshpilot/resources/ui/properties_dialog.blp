@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $SshPilotPropertiesDialog: Adw.Window {
-  title: "Properties";
+  title: _("Properties");
   default-width: 400;
   default-height: 500;
   resizable: true;
@@ -12,7 +12,7 @@ template $SshPilotPropertiesDialog: Adw.Window {
     [top]
     Adw.HeaderBar {
       title-widget: Gtk.Label {
-        label: "Properties";
+        label: _("Properties");
       };
     }
 

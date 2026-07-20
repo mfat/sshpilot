@@ -208,9 +208,9 @@ class SshCopyIdWindow(Adw.Window):
             group = Adw.PreferencesGroup(title="")
 
             # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
-            self.radio_existing = Gtk.CheckButton(label="Copy existing key")
+            self.radio_existing = Gtk.CheckButton(label=_("Copy existing key"))
             self.radio_existing.set_can_focus(True)  # Make it focusable for tab navigation
-            self.radio_generate = Gtk.CheckButton(label="Generate new key")
+            self.radio_generate = Gtk.CheckButton(label=_("Generate new key"))
             self.radio_generate.set_can_focus(True)  # Make it focusable for tab navigation
 
             # Make them behave like radio buttons (GTK4)
@@ -235,7 +235,7 @@ class SshCopyIdWindow(Adw.Window):
             self.dropdown_existing = Gtk.DropDown()
             self.dropdown_existing.set_can_focus(True)  # Make it focusable for tab navigation
             self.dropdown_existing.connect("notify::selected", self._on_dropdown_selected)
-            existing_box.append(Gtk.Label(label="Select key:", xalign=0))
+            existing_box.append(Gtk.Label(label=_("Select key:"), xalign=0))
             existing_box.append(self.dropdown_existing)
 
             # Fill dropdown with discovered keys (plus the trailing Browse item)
@@ -259,14 +259,14 @@ class SshCopyIdWindow(Adw.Window):
 
             # Key name
             self.row_key_name = Adw.EntryRow()
-            self.row_key_name.set_title("Key file name")
+            self.row_key_name.set_title(_("Key file name"))
             self.row_key_name.set_text("id_ed25519")
             self.row_key_name.set_can_focus(True)  # Make it focusable for tab navigation
             gen_box.append(self.row_key_name)
 
             # Key type
             key_type_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            key_type_label = Gtk.Label(label="Key type:", xalign=0)
+            key_type_label = Gtk.Label(label=_("Key type:"), xalign=0)
             self.type_dropdown = Gtk.DropDown()
             self._types_model = Gtk.StringList.new(["ed25519", "rsa"])
             self.type_dropdown.set_model(self._types_model)
@@ -306,7 +306,7 @@ class SshCopyIdWindow(Adw.Window):
                 passphrase_group = Adw.PreferencesGroup(title="")
                 
                 self.row_pass_toggle = Adw.SwitchRow()
-                self.row_pass_toggle.set_title("Encrypt with passphrase")
+                self.row_pass_toggle.set_title(_("Encrypt with passphrase"))
                 self.row_pass_toggle.set_activatable(True)  # Make the entire row clickable
                 
                 passphrase_group.add(self.row_pass_toggle)
@@ -343,8 +343,8 @@ class SshCopyIdWindow(Adw.Window):
                 force_group = Adw.PreferencesGroup(title="")
                 
                 self.force_toggle = Adw.SwitchRow()
-                self.force_toggle.set_title("Force key transfer")
-                self.force_toggle.set_subtitle("Overwrite existing keys on the server")
+                self.force_toggle.set_title(_("Force key transfer"))
+                self.force_toggle.set_subtitle(_("Overwrite existing keys on the server"))
                 self.force_toggle.set_active(True)  # Default to enabled
                 force_group.add(self.force_toggle)
                 
@@ -560,7 +560,7 @@ class SshCopyIdWindow(Adw.Window):
     def _info(self, title, body):
         try:
             md = Adw.MessageDialog(transient_for=self, modal=True, heading=title, body=body)
-            md.add_response("ok", "OK")
+            md.add_response("ok", _("OK"))
             md.set_default_response("ok")
             md.set_close_response("ok")
             md.present()
@@ -571,7 +571,7 @@ class SshCopyIdWindow(Adw.Window):
         try:
             text = body + (f"\n\n{detail}" if detail else "")
             md = Adw.MessageDialog(transient_for=self, modal=True, heading=title, body=text)
-            md.add_response("close", "Close")
+            md.add_response("close", _("Close"))
             md.set_default_response("close")
             md.set_close_response("close")
             md.present()

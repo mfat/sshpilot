@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+from gettext import gettext as _
 from typing import Any, Dict, List
 
 from ...api import (
@@ -40,19 +41,19 @@ class MoshProtocolBackend(ProtocolBackend):
 
     def connection_fields(self) -> List[FieldSpec]:
         return [
-            FieldSpec(key="host", label="Host", kind="text", required=True,
+            FieldSpec(key="host", label=_("Host"), kind="text", required=True,
                       placeholder="hostname or IP address"),
-            FieldSpec(key="username", label="Username", kind="text",
+            FieldSpec(key="username", label=_("Username"), kind="text",
                       placeholder="(from ~/.ssh/config)"),
-            FieldSpec(key="port", label="SSH port", kind="int", default=22),
-            FieldSpec(key="keyfile", label="Key file", kind="file", group="advanced"),
-            FieldSpec(key="extra_ssh_opts", label="Extra SSH options", kind="text",
+            FieldSpec(key="port", label=_("SSH port"), kind="int", default=22),
+            FieldSpec(key="keyfile", label=_("Key file"), kind="file", group="advanced"),
+            FieldSpec(key="extra_ssh_opts", label=_("Extra SSH options"), kind="text",
                       placeholder="-o Compression=yes", group="advanced"),
-            FieldSpec(key="predict", label="Local echo (predict)", kind="choice",
+            FieldSpec(key="predict", label=_("Local echo (predict)"), kind="choice",
                       default="adaptive", group="advanced",
                       choices=[("adaptive", "Adaptive (default)"), ("always", "Always"),
                                ("never", "Never"), ("experimental", "Experimental")]),
-            FieldSpec(key="mosh_port", label="UDP port / range", kind="text",
+            FieldSpec(key="mosh_port", label=_("UDP port / range"), kind="text",
                       placeholder="60000:60010", group="advanced"),
         ]
 

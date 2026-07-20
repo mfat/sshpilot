@@ -6,6 +6,7 @@ import logging
 import os
 import posixpath
 import threading
+from gettext import gettext as _
 from typing import TYPE_CHECKING, Any, Optional
 
 from gi.repository import Adw, Gio, GLib, Gtk
@@ -140,7 +141,7 @@ class PropertiesDialog(Adw.Window):
             size_text = _human_size(self._entry.size) if self._entry.size else "—"
         
         # Store reference to size row for updating
-        self._size_row = Adw.ActionRow(title="Size", subtitle=size_text)
+        self._size_row = Adw.ActionRow(title=_("Size"), subtitle=size_text)
         self._size_row.add_css_class("card")
         return self._size_row
 
@@ -150,7 +151,7 @@ class PropertiesDialog(Adw.Window):
         if not parent_path:
             parent_path = "/"
         
-        row = Adw.ActionRow(title="Parent Folder", subtitle=parent_path)
+        row = Adw.ActionRow(title=_("Parent Folder"), subtitle=parent_path)
         row.add_css_class("card")
         
         # Add folder open button for local files
@@ -167,7 +168,7 @@ class PropertiesDialog(Adw.Window):
     def _create_modified_row(self) -> Gtk.Widget:
         """Create the modified date row."""
         modified_time = _human_time(self._entry.modified) if self._entry.modified else "—"
-        row = Adw.ActionRow(title="Modified", subtitle=modified_time)
+        row = Adw.ActionRow(title=_("Modified"), subtitle=modified_time)
         row.add_css_class("card")
         # Stored so the async remote stat can refresh it with the precise mtime.
         self._modified_row = row
@@ -185,7 +186,7 @@ class PropertiesDialog(Adw.Window):
                 owner_text = "—"
         elif self._sftp_manager is not None:
             owner_text = "Loading…"  # filled by the async remote stat
-        row = Adw.ActionRow(title="Owner", subtitle=owner_text)
+        row = Adw.ActionRow(title=_("Owner"), subtitle=owner_text)
         row.add_css_class("card")
         self._owner_row = row
         return row
@@ -283,7 +284,7 @@ class PropertiesDialog(Adw.Window):
         except Exception:
             return Gtk.Box()  # Empty box widget
         
-        row = Adw.ActionRow(title="Created", subtitle=created_time)
+        row = Adw.ActionRow(title=_("Created"), subtitle=created_time)
         row.add_css_class("card")
         return row
 
@@ -402,7 +403,7 @@ class PropertiesDialog(Adw.Window):
                 else:
                     perms_text = "Read and Write"
         
-        row = Adw.ActionRow(title="Permissions", subtitle=perms_text)
+        row = Adw.ActionRow(title=_("Permissions"), subtitle=perms_text)
         row.add_css_class("card")
         # Store reference to row for async updates
         self._permissions_row = row

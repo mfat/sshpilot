@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 from collections import deque
+from gettext import gettext as _
 from typing import Any, Callable, List, Optional
 
 import gi
@@ -320,7 +321,7 @@ class DockerConsolePage(
         detail_frame.set_child(detail_lbl)
         detail_frame.set_visible(False)
 
-        details = Gtk.ToggleButton(label="Show detailed log")
+        details = Gtk.ToggleButton(label=_("Show detailed log"))
         details.add_css_class("flat")
         details.set_halign(Gtk.Align.CENTER)
         details.set_visible(False)
@@ -328,7 +329,7 @@ class DockerConsolePage(
         def _on_details_toggled(btn: Gtk.ToggleButton) -> None:
             show = btn.get_active()
             detail_frame.set_visible(show)
-            btn.set_label("Hide detailed log" if show else "Show detailed log")
+            btn.set_label(_("Hide detailed log") if show else _("Show detailed log"))
 
         details.connect("toggled", _on_details_toggled)
 
@@ -576,7 +577,7 @@ class DockerConsolePage(
         # Must not be flat: flat hides the suggested-action background.
         self._host_btn.set_has_frame(True)
         self._host_btn.add_css_class("suggested-action")
-        self._host_btn.set_tooltip_text("Choose Docker host")
+        self._host_btn.set_tooltip_text(_("Choose Docker host"))
         host_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         host_icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         host_icon.set_pixel_size(16)
@@ -593,7 +594,7 @@ class DockerConsolePage(
 
         end = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
-        runtime_label = Gtk.Label(label="Runtime")
+        runtime_label = Gtk.Label(label=_("Runtime"))
         runtime_label.add_css_class("dim-label")
         runtime_label.add_css_class("caption")
         end.append(runtime_label)
@@ -601,14 +602,14 @@ class DockerConsolePage(
         # Auto-detect (default) or force docker/podman per host.
         self._RUNTIME_MODES = ("Auto", "docker", "podman")
         self._runtime_drop = Gtk.DropDown.new_from_strings(list(self._RUNTIME_MODES))
-        self._runtime_drop.set_tooltip_text("Container runtime (Auto detects docker/podman)")
+        self._runtime_drop.set_tooltip_text(_("Container runtime (Auto detects docker/podman)"))
         self._runtime_drop.set_selected(self._runtime_mode_index(self._current_nickname()))
         self._runtime_drop.connect("notify::selected", self._on_runtime_mode_changed)
         end.append(self._runtime_drop)
 
         self._sudo_check = Gtk.CheckButton(label="sudo")
         self._sudo_check.set_tooltip_text(
-            "Run docker with sudo (for users not in the 'docker' group)"
+            _("Run docker with sudo (for users not in the 'docker' group)")
         )
         nick0 = self._current_nickname()
         if nick0:
@@ -617,17 +618,17 @@ class DockerConsolePage(
         end.append(self._sudo_check)
 
         self._pause_btn = Gtk.ToggleButton(icon_name="media-playback-pause-symbolic")
-        self._pause_btn.set_tooltip_text("Pause auto-refresh")
+        self._pause_btn.set_tooltip_text(_("Pause auto-refresh"))
         self._pause_btn.connect("toggled", self._on_pause_toggled)
         end.append(self._pause_btn)
 
         settings = Gtk.Button(icon_name="settings-symbolic")
-        settings.set_tooltip_text("Docker Console settings")
+        settings.set_tooltip_text(_("Docker Console settings"))
         settings.connect("clicked", lambda _b: self._open_settings())
         end.append(settings)
 
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
-        refresh.set_tooltip_text("Refresh")
+        refresh.set_tooltip_text(_("Refresh"))
         refresh.connect("clicked", lambda _b: self._manual_refresh())
         end.append(refresh)
 
@@ -719,8 +720,8 @@ class DockerConsolePage(
 
     def _on_pause_toggled(self, btn: Gtk.ToggleButton) -> None:
         self._paused = btn.get_active()
-        btn.set_tooltip_text("Resume auto-refresh" if self._paused
-                             else "Pause auto-refresh")
+        btn.set_tooltip_text(_("Resume auto-refresh") if self._paused
+                             else _("Pause auto-refresh"))
 
     # --- auto-refresh interval / timer ---------------------------------
     def _refresh_interval(self) -> int:
@@ -919,9 +920,9 @@ class DockerConsolePage(
             from_widget=self,
             connection=connection,
             connection_manager=manager,
-            heading="SSH password required",
-            body=(f"“{nickname}” uses password authentication.\n\n"
-                  "Enter the SSH login password to open Docker Console:"),
+            heading=_("SSH password required"),
+            body=_("“{name}” uses password authentication.\n\n"
+                   "Enter the SSH login password to open Docker Console:").format(name=nickname),
         )
         if not password:
             self._ssh_auth_blocked.add(nickname)
@@ -1137,7 +1138,7 @@ class DockerConsolePage(
     @staticmethod
     def _verify_sudo(rc: Any, nick: str, runtime: str, password: str) -> bool:
         """True if ``password`` lets ``sudo -S docker ps`` succeed on the host."""
-        ok, _ = DockerConsolePage._check_sudo(rc, nick, runtime, password)
+        ok, _unused = DockerConsolePage._check_sudo(rc, nick, runtime, password)
         return ok
 
     def _lookup_stored_sudo(self, nick: str) -> str:
@@ -1174,9 +1175,9 @@ class DockerConsolePage(
             display_name=nick,
             host=host,
             username=user,
-            heading="Sudo password required",
-            body=(f"“{nick}” needs a sudo password to access Docker.\n\n"
-                  "Enter your sudo password:"),
+            heading=_("Sudo password required"),
+            body=_("“{name}” needs a sudo password to access Docker.\n\n"
+                   "Enter your sudo password:").format(name=nick),
             store_label="Save sudo password",
             on_store=on_store,
         )
@@ -1339,9 +1340,9 @@ class DockerConsolePage(
             force_check = Gtk.CheckButton(label=force_label)
             dialog.set_extra_child(force_check)
         elif confirm_word:
-            entry = Gtk.Entry(placeholder_text=f"Type {confirm_word} to confirm")
+            entry = Gtk.Entry(placeholder_text=_("Type {word} to confirm").format(word=confirm_word))
             dialog.set_extra_child(entry)
-        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("cancel", _("Cancel"))
         dialog.add_response("ok", destructive_label)
         dialog.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_default_response("cancel")

@@ -858,7 +858,7 @@ class WindowTabsMixin:
             dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                heading=_("Close connection to {}").format(connection.nickname or host_value),
+                heading=_("Close connection to {name}").format(name=connection.nickname or host_value),
                 body=_("Are you sure you want to close this connection?")
             )
             dialog.add_response('cancel', _("Cancel"))

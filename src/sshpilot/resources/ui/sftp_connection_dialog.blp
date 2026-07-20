@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $SshPilotSftpConnectionDialog: Adw.Window {
-  title: "SFTP Connection";
+  title: _("SFTP Connection");
   default-width: 600;
   default-height: 400;
   modal: true;
@@ -29,7 +29,7 @@ template $SshPilotSftpConnectionDialog: Adw.Window {
         spacing: 4;
 
         Gtk.Label {
-          label: "<b>SFTP Connection Options</b>";
+          label: _("<b>SFTP Connection Options</b>");
           use-markup: true;
           halign: start;
         }
@@ -45,7 +45,7 @@ template $SshPilotSftpConnectionDialog: Adw.Window {
     }
 
     Gtk.Label {
-      label: "Due to Flatpak security restrictions, direct SFTP mounting is limited.\nPlease choose one of the following options:";
+      label: _("Due to Flatpak security restrictions, direct SFTP mounting is limited.\nPlease choose one of the following options:");
       use-markup: true;
       wrap: true;
       halign: start;
@@ -57,7 +57,7 @@ template $SshPilotSftpConnectionDialog: Adw.Window {
     }
 
     Gtk.Button close_button {
-      label: "Close";
+      label: _("Close");
       halign: end;
     }
   };

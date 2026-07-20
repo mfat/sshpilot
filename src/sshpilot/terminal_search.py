@@ -297,9 +297,9 @@ class TerminalSearch:
                 label.set_text("")
             elif result_index < 0:
                 # SearchAddon: resultIndex == -1 when highlight threshold exceeded.
-                label.set_text(f"{result_count}+")
+                label.set_text(_("{count}+").format(count=result_count))
             else:
-                label.set_text(f"{result_index + 1}/{result_count}")
+                label.set_text(_("{index}/{count}").format(index=result_index + 1, count=result_count))
         except Exception:
             pass
 

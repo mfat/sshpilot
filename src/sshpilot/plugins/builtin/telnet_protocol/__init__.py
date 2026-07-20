@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
+from gettext import gettext as _
 from typing import Any, Dict, List
 
 from ...api import (
@@ -33,9 +34,9 @@ class TelnetProtocolBackend(ProtocolBackend):
 
     def connection_fields(self) -> List[FieldSpec]:
         return [
-            FieldSpec(key="host", label="Host", kind="text", required=True,
+            FieldSpec(key="host", label=_("Host"), kind="text", required=True,
                       placeholder="hostname or IP address"),
-            FieldSpec(key="port", label="Port", kind="int",
+            FieldSpec(key="port", label=_("Port"), kind="int",
                       default=self.default_port),
         ]
 

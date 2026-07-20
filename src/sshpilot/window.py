@@ -622,9 +622,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             dialog = Adw.MessageDialog(
                 transient_for=self, modal=True,
                 heading=_("Diagnostics Exported"),
-                body=_("Saved to:\n{}\n\nSecrets are redacted. Your saved connections "
+                body=_("Saved to:\n{path}\n\nSecrets are redacted. Your saved connections "
                        "and SSH config are not included; a maintainer can request them "
-                       "separately if needed.").format(path),
+                       "separately if needed.").format(path=path),
             )
             dialog.add_response('open', _("Open Folder"))
             dialog.add_response('ok', _("OK"))
@@ -636,7 +636,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             dialog = Adw.MessageDialog(
                 transient_for=self, modal=True,
                 heading=_("Export Failed"),
-                body=_("Could not export diagnostics:\n{}").format(error or _("Unknown error")),
+                body=_("Could not export diagnostics:\n{error}").format(error=error or _("Unknown error")),
             )
             dialog.add_response('ok', _("OK"))
         dialog.present()
@@ -1138,7 +1138,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         
         # Create dismiss button with text, positioned at the left
         dismiss_button = Gtk.Button()
-        dismiss_button.set_label('Dismiss')
+        dismiss_button.set_label(_('Dismiss'))
         dismiss_button.set_halign(Gtk.Align.START)
         dismiss_button.set_valign(Gtk.Align.CENTER)
         dismiss_button.set_margin_start(12)
@@ -1234,7 +1234,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return accel
 
         accel_labels = ', '.join(_accel_label(a) for a in sidebar_accels)
-        self.sidebar_toggle_button.set_tooltip_text(f'Hide Sidebar ({accel_labels})')
+        self.sidebar_toggle_button.set_tooltip_text(
+            _('Hide Sidebar ({accels})').format(accels=accel_labels))
         # Button should not appear pressed when sidebar is visible
         self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
@@ -1244,7 +1245,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.local_terminal_button = Gtk.Button()
         icon_utils.set_button_icon(self.local_terminal_button, 'utilities-terminal-symbolic')
         self.local_terminal_button.set_tooltip_text(
-            f'Open Local Terminal ({get_primary_modifier_label()}+Shift+T)'
+            _('Open Local Terminal ({modifier}+Shift+T)').format(
+                modifier=get_primary_modifier_label())
         )
         self.local_terminal_button.add_css_class('flat')
         self.local_terminal_button.set_action_name('app.local-terminal')
@@ -2169,36 +2171,36 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         menu = Gio.Menu()
 
         new_section = Gio.Menu()
-        new_section.append('New Connection', 'app.new-connection')
-        new_section.append('Create Group', 'win.create-group')
-        new_section.append('Local Terminal', 'app.local-terminal')
+        new_section.append(_('New Connection'), 'app.new-connection')
+        new_section.append(_('Create Group'), 'win.create-group')
+        new_section.append(_('Local Terminal'), 'app.local-terminal')
         menu.append_section(None, new_section)
 
         server_section = Gio.Menu()
-        server_section.append('Copy Key to Server', 'app.new-key')
-        server_section.append('Broadcast Command', 'app.broadcast-command')
+        server_section.append(_('Copy Key to Server'), 'app.new-key')
+        server_section.append(_('Broadcast Command'), 'app.broadcast-command')
         if not should_hide_file_manager_options():
-            server_section.append('Manage Files', 'win.open-file-manager')
+            server_section.append(_('Manage Files'), 'win.open-file-manager')
         menu.append_section(None, server_section)
 
         ssh_section = Gio.Menu()
-        ssh_section.append('SSH Config Editor', 'app.edit-ssh-config')
-        ssh_section.append('Known Hosts Editor', 'win.edit-known-hosts')
-        ssh_section.append('Manage Local authorized_keys…', 'win.manage-local-authorized-keys')
+        ssh_section.append(_('SSH Config Editor'), 'app.edit-ssh-config')
+        ssh_section.append(_('Known Hosts Editor'), 'win.edit-known-hosts')
+        ssh_section.append(_('Manage Local authorized_keys…'), 'win.manage-local-authorized-keys')
         menu.append_section(None, ssh_section)
 
         submenu_section = Gio.Menu()
 
         sessions_menu = Gio.Menu()
-        sessions_menu.append('Save Session…', 'win.save-session')
-        sessions_menu.append('Open Session…', 'win.open-session')
-        sessions_menu.append('Manage Sessions…', 'win.manage-sessions')
-        submenu_section.append_submenu('Sessions', sessions_menu)
+        sessions_menu.append(_('Save Session…'), 'win.save-session')
+        sessions_menu.append(_('Open Session…'), 'win.open-session')
+        sessions_menu.append(_('Manage Sessions…'), 'win.manage-sessions')
+        submenu_section.append_submenu(_('Sessions'), sessions_menu)
 
         import_export_menu = Gio.Menu()
-        import_export_menu.append('Export Configuration', 'win.export-config')
-        import_export_menu.append('Import Configuration', 'win.import-config')
-        submenu_section.append_submenu('Import/Export', import_export_menu)
+        import_export_menu.append(_('Export Configuration'), 'win.export-config')
+        import_export_menu.append(_('Import Configuration'), 'win.import-config')
+        submenu_section.append_submenu(_('Import/Export'), import_export_menu)
 
         # Plugin-contributed pages live in the Tools submenu. The section
         # object is shared/mutable, so items the plugin host appends after
@@ -2207,29 +2209,29 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if plugins_section is not None:
             tools_menu = Gio.Menu()
             tools_menu.append_section(None, plugins_section)
-            submenu_section.append_submenu('Tools', tools_menu)
+            submenu_section.append_submenu(_('Tools'), tools_menu)
 
         menu.append_section(None, submenu_section)
 
         settings_section = Gio.Menu()
-        settings_section.append('Settings', 'app.preferences')
+        settings_section.append(_('Settings'), 'app.preferences')
         menu.append_section(None, settings_section)
 
         help_section = Gio.Menu()
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
-        help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
-        help_menu.append('Documentation', 'app.help')
-        help_menu.append('Check for Updates', 'win.check-for-updates')
-        help_menu.append('View Logs…', 'win.view-logs')
-        help_menu.append('Report a Problem…', 'win.report-problem')
-        help_menu.append('Export Diagnostics…', 'win.export-diagnostics')
-        help_section.append_submenu('Help', help_menu)
-        help_section.append('About', 'app.about')
+        help_menu.append(_('Keyboard Shortcuts'), 'app.shortcuts')
+        help_menu.append(_('Documentation'), 'app.help')
+        help_menu.append(_('Check for Updates'), 'win.check-for-updates')
+        help_menu.append(_('View Logs…'), 'win.view-logs')
+        help_menu.append(_('Report a Problem…'), 'win.report-problem')
+        help_menu.append(_('Export Diagnostics…'), 'win.export-diagnostics')
+        help_section.append_submenu(_('Help'), help_menu)
+        help_section.append(_('About'), 'app.about')
         menu.append_section(None, help_section)
 
         quit_section = Gio.Menu()
-        quit_section.append('Quit', 'app.quit')
+        quit_section.append(_('Quit'), 'app.quit')
         menu.append_section(None, quit_section)
 
         return menu
@@ -2712,7 +2714,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab"
+                    _("Switched to connection list — ↑/↓ navigate, Enter open, {modifier}+Enter new tab").format(
+                        modifier=get_primary_modifier_label())
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -2751,7 +2754,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Only show the hint toast when search was just revealed
             if not was_visible:
                 toast = Adw.Toast.new(
-                    "Search mode — Type to filter connections, Esc to clear and hide"
+                    _("Search mode — Type to filter connections, Esc to clear and hide")
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -2785,7 +2788,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         
                         # Show toast notification
                         toast = Adw.Toast.new(
-                            "Search mode — Type to filter connections, Esc to clear and hide"
+                            _("Search mode — Type to filter connections, Esc to clear and hide")
                         )
                         toast.set_timeout(3)  # seconds
                         if hasattr(self, 'toast_overlay'):
@@ -2802,7 +2805,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         
                         # Show toast notification
                         toast = Adw.Toast.new(
-                            f"Search hidden — {get_primary_modifier_label()}+F to search again"
+                            _("Search hidden — {modifier}+F to search again").format(
+                                modifier=get_primary_modifier_label())
                         )
                         toast.set_timeout(2)  # seconds
                         if hasattr(self, 'toast_overlay'):
@@ -3322,9 +3326,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Fallback error if window cannot be created
             try:
                 md = Adw.MessageDialog(transient_for=self, modal=True,
-                                       heading="Error",
-                                       body=f"Could not open the Copy Key window.\n\n{e}")
-                md.add_response("ok", "OK")
+                                       heading=_("Error"),
+                                       body=_("Could not open the Copy Key window.\n\n{error}").format(error=e))
+                md.add_response("ok", _("OK"))
                 md.present()
             except Exception:
                 pass
@@ -3505,12 +3509,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if is_visible:
                 icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
                 button.set_tooltip_text(
-                    f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
+                    _('Hide Sidebar (F9, {modifier}+B)').format(
+                        modifier=get_primary_modifier_label())
                 )
             else:
                 icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
                 button.set_tooltip_text(
-                    f'Show Sidebar (F9, {get_primary_modifier_label()}+B)'
+                    _('Show Sidebar (F9, {modifier}+B)').format(
+                        modifier=get_primary_modifier_label())
                 )
             
             # No need to save state - sidebar always starts visible
@@ -4236,19 +4242,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if ssh_terminals:
             # SSH terminals present - use original messaging
             if active_count == 1:
-                message = f"You have 1 open terminal tab."
-                detail = "Closing the application will disconnect this connection."
+                message = _("You have 1 open terminal tab.")
+                detail = _("Closing the application will disconnect this connection.")
             else:
-                message = f"You have {active_count} open terminal tabs."
-                detail = f"Closing the application will disconnect all connections."
+                message = _("You have {count} open terminal tabs.").format(count=active_count)
+                detail = _("Closing the application will disconnect all connections.")
         else:
             # Only local terminals with active jobs
             if active_count == 1:
-                message = f"You have 1 local terminal with an active job."
-                detail = "Closing the application will terminate the running process."
+                message = _("You have 1 local terminal with an active job.")
+                detail = _("Closing the application will terminate the running process.")
             else:
-                message = f"You have {active_count} local terminals with active jobs."
-                detail = f"Closing the application will terminate all running processes."
+                message = _("You have {count} local terminals with active jobs.").format(count=active_count)
+                detail = _("Closing the application will terminate all running processes.")
 
         # Use Gtk.AlertDialog: it builds its own top-level window, so the
         # compositor maps it even when the main window is in the background
@@ -4256,9 +4262,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # and stays unreachable on Wayland).
         dialog = Gtk.AlertDialog()
         dialog.set_modal(True)
-        dialog.set_message("Quit SSH Pilot?")
-        dialog.set_detail(f"{message}\n\n{detail}")
-        dialog.set_buttons(['Cancel', 'Quit Anyway'])
+        dialog.set_message(_("Quit SSH Pilot?"))
+        dialog.set_detail("{message}\n\n{detail}".format(message=message, detail=detail))
+        dialog.set_buttons([_('Cancel'), _('Quit Anyway')])
         dialog.set_cancel_button(0)   # Escape / dismiss -> Cancel
         dialog.set_default_button(1)  # Enter -> Quit Anyway
 

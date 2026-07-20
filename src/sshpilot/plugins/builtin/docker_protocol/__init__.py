@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
+from gettext import gettext as _
 from typing import Any, Dict, List
 
 from ...api import (
@@ -33,17 +34,17 @@ class DockerProtocolBackend(ProtocolBackend):
 
     def connection_fields(self) -> List[FieldSpec]:
         return [
-            FieldSpec(key="container", label="Container", kind="text", required=True,
+            FieldSpec(key="container", label=_("Container"), kind="text", required=True,
                       placeholder="name or id"),
-            FieldSpec(key="command", label="Command", kind="text", default="sh",
+            FieldSpec(key="command", label=_("Command"), kind="text", default="sh",
                       placeholder="sh"),
-            FieldSpec(key="runtime", label="Runtime", kind="choice", default="docker",
+            FieldSpec(key="runtime", label=_("Runtime"), kind="choice", default="docker",
                       choices=[("docker", "Docker"), ("podman", "Podman")]),
-            FieldSpec(key="docker_host", label="Daemon host", kind="text",
+            FieldSpec(key="docker_host", label=_("Daemon host"), kind="text",
                       placeholder="ssh://user@host or tcp://host:2375", group="advanced"),
-            FieldSpec(key="user", label="User", kind="text",
+            FieldSpec(key="user", label=_("User"), kind="text",
                       placeholder="user or UID", group="advanced"),
-            FieldSpec(key="workdir", label="Working directory", kind="text",
+            FieldSpec(key="workdir", label=_("Working directory"), kind="text",
                       placeholder="/path/in/container", group="advanced"),
         ]
 

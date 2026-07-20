@@ -160,7 +160,7 @@ def _show_cleanup_progress(window, total_connections):
 
     window._progress_label = Gtk.Label()
     window._progress_label.set_text(
-        f"Closing {total_connections} connection(s)..."
+        _("Closing {count} connection(s)...").format(count=total_connections)
     )
     box.append(window._progress_label)
 
@@ -177,7 +177,7 @@ def _update_cleanup_progress(window, completed, total):
 
     if getattr(window, "_progress_label", None):
         window._progress_label.set_text(
-            f"Closed {completed} of {total} connection(s)..."
+            _("Closed {completed} of {total} connection(s)...").format(completed=completed, total=total)
         )
 
 
@@ -221,7 +221,7 @@ def show_reconnecting_message(window, connection):
 
         label = Gtk.Label()
         label.set_text(
-            _("Reconnecting to {}...").format(getattr(connection, "nickname", ""))
+            _("Reconnecting to {host}...").format(host=getattr(connection, "nickname", ""))
         )
         label.set_halign(Gtk.Align.START)
         label.set_hexpand(True)

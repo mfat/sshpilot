@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
+from gettext import gettext as _
 from typing import Any, Dict, List
 
 from ...api import (
@@ -32,17 +33,17 @@ class KubernetesProtocolBackend(ProtocolBackend):
 
     def connection_fields(self) -> List[FieldSpec]:
         return [
-            FieldSpec(key="pod", label="Pod", kind="text", required=True,
+            FieldSpec(key="pod", label=_("Pod"), kind="text", required=True,
                       placeholder="pod name"),
-            FieldSpec(key="container", label="Container", kind="text",
+            FieldSpec(key="container", label=_("Container"), kind="text",
                       placeholder="(default container)"),
-            FieldSpec(key="namespace", label="Namespace", kind="text",
+            FieldSpec(key="namespace", label=_("Namespace"), kind="text",
                       placeholder="default"),
-            FieldSpec(key="kube_context", label="Context", kind="text",
+            FieldSpec(key="kube_context", label=_("Context"), kind="text",
                       placeholder="(current context)", group="advanced"),
-            FieldSpec(key="kubeconfig", label="Kubeconfig", kind="file",
+            FieldSpec(key="kubeconfig", label=_("Kubeconfig"), kind="file",
                       group="advanced"),
-            FieldSpec(key="command", label="Command", kind="text", default="sh",
+            FieldSpec(key="command", label=_("Command"), kind="text", default="sh",
                       placeholder="sh"),
         ]
 
