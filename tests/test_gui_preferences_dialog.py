@@ -83,3 +83,41 @@ def test_dialogs_parented_to_preferences_get_a_window(gui):
     # What the window-only APIs (transient_for, Gtk.FileDialog) will be handed.
     # Deliberately not opening a chooser here: it would leave a native dialog up.
     assert isinstance(prefs.get_root(), Gtk.Window)
+
+
+def test_every_page_widget_resolves_a_window_root(gui):
+    """The general guarantee for dialogs opened from *any* Preferences page.
+
+    Page code parents dialogs with `self.get_root()` (or a helper that ends up
+    there). Preferences used to be an Adw.Window, so that root was Preferences
+    itself; now it is the MainWindow the dialog is presented in. Both are
+    Gtk.Windows, which is why page-level dialog code is unaffected — but only
+    if every widget in every page really does resolve to a window.
+
+    Walks the whole realized widget tree of the dialog and asserts it.
+    """
+    from gi.repository import Gtk
+
+    prefs = _open_preferences(gui)
+    assert prefs is not None
+
+    def walk(widget):
+        yield widget
+        child = widget.get_first_child()
+        while child is not None:
+            yield from walk(child)
+            child = child.get_next_sibling()
+
+    widgets = list(walk(prefs))
+    assert len(widgets) > 50, f'only {len(widgets)} widgets; page tree did not build'
+
+    for w in widgets:
+        root = w.get_root()
+        assert isinstance(root, Gtk.Window), f'{type(w).__name__} resolved {type(root)}'
+        assert root is gui.window
+
+    # The one page contributed by another module gets an explicit window, not
+    # the dialog, so its own transient parent is correct too.
+    page = getattr(prefs, 'shortcuts_editor_page', None)
+    if page is not None:
+        assert page._transient_parent is None or isinstance(page._transient_parent, Gtk.Window)

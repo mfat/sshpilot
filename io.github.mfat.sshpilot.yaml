@@ -54,21 +54,20 @@ modules:
         url: https://download.gnome.org/sources/vte/0.78/vte-0.78.5.tar.xz
         sha256: bab93bff8d8acb05fc7c81a469e0d17c853da3851ce4be2a66d4d18772163a46
 
-  - python3-deps.yml
+  - flatpak/python3-deps.yml
 
   - name: sshpilot
     # Meson installs everything the hand-written build-commands used to: the
     # launcher, the Python package, the compiled gresource, the desktop entry and
     # metainfo (merged from the .in templates), the icon and sshpilot-agent.
-    # Runtime Python deps come from python3-deps.yml above; the GNOME SDK
+    # Runtime Python deps come from flatpak/python3-deps.yml above; the GNOME SDK
     # provides meson and blueprint-compiler.
     buildsystem: meson
     sources:
       - type: dir
-        # Relative to this manifest, so `..` is the repo root. Keeping it
-        # correct in place means the manifest builds where it lives instead of
-        # having to be copied to the root first.
-        path: ..
+        # The manifest lives at the repo root -- where GNOME Builder and
+        # flatpak-builder expect it -- so the source dir is just `.`.
+        path: .
         # Flathub builds from `type: git`, so it only ever sees tracked files.
         # This manifest copies the working tree, so skip the local build junk to
         # keep the test build close to a clean checkout (and fast).
