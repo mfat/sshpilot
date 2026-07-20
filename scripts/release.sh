@@ -17,10 +17,7 @@ DEFAULT_MAIN_BRANCH="main"
 BUMP_SCRIPT="scripts/bump-version.sh"
 PKGBUILD_SCRIPT="scripts/update-arch-pkgbuild.sh"
 INIT_FILE="src/sshpilot/__init__.py"
-RPM_SPEC_FILE="packaging/fedora/rpm.spec"
-METAINFO_FILE="data/io.github.mfat.sshpilot.metainfo.xml.in"
 PKGBUILD_FILE="packaging/ArchLinux/PKGBUILD"
-DEB_CHANGELOG="debian/changelog"
 
 echo "sshPilot release helper"
 echo
@@ -140,13 +137,11 @@ if ! grep -qE "from \. import __version__\s+as\s+APP_VERSION" src/sshpilot/windo
   echo "WARNING: About dialog may not reflect __version__ automatically. Please verify in src/sshpilot/window.py." >&2
 fi
 
-# -f: debian/ may still be ignored in older local checkouts; force-add is safe
-# for already-tracked packaging files and avoids set -e aborting on Git ≥2.25.
-git add -f "$INIT_FILE" "$METAINFO_FILE" "$DEB_CHANGELOG"
-if [[ -f "$RPM_SPEC_FILE" ]]; then
-  git add -f "$RPM_SPEC_FILE"
-fi
-git commit -m "Bump version to $VERSION"
+# bump-version.sh owns which files carry the version (it has grown meson.build
+# and the man pages since); -a commits whatever it touched rather than a second
+# list here that silently drifts. The clean-tree check at the top guarantees
+# nothing unrelated is swept in. Same as the Release workflow.
+git commit -am "Bump version to $VERSION"
 
 echo "Pushing version bump to origin/$DEV_BRANCH..."
 git push origin "$DEV_BRANCH"
