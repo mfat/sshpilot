@@ -15,6 +15,7 @@ DEFAULT_MAIN_BRANCH="main"
 INIT_FILE="src/sshpilot/__init__.py"
 RPM_SPEC_FILE="packaging/fedora/rpm.spec"
 METAINFO_FILE="data/io.github.mfat.sshpilot.metainfo.xml.in"
+PKGBUILD_FILE="packaging/ArchLinux/PKGBUILD"
 DEB_CHANGELOG="debian/changelog"
 # Series named in the committed changelog entry. Informational only: the
 # Launchpad recipe re-targets each build to its actual series, but the
@@ -320,6 +321,40 @@ fi
 
 git push origin "$MAIN_BRANCH"
 git push origin "v$VERSION"
+
+# The Arch PKGBUILD is updated here, after the tag exists, because its
+# sha256sums cover GitHub's generated tag tarball — which cannot be hashed
+# before the tag is pushed. It is only ever touched on $MAIN_BRANCH (never on
+# $DEV_BRANCH) so the merge above can never conflict over it.
+if [[ -f "$PKGBUILD_FILE" ]]; then
+  echo
+  echo "Updating $PKGBUILD_FILE for v$VERSION..."
+  TARBALL_URL="https://github.com/mfat/sshpilot/archive/refs/tags/v${VERSION}.tar.gz"
+  TARBALL="$(mktemp)"
+  SHA=""
+  for attempt in 1 2 3; do
+    # GitHub generates the tarball on first request; give it a moment.
+    if curl -sfL -o "$TARBALL" "$TARBALL_URL"; then
+      SHA=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+      break
+    fi
+    echo "  tarball not ready yet (attempt $attempt), retrying..."
+    sleep 5
+  done
+  rm -f "$TARBALL"
+  if [[ -z "$SHA" ]]; then
+    echo "WARNING: could not download $TARBALL_URL." >&2
+    echo "Update $PKGBUILD_FILE by hand: set pkgver=$VERSION, pkgrel=1 and run updpkgsums." >&2
+  else
+    sed -i -e "s/^pkgver=.*/pkgver=${VERSION}/" \
+           -e "s/^pkgrel=.*/pkgrel=1/" \
+           -e "s/^sha256sums=.*/sha256sums=('${SHA}')/" "$PKGBUILD_FILE"
+    git add "$PKGBUILD_FILE"
+    git commit -m "Update Arch PKGBUILD for v$VERSION"
+    git push origin "$MAIN_BRANCH"
+    echo "  pkgver=$VERSION, sha256sums=($SHA)"
+  fi
+fi
 
 echo
 echo "Release v$VERSION pushed."
