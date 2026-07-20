@@ -68,24 +68,32 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %meson
 %meson_build
 
+# po/LINGUAS is still empty, so Meson installs nothing under %%{_datadir}/locale
+# and the %%find_lang below produces an empty list. rpm treats an empty %%files
+# manifest as fatal by default, which would fail the build over the *absence* of
+# a problem. This macro is exactly that switch -- "Should empty %%files manifest
+# file terminate a build?" -- and clearing it downgrades the error to a warning.
+#
+# Keeping %%find_lang rather than dropping it means the .mo files get packaged
+# automatically the day the first translation lands, with no spec change to
+# remember. The guard given up is narrow: every other entry in %%files is an
+# explicit path that rpm still verifies, and the unpackaged-files check that
+# caught the missing man pages is untouched.
+#
+# Set here rather than in %%install so it is parsed before %%files reads it.
+%global _empty_manifest_terminate_build 0
+
 %install
 %meson_install
 
-# No %%find_lang here: po/LINGUAS is still empty, so Meson installs nothing under
-# %%{_datadir}/locale and the generated file list comes out empty -- which rpm
-# rejects outright ("Empty %%files file"), so the `|| touch` fallback this
-# replaced turned a non-problem into a build failure.
-#
-# Restore both this and the `-f %%{name}.lang` on %%files when the first
-# translation lands. Forgetting cannot ship a broken package: the unpackaged
-# .mo files fail the build with an explicit list of what is missing.
+%find_lang %{name} || touch %{name}.lang
 
 # Runs the desktop-entry and AppStream validators defined in data/meson.build.
 %check
 %meson_test
 
 
-%files
+%files -f %{name}.lang
 %license LICENSE*
 %doc README*
 %{_bindir}/sshpilot
