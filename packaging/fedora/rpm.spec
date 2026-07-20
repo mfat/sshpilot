@@ -103,6 +103,13 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %install
 %meson_install
 
+# Byte-compile explicitly: the automatic pass only walks %%{python3_sitelib},
+# and the payload deliberately lives outside it. Skipping this does not just
+# cost one slow first start -- %%{_datadir} is not user-writable, so the
+# interpreter cannot save __pycache__ and recompiles every module on *every*
+# launch. Guarded so a distro without python-rpm-macros still builds.
+%{?py_byte_compile:%py_byte_compile %{python3} %{buildroot}%{_datadir}/%{name}}
+
 %find_lang %{name} || touch %{name}.lang
 
 # Runs the desktop-entry and AppStream validators defined in data/meson.build.
