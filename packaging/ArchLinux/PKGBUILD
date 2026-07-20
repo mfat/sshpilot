@@ -1,13 +1,20 @@
 # Maintainer: Patrick Northon <northon_patrick3@yahoo.ca>
 
 pkgname=sshpilot
-pkgver=3.8.2
+pkgver=5.5.7
 pkgrel=1
 pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support.'
 url='https://github.com/mfat/sshpilot'
 license=('GPL-3.0-only')
-depends=('python')
-makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+arch=('any')
+depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography' 'python-matplotlib'
+         'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0'
+         'python-flask' 'python-flask-socketio')
+# Meson is the upstream build system: it compiles the Blueprint .blp sources into
+# the bundled GResource and installs the launcher, the Python package, the desktop
+# entry, the AppStream metainfo, the icon and sshpilot-agent.
+makedepends=('meson' 'ninja' 'blueprint-compiler' 'glib2-devel' 'gtk4' 'gettext'
+             'desktop-file-utils' 'appstream')
 # Built-in protocol plugins shell out to these; all degrade gracefully if absent.
 optdepends=('inetutils: Telnet protocol support'
             'mosh: Mosh protocol support'
@@ -15,41 +22,19 @@ optdepends=('inetutils: Telnet protocol support'
             'docker: Docker/Podman protocol support'
             'picocom: Serial console protocol support'
             'python-pykeepass: KeePass (.kdbx) secret backend')
-arch=('any')
-sha256sums=('28d8caf38558a0f50bb052a259358c49fdb26a3ade902e9ad3de16353a5b55f5')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-
-_srcdir="${pkgname}-${pkgver}"
+sha256sums=('103f974bffda9eee035cb4986126cb5d06b01f55e8975c4cd114293187f692c4')
 
 build() {
-	cd "${_srcdir}"
-	# The wheel includes the plugin system + built-in protocol plugins (and their
-	# plugin.json) and excludes the example plugins — see pyproject.toml.
-	python -m build --wheel --no-isolation
+	arch-meson "${pkgname}-${pkgver}" build
+	meson compile -C build
+}
+
+check() {
+	# Validates the .desktop entry and the AppStream metainfo.
+	meson test -C build --print-errorlogs
 }
 
 package() {
-	depends+=(
-		'python-gobject' 'python-cairo' 'python-cryptography' 'python-matplotlib'
-		'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0' 'python-flask' 'python-flask-socketio')
-
-	cd "${_srcdir}"
-
-	python -m installer --destdir="${pkgdir}" dist/*.whl
-
-	local site_packages
-	site_packages="$(python -c "import site; print(site.getsitepackages()[0])")"
-
-	# Resources (incl. the compiled GResource main.py loads from
-	# <package>/resources/) are not shipped in the wheel — install them alongside
-	# the package so the app starts.
-	install -d "${pkgdir}${site_packages}/sshpilot/resources"
-	cp -a 'src/sshpilot/resources'/* "${pkgdir}${site_packages}/sshpilot/resources/"
-
-	# Install the main executable (runner)
-	install -D -m 755 'run.py' "${pkgdir}/usr/bin/sshpilot"
-	# Install desktop file and icon
-	install -D -m 644 'data/io.github.mfat.sshpilot.desktop.in' "${pkgdir}/usr/share/applications/io.github.mfat.sshpilot.desktop"
-	install -D -m 644 'data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg' "${pkgdir}/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
-	install -D -m 644 'data/io.github.mfat.sshpilot.metainfo.xml.in' "${pkgdir}/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
+	meson install -C build --destdir "${pkgdir}"
 }
