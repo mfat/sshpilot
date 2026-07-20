@@ -56,7 +56,7 @@ The returned dict matches what the connection dialog and
   keep the raw command around to run as-is. Everything is decomposed into
   structured fields that get written to `~/.ssh/config` through the normal
   connection path, keeping the SSH config as the single source of truth (see
-  `CLAUDE.md` / `AGENTS.md` → *SSH Connection & Authentication Architecture*).
+  `docs/architecture.md` → *SSH Connection & Authentication Architecture*).
 - **Parsing only.** The module does not connect, write config, or touch the
   keyring. It is a pure function returning data; callers decide what to do with
   it (construct a `Connection`, pre-fill `ConnectionDialog`, etc.).

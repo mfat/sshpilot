@@ -59,7 +59,7 @@ class IdentityProvider(ABC):
    running agent's `SSH_AUTH_SOCK` for the OS/desktop agent (a volatile per-session
    socket). **Per-host identity that ssh config can express — key files, certificates, a
    fixed agent socket, PKCS#11 — does NOT go here.** ssh config is the source of truth
-   (`CLAUDE.md`): express it via `ssh_config_directives()` (written to a managed `Host *`
+   (`docs/architecture.md`): express it via `ssh_config_directives()` (written to a managed `Host *`
    block) or, per connection, the connection editor's IdentityFile/IdentityAgent fields.
 2. **Safe to instantiate when the dependency is missing.** The constructor must
    not raise because an agent is down or a key file is absent — report that via
@@ -100,7 +100,7 @@ A single private key on disk (e.g. `~/.ssh/id_ed25519`).
 
 - `is_available()` — true when the key file exists.
 - `apply_to_env()` — **no-op.** A key is expressed as `IdentityFile` in
-  `~/.ssh/config` (the source of truth — see `CLAUDE.md`); ssh reads no env var for a
+  `~/.ssh/config` (the source of truth — see `docs/architecture.md`); ssh reads no env var for a
   key path, so there is nothing to inject.
 - `list_identities()` — one `Identity`; fingerprint from the sibling `.pub`.
 - `unlock(lifetime=0)` / `has_stored_passphrase()` — passphrase comes from the

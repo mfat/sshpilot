@@ -1,4 +1,10 @@
-# AGENTS.md
+# Architecture reference
+
+How sshPilot is put together, and the rules that keep it that way. Read the SSH
+section before changing anything that connects, authenticates, or transfers.
+
+For setting up a development environment see [running-from-source.md](running-from-source.md);
+for build, test and packaging workflow see [../CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Project Overview
 
@@ -345,77 +351,7 @@ When changing this subsystem: keep a **single** connection method and a
 **single** auth resolver; prefer writing per-host settings to `~/.ssh/config`
 over adding command-line flags.
 
-## Setup Commands
-
-- Install dependencies: `pip install -r requirements.txt`
-- Run from source: `python3 run.py`
-- Run with verbose debugging: `python3 run.py --verbose`
-- Run tests: `pytest`
-- Build PyInstaller bundle: `./pyinstaller.sh` (macOS)
-
-## Development Environment
-
-### System Dependencies
-Install GTK4/libadwaita/VTE system packages 
-
-**Debian/Ubuntu:**
-```bash
-sudo apt install python3-gi python3-gi-cairo libgtk-4-1 gir1.2-gtk-4.0 libadwaita-1-0 gir1.2-adw-1 libvte-2.91-gtk4-0 gir1.2-vte-3.91 libgtksourceview-5-0 gir1.2-gtksource-5 libsecret-1-0 gir1.2-secret-1 python3-cryptography sshpass ssh-askpass gir1.2-webkit-6.0
-```
-
-**Fedora/RHEL/CentOS:**
-```bash
-sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libsecret python3-cryptography sshpass openssh-askpass webkitgtk6
-```
-
-### Python Dependencies
-- Python >= 3.8
-- PyGObject >= 3.42
-- pycairo >= 1.20.0
-- cryptography >= 42.0
-- libsecret (via PyGObject) for credential storage on Linux
-- keyring >= 24.3
-- psutil >= 5.9.0
-
-## Code Style
-
-- Follow [PEP 8](https://peps.python.org/pep-0008/) for Python code style
-- Use type hints where appropriate
-- Prefer GTK4/Adwaita components over custom widgets and follow GNOME HIG guidelines. Prefer modern Adwaita UI elements over traditional GTK
-- Avoid using deprecated gtk3 methods
-- All UI should be defined in code, not UI files
-
-## Testing Instructions
-
-- Run `pytest` to execute the test suite before committing changes
-- Add or update tests when modifying code
-- Prefer unit tests and controller tests. Do not add GUI tests unless the bug specifically involves widget interaction, focus handling, drag-and-drop, rendering, or event delivery.
-- Verify keyboard shortcuts work on both platforms
-
-### Running GUI tests (real GTK)
-
-The default `pytest` suite stubs `gi` and never opens a window, so it stays
-headless/CI-safe. Real-GTK GUI tests (marker `gui`) boot the actual
-`SshPilotApplication` on a display and drive its `Gio` actions/widgets — useful
-for action/dialog/state/preference flows. They are **opt-in** and excluded from
-the default run (`addopts = -m "not gui"` in `pytest.ini`):
-
-```bash
-SSHPILOT_GUI_TESTS=1 pytest -m gui            # on a display
-SSHPILOT_GUI_TESTS=1 xvfb-run -a pytest -m gui  # headless machine
-```
-
-Without `SSHPILOT_GUI_TESTS=1` + real PyGObject + a display they **skip**
-(never error), so they can never turn CI red. Write them with the harness in
-`tests/_gui_harness.py`: **name the file `test_gui_*.py`** (in GUI mode the
-conftest collects only `test_gui_*` modules — importing the stub-assuming
-modules under real GTK can segfault during collection), call `requires_gui()` at
-module top, mark the module `pytest.mark.gui`, and use the `gui` fixture
-(`open_local_tabs`, `user_pages`, `message_dialogs`, `activate_action`,
-`respond`). See `tests/test_gui_tab_close.py` for examples. They are NOT for pixel-gesture,
-drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
-
-## Platform-Specific Considerations
+## Platform-specific considerations
 
 ### macOS
 - Use `is_macos()` to detect macOS platform
@@ -425,7 +361,7 @@ drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 - Use `<primary>` key for Ctrl key shortcuts
 - Prefer system package managers for GTK dependencies
 
-## Security Guidelines
+## Security
 
 - Never store passwords in plain text
 - Use `libsecret` (via PyGObject) on Linux for credential storage
@@ -433,37 +369,9 @@ drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 - The app uses askpass for private key passphrases **and** stored login
   passwords; MFA/OTP stays on the TTY (`SSH_ASKPASS_REQUIRE=prefer`). Do not
   reintroduce sshpass for the native connection path
-## Build and Packaging
 
-**Meson is the build system for every Linux package.** It compiles the Blueprint
-`.blp` sources into the bundled GResource and installs the launcher, the Python
-package, the desktop entry, the AppStream metainfo, the icon and
-`sshpilot-agent`. Never re-implement any of that by hand in a packaging file —
-that is exactly how the packaging silently desynced from the tree when the
-sources moved under `src/`.
 
-| Target | Entry point | Builds with |
-| --- | --- | --- |
-| Flatpak | `flathub/io.github.mfat.sshpilot.yaml` (in-tree copy: `flatpak/`) | `buildsystem: meson` |
-| Debian / PPA | `debian/rules` | `dh --buildsystem=meson` |
-| Fedora / COPR | `packaging/fedora/rpm.spec` | `%meson` macros |
-| Arch | `packaging/ArchLinux/PKGBUILD` | `arch-meson` |
-| macOS DMG | `packaging/macos/` | PyInstaller (not Meson) |
-
-- The setuptools build (`pyproject.toml`) is kept in parallel for the
-  wheel-based paths only: PyPI, Homebrew and PyInstaller.
-- `meson test` runs the desktop-entry and AppStream validators; the packaging
-  wires it into `%check` / `dh_auto_test`.
-- macOS DMG naming takes its version from `__init__.py`.
-- `scripts/bump-version.sh` is the single writer of the version and changelog
-  across `__init__.py`, `meson.build`, the RPM spec, the metainfo and
-  `debian/changelog`. Both `scripts/release.sh` and the Release workflow call
-  it; never bump a version by hand.
-
-## Git and Release Guidelines
-- Project tags follow format `vX.Y.Z` (e.g., `v2.7.1`)
-
-## Common Patterns
+## Common patterns
 
 ### SSH Configuration
 - The project uses 2 operation modes: default (loads and saves ~/.ssh/config) and Isolated Mode which stores config in ~/.config/sshpilot
@@ -519,46 +427,3 @@ with `logs/` (all log files incl. crash reports), `system-info.txt` (`StartupInf
 `version.txt`, and a **redacted** `config.json` (`log_viewer._redact_config` strips
 password/passphrase/secret/token/credential/api-key/private-key values + PEM blobs).
 Saved connections / `ssh_config` are intentionally excluded for privacy.
-
-
-## Memory and Preferences
-- Do not add/remove features without user's confirmation
-- User prefers no UI files; define all interfaces in code
-- User requires explicit permission before modifying/deploying codebase
-
-## Cursor Cloud specific instructions
-
-These notes cover non-obvious caveats for this VM. Standard commands live in
-**Setup Commands** / **Development Environment** above and in `README.md`.
-
-- **Python deps live in the system interpreter, not a venv.** The app uses the
-  system `python3-gi` (PyGObject) + GTK/VTE/libadwaita GObject-introspection
-  packages, which a fresh virtualenv cannot see. Install pip deps with
-  `pip install --break-system-packages -r requirements.txt` (the startup update
-  script does this). A plain `python3 -m venv` will fail to import `gi`.
-- **`pytest` is required to run the suite** but is not in `requirements.txt`; the
-  update script installs it.
-- **GUI runs headed on `DISPLAY=:1`** (X11 is already available). Launch with
-  `python3 run.py --verbose`; it is a long-running process, so run it in a tmux
-  session. `libEGL ... DRI3` warnings are harmless (software rendering).
-- **SVG icons need `librsvg2-common`** (provides the gdk-pixbuf SVG loader). It
-  is installed in the snapshot; without it the app logs many
-  `Failed to load icon ... Unrecognized image file format` warnings (cosmetic
-  only — the app still runs).
-- **`pytest` runs headless against a stubbed `gi`** (see `tests/conftest.py`,
-  which injects dummy GTK modules when `gi` is not already imported). The
-  default `pytest` collects only `tests/`. The suite is green (1677 passed, 40
-  skipped); CI runs it on every PR in `.github/workflows/tests.yml`, alongside
-  Ruff (`lint.yml`), the type check (`typecheck.yml`), and the Meson build
-  (`meson.yml`).
-- **Nickname field forbids whitespace.** When creating a connection in the GUI,
-  the Save button silently stays disabled if the nickname contains a space
-  ("no whitespaces allowed"); use e.g. `DemoServer`, not `Demo Server`.
-- **The GResource bundle (`src/sshpilot/resources/sshpilot.gresource`) is
-  committed** and loaded at startup (the app exits if it cannot load it). Rebuild
-  it with `scripts/build_gresource.sh` if you change anything under
-  `src/sshpilot/resources/` — including the Blueprint `.blp` sources, which
-  compile to the `.ui` files inside the bundle. `lint.yml` fails the PR if the
-  committed artifacts drift from their sources. The Meson build compiles the same
-  resources itself into `builddir/`, so it never reads the committed bundle; a
-  source-tree run does.

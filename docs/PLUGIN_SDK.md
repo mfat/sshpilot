@@ -279,7 +279,7 @@ applies the shared native auth path (askpass for key passphrases; sshpass only
 for password-method connections). Prompt with `show_ssh_password_dialog` only
 when you need a password that is not already in the keyring / connection record.
 
-Full reference: **AGENTS.md → In-app password & passphrase dialogs** and
+Full reference: **docs/architecture.md → In-app password & passphrase dialogs** and
 docstrings on `show_ssh_password_dialog` in `sshpilot/window_dialogs.py`.
 
 ---

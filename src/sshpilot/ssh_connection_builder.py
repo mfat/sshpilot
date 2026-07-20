@@ -859,7 +859,7 @@ def build_ssh_connection(
             # ~/.ssh/config define ServerAliveInterval for this host, inject a
             # sane default so a dead link (laptop sleep, VPN drop, cable pull)
             # is detected instead of the connection lingering "green" forever.
-            # Honors CLAUDE.md: this is a runtime option that doesn't live in
+            # Honors docs/architecture.md: this is a runtime option that doesn't live in
             # ~/.ssh/config, applied via -o like the rest of ssh_overrides, and
             # any explicit user/per-host value wins.
             _maybe_append_default_keepalive(base_cmd, overrides, app_ssh_config)

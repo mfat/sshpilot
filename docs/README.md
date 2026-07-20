@@ -6,6 +6,7 @@ platform documentation that versions with the code:
 
 | Document | Contents |
 | --- | --- |
+| [architecture.md](architecture.md) | How the app is put together: the single SSH connection/auth path, secret backends, askpass mechanics, platform notes and debugging. Read this before changing how the app connects. |
 | [running-from-source.md](running-from-source.md) | Running from source on Linux: the hybrid (system PyGObject + venv) and pure-venv (pip-built PyGObject) approaches, plus dev/test setup and troubleshooting. |
 | [INSTALL-macos.md](INSTALL-macos.md) | Installing and running from source on macOS (Homebrew GTK stack). |
 | [keyboard-shortcuts.md](keyboard-shortcuts.md) | Full shortcut reference for Linux and macOS. |

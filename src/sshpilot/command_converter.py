@@ -12,7 +12,7 @@ execution: it fully decomposes the command into structured fields (host, port,
 username, identity file, forwardings, proxy jump, X11, agent forwarding, and any
 remaining ``-o`` options as ``extra_ssh_config``). Those fields are written to
 ``~/.ssh/config`` through the normal connection path, keeping the SSH config as
-the single source of truth (see ``CLAUDE.md`` / ``AGENTS.md``).
+the single source of truth (see ``docs/architecture.md``).
 
 It is currently not wired to any UI. See ``docs/command-converter.md``
 for the public API and notes on adding a UI entry point.

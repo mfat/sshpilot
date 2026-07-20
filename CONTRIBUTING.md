@@ -5,6 +5,13 @@ We welcome and appreciate contributions.
 To contribute, please open an issue first, then make a pull request that links
 to it.
 
+## Architecture
+
+Before changing how the app connects, authenticates or transfers files, read
+[docs/architecture.md](docs/architecture.md). There is exactly **one** connection
+path and **one** auth resolver, and PRs that add a second of either will be sent
+back.
+
 ## Running from source
 
 sshPilot is developed in a Python **virtual environment (venv) + pip** on top of
@@ -69,6 +76,41 @@ pytest -ra -m "not integration"
 in CI. Some unit tests are marked `xfail` (see `tests/conftest.py`) — that is
 expected.
 
+### Running GUI tests (real GTK)
+
+
+The default `pytest` suite stubs `gi` and never opens a window, so it stays
+headless/CI-safe. Real-GTK GUI tests (marker `gui`) boot the actual
+`SshPilotApplication` on a display and drive its `Gio` actions/widgets — useful
+for action/dialog/state/preference flows. They are **opt-in** and excluded from
+the default run (`addopts = -m "not gui"` in `pytest.ini`):
+
+```bash
+SSHPILOT_GUI_TESTS=1 pytest -m gui            # on a display
+SSHPILOT_GUI_TESTS=1 xvfb-run -a pytest -m gui  # headless machine
+```
+
+Without `SSHPILOT_GUI_TESTS=1` + real PyGObject + a display they **skip**
+(never error), so they can never turn CI red. Write them with the harness in
+`tests/_gui_harness.py`: **name the file `test_gui_*.py`** (in GUI mode the
+conftest collects only `test_gui_*` modules — importing the stub-assuming
+modules under real GTK can segfault during collection), call `requires_gui()` at
+module top, mark the module `pytest.mark.gui`, and use the `gui` fixture
+(`open_local_tabs`, `user_pages`, `message_dialogs`, `activate_action`,
+`respond`). See `tests/test_gui_tab_close.py` for examples. They are NOT for pixel-gesture,
+drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
+
+## Code style
+
+- Follow [PEP 8](https://peps.python.org/pep-0008/); use type hints where appropriate.
+- Prefer GTK4/libadwaita widgets over custom ones, and follow the GNOME HIG.
+  Prefer modern Adwaita elements; avoid deprecated GTK3 APIs.
+- Widget layout lives in Blueprint (`.blp`) templates compiled into the
+  GResource; behaviour lives in Python.
+- Add or update tests when you change behaviour. Prefer unit and controller
+  tests — add a GUI test only when the bug is genuinely about widget
+  interaction, focus, drag-and-drop, rendering or event delivery.
+
 ## Linting
 
 CI runs [Ruff](https://docs.astral.sh/ruff/). Match it locally before pushing:
@@ -99,3 +141,45 @@ sshPilot is extensible via plugins (new protocols and UI pages). Start with the
 Built-ins live under `src/sshpilot/plugins/builtin/<id>/`; remember to add their
 `plugin.json` to `[tool.setuptools.package-data]` in `pyproject.toml` (a test
 enforces this).
+
+## Packaging
+
+**Meson is the build system for every Linux package.** It compiles the Blueprint
+`.blp` sources into the bundled GResource and installs the launcher, the Python
+package, the desktop entry, the AppStream metainfo, the icon and
+`sshpilot-agent`. Never re-implement any of that by hand in a packaging file —
+that is exactly how the packaging silently desynced from the tree when the
+sources moved under `src/`.
+
+| Target | Entry point | Builds with |
+| --- | --- | --- |
+| Flatpak | `flathub/io.github.mfat.sshpilot.yaml` (in-tree copy: `flatpak/`) | `buildsystem: meson` |
+| Debian / PPA | `debian/rules` | `dh --buildsystem=meson` |
+| Fedora / COPR | `packaging/fedora/rpm.spec` | `%meson` macros |
+| Arch | `packaging/ArchLinux/PKGBUILD` | `arch-meson` |
+| macOS DMG | `packaging/macos/` | PyInstaller (not Meson) |
+
+- The setuptools build (`pyproject.toml`) is kept in parallel for the
+  wheel-based paths only: PyPI, Homebrew and PyInstaller.
+- `meson test` runs the desktop-entry and AppStream validators; the packaging
+  wires it into `%check` / `dh_auto_test`.
+- macOS DMG naming takes its version from `__init__.py`.
+- `scripts/bump-version.sh` is the single writer of the version and changelog
+  across `__init__.py`, `meson.build`, the RPM spec, the metainfo and
+  `debian/changelog`. Both `scripts/release.sh` and the Release workflow call
+  it; never bump a version by hand.
+
+## Releases
+
+- Tags follow `vX.Y.Z` (e.g. `v2.7.1`).
+- `scripts/release.sh` (interactive) and the **Release** workflow (manual
+  dispatch) both drive `scripts/bump-version.sh`; never bump a version by hand.
+
+## Generated artifacts
+
+The GResource bundle (`src/sshpilot/resources/sshpilot.gresource`) and the `.ui`
+files inside it are **committed**, because a source-tree run loads them directly.
+Rebuild with `scripts/build_gresource.sh` after changing anything under
+`src/sshpilot/resources/` — including the Blueprint `.blp` sources. `lint.yml`
+fails the PR if the committed artifacts drift from their sources. The Meson build
+compiles its own copy and never reads the committed one.

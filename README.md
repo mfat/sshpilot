@@ -388,6 +388,7 @@ Prefer to keep PyGObject out of system packages? The **pure-venv** approach
 
 ## Documentation
 - User guide and FAQ: https://github.com/mfat/sshpilot/wiki
+- Architecture reference: [docs/architecture.md](docs/architecture.md)
 - In-repo developer and platform docs: [docs/](docs/)
 - Writing plugins (protocols & UI pages): [docs/plugins/](docs/plugins/writing-plugins.md)
 

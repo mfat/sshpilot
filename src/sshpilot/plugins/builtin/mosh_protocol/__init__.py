@@ -89,7 +89,7 @@ class MoshProtocolBackend(ProtocolBackend):
         if not host:
             raise ProtocolError("No host configured for this connection.")
 
-        # Reuse the single SSH command/auth path (CLAUDE.md): never hand-roll ssh.
+        # Reuse the single SSH command/auth path (docs/architecture.md): never hand-roll ssh.
         from ....ssh_connection_builder import (  # noqa: PLC0415
             build_native_command,
             resolve_native_auth,

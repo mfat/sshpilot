@@ -1,7 +1,7 @@
 """Tests for SSH port-forwarding across all three types (local, remote, dynamic).
 
 Forwarding is not done with per-tunnel ``ssh -L/-R/-D`` subprocesses anymore;
-``~/.ssh/config`` is the source of truth (see CLAUDE.md / AGENTS.md). A rule
+``~/.ssh/config`` is the source of truth (see docs/architecture.md). A rule
 travels two code paths, both covered here for every type:
 
   1. UI -> rule dict:   ``ConnectionDialog._save_rule_from_editor`` turns the

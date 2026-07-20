@@ -35,7 +35,7 @@ class FileKeyProvider(IdentityProvider):
 
     def apply_to_env(self, env: Dict[str, str]) -> Dict[str, str]:
         # A file key is expressed as ``IdentityFile`` in ``~/.ssh/config`` (the source of
-        # truth — see CLAUDE.md), not via the environment. ssh reads no env var for a key
+        # truth — see docs/architecture.md), not via the environment. ssh reads no env var for a key
         # path, so there is nothing to inject here.
         return dict(env)
 

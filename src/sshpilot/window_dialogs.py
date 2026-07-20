@@ -192,7 +192,7 @@ def show_ssh_password_dialog(
     :func:`resolve_app_modal_parent`), and blocks until the user dismisses it
     (nested ``GLib.MainLoop``). **Must be called on the GTK main thread.**
 
-    See module docstring / ``AGENTS.md`` for call examples. Also re-exported
+    See module docstring / ``docs/architecture.md`` for call examples. Also re-exported
     from :mod:`sshpilot.window` for historical imports.
     """
     storage_host = host

@@ -68,7 +68,7 @@ class IdentityProvider(ABC):
 
         Per-host identity that ssh config can express (key files, certificates, a fixed
         agent socket, PKCS#11, …) does **not** belong here: it is the source of truth in
-        ``~/.ssh/config`` (see :meth:`ssh_config_directives` and CLAUDE.md). Must not
+        ``~/.ssh/config`` (see :meth:`ssh_config_directives` and docs/architecture.md). Must not
         mutate the argument in place.
         """
 

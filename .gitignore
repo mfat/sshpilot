@@ -41,6 +41,10 @@ build-deb-local.sh
 .pytest_cache/
 .ruff_cache/
 
+# Local assistant/editor instructions (not published)
+CLAUDE.md
+AGENTS.md
+
 # Editors / tools
 .history/
 .cursor/

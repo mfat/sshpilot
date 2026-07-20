@@ -44,7 +44,7 @@ test = [
 # - WebKit 6.0 (for PyXterm.js backend, optional but recommended on Linux only)
 #   Note: webkitgtk is Linux-only; PyXterm.js backend not available on macOS
 # - GtkSourceView 5.0, libsecret
-# See README.md or AGENTS.md for complete system dependency list.
+# See README.md or docs/running-from-source.md for the full system dependency list.
 
 [tool.setuptools.dynamic]
 version = {attr = "sshpilot.__version__"}
