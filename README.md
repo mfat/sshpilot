@@ -1,19 +1,6 @@
 **SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS.
 
 
-
-
-
-
-<table>
-  <tr>
-    <td align="center" valign="top">
-      <img width="1409" height="1092" alt="Start Page" src="https://github.com/user-attachments/assets/99670247-8456-45dd-bff8-af80592324f5" />
-    </td>
-    
-  </tr>
-</table>
-
 | Getting started | [Install](#download) | Project |
 | --- | --- | --- |
 | [Features](#features) | [Ubuntu PPA](#-ubuntu-ppa) | [Documentation](#documentation) |
@@ -22,7 +9,6 @@
 | | [Flatpak](#-flatpak) · [Arch Linux](#-arch-linux) | [Special Thanks](#special-thanks) |
 | | [Homebrew](#-homebrew-macos--linux) · [macOS](#-macos-aarch64) | [Support Development](#support-development) |
 | | [Debian / Ubuntu manual install](#--debianubuntu-manual-install) | |
-
 
 
 
@@ -51,8 +37,6 @@ sudo apt update
 sudo apt install sshpilot
 ```
 
-For more information, visit: https://launchpad.net/~mfat/+archive/ubuntu/sshpilot
-
 ### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> Debian APT Repository
 
 1. Add the GPG key:
@@ -73,8 +57,6 @@ sudo apt install sshpilot
 
 For more information, visit: https://mfat.github.io/sshpilot-ppa/
 
-### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Debian/Ubuntu (Manual Install)
-Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
 ### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL COPR Repository
 
@@ -87,8 +69,6 @@ dnf install sshpilot
 
 [![Copr build status](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/)
 
-### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL (Manual Install)
-Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
 ### <img src="https://flathub.org/favicon.svg" width="24" height="24"/> Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
@@ -182,128 +162,10 @@ everywhere Flatpak does.
 
 ---
 
-### 💻 Run from Source
+### Run from Source
 
 [docs/running-from-source.md](docs/running-from-source.md).
 
-#### Step 1 — Install system prerequisites (required)
-
-These provide PyGObject, the GObject-Introspection (GI) typelibs, and the native
-GTK4/libadwaita/VTE runtime. Install them **before** creating the venv.
-
-**Debian/Ubuntu**
-
-```bash
-sudo apt update
-sudo apt install \
-  python3 python3-venv python3-gi python3-gi-cairo \
-  libgtk-4-1 gir1.2-gtk-4.0 \
-  libadwaita-1-0 gir1.2-adw-1 \
-  libvte-2.91-gtk4-0 gir1.2-vte-3.91 \
-  libgtksourceview-5-0 gir1.2-gtksource-5 \
-  libsecret-1-0 gir1.2-secret-1 \
-  python3-cryptography sshpass ssh-askpass \
-  gir1.2-webkit-6.0
-```
-
-**Fedora / RHEL / CentOS**
-
-```bash
-sudo dnf install \
-  python3 python3-gobject \
-  gtk4 libadwaita \
-  vte291-gtk4 \
-  gtksourceview5 \
-  libsecret \
-  python3-cryptography sshpass openssh-askpass \
-  webkitgtk6
-```
-
-**Arch Linux**
-
-```bash
-sudo pacman -S --needed \
-  python python-gobject python-cairo \
-  gtk4 libadwaita vte4 gtksourceview5 libsecret \
-  python-cryptography sshpass
-```
-
-**openSUSE (Tumbleweed)**
-
-```bash
-sudo zypper install \
-  python3 python3-gobject \
-  typelib-1_0-Gtk-4_0 \
-  gtk4 libadwaita \
-  typelib-1_0-Adw-1 \
-  typelib-1_0-Vte-3_91 \
-  typelib-1_0-GtkSource-5 \
-  typelib-1_0-Secret-1 \
-  python3-cryptography \
-  sshpass openssh-askpass-gnome
-```
-
-Other distributions work too — install the equivalent GTK4 / libadwaita / VTE
-(GTK4) / GtkSourceView 5 / libsecret packages plus PyGObject. The optional
-**WebKit 6.0** package (`gir1.2-webkit-6.0` / `webkitgtk6` / `webkitgtk-6.0` /
-`typelib-1_0-WebKit-6_0`) is only needed for the PyXterm.js terminal backend; the
-default VTE backend works without it. Full per-distro detail (and the pure-venv
-approach) is in
-[docs/running-from-source.md](docs/running-from-source.md).
-
-`libsecret` handles secure credential storage on Linux via the Secret Service
-API. macOS contributors should follow
-[docs/INSTALL-macos.md](docs/INSTALL-macos.md) for the
-Homebrew GTK stack instead.
-
-#### Step 2 — Create and activate a virtual environment
-
-Create the venv **with `--system-site-packages`** so it can use the
-distribution's PyGObject/pycairo and GI bindings from Step 1:
-
-```bash
-git clone https://github.com/mfat/sshpilot.git
-cd sshpilot
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-```
-
-(Run `deactivate` to leave the environment later.)
-
-#### Step 3 — Install the Python dependencies (pip, inside the venv)
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-This installs only the pure-Python dependencies (Paramiko, cryptography,
-keyring, psutil, …). PyGObject and pycairo are intentionally **not** installed
-here — they come from the system packages in Step 1.
-
-#### Step 4 — Run
-
-```bash
-python3 run.py
-```
-
-Enable verbose debugging output with the `--verbose` flag:
-
-```bash
-python3 run.py --verbose
-```
-
-Logs, crash reports, the diagnostics flags and the bug-report bundle are
-documented in [docs/diagnostics.md](docs/diagnostics.md).
-
-Prefer to keep PyGObject out of system packages? The **pure-venv** approach
-(pip-built PyGObject/pycairo in a plain venv) is documented in the
-[full source-install guide](docs/running-from-source.md#approach-b--pure-venv-pip-built-pygobject).
-
-> **Alternative (not for development):** if you only want to *use* sshPilot, the
-> distribution packages, Flatpak, Homebrew, and AUR builds in
-> [Download](#download) are the easiest route. The venv workflow above is the
-> recommended path for running the latest source and for contributing.
 
 ## Documentation
 - User guide and FAQ: https://github.com/mfat/sshpilot/wiki
@@ -323,7 +185,7 @@ SSH Pilot uses the following third-party libraries:
 
 ## Special Thanks
 
-- [Elibugy](https://www.linkedin.com/in/elham-hesaraki) as the primary sponsor of the project
+- [Elibugy](https://www.linkedin.com/in/elham-hesaraki), [Mo Efazati](https://github.com/efazati) and [Sadeq](https://github.com/sadeq-n-yazdi) for supporting development
 - Behnam Tavakkoli, Chalist and Kalpase, Ramin Najjarbashi, Farid and Narbeh for testing
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
 
