@@ -43,11 +43,48 @@ gi.require_version('Vte', '3.91')
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
 
+# Build-time paths written by Meson at install time. Absent in a setuptools /
+# editable checkout, where we fall back to package-relative discovery.
+try:
+    from .build_config import PKGDATADIR as _PKGDATADIR, LOCALEDIR as _LOCALEDIR
+except Exception:  # pragma: no cover - only present in a Meson install
+    _PKGDATADIR = None
+    _LOCALEDIR = None
+
+
+def _init_gettext():
+    """Bind the ``sshpilot`` text domain so the existing ``_()`` calls resolve
+    translations. Uses the Meson-configured localedir when available, else the
+    system default. Harmless when no catalogs are installed (``_()`` is identity)."""
+    import gettext as _gettext
+    localedir = _LOCALEDIR if (_LOCALEDIR and os.path.isdir(_LOCALEDIR)) else None
+    try:
+        _gettext.bindtextdomain('sshpilot', localedir)
+        _gettext.textdomain('sshpilot')
+        # Mirror to the C library so GTK/Adw (.ui, .desktop) translations resolve too.
+        try:
+            import locale
+            locale.bindtextdomain('sshpilot', localedir)
+            locale.textdomain('sshpilot')
+        except Exception:
+            pass
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("gettext init skipped: %s", exc)
+
+
+_init_gettext()
+
+
 # Register resources before importing any UI modules
 def load_resources():
-    # Simplified lookup: prefer installed site-packages path, with one system fallback.
+    # Prefer the Meson-installed gresource in $pkgdatadir, then the bundled copy
+    # inside the package (setuptools/editable), then the legacy system path.
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    possible_paths = [
+    possible_paths = []
+    if _PKGDATADIR:
+        possible_paths.append(
+            os.path.join(_PKGDATADIR, 'io.github.mfat.sshpilot.gresource'))
+    possible_paths += [
         os.path.join(current_dir, 'resources', 'sshpilot.gresource'),
         '/usr/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource',
     ]
