@@ -38,7 +38,8 @@ BuildRequires:  gtk-update-icon-cache
 Requires:       python3
 Requires:       python3-gobject
 Requires:       gtk4 >= 4.6
-Requires:       libadwaita >= 1.4
+# 1.5 for Adw.Dialog / Adw.AlertDialog, both used unguarded.
+Requires:       libadwaita >= 1.5
 Requires:       vte291-gtk4 >= 0.70
 Requires:       gtksourceview5 >= 5.0
 Requires:       python3-cryptography

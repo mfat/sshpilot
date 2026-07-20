@@ -177,7 +177,7 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 | Component    | Minimum Version |
 |---------------|----------------|
 | GTK 4         | 4.6            |
-| libadwaita    | 1.4            |
+| libadwaita    | 1.5            |
 | VTE (GTK4)    | 0.70           |
 | PyGObject     | 3.42           |
 | pycairo       | 1.20.0         |

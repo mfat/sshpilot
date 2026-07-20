@@ -72,6 +72,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="icon-name">sidebar-show-symbolic</property>
                     <property name="tooltip-text" translatable="yes">Show Sidebar</property>
                     <property name="visible" bind-source="overlay_split_view" bind-property="collapsed" bind-flags="sync-create"/>
+                    <property name="active" bind-source="overlay_split_view" bind-property="show-sidebar" bind-flags="sync-create|bidirectional"/>
                   </object>
                 </child>
                 <property name="title-widget">

@@ -87,9 +87,7 @@ template $SshPilotPreferencesWindow: Adw.Dialog {
           icon-name: "sidebar-show-symbolic";
           tooltip-text: _("Show Sidebar");
           visible: bind overlay_split_view.collapsed;
-          // `active` is bound bidirectionally in Python: GtkBuilder's
-          // bind-flags="bidirectional" does not propagate button -> split view
-          // here, so pressing the button would not open the sidebar.
+          active: bind overlay_split_view.show-sidebar bidirectional;
         }
 
         title-widget: Gtk.Label header_title_label {

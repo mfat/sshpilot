@@ -25,7 +25,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio, GObject
+from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -314,11 +314,6 @@ class PreferencesWindow(Adw.Dialog):
 
         try:
             self.overlay_split_view.set_show_sidebar(True)
-            # Reveal/hide the collapsed sidebar from the header toggle.
-            self.overlay_split_view.bind_property(
-                'show-sidebar', self.show_sidebar_button, 'active',
-                GObject.BindingFlags.SYNC_CREATE | GObject.BindingFlags.BIDIRECTIONAL,
-            )
         except Exception as e:
             logger.debug(f"Failed to set OverlaySplitView show_sidebar: {e}")
 
