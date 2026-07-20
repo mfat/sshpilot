@@ -86,8 +86,15 @@ jobs:
             echo "Run scripts/build_gresource.sh and commit the result."
             exit 1
           fi
+          # ui/*.ui carry preprocess="xml-stripblanks", so glib pipes them through
+          # xmllint and what lands in the blob depends on the libxml2 version --
+          # not on whether anyone forgot to rebuild. Compare everything else
+          # (css, icons, pngs, language-specs), which glib stores verbatim.
+          # The .ui themselves are already covered byte-for-byte on disk above,
+          # and they only ever change via build_gresource.sh, which writes both.
           stale=0
           while read -r res; do
+            case "$res" in */ui/*.ui) continue ;; esac
             cmp -s <(gresource extract "$old" "$res") <(gresource extract "$new" "$res") \
               || { echo "::error::stale resource: $res"; stale=1; }
           done < <(gresource list "$new")
