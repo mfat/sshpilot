@@ -14,8 +14,18 @@ template $SshPilotPreferencesWindow: Adw.Dialog {
   content-width: 820;
   content-height: 600;
 
+  // A widget holding breakpoints has no minimum size of its own, so libadwaita
+  // requires the smallest size we support (it warns otherwise). These are
+  // measured, not guessed: the content pane's own minimum is 448px, so the
+  // collapsed split view cannot go narrower. Claiming less makes libadwaita
+  // warn that the child overflows.
+  width-request: 448;
+  height-request: 294;
+
   Adw.Breakpoint {
-    condition ("max-width: 400sp")
+    // Sidebar + content need 628px side by side; below that, collapse the
+    // sidebar into an overlay rather than overflowing.
+    condition ("max-width: 628sp")
 
     setters {
       overlay_split_view.collapsed: true;
@@ -68,6 +78,19 @@ template $SshPilotPreferencesWindow: Adw.Dialog {
         styles [
           "flat",
         ]
+
+        // Only route back to the page list once the sidebar is collapsed —
+        // without it the collapsed dialog is a dead end on whichever page
+        // happened to be selected.
+        [start]
+        ToggleButton show_sidebar_button {
+          icon-name: "sidebar-show-symbolic";
+          tooltip-text: _("Show Sidebar");
+          visible: bind overlay_split_view.collapsed;
+          // `active` is bound bidirectionally in Python: GtkBuilder's
+          // bind-flags="bidirectional" does not propagate button -> split view
+          // here, so pressing the button would not open the sidebar.
+        }
 
         title-widget: Gtk.Label header_title_label {
           label: "";

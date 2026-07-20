@@ -10,9 +10,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="title">Settings</property>
     <property name="content-width">820</property>
     <property name="content-height">600</property>
+    <property name="width-request">448</property>
+    <property name="height-request">294</property>
     <child>
       <object class="AdwBreakpoint">
-        <condition>max-width: 400sp</condition>
+        <condition>max-width: 628sp</condition>
         <setter object="overlay_split_view" property="collapsed">true</setter>
       </object>
     </child>
@@ -65,6 +67,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <style>
                   <class name="flat"/>
                 </style>
+                <child type="start">
+                  <object class="GtkToggleButton" id="show_sidebar_button">
+                    <property name="icon-name">sidebar-show-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Show Sidebar</property>
+                    <property name="visible" bind-source="overlay_split_view" bind-property="collapsed" bind-flags="sync-create"/>
+                  </object>
+                </child>
                 <property name="title-widget">
                   <object class="GtkLabel" id="header_title_label">
                     <property name="label"></property>

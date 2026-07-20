@@ -121,3 +121,37 @@ def test_every_page_widget_resolves_a_window_root(gui):
     page = getattr(prefs, 'shortcuts_editor_page', None)
     if page is not None:
         assert page._transient_parent is None or isinstance(page._transient_parent, Gtk.Window)
+
+
+def test_collapsed_sidebar_can_be_reopened(gui):
+    """The narrow layout must not be a dead end.
+
+    Below the breakpoint the sidebar collapses into an overlay, so the header
+    toggle is the only way back to the page list. Revealing the sidebar
+    re-emits row-selected for the already-selected row, so the dismiss-on-pick
+    behaviour must fire on a real page change only — otherwise the sidebar
+    slams shut the instant it opens.
+    """
+    prefs = _open_preferences(gui)
+    split = prefs.overlay_split_view
+
+    split.set_collapsed(True)
+    split.set_show_sidebar(False)
+    gui.pump(200)
+    assert prefs.show_sidebar_button.get_visible(), 'no way to reopen the sidebar'
+
+    prefs.show_sidebar_button.set_active(True)
+    gui.pump(200)
+    assert split.get_show_sidebar(), 'toggle did not reveal the sidebar'
+
+    # Re-selecting the current page keeps it open; a different page dismisses it.
+    current = prefs.sidebar.get_selected_row()
+    prefs.sidebar.select_row(current)
+    gui.pump(200)
+    assert split.get_show_sidebar(), 'reselecting the same row closed the sidebar'
+
+    other = next(r for i in range(10)
+                 if (r := prefs.sidebar.get_row_at_index(i)) is not None and r is not current)
+    prefs.sidebar.select_row(other)
+    gui.pump(200)
+    assert not split.get_show_sidebar(), 'choosing a page did not dismiss the sidebar'

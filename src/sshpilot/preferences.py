@@ -25,7 +25,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
+from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio, GObject
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +237,7 @@ class PreferencesWindow(Adw.Dialog):
     sidebar_header_bar = Gtk.Template.Child()
     sidebar = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
+    show_sidebar_button = Gtk.Template.Child()
     header_title_label = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
 
@@ -313,6 +314,11 @@ class PreferencesWindow(Adw.Dialog):
 
         try:
             self.overlay_split_view.set_show_sidebar(True)
+            # Reveal/hide the collapsed sidebar from the header toggle.
+            self.overlay_split_view.bind_property(
+                'show-sidebar', self.show_sidebar_button, 'active',
+                GObject.BindingFlags.SYNC_CREATE | GObject.BindingFlags.BIDIRECTIONAL,
+            )
         except Exception as e:
             logger.debug(f"Failed to set OverlaySplitView show_sidebar: {e}")
 
@@ -329,7 +335,15 @@ class PreferencesWindow(Adw.Dialog):
         """Handle sidebar row selection"""
         if row is not None:
             page_name = row.get_name()
+            changed = page_name != getattr(self, '_selected_page_name', None)
+            self._selected_page_name = page_name
             self.content_stack.set_visible_child_name(page_name)
+            # Collapsed, the sidebar is an overlay over the page: dismiss it once
+            # a page is chosen, the way a navigation sidebar behaves. Only on an
+            # actual change -- revealing the sidebar re-emits row-selected for
+            # the row that is already selected, which would slam it shut again.
+            if changed and self.overlay_split_view.get_collapsed():
+                self.overlay_split_view.set_show_sidebar(False)
             if page_name == getattr(self, '_secrets_page_id', None):
                 self._ensure_secrets_page_probes()
             if isinstance(row, Adw.ActionRow):
