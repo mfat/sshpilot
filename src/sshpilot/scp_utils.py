@@ -20,14 +20,14 @@ from .ssh_config_utils import get_effective_ssh_config
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    '_apply_native_auth_env',
+    '_build_scp_argv_prefix',
+    '_summarize_listing_error',
     'assemble_scp_transfer_args',
     'classify_sftp_error',
     'insert_legacy_scp_flag',
     'legacy_scp_flag_unsupported',
     'list_remote_files',
-    '_apply_native_auth_env',
-    '_build_scp_argv_prefix',
-    '_summarize_listing_error',
 ]
 
 

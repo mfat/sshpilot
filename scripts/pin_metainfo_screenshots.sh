@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-METAINFO_FILE="$ROOT_DIR/io.github.mfat.sshpilot.metainfo.xml"
+METAINFO_FILE="$ROOT_DIR/data/io.github.mfat.sshpilot.metainfo.xml"
 COMMIT="${1:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
 
 if [[ ! -f "$METAINFO_FILE" ]]; then

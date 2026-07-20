@@ -44,12 +44,12 @@ package() {
 	# <package>/resources/) are not shipped in the wheel — install them alongside
 	# the package so the app starts.
 	install -d "${pkgdir}${site_packages}/sshpilot/resources"
-	cp -a 'sshpilot/resources'/* "${pkgdir}${site_packages}/sshpilot/resources/"
+	cp -a 'src/sshpilot/resources'/* "${pkgdir}${site_packages}/sshpilot/resources/"
 
 	# Install the main executable (runner)
 	install -D -m 755 'run.py' "${pkgdir}/usr/bin/sshpilot"
 	# Install desktop file and icon
-	install -D -m 644 'io.github.mfat.sshpilot.desktop' -t "${pkgdir}/usr/share/applications"
-	install -D -m 644 'sshpilot/resources/sshpilot.svg' "${pkgdir}/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
-	install -D -m 644 'io.github.mfat.sshpilot.metainfo.xml' -t "${pkgdir}/usr/share/metainfo"
+	install -D -m 644 'data/io.github.mfat.sshpilot.desktop' -t "${pkgdir}/usr/share/applications"
+	install -D -m 644 'data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg' "${pkgdir}/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
+	install -D -m 644 'data/io.github.mfat.sshpilot.metainfo.xml' -t "${pkgdir}/usr/share/metainfo"
 }

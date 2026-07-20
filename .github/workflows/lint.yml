@@ -20,7 +20,7 @@ jobs:
         run: pip install "ruff==0.15.17"
 
       - name: ruff check
-        run: ruff check sshpilot/ tests/
+        run: ruff check src/ tests/
 
   resources:
     # Guard against committed UI artifacts drifting from their Blueprint source:
@@ -37,9 +37,9 @@ jobs:
 
       - name: Fail if committed .ui / .gresource are stale
         run: |
-          if ! git diff --quiet -- sshpilot/resources; then
+          if ! git diff --quiet -- src/sshpilot/resources; then
             echo "::error::Committed .ui/.gresource are out of date with the .blp sources."
             echo "Run scripts/build_gresource.sh and commit the result."
-            git --no-pager diff --stat -- sshpilot/resources
+            git --no-pager diff --stat -- src/sshpilot/resources
             exit 1
           fi

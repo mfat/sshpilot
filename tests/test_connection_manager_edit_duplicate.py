@@ -83,7 +83,7 @@ def _group_mgr():
 
 def test_duplicate_strips_private_keys_and_appends_copy_suffix():
     saved = {}
-    cm = _cm(get_connections=lambda: [],
+    cm = _cm(get_connections=list,
              update_connection=lambda c, d: (saved.update(d) or True))
     conn = _plugin_conn({
         "nickname": "orig", "command": "echo", "foo": "bar",
@@ -99,14 +99,14 @@ def test_duplicate_strips_private_keys_and_appends_copy_suffix():
 
 
 def test_duplicate_raises_runtimeerror_when_save_fails():
-    cm = _cm(get_connections=lambda: [], update_connection=lambda c, d: False)
+    cm = _cm(get_connections=list, update_connection=lambda c, d: False)
     with pytest.raises(RuntimeError):
         cm.duplicate_connection(_plugin_conn({"nickname": "orig"}), _group_mgr())
 
 
 def test_duplicate_mirrors_original_group_membership():
     moved = []
-    cm = _cm(get_connections=lambda: [], update_connection=lambda c, d: True)
+    cm = _cm(get_connections=list, update_connection=lambda c, d: True)
     gm = types.SimpleNamespace(
         get_connection_groups=lambda n: ["grp1"],
         groups={"grp1": {}},

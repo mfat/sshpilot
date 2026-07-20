@@ -40,7 +40,7 @@ jobs:
           import re
           import pathlib
           
-          content = pathlib.Path("sshpilot/__init__.py").read_text()
+          content = pathlib.Path("src/sshpilot/__init__.py").read_text()
           match = re.search(r"__version__\s*=\s*[\"'"'"']([^\"'"'"']*)[\"'"'"']", content)
           if match:
               print(match.group(1))
@@ -113,16 +113,16 @@ jobs:
             echo -e "\t# file_manager/, plugins/, vendor/ (incl. pyxtermjs html/LICENSE)"
             echo -e "\t# and resources/. Then drop the dev-only example plugins + caches."
             echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot"
-            echo -e "\tcp -a sshpilot/. \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/"
+            echo -e "\tcp -a src/sshpilot/. \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/"
             echo -e "\trm -rf \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/plugins/examples"
             echo -e "\tfind \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +"
           echo -e "\t# Install desktop file and icon"
-          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
+          echo -e "\tinstall -D -m 644 data/io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
           echo -e "\t# Install appstream metadata"
-          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
+          echo -e "\tinstall -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
           echo -e "\t# Install icon to hicolor theme (per AppStream guidelines)"
           echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps"
-          echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg"
+          echo -e "\tinstall -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg"
             echo "override_dh_auto_test:"
             echo -e "\t# Skip tests for now (can be enabled later)"
             echo "override_dh_auto_clean:"
@@ -149,7 +149,7 @@ jobs:
             echo "Copyright: 2025 mFat <newmfat@gmail.com>"
             echo "License: GPL-3+"
             echo ""
-            echo "Files: sshpilot/vendor/pyxtermjs/*"
+            echo "Files: src/sshpilot/vendor/pyxtermjs/*"
             echo "Copyright: 2018-2022 Chad Smith"
             echo "License: MIT"
             echo ""
@@ -176,13 +176,13 @@ jobs:
           echo "=== Checking required project files ==="
           ls -la run.py || echo "run.py missing"
           ls -la sshpilot/ || echo "sshpilot/ missing"
-          ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
-          ls -la io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
-          ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
+          ls -la data/io.github.mfat.sshpilot.desktop || echo "desktop file missing"
+          ls -la data/io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
+          ls -la data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg || echo "icon missing"
 
           echo "=== Validating desktop and AppStream metadata ==="
-          desktop-file-validate io.github.mfat.sshpilot.desktop
-          appstream-util validate-relax --nonet io.github.mfat.sshpilot.metainfo.xml
+          desktop-file-validate data/io.github.mfat.sshpilot.desktop
+          appstream-util validate-relax --nonet data/io.github.mfat.sshpilot.metainfo.xml
 
           echo "=== Debian packaging files created ==="
           ls -la debian/

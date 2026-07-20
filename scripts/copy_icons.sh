@@ -5,7 +5,7 @@
 set -u
 
 ICON_BASE="/usr/share/icons/Adwaita/symbolic"
-ICON_DEST="sshpilot/resources/icons/scalable/actions"
+ICON_DEST="src/sshpilot/resources/icons/scalable/actions"
 
 # Create destination directory
 mkdir -p "$ICON_DEST"

@@ -1,7 +1,6 @@
 """Askpass login-password autofill, MFA, and FIDO presence hints."""
 import os
 
-import pytest
 
 from sshpilot.askpass_utils import (
     classify_prompt,

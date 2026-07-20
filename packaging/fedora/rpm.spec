@@ -60,16 +60,16 @@ install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
 # so every subpackage ships: file_manager/, plugins/, vendor/ (incl. pyxtermjs
 # html/LICENSE) and resources/. Then drop the dev-only example plugins + caches.
 install -d %{buildroot}%{python3_sitelib}/sshpilot
-cp -a sshpilot/. %{buildroot}%{python3_sitelib}/sshpilot/
+cp -a src/sshpilot/. %{buildroot}%{python3_sitelib}/sshpilot/
 rm -rf %{buildroot}%{python3_sitelib}/sshpilot/plugins/examples
 find %{buildroot}%{python3_sitelib}/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # Install desktop file and icon
-install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-install -D -m 644 io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
+install -D -m 644 data/io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 # Install icon to hicolor theme (per AppStream guidelines)
 install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
-install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
+install -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %check
 # Validate desktop file

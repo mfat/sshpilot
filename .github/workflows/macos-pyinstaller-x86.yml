@@ -108,7 +108,7 @@ jobs:
       - name: Determine artifact names
         id: artifact-info
         run: |
-          VERSION=$(grep -o '__version__ = "[^"]*"' sshpilot/__init__.py | cut -d'"' -f2)
+          VERSION=$(grep -o '__version__ = "[^"]*"' src/sshpilot/__init__.py | cut -d'"' -f2)
           if [ -z "$VERSION" ]; then
             VERSION=$(date +%Y%m%d)
           fi

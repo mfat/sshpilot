@@ -8,7 +8,6 @@ sshpilot.terminal, which is its current (and, after the move, re-exporting) home
 
 import os
 import signal
-import types
 from datetime import datetime, timedelta
 
 import pytest

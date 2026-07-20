@@ -90,7 +90,7 @@ cp "$SCRIPT_DIR/Info.plist" "$BUNDLE_PATH/Contents/"
 cp "$SCRIPT_DIR/sshpilot.icns" "$BUNDLE_PATH/Contents/Resources/"
 
 # Copy resources
-cp -r "$PROJECT_ROOT/sshpilot/resources" "$BUNDLE_PATH/Contents/Resources/"
+cp -r "$PROJECT_ROOT/src/sshpilot/resources" "$BUNDLE_PATH/Contents/Resources/"
 
 # Copy the virtual environment to the bundle
 echo -e "${GREEN}Copying virtual environment to bundle...${NC}"

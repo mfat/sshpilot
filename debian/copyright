@@ -15,7 +15,7 @@ Files: debian/*
 Copyright: 2026 Mehdi <mah.fat@gmail.com>
 License: GPL-3+
 
-Files: io.github.mfat.sshpilot.metainfo.xml
+Files: data/io.github.mfat.sshpilot.metainfo.xml
 Copyright: 2025 mFat <newmfat@gmail.com>
 License: CC0-1.0
 

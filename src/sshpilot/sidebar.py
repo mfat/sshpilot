@@ -30,7 +30,6 @@ from .file_manager_integration import (
     should_hide_file_manager_options,
 )
 from .groups import GroupManager
-from .platform_utils import is_macos
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .shortcut_utils import get_primary_modifier_label

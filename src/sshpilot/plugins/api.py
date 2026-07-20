@@ -903,7 +903,6 @@ class PluginContext:
         returned handle is already stopped.
         """
         handle = StreamHandle()
-        import os
         from ..ssh_connection_builder import (
             ConnectionContext, build_ssh_connection)
         from .. import ssh_multiplex
@@ -1099,7 +1098,6 @@ class PluginContext:
         until app quit (or with the master). **Blocking** — call from a worker
         thread. Raises ``RuntimeError`` on failure."""
         import atexit
-        import os
         import subprocess
         import time
         from ..ssh_connection_builder import (
@@ -1205,7 +1203,6 @@ class PluginContext:
         """Install a public key on a saved host via the app's ssh-copy-id path
         (reusing ``resolve_native_auth`` and ``~/.ssh/config``). **Blocking** —
         call from a worker thread. Returns True on success."""
-        import os
         import subprocess
         from ..ssh_connection_builder import (
             _build_base_ssh_command,

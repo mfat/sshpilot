@@ -40,7 +40,7 @@ jobs:
           import re
           import pathlib
           
-          content = pathlib.Path("sshpilot/__init__.py").read_text()
+          content = pathlib.Path("src/sshpilot/__init__.py").read_text()
           match = re.search(r"__version__\s*=\s*[\"'"'"']([^\"'"'"']*)[\"'"'"']", content)
           if match:
               print(match.group(1))
@@ -124,7 +124,7 @@ jobs:
           # file_manager/, plugins/, vendor/ (incl. pyxtermjs html/LICENSE) and
           # resources/. Then drop the dev-only example plugins + caches.
           install -d %{buildroot}%{_datadir}/sshpilot/sshpilot
-          cp -a sshpilot/. %{buildroot}%{_datadir}/sshpilot/sshpilot/
+          cp -a src/sshpilot/. %{buildroot}%{_datadir}/sshpilot/sshpilot/
           rm -rf %{buildroot}%{_datadir}/sshpilot/sshpilot/plugins/examples
           find %{buildroot}%{_datadir}/sshpilot/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +
 
@@ -143,11 +143,11 @@ jobs:
           install -D -m 755 sshpilot-wrapper %{buildroot}%{_bindir}/sshpilot
 
           # Install desktop file, appstream metadata and icon
-          install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-          install -D -m 644 io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
+          install -D -m 644 data/io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+          install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
           # Install icon to hicolor theme (per AppStream guidelines)
           install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
-          install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
+          install -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
           %check
           # Validate desktop file
@@ -174,10 +174,10 @@ jobs:
           echo "=== Checking required project files ==="
           ls -la run.py || echo "run.py missing"
           ls -la sshpilot/ || echo "sshpilot/ missing"
-          ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
-          ls -la io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
-          ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
-          ls -la sshpilot/vendor/pyxtermjs/ || echo "vendor/pyxtermjs/ missing"
+          ls -la data/io.github.mfat.sshpilot.desktop || echo "desktop file missing"
+          ls -la data/io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
+          ls -la data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg || echo "icon missing"
+          ls -la src/sshpilot/vendor/pyxtermjs/ || echo "vendor/pyxtermjs/ missing"
           
           echo "=== RPM build tree ==="
           ls -la ~/rpmbuild/

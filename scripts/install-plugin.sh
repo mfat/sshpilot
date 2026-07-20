@@ -16,7 +16,7 @@ set -eu
 
 SRC_ARG="${1:-easyenv_workspaces}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXAMPLES_DIR="$REPO_ROOT/sshpilot/plugins/examples"
+EXAMPLES_DIR="$REPO_ROOT/src/sshpilot/plugins/examples"
 PLUGINS_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/sshpilot/plugins"
 
 # Resolve the source directory.

@@ -60,7 +60,7 @@ unresolved-import = "ignore"
 unresolved-attribute = "ignore"
 
 [tool.setuptools.packages.find]
-where = [""]
+where = ["src"]
 include = ["sshpilot*"]
 # Example plugins are developer references only — never shipped. Users get them
 # from the plugin registry instead.
@@ -103,8 +103,7 @@ Issues = "https://github.com/mfat/sshpilot/issues"
 target-version = "py39"
 line-length = 100
 extend-exclude = [
-    "src",
-    "sshpilot/vendor",
+    "src/sshpilot/vendor",
     "tests/manual",
     "tests_e2e",
     "build",

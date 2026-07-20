@@ -8,11 +8,11 @@ from __future__ import annotations
 import copy
 import os
 import logging
+import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
-import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple
+from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 if TYPE_CHECKING:
     from .command_blocks import CommandBlocksPanel, CommandBlockStore
@@ -79,8 +79,8 @@ from .window_file_manager import WindowFileManagerMixin
 from .window_tabs import WindowTabsMixin
 from .window_dialogs import (
     WindowConfigDialogsMixin,
-    resolve_app_modal_parent,
     resolve_topmost_prompt_parent,
+    resolve_app_modal_parent,  # noqa: F401  re-exported for tests / other modules
     present_for_modal_dialog,
     show_ssh_password_dialog,
     _show_password_passphrase_dialog,

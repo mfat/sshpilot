@@ -918,7 +918,7 @@ def _run_confirm_dialog(prompt: str, log_fn) -> "str | None":
         gi.require_version('Gtk', '4.0')
         gi.require_version('Adw', '1')
         gi.require_version('Gio', '2.0')
-        from gi.repository import Gtk, Adw, Gio
+        from gi.repository import Adw, Gio
     except Exception as exc:
         log_fn(f"ASKPASS: GTK not available for confirm dialog: {exc}")
         return None

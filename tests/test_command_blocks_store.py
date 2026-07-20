@@ -36,7 +36,7 @@ def _seeded_store():
 
 def test_fresh_config_loads_defaults_and_persists():
     cfg = FakeConfig()
-    store = CommandBlockStore(cfg)
+    CommandBlockStore(cfg)  # seeds cfg.config_data as a side effect
     data = cfg.config_data["command_blocks"]
     assert data["defaults_loaded"] is True
     # Default folders/commands were seeded from the module constants.
@@ -62,7 +62,7 @@ def test_existing_commands_skip_default_seeding():
 
 def test_data_repairs_missing_block():
     cfg = FakeConfig({"command_blocks": "not-a-dict"})
-    store = CommandBlockStore(cfg)
+    CommandBlockStore(cfg)  # repairs cfg.config_data as a side effect
     assert isinstance(cfg.config_data["command_blocks"], dict)
     assert "folders" in cfg.config_data["command_blocks"]
 

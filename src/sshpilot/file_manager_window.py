@@ -23,7 +23,6 @@ import os
 import pathlib
 import posixpath
 import shutil
-import threading
 import weakref
 from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
