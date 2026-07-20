@@ -59,13 +59,39 @@ jobs:
           blueprint-compiler --version
 
       - name: Recompile resources
-        run: bash scripts/build_gresource.sh
+        run: |
+          cp src/sshpilot/resources/sshpilot.gresource "$RUNNER_TEMP/committed.gresource"
+          bash scripts/build_gresource.sh
 
+      # The .ui files are compared byte-for-byte, which is safe now that the
+      # compiler is pinned. The .gresource blob is not: its exact bytes depend on
+      # the glib-compile-resources version, which laid out identical inputs
+      # ~15KB apart between the runner's glib and a current one. So compare what
+      # the blob contains rather than what it weighs -- that also catches a
+      # non-Blueprint resource (style.css, an icon) changing without a rebuild,
+      # which a diff restricted to ui/ would miss.
       - name: Fail if committed .ui / .gresource are stale
         run: |
-          if ! git diff --quiet -- src/sshpilot/resources; then
-            echo "::error::Committed .ui/.gresource are out of date with the .blp sources."
+          if ! git diff --quiet -- src/sshpilot/resources/ui; then
+            echo "::error::Committed .ui are out of date with the .blp sources."
             echo "Run scripts/build_gresource.sh and commit the result."
-            git --no-pager diff --stat -- src/sshpilot/resources
+            git --no-pager diff --stat -- src/sshpilot/resources/ui
+            exit 1
+          fi
+
+          old="$RUNNER_TEMP/committed.gresource"
+          new=src/sshpilot/resources/sshpilot.gresource
+          if ! diff <(gresource list "$old") <(gresource list "$new"); then
+            echo "::error::Committed .gresource does not hold the same set of resources."
+            echo "Run scripts/build_gresource.sh and commit the result."
+            exit 1
+          fi
+          stale=0
+          while read -r res; do
+            cmp -s <(gresource extract "$old" "$res") <(gresource extract "$new" "$res") \
+              || { echo "::error::stale resource: $res"; stale=1; }
+          done < <(gresource list "$new")
+          if [ "$stale" -ne 0 ]; then
+            echo "Run scripts/build_gresource.sh and commit the result."
             exit 1
           fi
