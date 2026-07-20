@@ -27,10 +27,18 @@ jobs:
 
       # Build deps come from packaging/fedora/rpm.spec itself via dnf builddep,
       # so this workflow can never drift from what the packaging declares.
+      #
+      # --disablerepo=fedora-cisco-openh264: builddep pulls the whole GTK/VTE
+      # tree, which reaches openh264. That package is hosted on Cisco's own
+      # server, not a Fedora mirror, and it is unreachable from the runners --
+      # the job died on "All mirrors were tried". Fedora's main repo carries a
+      # noopenh264 stub providing the same capability, so dropping the repo
+      # lets the depsolve pick that instead.
       - name: Install build dependencies
         run: |
-          dnf install -y rpm-build rpmdevtools rpmlint dnf5-plugins
-          dnf builddep -y packaging/fedora/rpm.spec
+          dnf install -y --disablerepo=fedora-cisco-openh264 \
+            rpm-build rpmdevtools rpmlint dnf5-plugins
+          dnf builddep -y --disablerepo=fedora-cisco-openh264 packaging/fedora/rpm.spec
 
       # The spec is the version of record for the RPM; scripts/release.sh keeps
       # it in step with src/sshpilot/__init__.py and meson.build.
