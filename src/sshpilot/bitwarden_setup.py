@@ -26,6 +26,8 @@ from urllib.request import Request, urlopen
 
 from gi.repository import Adw, GLib, Gtk
 
+from .window_dialogs import parent_window
+
 logger = logging.getLogger(__name__)
 
 _INSTALL_TIMEOUT = 600
@@ -316,21 +318,6 @@ def probe_bitwarden_status(bw=None, *, force_refresh: bool = False) -> Bitwarden
             )
     _bw_status_cache = (status, now)
     return status
-
-
-def _parent_window(parent):
-    """Return a ``Gtk.Window`` for APIs that require one (``transient_for``).
-
-    Callers may hand us a widget rather than a window — Preferences is an
-    ``Adw.Dialog``, which lives *inside* its parent window — so resolve the
-    widget's root in that case.
-    """
-    if parent is None or isinstance(parent, Gtk.Window):
-        return parent
-    try:
-        return parent.get_root()
-    except Exception:
-        return None
 
 
 def progress_dialog(parent, heading, message, *, on_cancel=None):
@@ -704,7 +691,7 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
     """Bitwarden server selection before sign-in (US / EU / self-hosted)."""
     parent = _modal_parent(window)
     dlg = Adw.MessageDialog(
-        transient_for=_parent_window(parent), modal=True,
+        transient_for=parent_window(parent), modal=True,
         heading=_("Bitwarden server"),
         body=_(
             "Choose which Bitwarden server to use before signing in. "
@@ -776,16 +763,21 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
 def _modal_parent(window):
     """Return the window that should own Bitwarden setup modals.
 
-    Prefer the initiating window (e.g. Preferences) when it is visible so
-    dialogs stack above it. ``resolve_app_modal_parent`` always picks
-    MainWindow, which leaves setup alerts behind Settings on Wayland.
-    Fall back to the app modal parent only when the initiator is missing or
-    not visible (e.g. Preferences was hidden to reveal a terminal tab).
+    Prefer the initiating window when it is visible, so dialogs stack above it;
+    ``resolve_app_modal_parent`` always picks MainWindow, which used to leave
+    setup alerts behind Settings on Wayland. Fall back to the app modal parent
+    only when the initiator is missing or not visible.
+
+    Note the ``parent_window()`` unwrap: callers pass whatever they hold, and
+    Preferences is now an ``Adw.Dialog`` — a widget inside MainWindow — so for
+    that caller this resolves to MainWindow itself. That is the correct owner:
+    a transient modal floats above MainWindow and therefore above the
+    Preferences dialog drawn inside it.
     """
     try:
         from .window import present_for_modal_dialog, resolve_app_modal_parent
 
-        window = _parent_window(window)
+        window = parent_window(window)
         if isinstance(window, Gtk.Window):
             try:
                 visible = window.get_visible()
@@ -845,7 +837,7 @@ def _signin_page(
     response.
     """
     dlg = Adw.MessageDialog(
-        transient_for=_parent_window(parent), modal=True, heading=heading, body=body,
+        transient_for=parent_window(parent), modal=True, heading=heading, body=body,
     )
     form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     for label, widget in rows:

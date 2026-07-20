@@ -68,19 +68,18 @@ def test_dialogs_parented_to_preferences_get_a_window(gui):
     call sites sit inside try/except and would otherwise fail silently.
     """
     from gi.repository import Gtk
-    from sshpilot import bitwarden_setup, rbw_setup, secret_unlock_dialog
+    from sshpilot.window_dialogs import parent_window
 
     prefs = _open_preferences(gui)
     assert prefs is not None
 
-    for mod in (bitwarden_setup, rbw_setup, secret_unlock_dialog):
-        resolved = mod._parent_window(prefs)
-        assert isinstance(resolved, Gtk.Window), f'{mod.__name__} resolved {type(resolved)}'
-        assert resolved is gui.window
-        # A real window passes through untouched, None stays None.
-        assert mod._parent_window(gui.window) is gui.window
-        assert mod._parent_window(None) is None
+    resolved = parent_window(prefs)
+    assert isinstance(resolved, Gtk.Window), f'resolved {type(resolved)}'
+    assert resolved is gui.window
+    # A real window passes through untouched, None stays None.
+    assert parent_window(gui.window) is gui.window
+    assert parent_window(None) is None
 
-    # Gtk.FileDialog rejects a non-window parent outright.
+    # What the window-only APIs (transient_for, Gtk.FileDialog) will be handed.
+    # Deliberately not opening a chooser here: it would leave a native dialog up.
     assert isinstance(prefs.get_root(), Gtk.Window)
-    Gtk.FileDialog().open(prefs.get_root(), None, lambda *a: None)

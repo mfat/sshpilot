@@ -32,6 +32,25 @@ BACKUP_EXPORT_WINDOW_HEIGHT = 720
 BACKUP_EXPORT_CLAMP_MAX = 560
 
 
+def parent_window(parent):
+    """Return a ``Gtk.Window`` for APIs that require one, given a window *or* a widget.
+
+    ``transient_for``, :class:`Gtk.FileDialog` and friends only accept a
+    :class:`Gtk.Window`. Callers may hold a widget instead — Preferences is an
+    :class:`Adw.Dialog`, which lives *inside* its parent window — so resolve the
+    widget's root. Windows pass through untouched and ``None`` stays ``None``.
+
+    This is the cheap structural unwrap. Use :func:`resolve_app_modal_parent`
+    when you want the app's primary window regardless of what you were handed.
+    """
+    if parent is None or isinstance(parent, Gtk.Window):
+        return parent
+    try:
+        return parent.get_root()
+    except Exception:
+        return None
+
+
 def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
     """Return the primary app window to use as a modal dialog parent.
 

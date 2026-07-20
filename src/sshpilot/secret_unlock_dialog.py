@@ -24,6 +24,7 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
 from .secret_storage import get_secret_manager, master_password_spec, selected_master_spec
+from .window_dialogs import parent_window
 
 logger = logging.getLogger(__name__)
 
@@ -59,21 +60,6 @@ def _friendly_backend_name(backend):
     return name.replace("-", " ").title() if name else _("vault")
 
 
-def _parent_window(parent):
-    """Return a ``Gtk.Window`` for APIs that require one (``transient_for``).
-
-    Callers may hand us a widget rather than a window — Preferences is an
-    ``Adw.Dialog``, which lives *inside* its parent window — so resolve the
-    widget's root in that case.
-    """
-    if parent is None or isinstance(parent, Gtk.Window):
-        return parent
-    try:
-        return parent.get_root()
-    except Exception:
-        return None
-
-
 def _message(parent, heading, body, on_closed=None):
     """Show a simple informational dialog (AlertDialog, MessageDialog fallback).
 
@@ -84,7 +70,7 @@ def _message(parent, heading, body, on_closed=None):
         dialog.add_response('ok', _("OK"))
     else:
         dialog = Adw.MessageDialog(
-            transient_for=_parent_window(parent), modal=True, heading=heading, body=body,
+            transient_for=parent_window(parent), modal=True, heading=heading, body=body,
         )
         dialog.add_response('ok', _("OK"))
 
@@ -129,7 +115,7 @@ def _spinner_dialog(parent, heading, body):
             pass
         dialog.present(parent)
     else:
-        dialog = Adw.MessageDialog(transient_for=_parent_window(parent), modal=True, heading=heading)
+        dialog = Adw.MessageDialog(transient_for=parent_window(parent), modal=True, heading=heading)
         dialog.set_extra_child(box)
         dialog.present()
 
@@ -166,7 +152,7 @@ def _prompt_unavailable_backend(parent, backend):
         from .bitwarden_setup import run_bitwarden_setup
 
         dialog = Adw.MessageDialog(
-            transient_for=_parent_window(parent), modal=True,
+            transient_for=parent_window(parent), modal=True,
             heading=_("Bitwarden CLI not found"),
             body=_(
                 "Bitwarden is selected for secret storage, but the “bw” command "
@@ -279,7 +265,7 @@ def _prompt_not_signed_in(parent, backend):
         from .bitwarden_setup import run_bitwarden_setup
 
         dialog = Adw.MessageDialog(
-            transient_for=_parent_window(parent), modal=True,
+            transient_for=parent_window(parent), modal=True,
             heading=_("Sign in to Bitwarden"),
             body=_(
                 "Bitwarden is selected for secret storage, but you are not signed "
@@ -524,7 +510,7 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
             dialog = Adw.AlertDialog(heading=heading, body=body)
         else:
             dialog = Adw.MessageDialog(
-                transient_for=_parent_window(parent), modal=True, heading=heading, body=body,
+                transient_for=parent_window(parent), modal=True, heading=heading, body=body,
             )
 
         entry = Gtk.PasswordEntry(show_peek_icon=True)

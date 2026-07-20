@@ -30,6 +30,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib  # noqa: E402
 
+from .window_dialogs import parent_window
+
 logger = logging.getLogger(__name__)
 
 RBW_HELP_URL = "https://github.com/doy/rbw"
@@ -133,7 +135,7 @@ def _install_dialog(window) -> None:
         dialog.add_response("ok", _("OK"))
         dialog.present(window)
     else:
-        dialog = Adw.MessageDialog(transient_for=_parent_window(window), modal=True,
+        dialog = Adw.MessageDialog(transient_for=parent_window(window), modal=True,
                                    heading=heading, body=body)
         dialog.set_body_use_markup(True)
         dialog.add_response("ok", _("OK"))
@@ -316,21 +318,6 @@ def ensure_rbw_ready(window, on_ready: Callable[[bool], None]) -> None:
         _login_async(window, on_ready)
 
     _thread(worker)
-
-
-def _parent_window(parent):
-    """Return a ``Gtk.Window`` for APIs that require one (``transient_for``).
-
-    Callers may hand us a widget rather than a window — Preferences is an
-    ``Adw.Dialog``, which lives *inside* its parent window — so resolve the
-    widget's root in that case.
-    """
-    if parent is None or isinstance(parent, Gtk.Window):
-        return parent
-    try:
-        return parent.get_root()
-    except Exception:
-        return None
 
 
 def run_rbw_setup(window, on_done: Optional[Callable[[bool], None]] = None) -> None:
