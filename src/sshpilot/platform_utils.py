@@ -664,9 +664,18 @@ def _applescript_string(value: str) -> str:
 
     osascript takes the script as one argument, so anything interpolated into it
     must be escaped or a quote in the value ends the literal and the rest is
-    executed as AppleScript.
+    executed as AppleScript. A literal newline cannot appear inside an
+    AppleScript string at all -- it is a syntax error, not an injection -- so
+    the line breaks are escaped too, otherwise the script simply fails to
+    compile. Backslash goes first so the escapes added below survive.
     """
-    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    escaped = (
+        value.replace('\\', '\\\\')
+        .replace('"', '\\"')
+        .replace('\n', '\\n')
+        .replace('\r', '\\r')
+    )
+    return '"' + escaped + '"'
 
 
 def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:

@@ -262,9 +262,32 @@ def test_argv_terminals_pass_the_command_unwrapped(monkeypatch, terminal):
     assert argv[-2] == "-c"
 
 
+@pytest.mark.parametrize("terminal", ["xdg-terminal", "some-unknown-terminal"])
+def test_pass_through_terminals_send_one_argv_element(monkeypatch, terminal):
+    """These hand the command straight to the emulator; it stays one argument."""
+    argv = _launched_argv(monkeypatch, [f"/usr/bin/{terminal}"])
+    assert argv == [f"/usr/bin/{terminal}", _HOSTILE]
+
+
+@pytest.mark.parametrize("app", ["Ghostty", "Alacritty", "SomeOtherTerm"])
+def test_macos_argv_terminals_do_not_interpolate(monkeypatch, app):
+    """`open --args ...` takes an argv, so the command is passed, not spliced."""
+    argv = _launched_argv(monkeypatch, ["open", "-a", app], macos=True)
+    # Bare (ghostty) or with the keep-the-shell-open suffix -- either way it is
+    # the whole trailing element, not embedded in a larger string.
+    assert argv[-1] in (_HOSTILE, f"{_HOSTILE}; exec bash")
+
+
 def test_applescript_literal_escapes_quotes():
     quoted = platform_utils._applescript_string('say "hi" \\ bye')
     assert quoted == '"say \\"hi\\" \\\\ bye"'
+
+
+def test_applescript_literal_escapes_line_breaks():
+    """A raw newline inside an AppleScript string does not compile."""
+    quoted = platform_utils._applescript_string("one\ntwo\rthree")
+    assert "\n" not in quoted and "\r" not in quoted
+    assert quoted == '"one\\ntwo\\rthree"'
 
 
 def test_macos_terminal_app_escapes_the_command(monkeypatch):
