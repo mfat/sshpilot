@@ -63,6 +63,15 @@ def _init_gettext():
         # Mirror to the C library so GTK/Adw (.ui, .desktop) translations resolve too.
         try:
             import locale
+            # setlocale first: until the process leaves the default "C" locale,
+            # the C library's gettext returns every string untranslated, so the
+            # GtkBuilder strings from the .ui files stay English while the
+            # Python _() ones (pure-Python gettext, env-driven) come out
+            # translated. Binding the domain without this is a no-op for GTK.
+            try:
+                locale.setlocale(locale.LC_ALL, '')
+            except locale.Error:
+                pass  # unset/ungenerated locale — leave C, Python side still works
             locale.bindtextdomain('sshpilot', localedir)
             locale.textdomain('sshpilot')
         except Exception:
