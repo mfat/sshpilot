@@ -659,15 +659,27 @@ def find_any_terminal() -> Optional[List[str]]:
     return None
 
 
+# C0 controls and DEL. Rejected outright rather than escaped: `do script` and
+# `write text` type their argument into a shell, where a newline is Enter --
+# and AppleScript's \n escape produces a *real* newline in the string value, so
+# escaping it makes the script compile and then hands the shell two commands.
+# Escaping is the wrong tool here; refusing to launch is the right one.
+_CONTROL_CHARS = frozenset(chr(c) for c in range(0x20)) | {'\x7f'}
+
+
 def _applescript_string(value: str) -> str:
     """Render *value* as an AppleScript string literal, escapes included.
 
     osascript takes the script as one argument, so anything interpolated into it
     must be escaped or a quote in the value ends the literal and the rest is
-    executed as AppleScript. A literal newline cannot appear inside an
-    AppleScript string at all -- it is a syntax error, not an injection -- so
-    the line breaks are escaped too, otherwise the script simply fails to
-    compile. Backslash goes first so the escapes added below survive.
+    executed as AppleScript. Backslash goes first so the escapes added below
+    survive.
+
+    Line breaks are escaped so the literal compiles, but that is *not* what
+    makes them safe -- \\n in AppleScript source becomes an actual newline in
+    the string, which `do script` would pass straight to the shell. Control
+    characters are rejected upstream in open_system_terminal(); this escaping
+    only keeps the helper correct in isolation.
     """
     escaped = (
         value.replace('\\', '\\\\')
@@ -687,7 +699,17 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
     it quoted with ``shlex.quote`` / ``_applescript_string`` rather than
     interpolated, so a Host alias containing a quote or backtick cannot break
     out. Returns False on failure.
+
+    Control characters are refused rather than quoted: the AppleScript branches
+    type their command into a shell, where a newline is Enter, and no amount of
+    escaping changes that. shlex.quote happens to single-quote newlines today,
+    but that is a property of a helper two layers away, not a guarantee this
+    function should rely on.
     """
+    if _CONTROL_CHARS.intersection(ssh_command):
+        logger.error("Refusing to open a terminal: command contains control characters")
+        return False
+
     # Keep the shell reading input after ssh exits, so errors stay on screen.
     keep_open = f'{ssh_command}; exec bash'
     try:

@@ -232,15 +232,36 @@ def test_resolve_bw_cli_path_flatpak_host_binary(monkeypatch):
 _HOSTILE = 'ssh \'srv"; touch /tmp/pwned; "\''
 
 
-def _launched_argv(monkeypatch, terminal_command, macos=False):
+def _launched_argv(monkeypatch, terminal_command, macos=False, command=_HOSTILE):
     seen = []
     monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
     monkeypatch.setattr(
         platform_utils.subprocess, "Popen",
         lambda cmd, **kw: seen.append(cmd) or object(),
     )
-    assert platform_utils.open_system_terminal(terminal_command, _HOSTILE) is True
+    assert platform_utils.open_system_terminal(terminal_command, command) is True
     return seen[0]
+
+
+@pytest.mark.parametrize("ctrl", ["\n", "\r", "\x00", "\x1b", "\x7f"])
+@pytest.mark.parametrize("macos", [False, True])
+def test_control_characters_refuse_to_launch(monkeypatch, ctrl, macos):
+    """`do script` types its argument at a shell, where a newline is Enter.
+
+    AppleScript's \\n escape yields a real newline in the string value, so
+    escaping does not help -- the command must be refused instead.
+    """
+    launched = []
+    monkeypatch.setattr(platform_utils, "is_macos", lambda: macos)
+    monkeypatch.setattr(
+        platform_utils.subprocess, "Popen",
+        lambda cmd, **kw: launched.append(cmd) or object(),
+    )
+    terminal = ["open", "-a", "Terminal"] if macos else ["/usr/bin/xterm"]
+    hostile = f"ssh srv{ctrl}touch /tmp/pwned"
+
+    assert platform_utils.open_system_terminal(terminal, hostile) is False
+    assert launched == []
 
 
 @pytest.mark.parametrize("terminal", ["konsole", "terminator", "guake", "xterm"])
