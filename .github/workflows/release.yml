@@ -14,6 +14,11 @@ on:
         description: 'Release notes, one per line. Leave empty to derive them from the commits since the last release.'
         required: false
         type: string
+      prerelease:
+        description: 'Mark the GitHub release as a pre-release (skips APT/Homebrew/Flathub)'
+        required: false
+        type: boolean
+        default: false
       dev_branch:
         description: 'Branch to release from'
         default: dev
@@ -123,6 +128,37 @@ jobs:
           git push origin '${{ inputs.main_branch }}'
           git push origin "v$VERSION"
 
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.PPA_TRIGGER_TOKEN }}
+        run: |
+          set -eu
+          VERSION='${{ steps.check.outputs.version }}'
+          NOTES="${RUNNER_TEMP}/changelog.txt"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            ARGS=(
+              release edit "v$VERSION"
+              --title "SSH Pilot v$VERSION"
+              --notes-file "$NOTES"
+            )
+            if [ '${{ inputs.prerelease }}' = 'true' ]; then
+              ARGS+=(--prerelease --latest=false)
+            else
+              ARGS+=(--prerelease=false)
+            fi
+          else
+            ARGS=(
+              release create "v$VERSION"
+              --verify-tag
+              --title "SSH Pilot v$VERSION"
+              --notes-file "$NOTES"
+            )
+            if [ '${{ inputs.prerelease }}' = 'true' ]; then
+              ARGS+=(--prerelease --latest=false)
+            fi
+          fi
+          gh "${ARGS[@]}"
+
       # Runs after the tag is pushed: the PKGBUILD checksum covers the tarball
       # GitHub generates for the tag. main-only, so the merge above can never
       # conflict over it.
@@ -137,10 +173,17 @@ jobs:
       - name: Summary
         run: |
           VERSION='${{ steps.check.outputs.version }}'
+          KIND=release
+          if [ '${{ inputs.prerelease }}' = 'true' ]; then
+            KIND=pre-release
+          fi
           {
-            echo "### Released v$VERSION"
+            echo "### Released v$VERSION ($KIND)"
             echo
             echo "Tag \`v$VERSION\` pushed — the .deb, .rpm, macOS and Flathub workflows build from it."
+            if [ "$KIND" = "pre-release" ]; then
+              echo "APT / Homebrew / Flathub updates are skipped for pre-releases."
+            fi
             echo
             echo '```'
             cat "$RUNNER_TEMP/changelog.txt"

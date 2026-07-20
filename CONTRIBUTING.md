@@ -174,6 +174,9 @@ sources moved under `src/`.
 - Tags follow `vX.Y.Z` (e.g. `v2.7.1`).
 - `scripts/release.sh` (interactive) and the **Release** workflow (manual
   dispatch) both drive `scripts/bump-version.sh`; never bump a version by hand.
+- Both ask whether this is a **release** or **pre-release**. Pre-releases are
+  marked on GitHub (so they are not "Latest") and skip APT / Homebrew / Flathub
+  updates; package assets are still built and attached.
 
 ## Generated artifacts
 

@@ -242,6 +242,5 @@ jobs:
           files: |
             dist/${{ steps.artifact-info.outputs.dmg }}
           generate_release_notes: false
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -41,6 +41,12 @@ if ! command -v dch >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh (GitHub CLI) is required to create the GitHub release" >&2
+  echo "(and mark it as a release vs pre-release). Install: https://cli.github.com/" >&2
+  exit 1
+fi
+
 if ! git diff-index --quiet HEAD -- || ! git diff --quiet; then
   echo "ERROR: Working tree has uncommitted changes. Please commit or stash before releasing." >&2
   echo "Run 'git status' to see what files have changes." >&2
@@ -88,6 +94,18 @@ fi
 
 CURRENT_VERSION=$(sed -n "s/^__version__ *= *['\"]\\([^'\"]*\\)['\"].*/\\1/p" "$INIT_FILE")
 echo "Current version: ${CURRENT_VERSION:-unknown}"
+
+read -rp "Publish as [R]elease or [P]re-release? [R]: " RELEASE_KIND
+RELEASE_KIND=${RELEASE_KIND:-R}
+IS_PRERELEASE=0
+case "$RELEASE_KIND" in
+  [Rr]|[Rr]elease) IS_PRERELEASE=0 ;;
+  [Pp]|[Pp]re|[Pp]re-release|[Pp]rerelease) IS_PRERELEASE=1 ;;
+  *)
+    echo "ERROR: Enter R (release) or P (pre-release)." >&2
+    exit 1
+    ;;
+esac
 
 read -rp "New version (semver, e.g. 2.1.0): " VERSION
 VERSION=${VERSION#v}
@@ -151,14 +169,26 @@ fi
 
 git tag -a "v$VERSION" -m "SSH Pilot v$VERSION" -m "$CHANGELOG"
 
+if (( IS_PRERELEASE )); then
+  RELEASE_LABEL="pre-release"
+else
+  RELEASE_LABEL="release"
+fi
+
 echo
-echo "Ready to publish v$VERSION:"
+echo "Ready to publish v$VERSION ($RELEASE_LABEL):"
 echo "  Current version was: $CURRENT_VERSION"
 echo "  Dev branch pushed:   origin/$DEV_BRANCH"
 echo "  Merge commit on:     $MAIN_BRANCH"
 echo "  Tag to push:         v$VERSION"
-echo "  CI will build .deb/.rpm/DMG packages, publish the GitHub release, and update APT/Homebrew."
-echo "  A Flathub manifest-bump PR is opened automatically on flathub/io.github.mfat.sshpilot; merge it to publish to Flathub."
+echo "  GitHub release type: $RELEASE_LABEL"
+if (( IS_PRERELEASE )); then
+  echo "  CI will build .deb/.rpm/DMG packages and attach them to the pre-release."
+  echo "  APT / Homebrew / Flathub updates are skipped for pre-releases."
+else
+  echo "  CI will build .deb/.rpm/DMG packages, publish the GitHub release, and update APT/Homebrew."
+  echo "  A Flathub manifest-bump PR is opened automatically on flathub/io.github.mfat.sshpilot; merge it to publish to Flathub."
+fi
 echo
 read -rp "Push $MAIN_BRANCH and tag v$VERSION to origin? [y/N]: " CONFIRM_PUSH
 CONFIRM_PUSH=${CONFIRM_PUSH:-N}
@@ -167,11 +197,47 @@ if [[ ! "$CONFIRM_PUSH" =~ ^[Yy]$ ]]; then
   echo "Resume manually with:"
   echo "  git push origin $MAIN_BRANCH"
   echo "  git push origin v$VERSION"
+  if (( IS_PRERELEASE )); then
+    echo "  gh release create v$VERSION --verify-tag --notes-from-tag --title \"SSH Pilot v$VERSION\" --prerelease --latest=false"
+  else
+    echo "  gh release create v$VERSION --verify-tag --notes-from-tag --title \"SSH Pilot v$VERSION\""
+  fi
   exit 1
 fi
 
 git push origin "$MAIN_BRANCH"
 git push origin "v$VERSION"
+
+# Create the GitHub release immediately after the tag push so softprops/action-gh-release
+# only attaches assets (and keeps our release vs pre-release flag). If CI wins the race
+# and creates the release first, edit it into the right shape instead.
+NOTES_FILE="$(mktemp)"
+printf '%s\n' "$CHANGELOG" > "$NOTES_FILE"
+if gh release view "v$VERSION" >/dev/null 2>&1; then
+  EDIT_ARGS=(
+    release edit "v$VERSION"
+    --title "SSH Pilot v$VERSION"
+    --notes-file "$NOTES_FILE"
+  )
+  if (( IS_PRERELEASE )); then
+    EDIT_ARGS+=(--prerelease --latest=false)
+  else
+    EDIT_ARGS+=(--prerelease=false)
+  fi
+  gh "${EDIT_ARGS[@]}"
+else
+  CREATE_ARGS=(
+    release create "v$VERSION"
+    --verify-tag
+    --title "SSH Pilot v$VERSION"
+    --notes-file "$NOTES_FILE"
+  )
+  if (( IS_PRERELEASE )); then
+    CREATE_ARGS+=(--prerelease --latest=false)
+  fi
+  gh "${CREATE_ARGS[@]}"
+fi
+rm -f "$NOTES_FILE"
 
 # The Arch PKGBUILD is updated here, after the tag exists, because its
 # sha256sums cover GitHub's generated tag tarball — which cannot be hashed
@@ -190,5 +256,5 @@ if [[ -f "$PKGBUILD_FILE" ]]; then
 fi
 
 echo
-echo "Release v$VERSION pushed."
+echo "Release v$VERSION pushed ($RELEASE_LABEL)."
 echo "Monitor GitHub Actions for build progress."

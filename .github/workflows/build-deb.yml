@@ -95,12 +95,32 @@ jobs:
         with:
           files: artifacts/*.deb
           generate_release_notes: false
-          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger APT repository publish
+      - name: Check for pre-release
         if: startsWith(github.ref, 'refs/tags/')
+        id: release_meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # release.sh creates the GitHub release right after pushing the tag, so
+          # this is usually available immediately; retry briefly for the rare race.
+          PRE=false
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            PRE=$(gh api "repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}" --jq .prerelease 2>/dev/null || echo "")
+            if [ -n "$PRE" ]; then
+              break
+            fi
+            sleep 3
+          done
+          PRE=${PRE:-false}
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Release ${{ github.ref_name }} prerelease=$PRE"
+
+      - name: Trigger APT repository publish
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_meta.outputs.prerelease != 'true'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.PPA_TRIGGER_TOKEN }}
