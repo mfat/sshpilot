@@ -28,8 +28,11 @@ Supported/tested Python versions are 3.12 and 3.13 (CI matrix).
 
 ## Building and installing with Meson
 
-Meson is the primary build system (the setuptools build is kept in parallel for
-the wheel-based packagers). It is what compiles the Blueprint `.blp` sources into
+Meson is the build system for every distro package — the Flatpak, the `.deb`
+(`debian/rules` runs `dh --buildsystem=meson`) and the `.rpm`
+(`packaging/fedora/rpm.spec` uses the `%meson` macros). The setuptools build is
+kept in parallel for the wheel-based paths (PyPI, PyInstaller). Meson is what
+compiles the Blueprint `.blp` sources into
 the bundled GResource, merges the translations, and installs the app the way a
 distro would:
 

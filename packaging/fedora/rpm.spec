@@ -5,13 +5,28 @@ Summary:        Manage your servers with ease
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
-Source0:        https://github.com/mfat/sshpilot/archive/refs/heads/main.tar.gz
+Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 
 
 BuildArch:      noarch
+BuildRequires:  meson >= 0.59
+BuildRequires:  ninja-build
 BuildRequires:  python3-devel
+# Compiles the .blp sources into the .ui files bundled in the GResource.
+# blueprint-compiler resolves widget types from the GIR files, so the -devel
+# packages for every namespace the .blp files 'using' are build-time deps.
+BuildRequires:  blueprint-compiler
+BuildRequires:  gtk4-devel
+BuildRequires:  libadwaita-devel
+# glib-compile-resources, for the GResource bundle.
+BuildRequires:  glib2-devel
+BuildRequires:  gettext
+# Both validators are run by `meson test` during %%check.
 BuildRequires:  desktop-file-utils
-#BuildRequires:  libappstream-glib
+BuildRequires:  appstream
+# gnome.post_install() resolves these at configure time (icon cache + desktop
+# database refresh); without them meson setup fails.
+BuildRequires:  gtk-update-icon-cache
 
 
 # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
@@ -43,45 +58,30 @@ Recommends:     telnet
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
 
 %prep
-%autosetup -n sshpilot-main
+%autosetup -n %{name}-%{version}
 
+# Meson installs the launcher, the Python package, the compiled GResource, the
+# desktop entry and AppStream metainfo (merged from the .in templates), the icon
+# and sshpilot-agent. Nothing is replayed by hand here.
 %build
-# No build step needed - standalone Python application
+%meson
+%meson_build
 
 %install
-# Show directory structure for debugging
-ls -la
-ls -la sshpilot/ || echo "sshpilot directory check"
+%meson_install
 
-# Install the main executable
-install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
-
-# Install the whole sshpilot package. Copy the entire tree (not 'sshpilot/*.py')
-# so every subpackage ships: file_manager/, plugins/, vendor/ (incl. pyxtermjs
-# html/LICENSE) and resources/. Then drop the dev-only example plugins + caches.
-install -d %{buildroot}%{python3_sitelib}/sshpilot
-cp -a src/sshpilot/. %{buildroot}%{python3_sitelib}/sshpilot/
-rm -rf %{buildroot}%{python3_sitelib}/sshpilot/plugins/examples
-find %{buildroot}%{python3_sitelib}/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +
-
-# Install desktop file and icon
-install -D -m 644 data/io.github.mfat.sshpilot.desktop.in %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml.in %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-# Install icon to hicolor theme (per AppStream guidelines)
-install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
-install -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
-
+# Runs the desktop-entry and AppStream validators defined in data/meson.build.
 %check
-# Validate desktop file
-desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-#appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
+%meson_test
 
 
 %files
 %license LICENSE*
 %doc README*
 %{_bindir}/sshpilot
+%{_bindir}/sshpilot-agent
 %{python3_sitelib}/sshpilot/
+%{_datadir}/io.github.mfat.sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg

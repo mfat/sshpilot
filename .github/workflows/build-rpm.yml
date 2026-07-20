@@ -19,204 +19,73 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build deps come from packaging/fedora/rpm.spec itself via dnf builddep,
+      # so this workflow can never drift from what the packaging declares.
       - name: Install build dependencies
         run: |
-          dnf update -y
-          dnf install -y \
-            rpm-build \
-            rpmdevtools \
-            python3 \
-            python3-devel \
-            desktop-file-utils \
-            appstream \
-            libappstream-glib \
-            git \
-            which
+          dnf install -y rpm-build rpmdevtools rpmlint dnf5-plugins git
+          dnf builddep -y packaging/fedora/rpm.spec
 
+      # The spec is the version of record for the RPM; scripts/release.sh keeps
+      # it in step with src/sshpilot/__init__.py and meson.build.
       - name: Extract version
         id: version
         run: |
-          VERSION=$(python3 -c '
-          import re
-          import pathlib
-          
-          content = pathlib.Path("src/sshpilot/__init__.py").read_text()
-          match = re.search(r"__version__\s*=\s*[\"'"'"']([^\"'"'"']*)[\"'"'"']", content)
-          if match:
-              print(match.group(1))
-          else:
-              print("0.0.0")
-          ')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION"
-
-      - name: Generate changelog date
-        id: changelog_date
-        run: |
-          CHANGELOG_DATE=$(date "+%a %b %d %Y")
-          echo "date=$CHANGELOG_DATE" >> $GITHUB_OUTPUT
-          echo "Changelog date: $CHANGELOG_DATE"
+          VERSION=$(rpmspec -q --srpm --qf '%{version}\n' packaging/fedora/rpm.spec)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building sshpilot $VERSION"
 
       - name: Create source tarball
-        shell: bash
-        working-directory: ${{ github.workspace }}
         run: |
-          set -euo pipefail
+          set -eu
           rpmdev-setuptree
-          mkdir -p ~/rpmbuild/SOURCES
-          VER="${{ steps.version.outputs.version }}"
-          if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            git archive --format=tar --prefix="sshpilot-${VER}/" HEAD | gzip > "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz"
-          else
-            tar --exclude-vcs --exclude '.github' \
-                --transform "s,^,sshpilot-${VER}/," \
-                -czf "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz" -C "$GITHUB_WORKSPACE" .
-          fi
+          VER='${{ steps.version.outputs.version }}'
+          git config --global --add safe.directory "$PWD"
+          git archive --format=tar --prefix="sshpilot-${VER}/" HEAD \
+            | gzip > ~/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz
 
-      - name: Create RPM spec file
-        run: |
-          cat > ~/rpmbuild/SPECS/sshpilot.spec << 'EOF'
-          Name:           sshpilot
-          Version:        ${{ steps.version.outputs.version }}
-          Release:        1
-          Summary:        Manage your servers with ease
-          
-          License:        GPL-3.0-or-later
-          URL:            https://github.com/mfat/sshpilot
-          Source0:        sshpilot-%{version}.tar.gz
-          
-          BuildArch:      noarch
-          BuildRequires:  python3-devel
-          BuildRequires:  desktop-file-utils
-          BuildRequires:  libappstream-glib
-
-          
-          # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
-          %global __requires_exclude ^python\\(abi\\)
-          
-          Requires:       python3
-          Requires:       python3-gobject
-          Requires:       gtk4 >= 4.6
-          Requires:       libadwaita >= 1.4
-          Requires:       vte291-gtk4 >= 0.70
-          Requires:       gtksourceview5 >= 5.0
-          Requires:       python3-cryptography
-          Requires:       python3-secretstorage 
-          Requires:       libsecret
-          Requires:       sshpass
-          Requires:       openssh-askpass
-          Requires:       webkitgtk6.0
-          # Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
-          Recommends:     python3-pykeepass
-
-          %description
-          SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
-          
-          %prep
-          %autosetup -n sshpilot-%{version}
-          
-          %build
-          # No build step needed - standalone Python application
-          
-          %install
-          # Install the whole sshpilot package to a version-independent location.
-          # Copy the entire tree (not 'sshpilot/*.py') so every subpackage ships:
-          # file_manager/, plugins/, vendor/ (incl. pyxtermjs html/LICENSE) and
-          # resources/. Then drop the dev-only example plugins + caches.
-          install -d %{buildroot}%{_datadir}/sshpilot/sshpilot
-          cp -a src/sshpilot/. %{buildroot}%{_datadir}/sshpilot/sshpilot/
-          rm -rf %{buildroot}%{_datadir}/sshpilot/sshpilot/plugins/examples
-          find %{buildroot}%{_datadir}/sshpilot/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +
-
-          # Create wrapper script that sets PYTHONPATH
-          cat > sshpilot-wrapper << 'WRAPPER_EOF'
-          #!/usr/bin/env python3
-          import sys
-          import os
-          sys.path.insert(0, '/usr/share/sshpilot')
-          from sshpilot.main import main
-          if __name__ == '__main__':
-              main()
-          WRAPPER_EOF
-          
-          # Install the wrapper as the main executable
-          install -D -m 755 sshpilot-wrapper %{buildroot}%{_bindir}/sshpilot
-
-          # Install desktop file, appstream metadata and icon
-          install -D -m 644 data/io.github.mfat.sshpilot.desktop.in %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-          install -D -m 644 data/io.github.mfat.sshpilot.metainfo.xml.in %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-          # Install icon to hicolor theme (per AppStream guidelines)
-          install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
-          install -D -m 644 data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
-
-          %check
-          # Validate desktop file
-          desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-          appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-
-          
-          %files
-          %license LICENSE*
-          %doc README*
-          %{_bindir}/sshpilot
-          %{_datadir}/sshpilot/
-          %{_datadir}/applications/io.github.mfat.sshpilot.desktop
-          %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-          %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
-          
-          %changelog
-          * ${{ steps.changelog_date.outputs.date }} mFat <newmfat@gmail.com> - ${{ steps.version.outputs.version }}-1
-          - Automated build from GitHub Actions
-          EOF
-
-      - name: Validate spec file and build environment
-        run: |
-          echo "=== Checking required project files ==="
-          ls -la run.py || echo "run.py missing"
-          ls -la src/sshpilot/ || echo "src/sshpilot/ missing"
-          ls -la data/io.github.mfat.sshpilot.desktop.in || echo "desktop file missing"
-          ls -la data/io.github.mfat.sshpilot.metainfo.xml.in || echo "metainfo file missing"
-          ls -la data/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg || echo "icon missing"
-          ls -la src/sshpilot/vendor/pyxtermjs/ || echo "vendor/pyxtermjs/ missing"
-          
-          echo "=== RPM build tree ==="
-          ls -la ~/rpmbuild/
-          ls -la ~/rpmbuild/SPECS/
-          ls -la ~/rpmbuild/SOURCES/
-          
-          echo "=== Spec file content ==="
-          cat ~/rpmbuild/SPECS/sshpilot.spec
-          
-          echo "=== Validating spec file ==="
-          rpmlint ~/rpmbuild/SPECS/sshpilot.spec || echo "rpmlint warnings (non-fatal)"
-
+      # Builds with Meson (see the spec). Meson installs the launcher, package,
+      # gresource, desktop entry, metainfo, icon and sshpilot-agent, and its
+      # desktop/AppStream validators run as %check.
       - name: Build RPM package
         run: |
-          # Build the RPM package
-          rpmbuild -ba ~/rpmbuild/SPECS/sshpilot.spec
-          
-          # Create artifacts directory and collect packages
+          rpmbuild -ba packaging/fedora/rpm.spec
           mkdir -p artifacts
-          
-          # Copy built RPM packages
-          find ~/rpmbuild/RPMS/ -name "*.rpm" -exec cp {} artifacts/ \;
-          find ~/rpmbuild/SRPMS/ -name "*.rpm" -exec cp {} artifacts/ \;
-
-      - name: List built packages
-        run: |
-          echo "=== Built packages ==="
+          find ~/rpmbuild/RPMS ~/rpmbuild/SRPMS -name '*.rpm' -exec cp {} artifacts/ \;
           ls -la artifacts/
-          
-          # Show package information
-          for rpm in artifacts/*.rpm; do
-            if [ -f "$rpm" ]; then
-              echo "=== Package: $rpm ==="
-              rpm -qip "$rpm"
-              echo ""
-              echo "=== Contents: ==="
-              rpm -qlp "$rpm" | head -20
-              echo ""
+
+      - name: Verify package contents
+        run: |
+          set -eu
+          RPM=$(ls artifacts/*.noarch.rpm | head -1)
+          contents=$(rpm -qlp "$RPM")
+          # Everything the app needs at runtime must be present...
+          for path in \
+            /usr/bin/sshpilot \
+            /usr/bin/sshpilot-agent \
+            /usr/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource \
+            /usr/share/applications/io.github.mfat.sshpilot.desktop \
+            /usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml \
+            /usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \
+          ; do
+            grep -qx "$path" <<<"$contents" || { echo "::error::missing $path"; exit 1; }
+          done
+          # ...and the build-time-only files must not be.
+          for pattern in '[.]blp$' 'plugins/examples' 'resources/ui/'; do
+            if grep -qE "$pattern" <<<"$contents"; then
+              echo "::error::$pattern should not ship in the RPM"; exit 1
             fi
+          done
+          echo "package contents verified"
+
+      - name: Rpmlint
+        run: rpmlint artifacts/*.noarch.rpm || echo "rpmlint warnings (non-fatal)"
+
+      - name: Show package info
+        run: |
+          for rpm in artifacts/*.rpm; do
+            echo "=== $rpm ==="
+            rpm -qip "$rpm"
           done
 
       - name: Upload artifacts
