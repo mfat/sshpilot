@@ -101,8 +101,13 @@ jobs:
           done
           echo "package contents verified"
 
+      # Still non-fatal, but no longer swallowed silently: the `|| echo` meant
+      # nobody ever read this, and it had been reporting five errors for a long
+      # time. Flip to fatal once a run confirms the rpmlintrc filter applies.
       - name: Rpmlint
-        run: rpmlint artifacts/*.noarch.rpm || echo "rpmlint warnings (non-fatal)"
+        run: |
+          rpmlint -r packaging/fedora/rpmlintrc.toml artifacts/*.noarch.rpm \
+            || echo "::warning::rpmlint reported findings (see above) -- not yet fatal"
 
       - name: Show package info
         run: |
@@ -111,17 +116,25 @@ jobs:
             rpm -qip "$rpm"
           done
 
+      # Both the binary RPM and the SRPM: rpmbuild -ba already produces the
+      # source package, and shipping it is what lets anyone rebuild this exactly
+      # (`rpmbuild --rebuild`) or feed it to COPR/mock without recreating the
+      # tarball by hand.
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rpm-packages-${{ steps.version.outputs.version }}
-          path: artifacts/*.noarch.rpm
+          path: |
+            artifacts/*.noarch.rpm
+            artifacts/*.src.rpm
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*.noarch.rpm
+          files: |
+            artifacts/*.noarch.rpm
+            artifacts/*.src.rpm
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

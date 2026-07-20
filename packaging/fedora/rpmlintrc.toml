@@ -1,0 +1,13 @@
+# rpmlint configuration for the sshpilot binary RPM.
+#
+# Only genuinely inapplicable checks belong here. Everything else should be
+# fixed in packaging/fedora/rpm.spec rather than silenced.
+
+Filters = [
+    # sshpilot reaches libsecret through GObject Introspection at runtime
+    # (secret_storage.py: gi.require_version("Secret", "1")), not by linking
+    # against it. rpmlint assumes an explicit library dependency means a missing
+    # automatic one, but nothing generates a dependency for a namespace imported
+    # by a Python app, so this Requires has to be written by hand.
+    "explicit-lib-dependency libsecret",
+]

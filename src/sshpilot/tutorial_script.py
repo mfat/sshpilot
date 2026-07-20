@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Standalone tutorial script that runs in a terminal."""
 
 import sys

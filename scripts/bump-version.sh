@@ -161,7 +161,10 @@ changelog_lines = [
 ]
 today = datetime.now().strftime("%a %b %d %Y")
 new_entry = (
-    f"* {today} mFat <newmfat@gmail.com> - {version}\n"
+    # "-1" mirrors the spec's `Release: 1%{?dist}`. rpmlint compares the newest
+    # changelog version against version-release and reports
+    # incoherent-version-in-changelog when the release part is missing.
+    f"* {today} mFat <newmfat@gmail.com> - {version}-1\n"
     + "\n".join(changelog_lines)
     + "\n\n"
 )

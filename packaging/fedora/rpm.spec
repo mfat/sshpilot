@@ -66,7 +66,9 @@ Recommends:     telnet
 # in-process PTY bridge -- nothing imports them any more.
 
 %description
-SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
+SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed
+terminal, remote file management, key transfer, port forwarding and more. It's
+an alternative to Putty, Termius and Mobaxterm.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -133,7 +135,7 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
-* Mon Jul 20 2026 mFat <newmfat@gmail.com> - 5.5.9
+* Mon Jul 20 2026 mFat <newmfat@gmail.com> - 5.5.9-1
 - Meson build system
 - Migrated to GNOME rcommended project structure
 

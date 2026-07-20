@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 sshPilot - SSH connection manager with integrated terminal
 Main application entry point

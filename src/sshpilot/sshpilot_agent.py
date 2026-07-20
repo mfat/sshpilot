@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 SSHPilot Agent - Host-side PTY handler for Flatpak sandbox
 
