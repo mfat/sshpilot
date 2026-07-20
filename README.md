@@ -1,6 +1,10 @@
 **SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS
 
 <img width="1202" height="777" alt="btop" src="https://github.com/user-attachments/assets/b58ff8f2-ea1b-4836-a9b6-ee679c66c095" />
+<img width="1184" height="702" alt="terminal" src="https://github.com/user-attachments/assets/b391e067-87b0-4ecb-a749-6e59de8e0bc2" />
+<img width="1303" height="726" alt="sftp" src="https://github.com/user-attachments/assets/46e5ea81-6a98-46ef-b8ec-33b98858d9cf" />
+<p align=center> <img width="550" height="623" alt="ssh-copy-id" src="https://github.com/user-attachments/assets/7b5c1c01-d20d-4694-bce1-e42eebc74f40" /></p>
+
 
 
 ## Features
