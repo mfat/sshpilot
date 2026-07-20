@@ -10,6 +10,7 @@ platform documentation that versions with the code:
 | [running-from-source.md](running-from-source.md) | Running from source on Linux: the hybrid (system PyGObject + venv) and pure-venv (pip-built PyGObject) approaches, plus dev/test setup and troubleshooting. |
 | [INSTALL-macos.md](INSTALL-macos.md) | Installing and running from source on macOS (Homebrew GTK stack). |
 | [keyboard-shortcuts.md](keyboard-shortcuts.md) | Full shortcut reference for Linux and macOS. |
+| [diagnostics.md](diagnostics.md) | Where the logs live, the crash report, the `--diagnostics` flags and the bug-report bundle. |
 | [agent-architecture.md](agent-architecture.md) | The Ptyxis-style agent that provides host shells with job control under Flatpak. |
 | [SSH-config-parsing.md](SSH-config-parsing.md) | Design rationale for host discovery: display-only parsing, `ssh -G` as the source of truth. |
 | [command-converter.md](command-converter.md) | The `ssh ...` command-line → connection-data parser (not yet wired to UI). |
