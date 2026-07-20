@@ -17,13 +17,19 @@ jobs:
     container: fedora:latest
 
     steps:
+      # Must precede the checkout: fedora:latest ships no git, and without it
+      # actions/checkout silently falls back to downloading a REST tarball,
+      # leaving no .git for `git archive` to build the source tarball from.
+      - name: Install git
+        run: dnf install -y git-core
+
       - uses: actions/checkout@v4
 
       # Build deps come from packaging/fedora/rpm.spec itself via dnf builddep,
       # so this workflow can never drift from what the packaging declares.
       - name: Install build dependencies
         run: |
-          dnf install -y rpm-build rpmdevtools rpmlint dnf5-plugins git
+          dnf install -y rpm-build rpmdevtools rpmlint dnf5-plugins
           dnf builddep -y packaging/fedora/rpm.spec
 
       # The spec is the version of record for the RPM; scripts/release.sh keeps
@@ -41,8 +47,11 @@ jobs:
           rpmdev-setuptree
           VER='${{ steps.version.outputs.version }}'
           git config --global --add safe.directory "$PWD"
-          git archive --format=tar --prefix="sshpilot-${VER}/" HEAD \
-            | gzip > ~/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz
+          # -o rather than a pipe into gzip: `set -e` does not see a failure on
+          # the left of a pipe, so a broken git archive used to yield a valid
+          # gzip of nothing and only blow up later in rpmbuild's %prep.
+          git archive --format=tar.gz --prefix="sshpilot-${VER}/" \
+            -o ~/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz HEAD
 
       # Builds with Meson (see the spec). Meson installs the launcher, package,
       # gresource, desktop entry, metainfo, icon and sshpilot-agent, and its
