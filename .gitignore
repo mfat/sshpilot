@@ -50,3 +50,6 @@ sshpilot/vendor/pyxtermjs/index.html
 # the sshpilot/plugins/ code package.)
 /plugins/
 /.mimocode
+
+# Generated translation template
+po/*.pot

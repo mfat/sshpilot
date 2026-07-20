@@ -21,11 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-try:
-    import gettext
-    _ = gettext.gettext
-except ImportError:
-    _ = lambda s: s
+from gettext import gettext as _
 
 # ---------------------------------------------------------------------------
 # Default content (seeded once into an empty store)
