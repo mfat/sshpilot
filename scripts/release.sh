@@ -166,6 +166,21 @@ if new_text == text:
 Path(path).write_text(new_text, encoding="utf-8")
 PY
 
+# Keep the Meson project() version in sync with __init__.py.
+if [[ -f "meson.build" ]]; then
+  echo "Updating version in meson.build..."
+  python3 - "meson.build" "$VERSION" <<'PY'
+import re, sys
+from pathlib import Path
+path, version = sys.argv[1], sys.argv[2]
+text = Path(path).read_text(encoding="utf-8")
+new = re.sub(r"(version:\s*')[^']+(',)", rf"\g<1>{version}\g<2>", text, count=1)
+if new == text:
+    raise SystemExit(f"ERROR: Could not update version in {path}")
+Path(path).write_text(new, encoding="utf-8")
+PY
+fi
+
 if [[ -f "$RPM_SPEC_FILE" ]]; then
   echo "Updating version in $RPM_SPEC_FILE..."
   python3 - "$RPM_SPEC_FILE" "$VERSION" "$CHANGELOG" <<'PY'
@@ -251,8 +266,8 @@ while IFS= read -r line; do
   [[ -n "$line" ]] && dch -c "$DEB_CHANGELOG" -a "$line"
 done <<<"$CHANGELOG"
 
-if ! grep -qE "from \. import __version__\s+as\s+APP_VERSION" sshpilot/window.py; then
-  echo "WARNING: About dialog may not reflect __version__ automatically. Please verify in sshpilot/window.py." >&2
+if ! grep -qE "from \. import __version__\s+as\s+APP_VERSION" src/sshpilot/window.py; then
+  echo "WARNING: About dialog may not reflect __version__ automatically. Please verify in src/sshpilot/window.py." >&2
 fi
 
 # -f: debian/ may still be ignored in older local checkouts; force-add is safe

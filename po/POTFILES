@@ -1,0 +1,4 @@
+# List of source files containing translatable strings.
+# Phase 4 regenerates this comprehensively (all *.py with _(...) and the *.blp).
+src/sshpilot/main.py
+src/sshpilot/window.py

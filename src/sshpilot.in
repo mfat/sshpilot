@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+# Meson-installed launcher for sshpilot. Equivalent to `python3 -m sshpilot.main`
+# (main() handles the SSH --askpass fast-path itself before starting GTK).
+import sys
+
+from sshpilot.main import main
+
+sys.exit(main())
