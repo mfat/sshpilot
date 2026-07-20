@@ -65,7 +65,10 @@ modules:
     buildsystem: meson
     sources:
       - type: dir
-        path: .
+        # Relative to this manifest, so `..` is the repo root. Keeping it
+        # correct in place means the manifest builds where it lives instead of
+        # having to be copied to the root first.
+        path: ..
         # Flathub builds from `type: git`, so it only ever sees tracked files.
         # This manifest copies the working tree, so skip the local build junk to
         # keep the test build close to a clean checkout (and fast).

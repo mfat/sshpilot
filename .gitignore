@@ -15,15 +15,11 @@ venv/
 /build
 builddir/
 /artifacts
-/packaging/macos/build
 
-# Flatpak build
+# Flatpak build. scripts/test-flatpak.sh builds flatpak/ in place, so only the
+# build output is ignored -- the manifests there are tracked.
 /.flatpak-builder
 /repo
-/flatpak
-io.github.mfat.sshpilot.yaml
-python3-deps.yml
-sshpilot-launcher.sh
 
 # Debian build artifacts (debian/ packaging itself is tracked for the PPA).
 # dpkg-buildpackage builds in obj-<arch> and stages into debian/<package>/.

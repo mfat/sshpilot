@@ -144,22 +144,22 @@ class TerminalSearch:
         try:
             controller = Gtk.EventControllerKey()
             controller.connect('key-pressed', self._on_vte_search_key_pressed)
-            if self.t.vte is not None:
-                self.t.vte.add_controller(controller)
-            elif self.t.terminal_widget is not None:
-                self.t.terminal_widget.add_controller(controller)
+            host = self.t.controller_host()
+            if host is not None:
+                host.add_controller(controller)
             self._search_key_controller = controller
             logger.debug("Search key controller installed")
         except Exception as exc:
             logger.debug("Failed to install search key controller: %s", exc)
 
     def teardown_key_controller(self):
-        """Detach the search key controller from the VTE widget."""
+        """Detach the search key controller from the terminal widget."""
         search_ctrl = getattr(self, '_search_key_controller', None)
         if search_ctrl is not None:
             try:
-                if hasattr(self.t.vte, 'remove_controller'):
-                    self.t.vte.remove_controller(search_ctrl)
+                host = self.t.controller_host()
+                if hasattr(host, 'remove_controller'):
+                    host.remove_controller(search_ctrl)
             except Exception as exc:
                 logger.debug("Failed to remove search key controller: %s", exc)
             finally:

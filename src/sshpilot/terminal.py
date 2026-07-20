@@ -497,6 +497,14 @@ class TerminalWidget(Gtk.Box):
         # Disconnect old backend signals
         self._disconnect_backend_signals()
 
+        # Detach the shortcut/scroll/search controllers from the widget that is
+        # about to be destroyed. Do this *before* self.vte/terminal_widget are
+        # repointed, or controller_host() would resolve to the new widget. The
+        # setup_terminal() call at the end reinstalls them on the new widget:
+        # it runs _apply_pass_through_mode(), which reinstalls whenever
+        # _shortcut_controller is None -- which is exactly what this clears.
+        self._remove_custom_shortcut_controllers()
+
         # Clean up context menu popover and gesture before destroying backend
         # This prevents GTK warnings about children left when finalizing widgets
         if hasattr(self, '_menu_popover') and self._menu_popover is not None:
@@ -3323,10 +3331,9 @@ class TerminalWidget(Gtk.Box):
                     Gtk.CallbackAction.new(_cb_reset_zoom)
                 ))
 
-                if self.vte is not None:
-                    self.vte.add_controller(controller)
-                elif self.terminal_widget is not None:
-                    self.terminal_widget.add_controller(controller)
+                host = self.controller_host()
+                if host is not None:
+                    host.add_controller(controller)
                 self._shortcut_controller = controller
 
             if getattr(self, '_shortcut_controller', None) is not None:
@@ -3384,23 +3391,32 @@ class TerminalWidget(Gtk.Box):
                 return False  # Don't consume the event if modifier not pressed
             
             scroll_controller.connect('scroll', _on_scroll)
-            if self.vte is not None:
-                self.vte.add_controller(scroll_controller)
-            elif self.terminal_widget is not None:
-                self.terminal_widget.add_controller(scroll_controller)
+            host = self.controller_host()
+            if host is not None:
+                host.add_controller(scroll_controller)
             self._scroll_controller = scroll_controller
             logger.debug("Mouse wheel zoom functionality installed")
 
         except Exception as e:
             logger.debug(f"Failed to setup mouse wheel zoom: {e}")
 
+    def controller_host(self):
+        """Widget custom event controllers live on.
+
+        The VTE backend exposes a `vte` widget; PyXterm only has `terminal_widget`.
+        Attach and detach must agree on the target, or a teardown silently leaves
+        the controller on the widget it was added to.
+        """
+        return self.vte if self.vte is not None else self.terminal_widget
+
     def _remove_custom_shortcut_controllers(self):
-        """Detach any custom shortcut or scroll controllers from the VTE widget."""
+        """Detach any custom shortcut or scroll controllers from the terminal widget."""
+        host = self.controller_host()
         ctrl = getattr(self, '_shortcut_controller', None)
         if ctrl is not None:
             try:
-                if hasattr(self.vte, 'remove_controller'):
-                    self.vte.remove_controller(ctrl)
+                if hasattr(host, 'remove_controller'):
+                    host.remove_controller(ctrl)
             except Exception as exc:
                 logger.debug("Failed to remove shortcut controller: %s", exc)
             finally:
@@ -3409,8 +3425,8 @@ class TerminalWidget(Gtk.Box):
         scroll = getattr(self, '_scroll_controller', None)
         if scroll is not None:
             try:
-                if hasattr(self.vte, 'remove_controller'):
-                    self.vte.remove_controller(scroll)
+                if hasattr(host, 'remove_controller'):
+                    host.remove_controller(scroll)
             except Exception as exc:
                 logger.debug("Failed to remove scroll controller: %s", exc)
             finally:

@@ -70,12 +70,18 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %install
 %meson_install
 
+# po/LINGUAS is still empty, so nothing is installed under %%{_datadir}/locale and
+# %%find_lang fails; the fallback keeps the build green until the first
+# translation lands, at which point the .mo files get packaged automatically
+# instead of tripping unpackaged-files.
+%find_lang %{name} || touch %{name}.lang
+
 # Runs the desktop-entry and AppStream validators defined in data/meson.build.
 %check
 %meson_test
 
 
-%files
+%files -f %{name}.lang
 %license LICENSE*
 %doc README*
 %{_bindir}/sshpilot

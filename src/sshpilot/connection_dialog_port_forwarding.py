@@ -29,12 +29,7 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     class Adw(metaclass=_DummyGIMeta):
         pass
 
-# Initialize gettext
-try:
-    from . import gettext as _
-except ImportError:
-    # Fallback for when gettext is not available
-    _ = lambda s: s
+from gettext import gettext as _
 
 from .port_utils import get_port_checker
 

@@ -25,4 +25,4 @@ jobs:
       # gating merges; flip continue-on-error off once the tree is clean.
       - name: ty check
         continue-on-error: true
-        run: ty check sshpilot/
+        run: ty check src/sshpilot/

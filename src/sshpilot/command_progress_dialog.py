@@ -50,12 +50,6 @@ _PROMPT_INLINE_MARKERS = (
 )
 
 
-def _ensure_terminal_card_css() -> None:
-    # .command-progress-terminal-card is now defined in the bundled style.css
-    # (loaded once at startup); nothing to install here.
-    return
-
-
 def normalize_child_exit_status(status) -> int:
     try:
         value = int(status)
@@ -126,7 +120,6 @@ def terminal_awaiting_input(text: str) -> bool:
 
 def wrap_dialog_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
     """Wrap the dialog terminal in an Adwaita card with clipped rounded corners."""
-    _ensure_terminal_card_css()
     frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     frame.add_css_class('card')
     frame.add_css_class('command-progress-terminal-card')

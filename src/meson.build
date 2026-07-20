@@ -52,6 +52,7 @@ gnome.compile_resources(app_id,
 conf = configuration_data()
 conf.set('PKGDATADIR', pkgdatadir)
 conf.set('LOCALEDIR', localedir)
+conf.set('MODULEDIR', moduledir)
 
 configure_file(
   input: 'build_config.py.in',

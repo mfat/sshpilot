@@ -75,5 +75,11 @@ jobs:
           print(f"gresource OK: {len(ui)} .ui files, style.css present")
           PY
 
+      # The prefix here is not on the default sys.path, so this only passes if
+      # the generated launcher adds its own install dir. Deliberately no
+      # PYTHONPATH -- that would hide the very thing being checked.
+      - name: Launcher resolves the package without PYTHONPATH
+        run: cd / && "$GITHUB_WORKSPACE/_install/bin/sshpilot" --help > /dev/null
+
       - name: Build a dist tarball
         run: meson dist -C builddir --no-tests

@@ -3,6 +3,13 @@
 # (main() handles the SSH --askpass fast-path itself before starting GTK).
 import sys
 
+# The package lands in the prefix's Python install dir. That is already on
+# sys.path for /usr and /app, but not for a custom --prefix, so add it
+# explicitly rather than making the launcher depend on PYTHONPATH.
+_moduledir = '@MODULEDIR@'
+if _moduledir not in sys.path:
+    sys.path.insert(1, _moduledir)
+
 from sshpilot.main import main
 
 sys.exit(main())

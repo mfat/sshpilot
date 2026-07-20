@@ -157,7 +157,7 @@ sources moved under `src/`.
 | Debian / PPA | `debian/rules` | `dh --buildsystem=meson` |
 | Fedora / COPR | `packaging/fedora/rpm.spec` | `%meson` macros |
 | Arch | `packaging/ArchLinux/PKGBUILD` | `arch-meson` |
-| macOS DMG | `packaging/macos/` | PyInstaller (not Meson) |
+| macOS DMG | `packaging/pyinstaller/` | PyInstaller (not Meson); `packaging/macos/` only holds the `.icns` |
 
 - The setuptools build (`pyproject.toml`) is kept in parallel for the
   wheel-based paths only: PyPI, Homebrew and PyInstaller.

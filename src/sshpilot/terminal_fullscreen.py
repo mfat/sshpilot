@@ -99,6 +99,7 @@ class FullscreenController:
 
             # Store current state
             self._fullscreen_sidebar_visible = None
+            self._fullscreen_sidebar_collapsed = None
             self._fullscreen_sidebar_show_content = None
             self._fullscreen_header_visible = None
             self._fullscreen_tab_bar_visible = None
@@ -329,8 +330,15 @@ class FullscreenController:
                 self._is_fullscreen = False
                 return
 
-            # Restore sidebar
-            if hasattr(root, 'split_view') and self._fullscreen_sidebar_visible is not None:
+            # Restore sidebar. NavigationSplitView records its state in
+            # _fullscreen_sidebar_collapsed/_show_content and never touches
+            # _fullscreen_sidebar_visible, so gating on the latter alone would
+            # skip the restore and leave the sidebar collapsed after F11.
+            has_saved_sidebar_state = (
+                self._fullscreen_sidebar_visible is not None
+                or self._fullscreen_sidebar_collapsed is not None
+            )
+            if hasattr(root, 'split_view') and has_saved_sidebar_state:
                 try:
                     # Check split view type using _split_variant attribute or method detection
                     split_variant = getattr(root, '_split_variant', None)
@@ -345,7 +353,7 @@ class FullscreenController:
                     elif HAS_NAV_SPLIT and split_variant == 'navigation':
                         # NavigationSplitView: restore using collapsed and show_content
                         try:
-                            if hasattr(self, '_fullscreen_sidebar_collapsed') and hasattr(self, '_fullscreen_sidebar_show_content'):
+                            if self._fullscreen_sidebar_collapsed is not None and self._fullscreen_sidebar_show_content is not None:
                                 root.split_view.set_collapsed(self._fullscreen_sidebar_collapsed)
                                 root.split_view.set_show_content(self._fullscreen_sidebar_show_content)
                                 logger.debug(f"NavigationSplitView restored: collapsed={self._fullscreen_sidebar_collapsed}, show_content={self._fullscreen_sidebar_show_content}")
