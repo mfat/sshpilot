@@ -113,7 +113,7 @@ More info here: https://github.com/mfat/homebrew-sshpilot
 
 Works on macOS Homebrew and Linuxbrew. The formula is build-from-source; first install pulls the GTK4 stack and compiles a Python virtualenv with the runtime deps. After install, launch sshPilot from a terminal inside an active desktop session (Wayland/X11 + dbus on Linux; native on macOS).
 
-### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" height="24"/> macOS (aarch64)
+### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" height="24"/> macOS (aarch64 and x86-64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
 ### For development on macOS:
