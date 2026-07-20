@@ -16,6 +16,7 @@ DEFAULT_MAIN_BRANCH="main"
 # live in scripts/bump-version.sh -- shared with the Release workflow.
 BUMP_SCRIPT="scripts/bump-version.sh"
 PKGBUILD_SCRIPT="scripts/update-arch-pkgbuild.sh"
+PPA_SCRIPT="scripts/trigger-ppa-build.py"
 INIT_FILE="src/sshpilot/__init__.py"
 PKGBUILD_FILE="packaging/ArchLinux/PKGBUILD"
 
@@ -248,6 +249,18 @@ if [[ -f "$PKGBUILD_FILE" ]]; then
     git commit -m "Update Arch PKGBUILD for v$VERSION"
     git push origin "$MAIN_BRANCH"
   fi
+fi
+
+# The Launchpad PPA is fed by a *daily* recipe over a code-imported mirror of
+# this repo, so without a nudge a release reaches ppa:mfat/sshpilot up to a day
+# late, built from whatever revision the import happened to hold. Ask for the
+# import and the builds explicitly. Last, and non-fatal: everything above is
+# already pushed, and the daily schedule still gets there on its own.
+if (( ! IS_PRERELEASE )) && [[ -f "$PPA_SCRIPT" ]]; then
+  echo
+  echo "Triggering the Launchpad PPA build..."
+  "$PPA_SCRIPT" "$(git rev-parse "$MAIN_BRANCH")" || \
+    echo "WARNING: PPA build not triggered; rerun: $PPA_SCRIPT \$(git rev-parse $MAIN_BRANCH)" >&2
 fi
 
 echo
