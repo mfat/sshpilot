@@ -44,9 +44,6 @@ pykeepass>=4.0
 # System utilities
 psutil>=5.9.0
 
-# Wake-on-LAN
-wakeonlan>=3.0.0
-
 # Networking / TLS
 # Provides a CA bundle so HTTPS (the GitHub update check) can verify
 # certificates in frozen/relocated builds that ship no system CA store

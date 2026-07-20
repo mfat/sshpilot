@@ -12,23 +12,15 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Optional dependency; send_magic_packet is used only when available
-try:
-    from wakeonlan import send_magic_packet
-    _WOL_AVAILABLE = True
-except ImportError:
-    _WOL_AVAILABLE = False
-    send_magic_packet = None
-
 # MAC: 6 hex bytes, optional separators : or -
 _MAC_RE = re.compile(
     r"^(?:(?:[0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{2}){6})$"
 )
 
 
-def is_wol_available() -> bool:
-    """Return True if the wakeonlan package is installed."""
-    return _WOL_AVAILABLE
+def build_magic_packet(mac: str) -> bytes:
+    """Build a Wake-on-LAN magic packet: six 0xFF bytes, then the MAC 16 times."""
+    return b"\xff" * 6 + bytes.fromhex(normalize_mac(mac).replace(":", "")) * 16
 
 
 def normalize_mac(mac: str) -> str:
@@ -66,8 +58,6 @@ def send_wol(
     :param host: Optional. When broadcast_ip is not set, used to derive subnet broadcast (e.g. 192.168.1.255).
     :return: (success, message).
     """
-    if not _WOL_AVAILABLE:
-        return False, "Wake-on-LAN support is not installed (pip install wakeonlan)."
     mac_norm = normalize_mac(mac)
     if not validate_mac(mac_norm):
         return False, "Invalid MAC address."
@@ -79,11 +69,9 @@ def send_wol(
     if not target:
         target = "255.255.255.255"
     try:
-        send_magic_packet(
-            mac_norm,
-            ip_address=target,
-            port=port,
-        )
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.sendto(build_magic_packet(mac_norm), (target, port))
         logger.info("WoL magic packet sent for %s to %s:%s", mac_norm, target, port)
         return True, "Magic packet sent."
     except Exception as e:

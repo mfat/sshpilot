@@ -42,7 +42,6 @@ Depends: ${python3:Depends},
          openssh-client
 Recommends: sshpass,
             python3-pykeepass,
-            python3-wakeonlan,
             gir1.2-webkit-6.0,
             ssh-askpass
 Description: modern, lightweight SSH connection manager

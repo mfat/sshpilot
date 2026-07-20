@@ -51,8 +51,6 @@ Requires:       openssh-askpass
 Requires:       webkitgtk6.0
 # Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
 Recommends:     python3-pykeepass
-# Wake-on-LAN needs python3-wakeonlan, which Fedora does not package; the
-# feature reports itself unavailable without it.
 # For the built-in telnet protocol plugin (degrades gracefully if absent)
 Recommends:     telnet
 
