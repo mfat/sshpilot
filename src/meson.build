@@ -65,10 +65,11 @@ configure_file(
 )
 
 # Install the Python package. The UI sources live only in the gresource, so drop
-# resources/ui from the installed package.
+# resources/ui; example plugins are developer references (users get them from the
+# plugin registry), matching the setuptools exclude in pyproject.toml.
 install_subdir('sshpilot',
   install_dir: moduledir,
-  exclude_directories: ['resources/ui'],
+  exclude_directories: ['resources/ui', 'plugins/examples'],
 )
 
 # Generated launcher installed as `sshpilot` in bindir.

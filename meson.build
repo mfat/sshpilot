@@ -23,6 +23,12 @@ subdir('data')
 subdir('src')
 subdir('po')
 
+# Standalone agent launcher (not generated) shipped alongside the app.
+install_data('sshpilot-agent',
+  install_dir: bindir,
+  install_mode: 'rwxr-xr-x',
+)
+
 gnome.post_install(
   gtk_update_icon_cache: true,
   update_desktop_database: true,
