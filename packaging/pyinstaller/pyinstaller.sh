@@ -139,9 +139,9 @@ if [ -d "dist/SSHPilot.app" ]; then
     fi
     
     # Read version from __init__.py
-    VERSION=$(grep -o '__version__ = "[^"]*"' sshpilot/__init__.py | cut -d'"' -f2)
+    VERSION=$(grep -o '__version__ = "[^"]*"' src/sshpilot/__init__.py | cut -d'"' -f2)
     if [ -z "$VERSION" ]; then
-        echo "⚠️  Could not read version from sshpilot/__init__.py, using date instead"
+        echo "⚠️  Could not read version from src/sshpilot/__init__.py, using date instead"
         VERSION=$(date +%Y%m%d)
     fi
     

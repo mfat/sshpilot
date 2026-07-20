@@ -75,9 +75,10 @@ datas += [
     (os.path.join(hb_share, "glib-2.0", "schemas"), "Resources/share/glib-2.0/schemas"),
     (os.path.join(hb_share, "icons", "Adwaita"),    "Resources/share/icons/Adwaita"),
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
-    (os.path.join(ROOT, "sshpilot"), "sshpilot"),
-    (os.path.join(ROOT, "sshpilot", "resources", "sshpilot.gresource"), "Resources/sshpilot"),
-    (os.path.join(ROOT, "sshpilot", "io.github.mfat.sshpilot.svg"), "share/icons"),
+    (os.path.join(ROOT, "src", "sshpilot"), "sshpilot"),
+    (os.path.join(ROOT, "src", "sshpilot", "resources", "sshpilot.gresource"), "Resources/sshpilot"),
+    (os.path.join(ROOT, "data", "icons", "hicolor", "scalable", "apps",
+                  "io.github.mfat.sshpilot.svg"), "share/icons"),
 ]
 
 # Find libadwaita share data in Cellar if not in standard share location
