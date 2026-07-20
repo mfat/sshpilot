@@ -101,13 +101,17 @@ jobs:
           done
           echo "package contents verified"
 
-      # Still non-fatal, but no longer swallowed silently: the `|| echo` meant
-      # nobody ever read this, and it had been reporting five errors for a long
-      # time. Flip to fatal once a run confirms the rpmlintrc filter applies.
+      # Fatal on the binary RPM, which is what users install. This step used to
+      # end in `|| echo`, so the five errors it had been reporting for months
+      # went unread; a lint nobody can fail is not a lint. Anything genuinely
+      # inapplicable belongs in the rpmlintrc, with the reason written down.
       - name: Rpmlint
         run: |
-          rpmlint -r packaging/fedora/rpmlintrc.toml artifacts/*.noarch.rpm \
-            || echo "::warning::rpmlint reported findings (see above) -- not yet fatal"
+          rpmlint -r packaging/fedora/sshpilot.rpmlintrc artifacts/*.noarch.rpm
+          # The SRPM covers the spec itself, which the binary package cannot.
+          # Informational until it has been clean for a while.
+          rpmlint -r packaging/fedora/sshpilot.rpmlintrc artifacts/*.src.rpm \
+            || echo "::warning::rpmlint findings on the SRPM (see above) -- not yet fatal"
 
       - name: Show package info
         run: |

@@ -1,0 +1,16 @@
+# rpmlint overrides for the sshpilot package.
+#
+# An rpmlintrc, not a .toml config: passed with `-r`, these filters are added to
+# the distribution's own configuration (/etc/xdg/rpmlint/fedora*.toml), which is
+# what suppresses the checks Fedora considers inapplicable. A .toml passed with
+# `-c` replaces that configuration instead, which would lose those.
+#
+# Only genuinely inapplicable checks belong here. Anything else gets fixed in
+# packaging/fedora/rpm.spec.
+
+# sshpilot reaches libsecret through GObject Introspection at runtime
+# (secret_storage.py: gi.require_version("Secret", "1")), rather than by linking
+# against it. rpmlint reads an explicit library dependency as a sign that an
+# automatic one is missing, but nothing generates dependencies for a typelib
+# imported by a Python application, so this Requires has to be hand-written.
+addFilter("explicit-lib-dependency libsecret")
