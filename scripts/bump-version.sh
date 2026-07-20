@@ -214,6 +214,15 @@ if not count:
 Path(path).write_text(text, encoding="utf-8")
 PY
 
+# Man pages carry the version in their .TH header; keep them in step rather
+# than letting them drift (they sat at 5.4.6 while the app was 5.5.7).
+for man in data/sshpilot.1 data/sshpilot-agent.1; do
+  if [[ -f "$man" ]]; then
+    echo "Updating $man..."
+    sed -i -E "s/^(\.TH [A-Z-]+ 1 )\"[^\"]*\" \"sshpilot [^\"]*\"/\\1\"$(date '+%B %Y')\" \"sshpilot ${VERSION}\"/" "$man"
+  fi
+done
+
 echo "Updating $DEB_CHANGELOG..."
 export DEBFULLNAME="${DEBFULLNAME:-Mehdi}" DEBEMAIL="${DEBEMAIL:-mah.fat@gmail.com}"
 dch -c "$DEB_CHANGELOG" -v "${VERSION}-0ubuntu1" -D "$DEB_SERIES" \

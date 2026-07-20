@@ -5,10 +5,14 @@ using Adw 1;
 // preference pages are built dynamically in Python (preferences.py,
 // add_page_to_layout); this file owns the OverlaySplitView / ToolbarView /
 // HeaderBar / ScrolledWindow container structure and the responsive breakpoint.
-template $SshPilotPreferencesWindow: Adw.Window {
+//
+// An Adw.Dialog rather than a window: libadwaita presents preferences over the
+// parent window, so it inherits the parent's stacking and adaptiveness instead
+// of being a second top-level.
+template $SshPilotPreferencesWindow: Adw.Dialog {
   title: "Settings";
-  default-width: 820;
-  default-height: 600;
+  content-width: 820;
+  content-height: 600;
 
   Adw.Breakpoint {
     condition ("max-width: 400sp")
@@ -18,12 +22,12 @@ template $SshPilotPreferencesWindow: Adw.Window {
     }
   }
 
-  content: Adw.OverlaySplitView overlay_split_view {
+  child: Adw.OverlaySplitView overlay_split_view {
     sidebar: Adw.ToolbarView {
       [top]
       Adw.HeaderBar sidebar_header_bar {
-        show-start-title-buttons: true;
-        show-end-title-buttons: true;
+        show-start-title-buttons: false;
+        show-end-title-buttons: false;
 
         styles [
           "flat",

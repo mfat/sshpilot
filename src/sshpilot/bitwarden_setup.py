@@ -433,6 +433,11 @@ def _terminal_host_candidates(window):
     except Exception:
         pass
     try:
+        # Adw.Dialog (Preferences) is a widget inside its parent window.
+        add(window.get_root())
+    except Exception:
+        pass
+    try:
         app = window.get_application()
         if app is not None:
             add(getattr(app, "window", None))
@@ -462,7 +467,7 @@ def _hide_preferences_windows(window) -> List[Gtk.Window]:
             continue
         try:
             if w.get_visible():
-                w.hide()
+                w.set_visible(False)
                 hidden.append(w)
         except Exception:
             pass
@@ -472,8 +477,7 @@ def _hide_preferences_windows(window) -> List[Gtk.Window]:
 def _restore_preferences_windows(windows: List[Gtk.Window]) -> None:
     for w in windows:
         try:
-            w.show()
-            w.present()
+            w.set_visible(True)
         except Exception:
             pass
 

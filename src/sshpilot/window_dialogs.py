@@ -492,7 +492,8 @@ class WindowConfigDialogsMixin:
         existing = getattr(self, '_preferences_window', None)
         if existing is not None:
             try:
-                existing.present()
+                # Adw.Dialog.present() takes the parent to present over.
+                existing.present(self)
                 return
             except Exception:
                 self._preferences_window = None
@@ -502,11 +503,12 @@ class WindowConfigDialogsMixin:
             from .preferences import PreferencesWindow
             preferences_window = PreferencesWindow(self, self.config)
             self._preferences_window = preferences_window
+            # Adw.Dialog emits 'closed' rather than a window's 'close-request'.
             preferences_window.connect(
-                'close-request',
-                lambda _w: (setattr(self, '_preferences_window', None), False)[1],
+                'closed',
+                lambda _d: setattr(self, '_preferences_window', None),
             )
-            preferences_window.present()
+            preferences_window.present(self)
         except Exception as e:
             logger.error(f"Failed to show preferences dialog: {e}")
 

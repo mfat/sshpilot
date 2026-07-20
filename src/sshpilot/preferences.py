@@ -221,8 +221,15 @@ def _detect_pyxterm_backend():
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/preferences_window.ui")
-class PreferencesWindow(Adw.Window):
-    """Preferences dialog window"""
+class PreferencesWindow(Adw.Dialog):
+    """Preferences dialog.
+
+    An ``Adw.Dialog`` (not a top-level window): libadwaita presents it over the
+    parent window, so it stacks correctly on Wayland and collapses with the
+    parent instead of being a second window in the shell. ``self.get_root()``
+    is the presenting window once presented — use it wherever a ``Gtk.Window``
+    is required (e.g. ``transient_for``).
+    """
 
     __gtype_name__ = "SshPilotPreferencesWindow"
 
@@ -234,7 +241,7 @@ class PreferencesWindow(Adw.Window):
     content_stack = Gtk.Template.Child()
 
     def __init__(self, parent_window, config):
-        super().__init__(transient_for=parent_window)
+        super().__init__()
         self.parent_window = parent_window
         self.config = config
         self._shortcuts_row = None
@@ -273,12 +280,9 @@ class PreferencesWindow(Adw.Window):
 
         # Set window properties with modern Adwaita structure
         self.set_title(self._base_header_title)
-        self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
-        
-        # Ensure window decorations and controls are visible
-        self.set_decorated(True)
-        self.set_resizable(True)
-        
+        self.set_content_width(820)   # wide enough to show the sidebar
+        self.set_content_height(600)
+
         # Create custom layout with sidebar
         self.setup_navigation_layout()
         
@@ -288,8 +292,10 @@ class PreferencesWindow(Adw.Window):
         # Apply any existing color overrides
         self.apply_color_overrides()
 
-        # Save on close to persist advanced SSH settings
-        self.connect('close-request', self.on_close_request)
+        # Save on close to persist advanced SSH settings. Adw.Dialog emits
+        # 'closed' (after dismissal); 'close-request' is a Gtk.Window signal and
+        # would never fire here.
+        self.connect('closed', self.on_close_request)
         self.connect('map', self._on_preferences_map)
     
     def setup_navigation_layout(self):
@@ -2059,7 +2065,11 @@ class PreferencesWindow(Adw.Window):
             logger.error(f"Failed to setup preferences: {e}")
 
     def on_close_request(self, *args):
-        """Persist settings when the preferences window closes"""
+        """Persist settings when the preferences dialog closes.
+
+        Connected to Adw.Dialog::closed. The return value is ignored there (it
+        cannot veto); vetoing would need ::close-attempt plus :can-close.
+        """
         try:
             if hasattr(self, 'shortcuts_editor_page'):
                 self.shortcuts_editor_page.flush_changes()
@@ -2690,7 +2700,7 @@ class PreferencesWindow(Adw.Window):
                     return
                 if not ok:
                     dlg = Adw.MessageDialog(
-                        transient_for=self, modal=True,
+                        transient_for=self.get_root(), modal=True,
                         heading=_("Log out failed"),
                         body=_(
                             "Could not sign out of Bitwarden. "
@@ -2812,7 +2822,7 @@ class PreferencesWindow(Adw.Window):
         self._kdbx_file_browse(_("Choose key file"), 'kdbx_keyfile_row')
 
     def _kdbx_message(self, heading, body):
-        d = Adw.MessageDialog(transient_for=self, modal=True, heading=heading, body=body)
+        d = Adw.MessageDialog(transient_for=self.get_root(), modal=True, heading=heading, body=body)
         d.add_response('ok', _('OK'))
         d.present()
 
@@ -2856,7 +2866,7 @@ class PreferencesWindow(Adw.Window):
 
     def _prompt_new_kdbx_password(self, path, error=None):
         dialog = Adw.MessageDialog(
-            transient_for=self, modal=True, heading=_("Set Master Password"),
+            transient_for=self.get_root(), modal=True, heading=_("Set Master Password"),
             body=error or _("Choose a master password for the new database “{}”.").format(
                 os.path.basename(path)))
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -2990,7 +3000,7 @@ class PreferencesWindow(Adw.Window):
     def apply_font_to_terminals(self, font_string):
         """Apply font to all active terminal widgets"""
         try:
-            parent_window = self.get_transient_for()
+            parent_window = self.get_root()
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 font_desc = Pango.FontDescription.from_string(font_string)
                 count = 0
@@ -3194,7 +3204,7 @@ class PreferencesWindow(Adw.Window):
 
 
     def _trigger_sidebar_refresh(self):
-        parent = self.get_transient_for() or self.parent_window
+        parent = self.get_root() or self.parent_window
         if not parent:
             return
 
@@ -3205,7 +3215,7 @@ class PreferencesWindow(Adw.Window):
                 logger.debug("Failed to rebuild connection list after preference change: %s", exc)
 
     def _trigger_terminal_style_refresh(self):
-        parent = self.get_transient_for() or self.parent_window
+        parent = self.get_root() or self.parent_window
         if not parent:
             return
 
@@ -4646,7 +4656,7 @@ class PreferencesWindow(Adw.Window):
 
             self._update_operation_mode_styles()
 
-            parent_window = self.get_transient_for()
+            parent_window = self.get_root()
             if parent_window and hasattr(parent_window, 'connection_manager'):
                 parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
 
@@ -4983,7 +4993,7 @@ class PreferencesWindow(Adw.Window):
         num_terminals = len(open_terminals)
         
         dialog = Gtk.MessageDialog(
-            transient_for=self,
+            transient_for=self.get_root(),
             modal=True,
             message_type=Gtk.MessageType.INFO,
             buttons=Gtk.ButtonsType.OK,
@@ -5471,7 +5481,7 @@ class PreferencesWindow(Adw.Window):
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
         try:
-            parent_window = self.get_transient_for()
+            parent_window = self.get_root()
             if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():

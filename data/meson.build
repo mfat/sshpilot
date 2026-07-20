@@ -39,3 +39,10 @@ endif
 install_data('icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg',
   install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',
 )
+
+# Man pages for both binaries. Installed here rather than by a single distro's
+# packaging, so every package (deb, rpm, Arch, Flatpak) ships them.
+install_man(
+  'sshpilot.1',
+  'sshpilot-agent.1',
+)

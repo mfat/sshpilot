@@ -6,24 +6,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="SshPilotPreferencesWindow" parent="AdwWindow">
+  <template class="SshPilotPreferencesWindow" parent="AdwDialog">
     <property name="title">Settings</property>
-    <property name="default-width">820</property>
-    <property name="default-height">600</property>
+    <property name="content-width">820</property>
+    <property name="content-height">600</property>
     <child>
       <object class="AdwBreakpoint">
         <condition>max-width: 400sp</condition>
         <setter object="overlay_split_view" property="collapsed">true</setter>
       </object>
     </child>
-    <property name="content">
+    <property name="child">
       <object class="AdwOverlaySplitView" id="overlay_split_view">
         <property name="sidebar">
           <object class="AdwToolbarView">
             <child type="top">
               <object class="AdwHeaderBar" id="sidebar_header_bar">
-                <property name="show-start-title-buttons">true</property>
-                <property name="show-end-title-buttons">true</property>
+                <property name="show-start-title-buttons">false</property>
+                <property name="show-end-title-buttons">false</property>
                 <style>
                   <class name="flat"/>
                 </style>

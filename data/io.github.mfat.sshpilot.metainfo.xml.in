@@ -21,6 +21,7 @@
   </description>
 
   <launchable type="desktop-id">io.github.mfat.sshpilot.desktop</launchable>
+  <translation type="gettext">sshpilot</translation>
   <provides>
     <binary>sshpilot</binary>
   </provides>
