@@ -95,6 +95,10 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
+# Glob the compression suffix: rpm gzips man pages, but which suffix it uses is
+# a distro policy, not something this spec should hardcode.
+%{_mandir}/man1/sshpilot.1*
+%{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
 * Mon Jul 20 2026 mFat <newmfat@gmail.com> - 5.5.9
