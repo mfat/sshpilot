@@ -56,13 +56,36 @@ def _init_gettext():
     translations. Uses the Meson-configured localedir when available, else the
     system default. Harmless when no catalogs are installed (``_()`` is identity)."""
     import gettext as _gettext
-    localedir = _LOCALEDIR if (_LOCALEDIR and os.path.isdir(_LOCALEDIR)) else None
+    # Preferences ▸ Interface ▸ Language, exported before the first lookup:
+    # gettext caches the catalogue it resolves, so this cannot be moved later.
+    localedir = None
+    try:
+        from .i18n import apply_language, get_localedir
+        apply_language()
+        # get_localedir() picks the first candidate that actually holds a
+        # catalogue -- Meson's localedir, else the copy bundled in the package.
+        # Testing _LOCALEDIR for existence instead would bind an empty tree
+        # whenever Meson installed the directory but no .mo into it, leaving the
+        # UI English while the picker still offered the language.
+        localedir = get_localedir()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("language preference not applied: %s", exc)
+        localedir = _LOCALEDIR if (_LOCALEDIR and os.path.isdir(_LOCALEDIR)) else None
     try:
         _gettext.bindtextdomain('sshpilot', localedir)
         _gettext.textdomain('sshpilot')
         # Mirror to the C library so GTK/Adw (.ui, .desktop) translations resolve too.
         try:
             import locale
+            # setlocale first: until the process leaves the default "C" locale,
+            # the C library's gettext returns every string untranslated, so the
+            # GtkBuilder strings from the .ui files stay English while the
+            # Python _() ones (pure-Python gettext, env-driven) come out
+            # translated. Binding the domain without this is a no-op for GTK.
+            try:
+                locale.setlocale(locale.LC_ALL, '')
+            except locale.Error:
+                pass  # unset/ungenerated locale — leave C, Python side still works
             locale.bindtextdomain('sshpilot', localedir)
             locale.textdomain('sshpilot')
         except Exception:

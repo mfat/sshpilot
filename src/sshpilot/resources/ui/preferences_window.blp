@@ -10,7 +10,7 @@ using Adw 1;
 // parent window, so it inherits the parent's stacking and adaptiveness instead
 // of being a second top-level.
 template $SshPilotPreferencesWindow: Adw.Dialog {
-  title: "Settings";
+  title: _("Settings");
   content-width: 820;
   content-height: 600;
 
@@ -44,7 +44,7 @@ template $SshPilotPreferencesWindow: Adw.Dialog {
         ]
 
         title-widget: Gtk.Label {
-          label: "Settings";
+          label: _("Settings");
           single-line-mode: true;
           xalign: 0;
 

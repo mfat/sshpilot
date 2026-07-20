@@ -147,7 +147,7 @@ class FileManagerWindow(Adw.Window):
         self._local_pane_toggle = Gtk.ToggleButton()
         from sshpilot import icon_utils
         icon_utils.set_button_icon(self._local_pane_toggle, "view-dual-symbolic")
-        self._local_pane_toggle.set_tooltip_text("Hide Local Pane")
+        self._local_pane_toggle.set_tooltip_text(_("Hide Local Pane"))
         self._local_pane_toggle.set_active(False)  # Start unselected
         self._local_pane_toggle.add_css_class("flat")  # Flat style
         self._local_pane_toggle.connect("toggled", self._on_local_pane_toggle)
@@ -897,11 +897,11 @@ class FileManagerWindow(Adw.Window):
         if is_active:
             # Hide local pane (button is pressed/selected)
             self._left_pane.set_visible(False)
-            toggle_button.set_tooltip_text("Show Local Pane")
+            toggle_button.set_tooltip_text(_("Show Local Pane"))
         else:
             # Show local pane (button is unpressed/unselected)
             self._left_pane.set_visible(True)
-            toggle_button.set_tooltip_text("Hide Local Pane")
+            toggle_button.set_tooltip_text(_("Hide Local Pane"))
 
     def _on_connected(self, *_args) -> None:
         """Handle successful connection and load directories."""
@@ -1318,9 +1318,9 @@ class FileManagerWindow(Adw.Window):
                 message = f"{conflict_count} of {total_count} files already exist in the destination folder."
 
             dialog = Adw.AlertDialog.new(title, message)
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("skip", "Skip Existing")
-            dialog.add_response("replace", "Replace All")
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("skip", _("Skip Existing"))
+            dialog.add_response("replace", _("Replace All"))
             dialog.set_default_response("skip")
             dialog.set_close_response("cancel")
 
@@ -1530,10 +1530,10 @@ class FileManagerWindow(Adw.Window):
         if action == "mkdir":
             dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
             entry = Gtk.Entry()
-            entry.set_text("New Folder")
+            entry.set_text(_("New Folder"))
             dialog.set_extra_child(entry)
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("ok", "Create")
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("ok", _("Create"))
             dialog.set_default_response("ok")
             dialog.set_close_response("cancel")
 
@@ -1592,8 +1592,8 @@ class FileManagerWindow(Adw.Window):
             entry = Gtk.Entry()
             entry.set_text("untitled.txt")
             dialog.set_extra_child(entry)
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("ok", "Create")
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("ok", _("Create"))
             dialog.set_default_response("ok")
             dialog.set_close_response("cancel")
 
@@ -1675,8 +1675,8 @@ class FileManagerWindow(Adw.Window):
             name_entry = Gtk.Entry()
             name_entry.set_text(entry.name)
             dialog.set_extra_child(name_entry)
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("ok", "Rename")
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("ok", _("Rename"))
             dialog.set_default_response("ok")
             dialog.set_close_response("cancel")
 
@@ -1752,8 +1752,8 @@ class FileManagerWindow(Adw.Window):
                 title = "Delete Items"
 
             dialog = Adw.AlertDialog.new(title, message)
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("ok", "Delete")
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("ok", _("Delete"))
             dialog.set_default_response("cancel")
             dialog.set_close_response("cancel")
 

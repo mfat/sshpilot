@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SshPilotPropertiesDialog" parent="AdwWindow">
-    <property name="title">Properties</property>
+    <property name="title" translatable="yes">Properties</property>
     <property name="default-width">400</property>
     <property name="default-height">500</property>
     <property name="resizable">true</property>
@@ -18,7 +18,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="AdwHeaderBar">
             <property name="title-widget">
               <object class="GtkLabel">
-                <property name="label">Properties</property>
+                <property name="label" translatable="yes">Properties</property>
               </object>
             </property>
           </object>

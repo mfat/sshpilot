@@ -12,6 +12,8 @@ from gi.repository import Gtk, Adw  # noqa: E402
 
 from . import widgets as w  # noqa: E402
 
+from gettext import gettext as _  # noqa: E402
+
 
 class StatsTabMixin:
     # Columns rendered in the stats grid: (header, stat-keys to read).
@@ -30,8 +32,8 @@ class StatsTabMixin:
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         live = Gtk.Button()
         live.set_child(Adw.ButtonContent(icon_name="warning-outline-symbolic",
-                                         label="Live stats"))
-        live.set_tooltip_text("Open a streaming `docker stats` in a terminal tab")
+                                         label=_("Live stats")))
+        live.set_tooltip_text(_("Open a streaming `docker stats` in a terminal tab"))
         live.connect("clicked", lambda _b: self._open_live_stats())
         toolbar.append(live)
         box.append(toolbar)

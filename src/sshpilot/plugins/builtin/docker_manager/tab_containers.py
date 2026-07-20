@@ -16,6 +16,8 @@ from .dialogs import (
 )  # noqa: E402
 from . import widgets as w  # noqa: E402
 
+from gettext import gettext as _  # noqa: E402
+
 
 class ContainersTabMixin:
     def _build_containers_section(self) -> Gtk.Widget:
@@ -23,12 +25,12 @@ class ContainersTabMixin:
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._container_search = Gtk.SearchEntry()
-        self._container_search.set_placeholder_text("Filter by name / image / id…")
+        self._container_search.set_placeholder_text(_("Filter by name / image / id…"))
         self._container_search.set_hexpand(True)
         self._container_search.connect("search-changed", self._on_container_search)
         toolbar.append(self._container_search)
         # Label + switch pair, same pattern as the Logs dialog timestamps switch.
-        toolbar.append(Gtk.Label(label="Show stopped"))
+        toolbar.append(Gtk.Label(label=_("Show stopped")))
         self._show_all_check = Gtk.Switch()
         self._show_all_check.set_active(
             bool(self.ctx.settings.get("show_all_containers", True)))
@@ -37,7 +39,7 @@ class ContainersTabMixin:
         toolbar.append(self._show_all_check)
         create = Gtk.Button()
         create.set_child(Adw.ButtonContent(icon_name="list-add-symbolic",
-                                           label="New Container"))
+                                           label=_("New Container")))
         create.add_css_class("suggested-action")
         create.set_halign(Gtk.Align.END)
         create.connect("clicked", lambda _b: self._create_container())
@@ -449,8 +451,8 @@ class ContainersTabMixin:
             self._run_async(lambda: client.lifecycle("rm", cid, force=force), done)
 
         self._confirm(
-            heading="Remove container?",
-            body=f"This will remove “{name}”.",
+            heading=_("Remove container?"),
+            body=_("This will remove “{name}”.").format(name=name),
             destructive_label="Remove",
             on_confirm=do,
             force_label="Force (-f) — remove even if running",
@@ -461,7 +463,7 @@ class ContainersTabMixin:
                       ports: List[tuple]) -> None:
         btn = Gtk.MenuButton()
         btn.set_icon_name("web-browser-symbolic")
-        btn.set_tooltip_text("Open web UI")
+        btn.set_tooltip_text(_("Open web UI"))
         btn.add_css_class("flat")
         btn.set_valign(Gtk.Align.CENTER)
         pop = Gtk.Popover()

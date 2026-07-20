@@ -657,7 +657,7 @@ class TerminalManager:
             dialog = Adw.MessageDialog(
                 transient_for=window,
                 modal=True,
-                heading=_("Disconnect from {}").format(connection.nickname or host_value),
+                heading=_("Disconnect from {host}").format(host=connection.nickname or host_value),
                 body=_("Are you sure you want to disconnect from this host?")
             )
             dialog.add_response('cancel', _("Cancel"))
@@ -757,10 +757,10 @@ class TerminalManager:
                 dialog = Adw.MessageDialog(
                     transient_for=self.window,
                     modal=True,
-                    heading="Error",
-                    body=f"Could not open local terminal.\n\n{e}"
+                    heading=_("Error"),
+                    body=_("Could not open local terminal.\n\n{error}").format(error=e)
                 )
-                dialog.add_response("ok", "OK")
+                dialog.add_response("ok", _("OK"))
                 dialog.present()
             except Exception:
                 pass
@@ -946,7 +946,7 @@ class TerminalManager:
             if getattr(page, 'custom_tab_title', None):
                 return
             if title and title != terminal.connection.nickname:
-                page.set_title(f"{terminal.connection.nickname} - {title}")
+                page.set_title(_("{nickname} - {title}").format(nickname=terminal.connection.nickname, title=title))
             else:
                 page.set_title(terminal.connection.nickname)
 

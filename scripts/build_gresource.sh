@@ -21,6 +21,22 @@ if ls src/sshpilot/resources/ui/*.blp >/dev/null 2>&1; then
   fi
 fi
 
+# Compile the translations into the package. Meson builds and installs its own
+# catalogues from po/, but a source checkout and a pip install never run Meson,
+# and without a .mo the language setting has nothing to select. The generated
+# .mo files are committed, like the .ui files and the gresource bundle.
+if command -v msgfmt >/dev/null 2>&1; then
+  echo "Compiling translations (po/*.po -> src/sshpilot/locale)..."
+  for po in po/*.po; do
+    [ -e "$po" ] || continue
+    lang="$(basename "$po" .po)"
+    mkdir -p "src/sshpilot/locale/$lang/LC_MESSAGES"
+    msgfmt --check "$po" -o "src/sshpilot/locale/$lang/LC_MESSAGES/sshpilot.mo"
+  done
+else
+  echo "WARNING: msgfmt not found; using committed .mo files as-is." >&2
+fi
+
 echo "Compiling GResource files..."
 
 cd src/sshpilot/resources

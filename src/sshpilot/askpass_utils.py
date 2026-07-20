@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import threading
+from gettext import gettext as _
 from typing import List
 
 # SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
@@ -613,16 +614,16 @@ def _run_challenge_dialog(prompt: str, log_fn) -> "str | None":
 
     def on_activate(application):
         window = Adw.ApplicationWindow(application=application)
-        window.set_title("Authentication Required")
+        window.set_title(_("Authentication Required"))
         window.set_resizable(False)
         window.set_default_size(420, -1)
         done = [False]
 
         entry = Adw.PasswordEntryRow()
-        entry.set_title("Response")
+        entry.set_title(_("Response"))
 
-        cancel_btn = Gtk.Button(label="Cancel")
-        ok_btn = Gtk.Button(label="Continue")
+        cancel_btn = Gtk.Button(label=_("Cancel"))
+        ok_btn = Gtk.Button(label=_("Continue"))
         ok_btn.add_css_class("suggested-action")
 
         def _finish(ok: bool):
@@ -856,7 +857,7 @@ def _run_presence_dialog(prompt: str, log_fn) -> "str | None":
 
     def on_activate(application):
         window = Adw.ApplicationWindow(application=application)
-        window.set_title("Security Key")
+        window.set_title(_("Security Key"))
         window.set_resizable(False)
         window.set_default_size(420, -1)
 
@@ -872,7 +873,7 @@ def _run_presence_dialog(prompt: str, log_fn) -> "str | None":
         except Exception:
             pass
 
-        close_btn = Gtk.Button(label="Close")
+        close_btn = Gtk.Button(label=_("Close"))
         close_btn.add_css_class("suggested-action")
         close_btn.connect("clicked", _close)
 
@@ -886,7 +887,7 @@ def _run_presence_dialog(prompt: str, log_fn) -> "str | None":
         )
         body.add_css_class("body")
         hint = Gtk.Label(
-            label="Touch your security key when it blinks.",
+            label=_("Touch your security key when it blinks."),
             wrap=True,
             xalign=0,
         )
@@ -933,10 +934,10 @@ def _run_confirm_dialog(prompt: str, log_fn) -> "str | None":
 
     def on_activate(application):
         dialog = Adw.AlertDialog()
-        dialog.set_heading("Confirm")
+        dialog.set_heading(_("Confirm"))
         dialog.set_body((prompt or "Allow this key operation?").strip())
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("ok", "Allow")
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("Allow"))
         dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("ok")
         dialog.set_close_response("cancel")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
+from gettext import gettext as _
 from typing import Any, Dict, List
 
 from ...api import (
@@ -39,18 +40,18 @@ class SerialProtocolBackend(ProtocolBackend):
 
     def connection_fields(self) -> List[FieldSpec]:
         return [
-            FieldSpec(key="device", label="Device", kind="text", required=True,
+            FieldSpec(key="device", label=_("Device"), kind="text", required=True,
                       placeholder="/dev/ttyUSB0"),
-            FieldSpec(key="baud", label="Baud rate", kind="choice", default="115200",
+            FieldSpec(key="baud", label=_("Baud rate"), kind="choice", default="115200",
                       choices=[(b, b) for b in _BAUDS]),
-            FieldSpec(key="flow", label="Flow control", kind="choice", default="none",
+            FieldSpec(key="flow", label=_("Flow control"), kind="choice", default="none",
                       choices=list(_FLOW)),
-            FieldSpec(key="databits", label="Data bits", kind="choice", default="8",
+            FieldSpec(key="databits", label=_("Data bits"), kind="choice", default="8",
                       choices=[("8", "8"), ("7", "7"), ("6", "6"), ("5", "5")],
                       group="advanced"),
-            FieldSpec(key="parity", label="Parity", kind="choice", default="none",
+            FieldSpec(key="parity", label=_("Parity"), kind="choice", default="none",
                       choices=list(_PARITY), group="advanced"),
-            FieldSpec(key="stopbits", label="Stop bits", kind="choice", default="1",
+            FieldSpec(key="stopbits", label=_("Stop bits"), kind="choice", default="1",
                       choices=[("1", "1"), ("2", "2")], group="advanced"),
         ]
 

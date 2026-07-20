@@ -7,6 +7,7 @@ use the Logs button on a container row.
 from __future__ import annotations
 
 from collections import deque
+from gettext import gettext as _
 from typing import Any, List, Optional
 
 import gi
@@ -29,7 +30,7 @@ class LogsTabMixin:
         if getattr(self, "_logs_window", None) is not None:
             return
         win = Adw.Window()
-        win.set_title("Container logs")
+        win.set_title(_("Container logs"))
         win.set_default_size(780, 560)
         win.set_modal(True)
         parent = self._window()
@@ -39,7 +40,7 @@ class LogsTabMixin:
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
-        self._logs_title = Gtk.Label(label="Logs")
+        self._logs_title = Gtk.Label(label=_("Logs"))
         self._logs_title.add_css_class("heading")
         header.set_title_widget(self._logs_title)
         # Rely on the header bar's native window close; a packed Close button
@@ -62,70 +63,70 @@ class LogsTabMixin:
         self._logs_target_label.add_css_class("dim-label")
         toolbar.append(self._logs_target_label)
 
-        toolbar.append(Gtk.Label(label="Tail:"))
+        toolbar.append(Gtk.Label(label=_("Tail:")))
         self._tail_spin = Gtk.SpinButton.new_with_range(10, 5000, 50)
         self._tail_spin.set_value(self._log_tail_setting())
         toolbar.append(self._tail_spin)
 
         self._ts_switch = Gtk.Switch()
-        self._ts_switch.set_tooltip_text("Show timestamps (-t)")
+        self._ts_switch.set_tooltip_text(_("Show timestamps (-t)"))
         self._ts_switch.set_valign(Gtk.Align.CENTER)
-        toolbar.append(Gtk.Label(label="Timestamps"))
+        toolbar.append(Gtk.Label(label=_("Timestamps")))
         toolbar.append(self._ts_switch)
         box.append(toolbar)
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        load = Gtk.Button(label="Load")
+        load = Gtk.Button(label=_("Load"))
         load.connect("clicked", lambda _b: self._reload_logs())
         actions.append(load)
-        self._logs_follow = Gtk.ToggleButton(label="Follow")
+        self._logs_follow = Gtk.ToggleButton(label=_("Follow"))
         self._logs_follow.set_tooltip_text(
-            "Stream new log lines into this view (docker logs -f)")
+            _("Stream new log lines into this view (docker logs -f)"))
         self._logs_follow.connect("toggled", self._on_logs_follow_toggled)
         actions.append(self._logs_follow)
-        follow_term = Gtk.Button(label="Follow in terminal")
+        follow_term = Gtk.Button(label=_("Follow in terminal"))
         follow_term.connect("clicked", lambda _b: self._follow_logs_selected())
         actions.append(follow_term)
         copy = Gtk.Button(icon_name="edit-copy-symbolic")
-        copy.set_tooltip_text("Copy logs")
+        copy.set_tooltip_text(_("Copy logs"))
         copy.connect("clicked", lambda _b: self._copy_logs())
         actions.append(copy)
         save = Gtk.Button(icon_name="document-save-symbolic")
-        save.set_tooltip_text("Save logs…")
+        save.set_tooltip_text(_("Save logs…"))
         save.connect("clicked", lambda _b: self._save_logs())
         actions.append(save)
         clear = Gtk.Button(icon_name="edit-clear-all-symbolic")
-        clear.set_tooltip_text("Clear")
+        clear.set_tooltip_text(_("Clear"))
         clear.connect("clicked", lambda _b: self._clear_logs())
         actions.append(clear)
         box.append(actions)
 
         filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._logs_search = Gtk.SearchEntry()
-        self._logs_search.set_placeholder_text("Search logs…")
+        self._logs_search.set_placeholder_text(_("Search logs…"))
         self._logs_search.set_hexpand(True)
         self._logs_search.connect("search-changed", lambda _e: self._on_logs_search_changed())
         self._logs_search.connect("activate", lambda _e: self._logs_match_next())
         filters.append(self._logs_search)
 
-        self._logs_case = Gtk.ToggleButton(label="Aa")
-        self._logs_case.set_tooltip_text("Case-sensitive search")
+        self._logs_case = Gtk.ToggleButton(label=_("Aa"))
+        self._logs_case.set_tooltip_text(_("Case-sensitive search"))
         self._logs_case.connect("toggled", lambda _b: self._on_logs_search_changed())
         filters.append(self._logs_case)
 
-        self._logs_highlight_mode = Gtk.ToggleButton(label="Highlight")
+        self._logs_highlight_mode = Gtk.ToggleButton(label=_("Highlight"))
         self._logs_highlight_mode.set_tooltip_text(
-            "Highlight matches instead of filtering lines out")
+            _("Highlight matches instead of filtering lines out"))
         self._logs_highlight_mode.set_active(True)
         self._logs_highlight_mode.connect("toggled", lambda _b: self._apply_log_filter())
         filters.append(self._logs_highlight_mode)
 
         prev_btn = Gtk.Button(icon_name="go-up-symbolic")
-        prev_btn.set_tooltip_text("Previous match")
+        prev_btn.set_tooltip_text(_("Previous match"))
         prev_btn.connect("clicked", lambda _b: self._logs_match_prev())
         filters.append(prev_btn)
         next_btn = Gtk.Button(icon_name="go-down-symbolic")
-        next_btn.set_tooltip_text("Next match")
+        next_btn.set_tooltip_text(_("Next match"))
         next_btn.connect("clicked", lambda _b: self._logs_match_next())
         filters.append(next_btn)
         self._logs_match_label = Gtk.Label(label="")
@@ -133,12 +134,12 @@ class LogsTabMixin:
         self._logs_match_label.add_css_class("caption")
         filters.append(self._logs_match_label)
 
-        self._logs_errors_only = Gtk.ToggleButton(label="Errors only")
+        self._logs_errors_only = Gtk.ToggleButton(label=_("Errors only"))
         self._logs_errors_only.set_tooltip_text(
-            "Show only lines mentioning error/warn/fail/fatal")
+            _("Show only lines mentioning error/warn/fail/fatal"))
         self._logs_errors_only.connect("toggled", lambda _b: self._apply_log_filter())
         filters.append(self._logs_errors_only)
-        self._logs_autoscroll = Gtk.ToggleButton(label="Auto-scroll")
+        self._logs_autoscroll = Gtk.ToggleButton(label=_("Auto-scroll"))
         self._logs_autoscroll.set_active(True)
         filters.append(self._logs_autoscroll)
         box.append(filters)
@@ -184,8 +185,8 @@ class LogsTabMixin:
         self._logs_lines.clear()
         self._logs_raw = ""
         self._logs_buffer.set_text("", 0)
-        self._logs_window.set_title(f"Logs — {name}")
-        self._logs_title.set_label(f"Logs — {name}")
+        self._logs_window.set_title(_("Logs — {name}").format(name=name))
+        self._logs_title.set_label(_("Logs — {name}").format(name=name))
         parent = self._window()
         if parent is not None:
             self._logs_window.set_transient_for(parent)
@@ -283,7 +284,7 @@ class LogsTabMixin:
         cid = self._selected_container_id()
         if client is None or not nick or not cid:
             self._stop_logs_follow()
-            self._toast("Select a container to follow logs")
+            self._toast(_("Select a container to follow logs"))
             return
         self._stop_logs_follow_keep_toggle()
         self._resize_logs_ring()
@@ -368,7 +369,7 @@ class LogsTabMixin:
         if err is not None:
             self._logs_lines.clear()
             self._logs_raw = ""
-            self._logs_buffer.set_text(f"Error: {err}", -1)
+            self._logs_buffer.set_text(_("Error: {err}").format(err=err), -1)
             return
         cleaned = w.strip_ansi(text or "")
         self._resize_logs_ring()
@@ -435,7 +436,7 @@ class LogsTabMixin:
             pos = idx + max(1, len(needle_cmp))
         n = len(self._logs_match_offsets)
         if n == 0:
-            self._logs_match_label.set_text("No results")
+            self._logs_match_label.set_text(_("No results"))
             self._logs_match_index = -1
             return
         if self._logs_match_index < 0 or self._logs_match_index >= n:
@@ -489,17 +490,17 @@ class LogsTabMixin:
     def _copy_logs(self) -> None:
         text = self._logs_text()
         if not text:
-            self._toast("Nothing to copy")
+            self._toast(_("Nothing to copy"))
             return
         display = self.get_display() or Gdk.Display.get_default()
         if display is not None:
             display.get_clipboard().set(text)
-            self._toast("Logs copied")
+            self._toast(_("Logs copied"))
 
     def _save_logs(self) -> None:
         text = self._logs_text()
         if not text:
-            self._toast("Nothing to save")
+            self._toast(_("Nothing to save"))
             return
         dialog = Gtk.FileDialog.new()
         dialog.set_initial_name(f"{self._selected_container_name()}-logs.txt")
@@ -513,7 +514,7 @@ class LogsTabMixin:
                 gfile.replace_contents(
                     text.encode("utf-8"), None, False,
                     Gio.FileCreateFlags.REPLACE_DESTINATION, None)
-                self._toast("Logs saved")
+                self._toast(_("Logs saved"))
             except Exception as exc:  # noqa: BLE001
                 self._toast(f"Save failed: {exc}")
 

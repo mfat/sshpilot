@@ -13,6 +13,8 @@ from gi.repository import Gtk  # noqa: E402
 from .dialogs import TextViewDialog  # noqa: E402
 from . import widgets as w  # noqa: E402
 
+from gettext import gettext as _  # noqa: E402
+
 
 class ListingsTabMixin:
     def _build_listing_section(self, list_attr: str, ph_attr: str,
@@ -92,7 +94,7 @@ class ListingsTabMixin:
                 lambda: client.remove_volume(name, force=force),
                 lambda res, err: self._on_action(f"remove {name}", res, err, self._refresh_volumes))
 
-        self._confirm(heading="Remove volume?", body=f"This will remove “{name}”.",
+        self._confirm(heading=_("Remove volume?"), body=_("This will remove “{name}”.").format(name=name),
                       destructive_label="Remove", on_confirm=do,
                       force_label="Force (-f)")
 
@@ -138,6 +140,6 @@ class ListingsTabMixin:
                 lambda: client.remove_network(name),
                 lambda res, err: self._on_action(f"remove {name}", res, err, self._refresh_networks))
 
-        self._confirm(heading="Remove network?", body=f"This will remove “{name}”.",
+        self._confirm(heading=_("Remove network?"), body=_("This will remove “{name}”.").format(name=name),
                       destructive_label="Remove", on_confirm=do)
 

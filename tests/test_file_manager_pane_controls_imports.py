@@ -59,7 +59,11 @@ def _iter_code_objects(module):
     seen: set[int] = set()
     stack = []
     for value in vars(module).values():
-        if inspect.isfunction(value) or inspect.ismethod(value):
+        # Only functions *defined here*. An imported function (``from gettext
+        # import gettext as _``) resolves its globals against its own module,
+        # so walking it would report that module's internals as unresolved.
+        if (inspect.isfunction(value) or inspect.ismethod(value)) \
+                and getattr(value, "__module__", None) == module.__name__:
             stack.append(value.__code__)
         elif inspect.isclass(value) and value.__module__ == module.__name__:
             for attr in vars(value).values():

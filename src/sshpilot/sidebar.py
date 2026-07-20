@@ -838,7 +838,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.drop_target_indicator.append(drop_icon)
         
         drop_label = Gtk.Label()
-        drop_label.set_markup("<b>Add to Group</b>")
+        drop_label.set_markup(_("<b>Add to Group</b>"))
         self.drop_target_indicator.append(drop_label)
         
         self.drop_target_indicator.set_visible(False)
@@ -876,7 +876,7 @@ class GroupRow(Gtk.ListBoxRow):
         count = len(actual_connections)
         group_name = GLib.markup_escape_text(str(self.group_info['name']))
         self.name_label.set_markup(f"<b>{group_name}</b>")
-        self.count_label.set_text(f"{count} connections")
+        self.count_label.set_text(_("{count} connections").format(count=count))
         self._apply_group_color_style()
 
 
@@ -1906,11 +1906,11 @@ class ConnectionRow(Gtk.ListBoxRow):
             if state == ConnectionState.CONNECTED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-closed-symbolic")
                 self.status_icon.add_css_class("conn-status-up")
-                self.status_icon.set_tooltip_text(f"Connected to {host_value}")
+                self.status_icon.set_tooltip_text(_("Connected to {host}").format(host=host_value))
             elif state == ConnectionState.CONNECTING:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-dots-symbolic")
                 self.status_icon.add_css_class("warning")
-                self.status_icon.set_tooltip_text(f"Connecting to {host_value}…")
+                self.status_icon.set_tooltip_text(_("Connecting to {host}…").format(host=host_value))
             elif state == ConnectionState.FAILED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
                 self.status_icon.add_css_class("conn-status-down")
@@ -1920,12 +1920,13 @@ class ConnectionRow(Gtk.ListBoxRow):
                 except Exception:
                     reason = ''
                 self.status_icon.set_tooltip_text(
-                    f"Connection failed: {reason}" if reason else "Connection failed"
+                    _("Connection failed: {reason}").format(reason=reason) if reason
+                    else _("Connection failed")
                 )
             else:  # DISCONNECTED — a previously-live session that went down.
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
                 self.status_icon.add_css_class("conn-status-down")
-                self.status_icon.set_tooltip_text("Disconnected")
+                self.status_icon.set_tooltip_text(_("Disconnected"))
 
             self.status_icon.queue_draw()
         except Exception as e:
@@ -3456,7 +3457,8 @@ def build_sidebar(window):
     add_button.add_css_class('flat')
     _expand_toolbar_button(add_button)
     add_button.set_tooltip_text(
-        f'Add Connection ({get_primary_modifier_label()}+Shift+N)'
+        _('Add Connection ({shortcut}+Shift+N)').format(
+            shortcut=get_primary_modifier_label())
     )
     add_button.connect('clicked', window.on_add_connection_clicked)
     try:
@@ -3471,7 +3473,8 @@ def build_sidebar(window):
     _expand_toolbar_button(window.search_button)
     # Platform-aware shortcut in tooltip
     shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
-    window.search_button.set_tooltip_text(f'Search Connections ({shortcut})')
+    window.search_button.set_tooltip_text(
+        _('Search Connections ({shortcut})').format(shortcut=shortcut))
     window.search_button.connect('clicked', lambda *_: window.focus_search_entry())
     try:
         window.search_button.set_can_focus(False)
@@ -3484,7 +3487,7 @@ def build_sidebar(window):
         try:
             icon = 'view-conceal-symbolic' if window._hide_hosts else 'view-reveal-symbolic'
             icon_utils.set_button_icon(btn, icon)
-            btn.set_tooltip_text('Show hostnames' if window._hide_hosts else 'Hide hostnames')
+            btn.set_tooltip_text(_('Show hostnames') if window._hide_hosts else _('Hide hostnames'))
         except Exception:
             pass
 
@@ -3590,7 +3593,7 @@ def build_sidebar(window):
     # MenuButton uses set_icon_name() which goes through icon theme
     # We'll use set_icon_name() - the icon theme should find our bundled icon
     window.menu_button.set_icon_name('open-menu-symbolic')
-    window.menu_button.set_tooltip_text('Menu')
+    window.menu_button.set_tooltip_text(_('Menu'))
     window.menu_button.set_menu_model(window.create_menu())
 
     header_handle = Gtk.WindowHandle()
@@ -4115,7 +4118,7 @@ def build_sidebar(window):
     window.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
     window.edit_button.add_css_class('flat')
     _expand_toolbar_button(window.edit_button)
-    window.edit_button.set_tooltip_text('Edit Connection')
+    window.edit_button.set_tooltip_text(_('Edit Connection'))
     window.edit_button.set_sensitive(False)
     window.edit_button.connect('clicked', window.on_edit_connection_clicked)
     window.connection_toolbar.append(window.edit_button)
@@ -4125,7 +4128,8 @@ def build_sidebar(window):
     window.copy_key_button.add_css_class('flat')
     _expand_toolbar_button(window.copy_key_button)
     window.copy_key_button.set_tooltip_text(
-        f'Copy public key to server for passwordless login ({get_primary_modifier_label()}+Shift+K)'
+        _('Copy public key to server for passwordless login ({shortcut}+Shift+K)').format(
+            shortcut=get_primary_modifier_label())
     )
     window.copy_key_button.set_sensitive(False)
     window.copy_key_button.connect('clicked', window.on_copy_key_to_server_clicked)
@@ -4135,7 +4139,7 @@ def build_sidebar(window):
     window.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
     window.scp_button.add_css_class('flat')
     _expand_toolbar_button(window.scp_button)
-    window.scp_button.set_tooltip_text('Transfer files with scp')
+    window.scp_button.set_tooltip_text(_('Transfer files with scp'))
     window.scp_button.set_sensitive(False)
     window.scp_button.connect('clicked', window.on_scp_button_clicked)
     window.connection_toolbar.append(window.scp_button)
@@ -4146,7 +4150,8 @@ def build_sidebar(window):
     _expand_toolbar_button(window.manage_files_button)
     primary_label = get_primary_modifier_label()
     window.manage_files_button.set_tooltip_text(
-        f"Open file manager for remote server ({primary_label}+Shift+O)"
+        _("Open file manager for remote server ({shortcut}+Shift+O)").format(
+            shortcut=primary_label)
     )
     window.manage_files_button.set_sensitive(False)
     window.manage_files_button.connect('clicked', window.on_manage_files_button_clicked)
@@ -4158,7 +4163,7 @@ def build_sidebar(window):
         window.system_terminal_button = icon_utils.new_button_from_icon_name('utilities-terminal-symbolic')
         window.system_terminal_button.add_css_class('flat')
         _expand_toolbar_button(window.system_terminal_button)
-        window.system_terminal_button.set_tooltip_text('Open connection in system terminal')
+        window.system_terminal_button.set_tooltip_text(_('Open connection in system terminal'))
         window.system_terminal_button.set_sensitive(False)
         window.system_terminal_button.connect('clicked', window.on_system_terminal_button_clicked)
         window.connection_toolbar.append(window.system_terminal_button)
@@ -4167,7 +4172,7 @@ def build_sidebar(window):
     window.delete_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
     window.delete_button.add_css_class('flat')
     _expand_toolbar_button(window.delete_button)
-    window.delete_button.set_tooltip_text('Delete Connection')
+    window.delete_button.set_tooltip_text(_('Delete Connection'))
     window.delete_button.set_sensitive(False)
     window.delete_button.connect('clicked', window.on_delete_connection_clicked)
     window.connection_toolbar.append(window.delete_button)
@@ -4181,7 +4186,7 @@ def build_sidebar(window):
     window.rename_group_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
     window.rename_group_button.add_css_class('flat')
     _expand_toolbar_button(window.rename_group_button)
-    window.rename_group_button.set_tooltip_text('Rename Group')
+    window.rename_group_button.set_tooltip_text(_('Rename Group'))
     window.rename_group_button.set_sensitive(False)
     window.rename_group_button.connect('clicked', window.on_rename_group_clicked)
     window.group_toolbar.append(window.rename_group_button)
@@ -4190,7 +4195,7 @@ def build_sidebar(window):
     window.delete_group_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
     window.delete_group_button.add_css_class('flat')
     _expand_toolbar_button(window.delete_group_button)
-    window.delete_group_button.set_tooltip_text('Delete Group')
+    window.delete_group_button.set_tooltip_text(_('Delete Group'))
     window.delete_group_button.set_sensitive(False)
     window.delete_group_button.connect('clicked', window.on_delete_group_clicked)
     window.group_toolbar.append(window.delete_group_button)

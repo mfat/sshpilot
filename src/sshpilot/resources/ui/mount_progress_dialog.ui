@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SshPilotMountProgressDialog" parent="AdwWindow">
-    <property name="title">Mounting SFTP Connection</property>
+    <property name="title" translatable="yes">Mounting SFTP Connection</property>
     <property name="default-width">500</property>
     <property name="default-height">200</property>
     <property name="resizable">false</property>
@@ -26,17 +26,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <child>
           <object class="GtkProgressBar" id="progress_bar">
             <property name="show-text">true</property>
-            <property name="text">Initializing connection...</property>
+            <property name="text" translatable="yes">Initializing connection...</property>
           </object>
         </child>
         <child>
           <object class="GtkLabel" id="status_label">
-            <property name="label">Preparing SFTP mount...</property>
+            <property name="label" translatable="yes">Preparing SFTP mount...</property>
           </object>
         </child>
         <child>
           <object class="GtkButton" id="cancel_button">
-            <property name="label">Cancel</property>
+            <property name="label" translatable="yes">Cancel</property>
             <property name="halign">3</property>
           </object>
         </child>

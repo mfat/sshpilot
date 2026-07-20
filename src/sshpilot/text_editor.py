@@ -13,6 +13,7 @@ import re
 import shlex
 import tempfile
 from concurrent.futures import Future
+from gettext import gettext as _
 from typing import Any, Callable, TYPE_CHECKING, Optional
 
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
@@ -27,7 +28,7 @@ try:
     import gi
     gi.require_version('GtkSource', '5')
     from gi.repository import GtkSource
-    _ = GtkSource.View  # noqa: F841 — force shared-library load
+    _unused = GtkSource.View  # noqa: F841 — force shared-library load
     _HAS_GTKSOURCE = True
 except Exception:  # noqa: BLE001 — ImportError/ValueError/GError/TypeError
     _HAS_GTKSOURCE = False
@@ -132,7 +133,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self.set_transient_for(parent)
         self.set_modal(False)  # Allow multiple editors
         self.set_default_size(900, 600)
-        self.set_title(f"Edit {file_name}")
+        self.set_title(_("Edit {file_name}").format(file_name=file_name))
         
         self._is_local = is_local
         self._file_path = file_path  # Can be remote path or local path
@@ -223,7 +224,7 @@ class RemoteFileEditorWindow(Adw.Window):
         header_bar.set_title_widget(self._title_widget)
         
         # Save button
-        save_label = "Save"
+        save_label = _("Save")
         self._save_button = Gtk.Button(label=save_label)
         self._save_button.add_css_class("suggested-action")
         self._save_button.set_sensitive(False)
@@ -233,9 +234,9 @@ class RemoteFileEditorWindow(Adw.Window):
         # "Edit as root" toggle — remote files only. Reads/saves the file via
         # sudo over the same SSH/auth path (see _on_root_toggled).
         if not self._is_local and self._sftp_manager is not None:
-            self._root_button = Gtk.ToggleButton(label="Edit as root")
+            self._root_button = Gtk.ToggleButton(label=_("Edit as root"))
             self._root_button.set_tooltip_text(
-                "Re-read and save this file as root (sudo)")
+                _("Re-read and save this file as root (sudo)"))
             self._root_button.connect("toggled", self._on_root_toggled)
             header_bar.pack_end(self._root_button)
 
@@ -246,7 +247,7 @@ class RemoteFileEditorWindow(Adw.Window):
         if self._show_outline:
             self._sidebar_toggle = Gtk.ToggleButton()
             self._sidebar_toggle.set_icon_name("sidebar-show-symbolic")
-            self._sidebar_toggle.set_tooltip_text("Show/Hide sidebar")
+            self._sidebar_toggle.set_tooltip_text(_("Show/Hide sidebar"))
             self._sidebar_toggle.set_active(
                 bool(self._pref("editor.show_outline_sidebar", True)))
             self._sidebar_toggle.connect("toggled", self._on_sidebar_toggled)
@@ -254,13 +255,13 @@ class RemoteFileEditorWindow(Adw.Window):
 
         # Undo/Redo buttons
         self._undo_button = icon_utils.new_button_from_icon_name("edit-undo-symbolic")
-        self._undo_button.set_tooltip_text("Undo")
+        self._undo_button.set_tooltip_text(_("Undo"))
         self._undo_button.set_sensitive(False)
         self._undo_button.connect("clicked", self._on_undo_clicked)
         header_bar.pack_start(self._undo_button)
         
         self._redo_button = icon_utils.new_button_from_icon_name("edit-redo-symbolic")
-        self._redo_button.set_tooltip_text("Redo")
+        self._redo_button.set_tooltip_text(_("Redo"))
         self._redo_button.set_sensitive(False)
         self._redo_button.connect("clicked", self._on_redo_clicked)
         header_bar.pack_start(self._redo_button)
@@ -268,7 +269,7 @@ class RemoteFileEditorWindow(Adw.Window):
         # Search button to toggle search bar (only if GtkSource is available)
         if self._gtksource_enabled:
             self._search_button = icon_utils.new_button_from_icon_name("system-search-symbolic")
-            self._search_button.set_tooltip_text("Search")
+            self._search_button.set_tooltip_text(_("Search"))
             self._search_button.connect("clicked", self._on_search_button_clicked)
             header_bar.pack_start(self._search_button)
         else:
@@ -279,17 +280,17 @@ class RemoteFileEditorWindow(Adw.Window):
         zoom_box.add_css_class("linked")
         
         self._zoom_out_button = icon_utils.new_button_from_icon_name("zoom-out-symbolic")
-        self._zoom_out_button.set_tooltip_text("Zoom Out")
+        self._zoom_out_button.set_tooltip_text(_("Zoom Out"))
         self._zoom_out_button.connect("clicked", lambda *_: self.zoom_out())
         zoom_box.append(self._zoom_out_button)
         
         self._zoom_reset_button = icon_utils.new_button_from_icon_name("zoom-fit-best-symbolic")
-        self._zoom_reset_button.set_tooltip_text("Reset Zoom")
+        self._zoom_reset_button.set_tooltip_text(_("Reset Zoom"))
         self._zoom_reset_button.connect("clicked", lambda *_: self.reset_zoom())
         zoom_box.append(self._zoom_reset_button)
         
         self._zoom_in_button = icon_utils.new_button_from_icon_name("zoom-in-symbolic")
-        self._zoom_in_button.set_tooltip_text("Zoom In")
+        self._zoom_in_button.set_tooltip_text(_("Zoom In"))
         self._zoom_in_button.connect("clicked", lambda *_: self.zoom_in())
         zoom_box.append(self._zoom_in_button)
         
@@ -313,27 +314,27 @@ class RemoteFileEditorWindow(Adw.Window):
             toolbar.set_margin_bottom(6)
             
             # Search section
-            search_label = Gtk.Label(label="Search:")
+            search_label = Gtk.Label(label=_("Search:"))
             self._search_entry = Gtk.Entry()
-            self._search_entry.set_placeholder_text("Search...")
+            self._search_entry.set_placeholder_text(_("Search..."))
             self._search_entry.set_width_chars(20)
             
-            search_prev_btn = Gtk.Button(label="Prev")
+            search_prev_btn = Gtk.Button(label=_("Prev"))
             search_prev_btn.connect("clicked", self._on_search_prev_clicked)
             
-            search_next_btn = Gtk.Button(label="Next")
+            search_next_btn = Gtk.Button(label=_("Next"))
             search_next_btn.connect("clicked", self._on_search_next_clicked)
             
             # Replace section
-            replace_label = Gtk.Label(label="Replace:")
+            replace_label = Gtk.Label(label=_("Replace:"))
             self._replace_entry = Gtk.Entry()
-            self._replace_entry.set_placeholder_text("Replace with...")
+            self._replace_entry.set_placeholder_text(_("Replace with..."))
             self._replace_entry.set_width_chars(20)
             
-            replace_btn = Gtk.Button(label="Replace")
+            replace_btn = Gtk.Button(label=_("Replace"))
             replace_btn.connect("clicked", self._on_replace_clicked)
             
-            replace_all_btn = Gtk.Button(label="Replace All")
+            replace_all_btn = Gtk.Button(label=_("Replace All"))
             replace_all_btn.connect("clicked", self._on_replace_all_clicked)
             
             # Pack toolbar
@@ -383,7 +384,7 @@ class RemoteFileEditorWindow(Adw.Window):
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         # Permission-denied prompt offering to retry as root (remote files only).
         if self._root_button is not None:
-            self._root_banner = Adw.Banner(title="Permission denied")
+            self._root_banner = Adw.Banner(title=_("Permission denied"))
             self._root_banner.set_button_label("Edit as root")
             self._root_banner.connect("button-clicked", self._on_banner_root_clicked)
             self._root_banner.set_revealed(False)
@@ -460,7 +461,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._scheme_button = Gtk.MenuButton()
             self._scheme_button.set_child(
                 icon_utils.new_image_from_icon_name("color-symbolic"))
-            self._scheme_button.set_tooltip_text("Editor color scheme")
+            self._scheme_button.set_tooltip_text(_("Editor color scheme"))
             chooser_scroller = Gtk.ScrolledWindow()
             chooser_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             chooser_scroller.set_min_content_width(240)
@@ -821,7 +822,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._title_widget.set_title(f"• {base}" if modified else base)
             subtitle = self._pretty_path()
             if getattr(self, "_root_mode", False):
-                subtitle = f"{subtitle}  —  editing as root"
+                subtitle = _("{subtitle}  —  editing as root").format(subtitle=subtitle)
             self._title_widget.set_subtitle(subtitle)
 
     # ---------- Host/Match outline sidebar ----------
@@ -949,8 +950,8 @@ class RemoteFileEditorWindow(Adw.Window):
                 "File changed on disk",
                 "This file was modified outside the editor since you opened it. "
                 "Saving now overwrites those changes.")
-            dlg.add_response("cancel", "Cancel")
-            dlg.add_response("overwrite", "Overwrite")
+            dlg.add_response("cancel", _("Cancel"))
+            dlg.add_response("overwrite", _("Overwrite"))
             dlg.set_response_appearance("overwrite", Adw.ResponseAppearance.DESTRUCTIVE)
             dlg.connect("response",
                         lambda _d, r: r == "overwrite" and self._perform_save(text))
@@ -1173,8 +1174,8 @@ class RemoteFileEditorWindow(Adw.Window):
                     "Discard changes?",
                     "Editing as root re-reads the file from the host and discards "
                     "your unsaved changes.")
-                dlg.add_response("cancel", "Cancel")
-                dlg.add_response("discard", "Discard and continue")
+                dlg.add_response("cancel", _("Cancel"))
+                dlg.add_response("discard", _("Discard and continue"))
                 dlg.set_response_appearance(
                     "discard", Adw.ResponseAppearance.DESTRUCTIVE)
 
@@ -1265,7 +1266,7 @@ class RemoteFileEditorWindow(Adw.Window):
             display_name=host or self._file_name,
             host=host,
             username=user,
-            heading="Sudo password required",
+            heading=_("Sudo password required"),
             body=(f"Editing “{self._file_name}” as root needs a sudo password"
                   + (f" on “{host}”" if host else "") + ".\n\n"
                   "Enter your sudo password:"),
@@ -1344,17 +1345,17 @@ class RemoteFileEditorWindow(Adw.Window):
             # Show confirmation dialog - text differs for local vs remote
             if self._is_local:
                 dialog_text = f"You have unsaved changes to {self._file_name}. Save changes before closing?"
-                save_label = "Save"
+                save_label = _("Save")
             else:
                 dialog_text = f"You have unsaved changes to {self._file_name}. Upload changes before closing?"
-                save_label = "Save & Upload"
+                save_label = _("Save & Upload")
             
             dialog = Adw.AlertDialog.new(
                 "Unsaved Changes",
                 dialog_text
             )
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("discard", "Discard Changes")
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("discard", _("Discard Changes"))
             dialog.add_response("save", save_label)
             dialog.set_default_response("save")
             dialog.set_close_response("cancel")
@@ -1401,7 +1402,7 @@ class RemoteFileEditorWindow(Adw.Window):
     def _show_error(self, message: str) -> None:
         """Show an error dialog."""
         dialog = Adw.AlertDialog.new("Error", message)
-        dialog.add_response("ok", "OK")
+        dialog.add_response("ok", _("OK"))
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")
         dialog.present(self)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import collections
 import logging
 import time
+from gettext import gettext as _
 from typing import Optional
 
 from gi.repository import Adw, GLib, Gtk, Pango
@@ -51,24 +52,24 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
 
     def __init__(self, parent=None, operation_type="transfer"):
         _titles = {
-            "download": "Downloading Files",
-            "upload": "Uploading Files",
-            "copy": "Copying on Server",
-            "move": "Moving on Server",
+            "download": _("Downloading Files"),
+            "upload": _("Uploading Files"),
+            "copy": _("Copying on Server"),
+            "move": _("Moving on Server"),
         }
-        title = _titles.get(operation_type, "Transferring Files")
+        title = _titles.get(operation_type, _("Transferring Files"))
 
         # Different constructor kwargs for the two base classes.
         if _HAS_ALERT_DIALOG:
             super().__init__(
                 heading=title,
-                body="Transferring files…",
+                body=_("Transferring files…"),
                 default_response="cancel",
             )
         else:
             super().__init__(
                 title=title,
-                body="Transferring files…",
+                body=_("Transferring files…"),
                 default_response="cancel",
             )
             # MessageDialog is a Gtk.Window — old API: set transient + modal.
@@ -170,7 +171,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
 
         # Status label for detailed progress messages
         self.status_label = Gtk.Label()
-        self.status_label.set_text("Preparing transfer…")
+        self.status_label.set_text(_("Preparing transfer…"))
         _configure_progress_label(self.status_label)
         progress_box.append(self.status_label)
 
@@ -223,7 +224,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         
         # File counter
         self.counter_label = Gtk.Label()
-        self.counter_label.set_text("0 of 0 files")
+        self.counter_label.set_text(_("0 of 0 files"))
         self.counter_label.set_halign(Gtk.Align.CENTER)
         self.counter_label.add_css_class("caption")
         details_box.append(self.counter_label)
@@ -233,7 +234,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         action_row.set_halign(Gtk.Align.END)
         action_row.set_margin_top(6)
-        self.action_button = Gtk.Button(label="Cancel")
+        self.action_button = Gtk.Button(label=_("Cancel"))
         self.action_button.add_css_class("pill")
         self.action_button.connect("clicked", self._on_action_button_clicked)
         action_row.append(self.action_button)
@@ -256,7 +257,11 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         # Only update total_files if it's larger (for adding more files to existing dialog)
         if total_files > self.total_files:
             self.total_files = total_files
-            self.counter_label.set_text(f"{self.files_completed} of {total_files} files")
+            self.counter_label.set_text(
+                _("{done} of {total} files").format(
+                    done=self.files_completed, total=total_files
+                )
+            )
 
         if filename:
             self.current_file = filename
@@ -270,11 +275,11 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         full untruncated path is exposed as a tooltip on hover.
         """
         if source:
-            self.source_label.set_text(f"From: {source}")
+            self.source_label.set_text(_("From: {path}").format(path=source))
             self.source_label.set_tooltip_text(source)
             self.source_label.set_visible(True)
         if destination:
-            self.dest_label.set_text(f"To: {destination}")
+            self.dest_label.set_text(_("To: {path}").format(path=destination))
             self.dest_label.set_tooltip_text(destination)
             self.dest_label.set_visible(True)
     
@@ -470,7 +475,11 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
     def _increment_file_count_ui(self):
         """Update file counter (must be called from main thread)"""
         self.files_completed += 1
-        self.counter_label.set_text(f"{self.files_completed} of {self.total_files} files")
+        self.counter_label.set_text(
+            _("{done} of {total} files").format(
+                done=self.files_completed, total=self.total_files
+            )
+        )
         return False
     
     def set_future(self, future):
@@ -515,23 +524,27 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self._stop_render_timer()
         
         if success:
-            self._set_dialog_heading("Transfer Complete")
-            self.status_label.set_text("Transfer completed successfully")
-            self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
+            self._set_dialog_heading(_("Transfer Complete"))
+            self.status_label.set_text(_("Transfer completed successfully"))
+            self.file_label.set_text(
+                _("Successfully transferred {count} files").format(
+                    count=self.files_completed
+                )
+            )
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
         else:
-            self._set_dialog_heading("Transfer Failed")
-            self.status_label.set_text("Transfer failed")
+            self._set_dialog_heading(_("Transfer Failed"))
+            self.status_label.set_text(_("Transfer failed"))
             if error_message:
-                self.file_label.set_text(f"Error: {error_message}")
+                self.file_label.set_text(_("Error: {message}").format(message=error_message))
             else:
-                self.file_label.set_text("An error occurred during transfer")
+                self.file_label.set_text(_("An error occurred during transfer"))
         
         # Swap the body button's label from Cancel → Done. _on_action_button_clicked
         # reads _completion_shown (set above) and takes the "just close" path.
         try:
-            self.action_button.set_label("Done")
+            self.action_button.set_label(_("Done"))
             self.action_button.add_css_class("suggested-action")
         except (AttributeError, RuntimeError, GLib.GError):
             # Button may have been destroyed if the dialog is mid-close.

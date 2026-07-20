@@ -236,7 +236,7 @@ class AuthorizedKeysWindow(Adw.Window):
         ):
             self._password_dialog_shown = False
             self._password_retry_count = 0
-        GLib.idle_add(self._toast, _("Connection error: {}").format(msg))
+        GLib.idle_add(self._toast, _("Connection error: {error}").format(error=msg))
 
     def _connection_display_name(self) -> str:
         user = getattr(self._connection, "username", "") or ""
@@ -296,7 +296,7 @@ class AuthorizedKeysWindow(Adw.Window):
     def _handle_auth_required(self, msg: str) -> bool:
         if not _is_password_auth_enabled(self._connection):
             self._set_status(_("Authentication failed"))
-            self._toast(_("Authentication failed: {}").format(msg))
+            self._toast(_("Authentication failed: {error}").format(error=msg))
             return False
 
         if self._password_dialog_shown:
@@ -327,7 +327,7 @@ class AuthorizedKeysWindow(Adw.Window):
             self._manager.connect_to_server()
         except Exception as exc:
             logger.error("Failed to retry SFTP connection: %s", exc)
-            self._toast(_("Connection failed: {}").format(exc))
+            self._toast(_("Connection failed: {error}").format(error=exc))
         return False
 
     # ------------------------------------------------------------------
@@ -361,7 +361,7 @@ class AuthorizedKeysWindow(Adw.Window):
                 items = fut.result()
             except Exception as exc:
                 logger.error("Failed to load authorized_keys: %s", exc)
-                GLib.idle_add(self._toast, _("Failed to load: {}").format(exc))
+                GLib.idle_add(self._toast, _("Failed to load: {error}").format(error=exc))
                 GLib.idle_add(self._set_status, _("Error loading authorized_keys"))
                 return
             GLib.idle_add(self._apply_loaded, items)
@@ -398,7 +398,7 @@ class AuthorizedKeysWindow(Adw.Window):
                 fut.result()
             except Exception as exc:
                 logger.error("Failed to save authorized_keys: %s", exc)
-                GLib.idle_add(self._toast, _("Save failed: {}").format(exc))
+                GLib.idle_add(self._toast, _("Save failed: {error}").format(error=exc))
                 GLib.idle_add(self._save_button.set_sensitive, True)
                 GLib.idle_add(self._set_status, _("Save failed"))
                 return
@@ -512,12 +512,12 @@ class AuthorizedKeysWindow(Adw.Window):
                 from .key_manager import KeyManager
                 self._key_manager = KeyManager(self._connection_manager)
             except Exception as exc:
-                self._toast(_("Cannot list local keys: {}").format(exc))
+                self._toast(_("Cannot list local keys: {error}").format(error=exc))
                 return
         try:
             keys = self._key_manager.discover_keys() or []
         except Exception as exc:
-            self._toast(_("Failed to read local keys: {}").format(exc))
+            self._toast(_("Failed to read local keys: {error}").format(error=exc))
             return
         if not keys:
             self._toast(_("No local SSH keys found in ~/.ssh"))
@@ -590,14 +590,14 @@ class AuthorizedKeysWindow(Adw.Window):
         # on disk if the user imported only the private key.
         if not os.path.exists(public_path):
             self._toast(
-                _("No public-key file found at {}. Generate it with `ssh-keygen -y -f <private>` and try again.").format(public_path)
+                _("No public-key file found at {path}. Generate it with `ssh-keygen -y -f <private>` and try again.").format(path=public_path)
             )
             return
         try:
             with open(public_path, encoding="utf-8") as fh:
                 text = fh.read().strip()
         except OSError as exc:
-            self._toast(_("Could not read {}: {}").format(public_path, exc))
+            self._toast(_("Could not read {path}: {error}").format(path=public_path, error=exc))
             return
         self._append_pubkey_text(text)
 
@@ -624,7 +624,7 @@ class AuthorizedKeysWindow(Adw.Window):
         try:
             from .text_editor import RemoteFileEditorWindow
         except Exception as exc:
-            self._toast(_("Raw editor unavailable: {}").format(exc))
+            self._toast(_("Raw editor unavailable: {error}").format(error=exc))
             return
 
         if self._local_path is not None:
@@ -640,7 +640,7 @@ class AuthorizedKeysWindow(Adw.Window):
                 editor.present()
             except Exception as exc:
                 logger.error("Failed to open raw editor: %s", exc)
-                self._toast(_("Raw editor failed: {}").format(exc))
+                self._toast(_("Raw editor failed: {error}").format(error=exc))
             return
 
         sftp = getattr(self._manager, "_sftp", None)
@@ -650,7 +650,7 @@ class AuthorizedKeysWindow(Adw.Window):
         try:
             home = sftp.normalize(".")
         except Exception as exc:
-            self._toast(_("Could not resolve home dir: {}").format(exc))
+            self._toast(_("Could not resolve home dir: {error}").format(error=exc))
             return
         ak_path = posixpath.join(home, ".ssh", "authorized_keys")
         try:
@@ -666,7 +666,7 @@ class AuthorizedKeysWindow(Adw.Window):
             editor.present()
         except Exception as exc:
             logger.error("Failed to open raw editor: %s", exc)
-            self._toast(_("Raw editor failed: {}").format(exc))
+            self._toast(_("Raw editor failed: {error}").format(error=exc))
 
     def _on_raw_editor_close(self, editor) -> bool:
         try:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import logging
+from gettext import gettext as _
 
 import gi
 
@@ -72,13 +73,13 @@ class WebTab(Gtk.Box):
         bar.add_css_class("toolbar")
         self._back = Gtk.Button.new_from_icon_name("go-previous-symbolic")
         self._back.add_css_class("flat")
-        self._back.set_tooltip_text("Back")
+        self._back.set_tooltip_text(_("Back"))
         self._back.set_sensitive(False)
         self._back.connect("clicked", lambda _b: self._webview.go_back())
         bar.append(self._back)
         reload_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
         reload_btn.add_css_class("flat")
-        reload_btn.set_tooltip_text("Reload")
+        reload_btn.set_tooltip_text(_("Reload"))
         reload_btn.connect("clicked", lambda _b: self._webview.reload())
         bar.append(reload_btn)
         self._url_lbl = Gtk.Label(label=url, xalign=0, hexpand=True)
@@ -87,7 +88,7 @@ class WebTab(Gtk.Box):
         bar.append(self._url_lbl)
         ext = Gtk.Button.new_from_icon_name("adw-external-link-symbolic")
         ext.add_css_class("flat")
-        ext.set_tooltip_text("Open in browser")
+        ext.set_tooltip_text(_("Open in browser"))
         ext.connect(
             "clicked",
             lambda _b: open_url_in_browser(self._webview.get_uri() or url))

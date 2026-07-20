@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SshPilotSftpConnectionDialog" parent="AdwWindow">
-    <property name="title">SFTP Connection</property>
+    <property name="title" translatable="yes">SFTP Connection</property>
     <property name="default-width">600</property>
     <property name="default-height">400</property>
     <property name="modal">true</property>
@@ -35,7 +35,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="spacing">4</property>
                 <child>
                   <object class="GtkLabel">
-                    <property name="label">&lt;b&gt;SFTP Connection Options&lt;/b&gt;</property>
+                    <property name="label" translatable="yes">&lt;b&gt;SFTP Connection Options&lt;/b&gt;</property>
                     <property name="use-markup">true</property>
                     <property name="halign">1</property>
                   </object>
@@ -54,7 +54,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkLabel">
-            <property name="label">Due to Flatpak security restrictions, direct SFTP mounting is limited.
+            <property name="label" translatable="yes">Due to Flatpak security restrictions, direct SFTP mounting is limited.
 Please choose one of the following options:</property>
             <property name="use-markup">true</property>
             <property name="wrap">true</property>
@@ -69,7 +69,7 @@ Please choose one of the following options:</property>
         </child>
         <child>
           <object class="GtkButton" id="close_button">
-            <property name="label">Close</property>
+            <property name="label" translatable="yes">Close</property>
             <property name="halign">2</property>
           </object>
         </child>

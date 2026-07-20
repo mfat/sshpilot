@@ -236,7 +236,7 @@ class TerminalWidget(Gtk.Box):
         spinner = Gtk.Spinner()
         spinner.start()
         label = Gtk.Label()
-        label.set_markup('<span color="#FFFFFF">Connecting</span>')
+        label.set_markup(_('<span color="#FFFFFF">Connecting</span>'))
         self.connecting_box.append(spinner)
         self.connecting_box.append(label)
 

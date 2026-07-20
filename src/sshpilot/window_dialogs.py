@@ -1024,7 +1024,7 @@ class WindowConfigDialogsMixin:
                 from .backup_backends import BitwardenBackupBackend, BackupTooLargeForNote
                 from .secret_storage import get_secret_manager
                 from .bitwarden_backup_setup import progress_dialog
-                name = _("sshPilot Backup {}").format(datetime.now().strftime('%Y-%m-%d %H:%M'))
+                name = _("sshPilot Backup {date}").format(date=datetime.now().strftime('%Y-%m-%d %H:%M'))
                 bw = get_secret_manager().get_backend("bitwarden")
                 mgr = BackupManager(self.config, self.connection_manager)
                 backend = BitwardenBackupBackend(bw, item_name=name)
@@ -1153,7 +1153,7 @@ class WindowConfigDialogsMixin:
             cancelled = {'v': False}
             _set_status, close_spinner = progress_dialog(
                 self, _("Export to SSH Server"),
-                _("Backing up to {} — this may take a while…").format(who),
+                _("Backing up to {host} — this may take a while…").format(host=who),
                 on_cancel=lambda: cancelled.__setitem__('v', True))
 
             def worker():
@@ -1201,8 +1201,8 @@ class WindowConfigDialogsMixin:
         sensitive_text = _(" and ").join(sensitive_items) if sensitive_items else _("backup data")
         warn = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Export without encryption?"),
-            body=_("{} will be written in PLAIN TEXT and readable by anyone with the "
-                   "file. Continue?").format(sensitive_text))
+            body=_("{items} will be written in PLAIN TEXT and readable by anyone with the "
+                   "file. Continue?").format(items=sensitive_text))
         warn.add_response('back', _('Go Back'))
         warn.add_response('plain', _('Export Unencrypted'))
         warn.set_response_appearance('plain', Adw.ResponseAppearance.DESTRUCTIVE)
@@ -1618,7 +1618,7 @@ class WindowConfigDialogsMixin:
             if not entries:
                 self._simple_dialog(
                     _("No backups found"),
-                    _("No sshPilot backups were found in {} on that server.").format(remote_dir))
+                    _("No sshPilot backups were found in {path} on that server.").format(path=remote_dir))
                 return
             self._choose_backup_entry(
                 entries, heading=_("Import from SSH Server"),
@@ -1845,7 +1845,7 @@ class WindowConfigDialogsMixin:
             notice_group = Adw.PreferencesGroup()
             notice_group.set_description(
                 _("A backup will be created automatically before importing.\n"
-                  "Backup location: {}").format(backup_dir))
+                  "Backup location: {path}").format(path=backup_dir))
             page.add(notice_group)
 
             def on_import(_btn):
@@ -1893,11 +1893,11 @@ class WindowConfigDialogsMixin:
             or os.path.expanduser('~/.ssh/config')
         warn = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Replace your global SSH config?"),
-            body=_("Replace mode will overwrite {} entirely. That file is shared with ssh, "
+            body=_("Replace mode will overwrite {path} entirely. That file is shared with ssh, "
                    "scp, git and every other SSH tool on this machine — any Host blocks, "
                    "Include and Match rules not managed by sshPilot will be lost.\n\n"
                    "Choose Merge instead to add hosts without overwriting, or continue to "
-                   "replace. A backup is saved first either way.").format(ssh_path))
+                   "replace. A backup is saved first either way.").format(path=ssh_path))
         warn.add_response('cancel', _('Cancel'))
         warn.add_response('replace', _('Replace Anyway'))
         warn.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
@@ -2038,11 +2038,11 @@ class WindowConfigDialogsMixin:
                          else _("Backup imported, with some items skipped."))
             done = []
             if restored:
-                done.append(_("{} credential(s)").format(restored))
+                done.append(_("{count} credential(s)").format(count=restored))
             if restored_keys:
-                done.append(_("{} private key(s)").format(restored_keys))
+                done.append(_("{count} private key(s)").format(count=restored_keys))
             if done:
-                lines.append(_("Restored {}.").format(_(", ").join(done)))
+                lines.append(_("Restored {items}.").format(items=_(", ").join(done)))
             if skipped_credentials:
                 lines.append(_("{} credential(s) already existed and were left untouched — "
                                "sshPilot never overwrites a saved secret.").format(
@@ -2154,7 +2154,7 @@ class WindowConfigDialogsMixin:
                     transient_for=self,
                     modal=True,
                     heading=_("Import Failed"),
-                    body=_("Failed to import configuration:\n{}").format(error or "Unknown error")
+                    body=_("Failed to import configuration:\n{error}").format(error=error or "Unknown error")
                 )
                 error_dialog.add_response('ok', _('OK'))
                 error_dialog.present()
@@ -2165,7 +2165,7 @@ class WindowConfigDialogsMixin:
                 transient_for=self,
                 modal=True,
                 heading=_("Import Failed"),
-                body=_("An error occurred during import:\n{}").format(str(e))
+                body=_("An error occurred during import:\n{error}").format(error=str(e))
             )
             error_dialog.add_response('ok', _('OK'))
             error_dialog.present()

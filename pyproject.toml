@@ -71,7 +71,7 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 # Must be declared explicitly: `resources` is not a Python package, so setuptools
 # does not pick it up automatically. Without this the wheel ships no gresource
 # and the app fails at startup with "can't load gresource".
-"sshpilot" = ["resources/**/*", "resources/*"]
+"sshpilot" = ["resources/**/*", "resources/*", "locale/**/*.mo"]
 # PyXterm.js web-terminal backend: HTML template + bundled xterm.js assets
 #
 # (Blueprint .blp sources are excluded below — they are build-time inputs

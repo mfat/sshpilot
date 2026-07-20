@@ -95,7 +95,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="vexpand">false</property>
                 <child>
                   <object class="GtkLabel" id="preview_label">
-                    <property name="label">The quick brown fox jumps over the lazy dog
+                    <property name="label" translatable="yes">The quick brown fox jumps over the lazy dog
 0123456789 !@#$%^&amp;*()_+-=[]{}|;:,.&lt;&gt;?</property>
                     <property name="selectable">true</property>
                     <property name="wrap">true</property>

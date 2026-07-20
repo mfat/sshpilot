@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gettext import gettext as _
+
 from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 from .icon_levels import _DEFAULT_ICON_LEVEL, _MAX_ICON_LEVEL, _MIN_ICON_LEVEL
@@ -110,20 +112,20 @@ class PaneToolbar(Gtk.Box):
         # dropdown. The "custom" attribute names a slot that PopoverMenu
         # fills with whatever widget we add_child() under the same id.
         size_section = Gio.Menu()
-        zoom_item = Gio.MenuItem.new("Icon Size", None)
+        zoom_item = Gio.MenuItem.new(_("Icon Size"), None)
         zoom_item.set_attribute_value("custom", GLib.Variant.new_string("zoom_slider"))
         size_section.append_item(zoom_item)
         menu_model.append_section(None, size_section)
 
         sort_section = Gio.Menu()
-        sort_section.append("Name", "pane.sort-by-name")
-        sort_section.append("Size", "pane.sort-by-size")
-        sort_section.append("Modified", "pane.sort-by-modified")
-        menu_model.append_section("Sort by", sort_section)
+        sort_section.append(_("Name"), "pane.sort-by-name")
+        sort_section.append(_("Size"), "pane.sort-by-size")
+        sort_section.append(_("Modified"), "pane.sort-by-modified")
+        menu_model.append_section(_("Sort by"), sort_section)
         direction_section = Gio.Menu()
-        direction_section.append("Ascending", "pane.sort-direction-asc")
-        direction_section.append("Descending", "pane.sort-direction-desc")
-        menu_model.append_section("Order", direction_section)
+        direction_section.append(_("Ascending"), "pane.sort-direction-asc")
+        direction_section.append(_("Descending"), "pane.sort-direction-desc")
+        menu_model.append_section(_("Order"), direction_section)
 
         # Build a PopoverMenu from the model so we can inject the slider widget
         # into the named custom slot.
@@ -132,10 +134,10 @@ class PaneToolbar(Gtk.Box):
 
         split_button = Adw.SplitButton()
         split_button.set_popover(popover)
-        split_button.set_tooltip_text("Toggle view mode")
+        split_button.set_tooltip_text(_("Toggle view mode"))
         # Tooltip text is parsed as Pango markup; escape the ampersand or
         # use a plain word to avoid "entity did not end with a semicolon".
-        split_button.set_dropdown_tooltip("Adjust icon size and sort order")
+        split_button.set_dropdown_tooltip(_("Adjust icon size and sort order"))
         split_button.set_icon_name("view-list-symbolic")
         split_button.connect("clicked", self._on_view_toggle_clicked)
         return split_button
@@ -149,7 +151,7 @@ class PaneToolbar(Gtk.Box):
         box.set_margin_end(10)
         box.set_size_request(220, -1)
 
-        header = Gtk.Label(label="Icon Size", xalign=0)
+        header = Gtk.Label(label=_("Icon Size"), xalign=0)
         header.add_css_class("caption-heading")
         header.add_css_class("dim-label")
         box.append(header)

@@ -176,7 +176,7 @@ class WindowBroadcastMixin:
                     transient_for=self,
                     modal=True,
                     heading=_("Error"),
-                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
+                    body=_("Failed to open broadcast command dialog: {error}").format(error=str(e))
                 )
                 error_dialog.add_response('ok', _('OK'))
                 error_dialog.present()

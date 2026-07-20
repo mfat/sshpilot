@@ -1,3 +1,11 @@
+sshpilot (5.6.0-0ubuntu1) resolute; urgency=medium
+
+  * Release v5.6.0.
+  * German translation
+  * Various bug fixes and improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Tue, 21 Jul 2026 00:11:12 +0330
+
 sshpilot (5.5.9-0ubuntu1) resolute; urgency=medium
 
   * Release v5.5.9.

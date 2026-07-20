@@ -12,28 +12,30 @@ from gi.repository import Gtk  # noqa: E402
 from .dialogs import TextViewDialog, prompt_text  # noqa: E402
 from . import widgets as w  # noqa: E402
 
+from gettext import gettext as _  # noqa: E402
+
 
 class ImagesTabMixin:
     def _build_images_section(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        pull = Gtk.Button(label="Pull image")
-        pull.set_tooltip_text("docker pull — progress shown in a terminal tab")
+        pull = Gtk.Button(label=_("Pull image"))
+        pull.set_tooltip_text(_("docker pull — progress shown in a terminal tab"))
         pull.add_css_class("suggested-action")
         pull.connect("clicked", lambda _b: self._pull_image())
         toolbar.append(pull)
-        iprune = Gtk.Button(label="Prune images")
-        iprune.set_tooltip_text("docker image prune -f (remove dangling images)")
+        iprune = Gtk.Button(label=_("Prune images"))
+        iprune.set_tooltip_text(_("docker image prune -f (remove dangling images)"))
         iprune.add_css_class("destructive-action")
         iprune.connect("clicked", lambda _b: self._image_prune())
         toolbar.append(iprune)
-        prune = Gtk.Button(label="System prune")
-        prune.set_tooltip_text("docker system prune -f (dangling images, stopped containers, unused networks)")
+        prune = Gtk.Button(label=_("System prune"))
+        prune.set_tooltip_text(_("docker system prune -f (dangling images, stopped containers, unused networks)"))
         prune.add_css_class("destructive-action")
         prune.connect("clicked", lambda _b: self._system_prune())
         toolbar.append(prune)
-        vprune = Gtk.Button(label="Prune volumes")
+        vprune = Gtk.Button(label=_("Prune volumes"))
         vprune.add_css_class("destructive-action")
         vprune.connect("clicked", lambda _b: self._volume_prune())
         toolbar.append(vprune)
@@ -91,13 +93,13 @@ class ImagesTabMixin:
 
             ref = f"{repo}:{tag}" if repo != "<none>" else iid
             hist = Gtk.Button(icon_name="document-open-recent-symbolic")
-            hist.set_tooltip_text("Image history (layers)")
+            hist.set_tooltip_text(_("Image history (layers)"))
             hist.add_css_class("flat")
             hist.connect("clicked", lambda _b, r=ref: self._image_history(r))
             row.append(hist)
 
             rm = Gtk.Button(icon_name="user-trash-symbolic")
-            rm.set_tooltip_text("Remove image")
+            rm.set_tooltip_text(_("Remove image"))
             rm.add_css_class("flat")
             rm.connect("clicked", lambda _b, i=iid, r=f"{repo}:{tag}": self._remove_image(i, r))
             row.append(rm)
@@ -130,8 +132,8 @@ class ImagesTabMixin:
                             lambda res, err: self._on_prune(res, err))
 
         self._confirm(
-            heading="Prune unused images?",
-            body="Removes all dangling images (untagged layers not used by a container).",
+            heading=_("Prune unused images?"),
+            body=_("Removes all dangling images (untagged layers not used by a container)."),
             destructive_label="Prune",
             on_confirm=do,
         )
@@ -170,8 +172,8 @@ class ImagesTabMixin:
             )
 
         self._confirm(
-            heading="Remove image?",
-            body=f"This will remove “{label}”.",
+            heading=_("Remove image?"),
+            body=_("This will remove “{name}”.").format(name=label),
             destructive_label="Remove",
             on_confirm=do,
             force_label="Force (-f)",
@@ -189,8 +191,8 @@ class ImagesTabMixin:
             )
 
         self._confirm(
-            heading="Run system prune?",
-            body="Removes all dangling images, stopped containers, and unused networks.",
+            heading=_("Run system prune?"),
+            body=_("Removes all dangling images, stopped containers, and unused networks."),
             destructive_label="Prune",
             on_confirm=do,
         )
@@ -207,8 +209,8 @@ class ImagesTabMixin:
             )
 
         self._confirm(
-            heading="Prune unused volumes?",
-            body=("Removes ALL volumes not used by a container — this can delete "
+            heading=_("Prune unused volumes?"),
+            body=_("Removes ALL volumes not used by a container — this can delete "
                   "orphaned database data permanently. Type PRUNE to confirm."),
             destructive_label="Prune",
             on_confirm=do,

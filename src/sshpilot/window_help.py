@@ -68,7 +68,7 @@ class WindowHelpMixin:
                 modal=True,
                 message_type=Gtk.MessageType.ERROR,
                 buttons=Gtk.ButtonsType.OK,
-                text="Failed to open help",
+                text=_("Failed to open help"),
                 secondary_text=f"Please open this page manually:\n{url}"
             )
             dialog.present()

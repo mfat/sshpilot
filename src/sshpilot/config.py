@@ -172,6 +172,10 @@ class Config(GObject.Object):
                 'agent_socket': '',
             },
             'ui': {
+                # Interface language as a locale code ('de'). Empty = follow the
+                # system locale. Applied at startup by i18n.apply_language();
+                # gettext caches its catalogue, so a change needs a restart.
+                'language': '',
                 'show_hostname': True,
                 'auto_focus_terminal': True,
                 'confirm_close_tabs': True,

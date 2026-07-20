@@ -12,6 +12,8 @@ from gi.repository import Gtk, Pango  # noqa: E402
 from .dialogs import TextViewDialog  # noqa: E402
 from . import widgets as w  # noqa: E402
 
+from gettext import gettext as _  # noqa: E402
+
 
 class ComposeTabMixin:
     def _build_compose_section(self) -> Gtk.Widget:
@@ -152,8 +154,8 @@ class ComposeTabMixin:
                 self._toast("Could not start compose down")
 
         self._confirm(
-            heading="Tear down stack?",
-            body=f"This stops and removes all containers, networks for “{project}”.",
+            heading=_("Tear down stack?"),
+            body=_("This stops and removes all containers, networks for “{name}”.").format(name=project),
             destructive_label="Down",
             on_confirm=do,
         )

@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $SshPilotMountProgressDialog: Adw.Window {
-  title: "Mounting SFTP Connection";
+  title: _("Mounting SFTP Connection");
   default-width: 500;
   default-height: 200;
   resizable: false;
@@ -20,15 +20,15 @@ template $SshPilotMountProgressDialog: Adw.Window {
 
     Gtk.ProgressBar progress_bar {
       show-text: true;
-      text: "Initializing connection...";
+      text: _("Initializing connection...");
     }
 
     Gtk.Label status_label {
-      label: "Preparing SFTP mount...";
+      label: _("Preparing SFTP mount...");
     }
 
     Gtk.Button cancel_button {
-      label: "Cancel";
+      label: _("Cancel");
       halign: center;
     }
   };

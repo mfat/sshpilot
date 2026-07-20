@@ -7,6 +7,7 @@ import logging
 import shutil
 import subprocess
 import threading
+from gettext import gettext as _
 from typing import Optional, Tuple, Callable, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
@@ -1273,7 +1274,7 @@ class MountProgressDialog(Adw.Window):
             self.set_transient_for(parent_window)
 
         # Dynamic header text (static shell is in the template).
-        self.header_label.set_markup(f"<b>Connecting to {user}@{host}</b>")
+        self.header_label.set_markup(_("<b>Connecting to {user}@{host}</b>").format(user=user, host=host))
         self.cancel_button.connect("clicked", self._on_cancel)
 
     def _on_cancel(self, button):
@@ -1312,7 +1313,7 @@ class MountProgressDialog(Adw.Window):
     def show_error(self, error_text: str):
         """Show error state"""
         self.progress_bar.add_css_class("error")
-        self.cancel_button.set_label("Close")
+        self.cancel_button.set_label(_("Close"))
 
     def close(self, widget=None):
         """Close the dialog"""
@@ -1340,7 +1341,7 @@ class SftpConnectionDialog(Adw.Window):
         self.uri = uri
 
         # Dynamic subtitle (static shell + header/instructions are in the template).
-        self.subtitle_label.set_text(f"Connect to {user}@{host}")
+        self.subtitle_label.set_text(_("Connect to {user}@{host}").format(user=user, host=host))
 
         # Option cards are data-driven; append them into the template's options box.
         self.options_box.append(self._create_option_box(

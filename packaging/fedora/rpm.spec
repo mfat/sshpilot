@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.5.9}
+Version:        %{?version}%{!?version:5.6.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -94,17 +94,18 @@ an alternative to Putty, Termius and Mobaxterm.
 %meson -Dpython.purelibdir=%{_datadir}/%{name}
 %meson_build
 
-# po/LINGUAS is still empty, so Meson installs nothing under %%{_datadir}/locale
-# and the %%find_lang below produces an empty list. rpm treats an empty %%files
-# manifest as fatal by default, which would fail the build over the *absence* of
-# a problem. This macro is exactly that switch -- "Should empty %%files manifest
-# file terminate a build?" -- and clearing it downgrades the error to a warning.
+# po/LINGUAS now lists de, so %%find_lang below does find the installed .mo and
+# the manifest is no longer empty. This stays for the case it was written for:
+# a build whose LINGUAS is empty again (a tarball predating the translation, or
+# one whose catalogues failed to build) produces an empty list, and rpm treats
+# an empty %%files manifest as fatal by default -- failing the build over the
+# *absence* of a problem. This macro is exactly that switch -- "Should empty
+# %%files manifest file terminate a build?" -- and clearing it downgrades the
+# error to a warning.
 #
-# Keeping %%find_lang rather than dropping it means the .mo files get packaged
-# automatically the day the first translation lands, with no spec change to
-# remember. The guard given up is narrow: every other entry in %%files is an
-# explicit path that rpm still verifies, and the unpackaged-files check that
-# caught the missing man pages is untouched.
+# The guard given up is narrow: every other entry in %%files is an explicit path
+# that rpm still verifies, and the unpackaged-files check that caught the
+# missing man pages is untouched.
 #
 # Set here rather than in %%install so it is parsed before %%files reads it.
 %global _empty_manifest_terminate_build 0
@@ -142,6 +143,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Tue Jul 21 2026 mFat <newmfat@gmail.com> - 5.6.0-1
+- German translation
+- Various bug fixes and improvements
+
 * Mon Jul 20 2026 mFat <newmfat@gmail.com> - 5.5.9-1
 - Meson build system
 - Migrated to GNOME rcommended project structure
