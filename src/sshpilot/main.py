@@ -58,15 +58,19 @@ def _init_gettext():
     import gettext as _gettext
     # Preferences ▸ Interface ▸ Language, exported before the first lookup:
     # gettext caches the catalogue it resolves, so this cannot be moved later.
-    localedir = _LOCALEDIR if (_LOCALEDIR and os.path.isdir(_LOCALEDIR)) else None
+    localedir = None
     try:
         from .i18n import apply_language, get_localedir
         apply_language()
-        # Meson writes LOCALEDIR; every other way of running the app (the
-        # checkout, a pip install) needs the catalogues bundled in the package.
-        localedir = localedir or get_localedir()
+        # get_localedir() picks the first candidate that actually holds a
+        # catalogue -- Meson's localedir, else the copy bundled in the package.
+        # Testing _LOCALEDIR for existence instead would bind an empty tree
+        # whenever Meson installed the directory but no .mo into it, leaving the
+        # UI English while the picker still offered the language.
+        localedir = get_localedir()
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("language preference not applied: %s", exc)
+        localedir = _LOCALEDIR if (_LOCALEDIR and os.path.isdir(_LOCALEDIR)) else None
     try:
         _gettext.bindtextdomain('sshpilot', localedir)
         _gettext.textdomain('sshpilot')

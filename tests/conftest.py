@@ -4,6 +4,18 @@ import types
 
 import pytest
 
+# Run the suite in English regardless of the developer's locale. A compiled
+# catalogue ships inside the package (src/sshpilot/locale, for runs that never
+# see Meson), so gettext translates happily at test time, and every assertion
+# here that compares user-visible text assumes English.
+#
+# Set at conftest import, not from a fixture: modules are imported during
+# collection, and several bake their labels at import time
+# (shortcut_editor.ACTION_LABELS, connection_sort.CONNECTION_SORT_PRESETS,
+# authorized_keys_window._RESTRICT_OPT_INS). A session fixture runs after that
+# and would leave those constants frozen in the developer's language.
+os.environ["LANGUAGE"] = "en"
+
 
 # Pre-existing test failures tracked in #987. The original list (introduced by
 # the CI PR #985) bundled three buckets: API/architecture drift, gi/paramiko stub
@@ -23,24 +35,6 @@ _KNOWN_FAILING_NODEIDS = {
     "tests/test_certificate_support.py::test_certificate_support",  # needs ssh-keygen
     "tests/test_key_discovery.py::test_discover_keys_recurses",     # needs /usr/bin/python3 + paramiko
 }
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _pin_english_ui():
-    """Run the suite in English regardless of the developer's locale.
-
-    A compiled catalogue now ships inside the package (src/sshpilot/locale, for
-    runs that never see Meson), so gettext will happily translate at test time.
-    Every assertion here that compares user-visible text assumes English, so a
-    German-locale developer would otherwise see dozens of spurious failures.
-    """
-    previous = os.environ.get("LANGUAGE")
-    os.environ["LANGUAGE"] = "en"
-    yield
-    if previous is None:
-        os.environ.pop("LANGUAGE", None)
-    else:
-        os.environ["LANGUAGE"] = previous
 
 
 def pytest_ignore_collect(collection_path, config):

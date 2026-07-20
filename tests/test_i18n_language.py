@@ -39,6 +39,55 @@ def test_catalogues_bundled_in_the_package_are_found(monkeypatch, tmp_path):
     assert ("de", "Deutsch") in i18n.available_languages()
 
 
+def test_empty_meson_localedir_falls_through_to_the_bundled_copy(monkeypatch, tmp_path):
+    """Meson installed the directory but no catalogue into it.
+
+    Binding there would leave the UI English while the picker still listed the
+    language, so an existing-but-empty tree must not win.
+    """
+    empty, bundled = tmp_path / "installed", tmp_path / "bundled"
+    empty.mkdir()
+    _install_catalogue(bundled, "de")
+    monkeypatch.setattr(i18n, "_BUILD_LOCALEDIR", str(empty))
+    monkeypatch.setattr(i18n, "_PACKAGE_LOCALEDIR", str(bundled))
+
+    assert i18n.get_localedir() == str(bundled)
+    assert ("de", "Deutsch") in i18n.available_languages()
+
+
+def test_picker_is_scoped_to_the_directory_that_gets_bound(monkeypatch, tmp_path):
+    """Never offer a language from a tree the text domain will not be bound to."""
+    installed, bundled = tmp_path / "installed", tmp_path / "bundled"
+    _install_catalogue(installed, "fr")
+    _install_catalogue(bundled, "de")
+    monkeypatch.setattr(i18n, "_BUILD_LOCALEDIR", str(installed))
+    monkeypatch.setattr(i18n, "_PACKAGE_LOCALEDIR", str(bundled))
+
+    codes = [c for c, _name in i18n.available_languages()]
+
+    assert codes == ["en", "fr"]  # de lives only in the tree that loses
+
+
+@pytest.mark.parametrize(
+    "env, expected",
+    [
+        ({"LANGUAGE": "de"}, ["de"]),
+        ({"LANGUAGE": "pt_BR:pt"}, ["pt_BR", "pt"]),
+        ({"LANGUAGE": "", "LC_ALL": "de_DE.UTF-8"}, ["de_DE", "de"]),
+        ({"LANGUAGE": "", "LC_ALL": "C"}, []),
+        ({"LANGUAGE": "", "LC_ALL": "", "LC_MESSAGES": "", "LANG": ""}, []),
+    ],
+)
+def test_ui_language_codes(monkeypatch, env, expected):
+    """Drives the tips.<lang>.md lookup, which is translated as data."""
+    for var in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        monkeypatch.delenv(var, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+    assert i18n.ui_language_codes() == expected
+
+
 def test_meson_localedir_wins_over_the_bundled_copy(monkeypatch, tmp_path):
     installed, bundled = tmp_path / "installed", tmp_path / "bundled"
     _install_catalogue(installed, "de")

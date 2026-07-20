@@ -103,14 +103,12 @@ def available_languages(localedir: Optional[str] = None) -> List[Tuple[str, str]
     English is always included: it is the source language and ships no .mo of
     its own, but a user who has switched to German needs a way back.
     """
-    dirs = [localedir] if localedir is not None else candidate_localedirs()
+    # Exactly the directory the text domain will be bound to, never a union of
+    # the candidates: a language found only under a lower-priority tree would be
+    # offered in the picker and then silently fail to load after the restart.
+    d = localedir if localedir is not None else get_localedir()
 
-    codes = []
-    for d in dirs:
-        for code in _catalogue_codes(d):
-            if code not in codes:
-                codes.append(code)
-
+    codes = _catalogue_codes(d) if d else []
     if 'en' not in codes:
         codes.insert(0, 'en')
     return [(c, LANGUAGE_NAMES.get(c, c)) for c in sorted(codes)]
@@ -132,6 +130,28 @@ def configured_language() -> str:
     except Exception as exc:  # malformed config — the app repairs it later
         logger.debug("Could not read the language preference: %s", exc)
         return ''
+
+
+def ui_language_codes() -> List[str]:
+    """Language codes for the running UI, most specific first (e.g. pt_BR, pt).
+
+    For resources translated as data rather than through gettext -- the tips
+    file -- which still need to follow whatever language the UI ended up in.
+    """
+    for var in ('LANGUAGE', 'LC_ALL', 'LC_MESSAGES', 'LANG'):
+        value = os.environ.get(var)
+        if not value:
+            continue
+        # LANGUAGE is a colon-separated preference list; the others are a single
+        # locale like de_DE.UTF-8. Either way the first entry is what applies.
+        tag = value.split(':')[0].split('.')[0].split('@')[0]
+        if not tag or tag in ('C', 'POSIX'):
+            return []
+        codes = [tag]
+        if '_' in tag:
+            codes.append(tag.split('_')[0])
+        return codes
+    return []
 
 
 def apply_language(code: Optional[str] = None) -> str:

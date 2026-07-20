@@ -928,6 +928,15 @@ class PreferencesWindow(Adw.Dialog):
             self.language_row.set_model(language_names)
 
             saved_language = self.config.get_setting('ui.language', '')
+            if saved_language and saved_language not in self._language_codes:
+                # The catalogue went away (uninstalled, or the setting came from
+                # another machine). Showing "System Default" while the config
+                # still names the missing language would keep applying it at
+                # every start, so clear it to match what the row now says.
+                logger.info("Interface language %r is no longer installed; "
+                            "falling back to the system default", saved_language)
+                self.config.set_setting('ui.language', '')
+                saved_language = ''
             self.language_row.set_selected(
                 self._language_codes.index(saved_language)
                 if saved_language in self._language_codes else 0)
@@ -2904,8 +2913,8 @@ class PreferencesWindow(Adw.Dialog):
     def _prompt_new_kdbx_password(self, path, error=None):
         dialog = Adw.MessageDialog(
             transient_for=self.get_root(), modal=True, heading=_("Set Master Password"),
-            body=error or _("Choose a master password for the new database “{}”.").format(
-                os.path.basename(path)))
+            body=error or _("Choose a master password for the new database “{name}”.").format(
+                name=os.path.basename(path)))
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         pw = Gtk.PasswordEntry(show_peek_icon=True)
         pw.set_property('placeholder-text', _("Master password"))
@@ -2963,7 +2972,7 @@ class PreferencesWindow(Adw.Dialog):
         except Exception:
             logger.debug("auto-unlock after create failed", exc_info=True)
         self._kdbx_message(_("Database Created"),
-                           _("Created and unlocked:\n{}").format(path))
+                           _("Created and unlocked:\n{path}").format(path=path))
 
     def on_secret_session_timeout_changed(self, row, _pspec):
         """Persist and propagate the session-backend idle unlock timeout."""
@@ -3323,7 +3332,7 @@ class PreferencesWindow(Adw.Dialog):
 
         def _subtitle(info):
             if not info.api_compatible:
-                return _("Incompatible (targets API v{})").format(info.api_version)
+                return _("Incompatible (targets API v{version})").format(version=info.api_version)
             if info.required:
                 return _("Required — always enabled")
             if info.plugin_id in loaded_ids:
@@ -3517,7 +3526,7 @@ class PreferencesWindow(Adw.Dialog):
 
     def _available_subtitle(self, entry):
         bits = [b for b in (entry.get('description'),
-                            (_("by {}").format(entry['author']) if entry.get('author') else None),
+                            (_("by {author}").format(author=entry['author']) if entry.get('author') else None),
                             ("v" + entry['version']) if entry.get('version') else None) if b]
         return " · ".join(bits)
 
@@ -3903,20 +3912,20 @@ class PreferencesWindow(Adw.Dialog):
         try:
             meta = json.loads((mdir / 'plugin.json').read_text(encoding='utf-8'))
         except Exception as exc:
-            return _abort(_("Install failed"), _("Invalid plugin.json: {}").format(exc))
+            return _abort(_("Install failed"), _("Invalid plugin.json: {error}").format(error=exc))
         pid = meta.get('id')
         if not pid:
             return _abort(_("Install failed"), _("plugin.json has no 'id'."))
         if meta.get('api_version') != API_VERSION[0]:
             return _abort(_("Incompatible plugin"),
-                          _("This plugin targets API v{}, but this app provides v{}.").format(
-                              meta.get('api_version'), API_VERSION[0]))
+                          _("This plugin targets API v{required}, but this app provides v{provided}.").format(
+                              required=meta.get('api_version'), provided=API_VERSION[0]))
         if not (mdir / '__init__.py').is_file():
             return _abort(_("Install failed"), _("The plugin has no __init__.py."))
         builtin_ids = {i.plugin_id for i in discover_plugins() if i.builtin}
         if pid in builtin_ids:
             return _abort(_("Install failed"),
-                          _("'{}' conflicts with a built-in plugin.").format(pid))
+                          _("'{plugin}' conflicts with a built-in plugin.").format(plugin=pid))
 
         dest = _user_plugin_dir() / pid
         permissions = [str(p) for p in (meta.get('permissions') or []) if isinstance(p, str)]
@@ -3971,7 +3980,7 @@ class PreferencesWindow(Adw.Dialog):
     def _confirm_remove_plugin(self, info):
         confirm = Adw.AlertDialog(
             heading=_("Remove plugin?"),
-            body=_("Delete '{}' from disk? This cannot be undone.").format(info.name))
+            body=_("Delete '{name}' from disk? This cannot be undone.").format(name=info.name))
         confirm.add_response('cancel', _("Cancel"))
         confirm.add_response('remove', _("Remove"))
         confirm.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE)
@@ -3993,8 +4002,8 @@ class PreferencesWindow(Adw.Dialog):
                 self.config.set_setting(key, sorted(ids))
         self._rebuild_plugins_page()
         self._alert(_("Plugin removed"),
-                    _("Removed '{}'. Restart SSH Pilot to unload it if it was active.").format(
-                        info.name))
+                    _("Removed '{name}'. Restart SSH Pilot to unload it if it was active.").format(
+                        name=info.name))
 
     def _add_plugin_page_gear(self, row, plugin_id):
         """If an *active* plugin has registered a UI page, add a gear button to
