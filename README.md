@@ -16,11 +16,12 @@
 
 | Getting started | [Install](#download) | Project |
 | --- | --- | --- |
-| [About](#about) | Debian / Ubuntu — [APT repo](#--debianubuntu-apt-repository) · [manual](#--debianubuntu-manual-install) | [Documentation](#documentation) |
-| [Features](#features) | Fedora / RHEL — [COPR](#-fedorarhel-copr-repository) · [manual](#-fedorarhel-manual-install) | [Telegram Channel](#telegram-channel) |
-| [Minimum Requirements](#minimum-requirements) | [Flatpak](#-flatpak) · [Arch Linux](#-arch-linux) | [Third-Party Libraries](#third-party-libraries) |
-| [Run from Source](#-run-from-source) | [Homebrew](#-homebrew-macos--linux) · [macOS](#-macos-aarch64) | [Special Thanks](#special-thanks) |
-| | | [Support Development](#support-development) |
+| [Features](#features) | [Ubuntu PPA](#-ubuntu-ppa) | [Documentation](#documentation) |
+| [Minimum Requirements](#minimum-requirements) | [Debian APT repo](#-debian-apt-repository) | [Telegram Channel](#telegram-channel) |
+| [Run from Source](#-run-from-source) | Fedora / RHEL — [COPR](#-fedorarhel-copr-repository) · [manual](#-fedorarhel-manual-install) | [Third-Party Libraries](#third-party-libraries) |
+| | [Flatpak](#-flatpak) · [Arch Linux](#-arch-linux) | [Special Thanks](#special-thanks) |
+| | [Homebrew](#-homebrew-macos--linux) · [macOS](#-macos-aarch64) | [Support Development](#support-development) |
+| | [Debian / Ubuntu manual install](#--debianubuntu-manual-install) | |
 
 
 
@@ -42,9 +43,17 @@
 
 ## Download
 
-### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Debian/Ubuntu APT Repository
+### <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Ubuntu PPA
 
-#### Installation
+```bash
+sudo add-apt-repository ppa:mfat/sshpilot
+sudo apt update
+sudo apt install sshpilot
+```
+
+For more information, visit: https://launchpad.net/~mfat/+archive/ubuntu/sshpilot
+
+### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> Debian APT Repository
 
 1. Add the GPG key:
 ```bash
