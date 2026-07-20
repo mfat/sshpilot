@@ -3105,7 +3105,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.debug("Failed to read plugin field %r: %s", key, e)
                 data[key] = spec.default
             if getattr(spec, 'required', False) and not data[key]:
-                self.show_error(_("{} is required").format(spec.label))
+                self.show_error(_("{field} is required").format(field=spec.label))
                 try:
                     self._focus_row(row)
                 except Exception:

@@ -3205,7 +3205,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             counter += 1
                         suggestion = f"{base_name}_{counter}"
                         
-                        raise ValueError(_("A key named '{}' already exists. Try '{}' instead.").format(key_name, suggestion))
+                        raise ValueError(_("A key named '{name}' already exists. Try '{suggestion}' instead.").format(name=key_name, suggestion=suggestion))
 
                     kt = "ed25519" if type_row.get_selected() == 0 else "rsa"
 

@@ -1024,7 +1024,7 @@ class WindowConfigDialogsMixin:
                 from .backup_backends import BitwardenBackupBackend, BackupTooLargeForNote
                 from .secret_storage import get_secret_manager
                 from .bitwarden_backup_setup import progress_dialog
-                name = _("sshPilot Backup {}").format(datetime.now().strftime('%Y-%m-%d %H:%M'))
+                name = _("sshPilot Backup {date}").format(date=datetime.now().strftime('%Y-%m-%d %H:%M'))
                 bw = get_secret_manager().get_backend("bitwarden")
                 mgr = BackupManager(self.config, self.connection_manager)
                 backend = BitwardenBackupBackend(bw, item_name=name)
@@ -1153,7 +1153,7 @@ class WindowConfigDialogsMixin:
             cancelled = {'v': False}
             _set_status, close_spinner = progress_dialog(
                 self, _("Export to SSH Server"),
-                _("Backing up to {} — this may take a while…").format(who),
+                _("Backing up to {host} — this may take a while…").format(host=who),
                 on_cancel=lambda: cancelled.__setitem__('v', True))
 
             def worker():
@@ -1618,7 +1618,7 @@ class WindowConfigDialogsMixin:
             if not entries:
                 self._simple_dialog(
                     _("No backups found"),
-                    _("No sshPilot backups were found in {} on that server.").format(remote_dir))
+                    _("No sshPilot backups were found in {path} on that server.").format(path=remote_dir))
                 return
             self._choose_backup_entry(
                 entries, heading=_("Import from SSH Server"),
@@ -2038,11 +2038,11 @@ class WindowConfigDialogsMixin:
                          else _("Backup imported, with some items skipped."))
             done = []
             if restored:
-                done.append(_("{} credential(s)").format(restored))
+                done.append(_("{count} credential(s)").format(count=restored))
             if restored_keys:
-                done.append(_("{} private key(s)").format(restored_keys))
+                done.append(_("{count} private key(s)").format(count=restored_keys))
             if done:
-                lines.append(_("Restored {}.").format(_(", ").join(done)))
+                lines.append(_("Restored {items}.").format(items=_(", ").join(done)))
             if skipped_credentials:
                 lines.append(_("{} credential(s) already existed and were left untouched — "
                                "sshPilot never overwrites a saved secret.").format(
