@@ -1,4 +1,4 @@
-**SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and SFTP file manager. It's an alternative to Termius, Putty, Mobaxterm and similar apps.
+**SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS.
 
 
 
@@ -14,7 +14,6 @@
   </tr>
 </table>
 
-- [About](#about)
 - [Features](#features)
 - [Download](#download)
   - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
@@ -33,46 +32,23 @@
 - [Special Thanks](#special-thanks)
 - [Support Development](#support-development)
 
-  
-## About
 
-### What is SSH Pilot?
-It's an SSH connection manager with an integrated terminal and built-in dual-pane SFTP client.
-
-### Why should I use SSH Pilot?
-It makes managing multiple machines easier and more fun. You see all your hosts in one unified interface and can organize them into groups, with color tags.
-
-### What makes it unique?
-SSH Pilot is a GUI on top of your .ssh/config
-It honors your existing SSH configuration. Just fire up the app and you'll be have access to all your machines instantly.
-
-### What else can it do?
-It can do [so many things](#features).
-
-SSH Pilot can generate and copy keys to your servers.
-It stores your secrets (passwords and private key passphrases) securely in the operating system's keychain.
-It can securely use saved secrets to log you in.
 
 
 ## Features
 
-- Tabbed interface
-- Intuitive, minimal UI with keyboard navigation and shortcuts
+- Works with your existing ~/.ssh/config
+- Integrated terminal with tabbed interface and split view support (works with your favorite terminal apps too)
+- Intuitive, minimal UI with keyboard navigation and customizable shortcuts
 - Built-in SFTP dual-pane file manager
-- Organize servers in groups
-- Option to use the built-in terminal or your favorite one
-- Broadcast commands to all open tabs
-- Full support for Local, Remote and Dynamic port forwarding 
-- SCP support for quickly uploading or downloading files to/from remote servers
-- Keypair generation and copying to remote servers (ssh-copy-id)
-- Support for running remote and local commands upon login
-- Secure storage for credentials
-- Privacy toggle to show/hide ip addresses/hostnames in the main window
-- Light/Dark interface themes
-- Customizable terminal font and color schemes
-- Load/save standard .ssh/config entries (Or use dedicated configuration file)
-- Free software (GPL v3 license)
-
+- SCP download/upload support
+- Key transfer to server (ssh-copy-id)
+- Known hosts and Authorized keys management (local & remote)
+- Graphical Docker container managemer 
+- Support for various secure storage backends (libsecret, Keepass, Bitwarden/Vaultwarden, pass)
+- Backup and restore to/from Bitwarden/Vaultwarden, or your own servers (supports app settings, secrets and keys)
+- Snippets for quick execution of scripts/commands
+- Extensible via plugins
 
 ## Download
 
@@ -209,41 +185,7 @@ everywhere Flatpak does.
 
 ### 💻 Run from Source
 
-sshPilot is run from source in a **Python virtual environment (venv) + pip**, on
-top of the GTK stack. Two setups are supported (both mirror PyGObject's official
-[Getting Started](https://pygobject.gnome.org/getting_started.html) guide):
-
-- **Hybrid (recommended):** install the GTK stack *and* PyGObject from your
-  distribution, then use a `--system-site-packages` venv for the pure-Python
-  deps. No compiler needed — the quick-start below uses this.
-- **Pure venv:** build PyGObject/pycairo from PyPI into a plain venv (needs a C
-  toolchain + GTK `-dev` headers).
-
-📖 **Full guide to both approaches, dev/test setup, and troubleshooting:**
 [docs/running-from-source.md](docs/running-from-source.md).
-
-#### ⚡ Quick install (automated)
-
-One command — detects your distro (Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE),
-installs the system GTK stack via `sudo`, sets up the venv, and launches:
-
-```bash
-git clone https://github.com/mfat/sshpilot.git && cd sshpilot && ./scripts/install-run-linux.sh
-```
-
-(Flags: `--no-run`, `--with-webkit`, `-y`. On an unsupported distro, follow the
-manual steps below.) Prefer to set things up yourself? Continue with Step 1.
-
-> **Why a venv?** Modern Linux distributions ship an *externally-managed* system
-> Python (PEP 668) that refuses `pip install`. A venv keeps sshPilot's Python
-> dependencies isolated.
-
-> **Why system packages for the GTK stack (hybrid)?** PyGObject, pycairo, and
-> the GTK4/libadwaita/VTE runtime are provided by your distribution. **Do not
-> install PyGObject or pycairo via pip** in this setup — pip would build them
-> from source, requiring a C toolchain and `-dev` headers. Install them as system
-> packages (Step 1) and create the venv with `--system-site-packages` so it can
-> see them (Step 2).
 
 #### Step 1 — Install system prerequisites (required)
 
