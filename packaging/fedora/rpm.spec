@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.5.8}
+Version:        %{?version}%{!?version:5.5.9}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -94,6 +94,10 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Mon Jul 20 2026 mFat <newmfat@gmail.com> - 5.5.9
+- Meson build system
+- Migrated to GNOME rcommended project structure
+
 * Mon Jul 20 2026 mFat <newmfat@gmail.com> - 5.5.8
 - Migrated to meson build system
 

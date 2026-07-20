@@ -61,6 +61,12 @@
 
 
 
+    <release version="5.5.9" date="2026-07-20">
+      <description>
+        <p>Meson build system</p>
+        <p>Migrated to GNOME rcommended project structure</p>
+      </description>
+    </release>
     <release version="5.5.8" date="2026-07-20">
       <description>
         <p>Migrated to meson build system</p>
