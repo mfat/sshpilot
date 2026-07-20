@@ -18,21 +18,17 @@ bindir = prefix / get_option('bindir')
 localedir = prefix / get_option('localedir')
 pkgdatadir = datadir / app_id
 
-# Where the Python package lands. The default -- the interpreter's site-packages
-# -- is right for anything built once per Python version (deb, Arch, Flatpak).
-# A single noarch RPM installed across several distros cannot use it: the path
-# carries the Python minor version, so the payload would be invisible to any
-# other interpreter. Such builds pass a version-independent directory instead;
-# the launcher and build_config.py both take the path from here, so nothing
-# needs to guess it.
-_python_install_dir = get_option('python_install_dir')
-if _python_install_dir == ''
-  moduledir = py.get_install_dir()
-elif _python_install_dir.startswith('/')
-  moduledir = _python_install_dir
-else
-  moduledir = prefix / _python_install_dir
-endif
+# Where the Python package lands: the interpreter's site-packages, which is
+# right for anything built once per Python version (deb, Arch, Flatpak).
+#
+# A single noarch RPM installed across several distros cannot use that, because
+# the path carries the Python minor version and the payload would be invisible
+# to every other interpreter. Such builds override it with Meson's built-in
+# `-Dpython.purelibdir=...` (see packaging/fedora/rpm.spec) rather than an
+# option defined here: a project-defined option only exists in tarballs new
+# enough to carry it, and the spec is applied to release tarballs that predate
+# it. The launcher and build_config.py both read the path from here either way.
+moduledir = py.get_install_dir()
 
 subdir('data')
 subdir('src')

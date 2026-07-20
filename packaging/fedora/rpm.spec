@@ -9,7 +9,8 @@ Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.
 
 
 BuildArch:      noarch
-BuildRequires:  meson >= 0.59
+# 0.60 for the built-in python.purelibdir option used in %%build.
+BuildRequires:  meson >= 0.60
 BuildRequires:  ninja-build
 BuildRequires:  python3-devel
 # Compiles the .blp sources into the .ui files bundled in the GResource.
@@ -77,14 +78,20 @@ an alternative to Putty, Termius and Mobaxterm.
 # desktop entry and AppStream metainfo (merged from the .in templates), the icon
 # and sshpilot-agent. Nothing is replayed by hand here.
 %build
-# -Dpython_install_dir: keep the payload out of %%{python3_sitelib}. That path
-# carries the Python minor version (…/python3.14/site-packages), so a noarch RPM
-# built once and installed on a distro with any other Python would put its files
-# where no interpreter looks -- installing cleanly and then failing to import.
-# The previous spec papered over this by filtering the python(abi) dependency,
-# which removed the error without removing the breakage. Both the launcher and
-# sshpilot-agent locate the package here.
-%meson -Dpython_install_dir=%{_datadir}/%{name}
+# Keep the payload out of %%{python3_sitelib}. That path carries the Python minor
+# version (…/python3.14/site-packages), so a noarch RPM built once and installed
+# on a distro with any other Python would put its files where no interpreter
+# looks -- installing cleanly and then failing to import. The previous spec
+# papered over this by filtering the python(abi) dependency, which removed the
+# error without removing the breakage. Both the launcher and sshpilot-agent
+# locate the package here.
+#
+# python.purelibdir is Meson's own option, deliberately not one declared by this
+# project: COPR builds this spec against the release tarball named in Source0,
+# which for any tag older than the change is a tree with no such option in it,
+# and meson setup would abort with "Unknown option". A built-in works on every
+# tarball, including ones that predate this comment.
+%meson -Dpython.purelibdir=%{_datadir}/%{name}
 %meson_build
 
 # po/LINGUAS is still empty, so Meson installs nothing under %%{_datadir}/locale
