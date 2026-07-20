@@ -9,14 +9,14 @@ cd "$(dirname "$0")/.."
 
 echo "=== Test Flatpak Build ==="
 
-# Copy all 3 files from flatpak/ directory to current directory
+# The manifest resolves python3-deps.yml relative to itself, and its `type: dir`
+# source is the repo root, so both must sit at the root to build.
 echo "Copying files from flatpak/ to current directory..."
 cp flatpak/io.github.mfat.sshpilot.yaml .
 cp flatpak/python3-deps.yml .
-cp flatpak/sshpilot-launcher.sh .
 
 echo "Files copied:"
-ls -la io.github.mfat.sshpilot.yaml python3-deps.yml sshpilot-launcher.sh
+ls -la io.github.mfat.sshpilot.yaml python3-deps.yml
 
 # Run flatpak build
 echo ""
