@@ -12,6 +12,7 @@ from .file_manager_integration import (
 )
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos
+from .i18n import ui_language_codes as _ui_language_codes
 from . import wol
 
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
@@ -920,9 +921,15 @@ class WindowActions:
         unreadable, in which case no tips are shown.
         """
         here = os.path.dirname(os.path.abspath(__file__))
-        candidates = (
-            os.path.join(here, 'resources', 'tips.md'),
-        )
+        # Tips are data, not code, so they are translated as data: drop a
+        # tips.<lang>.md next to tips.md and it wins for that language. Routing
+        # them through gettext instead would mean the .md could no longer be
+        # edited without an extraction pass, which is the one property this file
+        # exists to have.
+        candidates = tuple(
+            os.path.join(here, 'resources', f'tips.{code}.md')
+            for code in _ui_language_codes()
+        ) + (os.path.join(here, 'resources', 'tips.md'),)
         for path in candidates:
             try:
                 with open(path, encoding='utf-8') as fh:

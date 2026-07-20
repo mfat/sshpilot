@@ -35,7 +35,7 @@ jobs:
       - name: Install GResource tooling
         run: |
           sudo apt-get update && sudo apt-get install -y \
-            libglib2.0-bin libglib2.0-dev-bin \
+            libglib2.0-bin libglib2.0-dev-bin gettext \
             python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
 
       # Pinned, and deliberately not the apt package: this job compares generated
@@ -70,6 +70,31 @@ jobs:
       # the blob contains rather than what it weighs -- that also catches a
       # non-Blueprint resource (style.css, an icon) changing without a rebuild,
       # which a diff restricted to ui/ would miss.
+      # The committed catalogues under src/sshpilot/locale are what a checkout or
+      # pip install translates from, and build_gresource.sh only regenerates them
+      # when msgfmt is present -- it warns and carries on otherwise, so a machine
+      # without gettext can commit a .po change whose .mo still holds the old
+      # strings. Compare content rather than bytes, for the same reason the
+      # gresource is compared by listing: .mo layout is a gettext-version detail.
+      - name: Fail if committed translations are stale
+        run: |
+          for po in po/*.po; do
+            [ -e "$po" ] || continue
+            lang="$(basename "$po" .po)"
+            mo="src/sshpilot/locale/$lang/LC_MESSAGES/sshpilot.mo"
+            if [ ! -f "$mo" ]; then
+              echo "::error::$po has no compiled catalogue at $mo."
+              echo "Run scripts/build_gresource.sh and commit the result."
+              exit 1
+            fi
+            msgfmt --check "$po" -o "$RUNNER_TEMP/fresh-$lang.mo"
+            if ! diff <(msgunfmt "$RUNNER_TEMP/fresh-$lang.mo") <(msgunfmt "$mo"); then
+              echo "::error::$mo does not match $po."
+              echo "Run scripts/build_gresource.sh and commit the result."
+              exit 1
+            fi
+          done
+
       - name: Fail if committed .ui / .gresource are stale
         run: |
           if ! git diff --quiet -- src/sshpilot/resources/ui; then

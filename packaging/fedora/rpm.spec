@@ -94,17 +94,18 @@ an alternative to Putty, Termius and Mobaxterm.
 %meson -Dpython.purelibdir=%{_datadir}/%{name}
 %meson_build
 
-# po/LINGUAS is still empty, so Meson installs nothing under %%{_datadir}/locale
-# and the %%find_lang below produces an empty list. rpm treats an empty %%files
-# manifest as fatal by default, which would fail the build over the *absence* of
-# a problem. This macro is exactly that switch -- "Should empty %%files manifest
-# file terminate a build?" -- and clearing it downgrades the error to a warning.
+# po/LINGUAS now lists de, so %%find_lang below does find the installed .mo and
+# the manifest is no longer empty. This stays for the case it was written for:
+# a build whose LINGUAS is empty again (a tarball predating the translation, or
+# one whose catalogues failed to build) produces an empty list, and rpm treats
+# an empty %%files manifest as fatal by default -- failing the build over the
+# *absence* of a problem. This macro is exactly that switch -- "Should empty
+# %%files manifest file terminate a build?" -- and clearing it downgrades the
+# error to a warning.
 #
-# Keeping %%find_lang rather than dropping it means the .mo files get packaged
-# automatically the day the first translation lands, with no spec change to
-# remember. The guard given up is narrow: every other entry in %%files is an
-# explicit path that rpm still verifies, and the unpackaged-files check that
-# caught the missing man pages is untouched.
+# The guard given up is narrow: every other entry in %%files is an explicit path
+# that rpm still verifies, and the unpackaged-files check that caught the
+# missing man pages is untouched.
 #
 # Set here rather than in %%install so it is parsed before %%files reads it.
 %global _empty_manifest_terminate_build 0
