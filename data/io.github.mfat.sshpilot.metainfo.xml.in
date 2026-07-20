@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.5.8" date="2026-07-20">
+      <description>
+        <p>Migrated to meson build system</p>
+      </description>
+    </release>
     <release version="5.5.7" date="2026-07-19">
       <description>
         <p>Enhanced support for multi-step authentication challenges</p>
