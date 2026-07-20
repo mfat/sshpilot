@@ -6,16 +6,16 @@ API. This guide is the contract: everything documented here is stable within
 an API major version; everything else under `sshpilot.*` is private and may
 change without notice.
 
-> The canonical, maintained guide is **[docs/plugins/writing-plugins.md](docs/plugins/writing-plugins.md)**
-> (plus [registry.md](docs/plugins/registry.md) and the
-> [template](docs/plugins/template/)). Start there for the **6-step Quickstart**
+> The canonical, maintained guide is **[docs/plugins/writing-plugins.md](plugins/writing-plugins.md)**
+> (plus [registry.md](plugins/registry.md) and the
+> [template](plugins/template/)). Start there for the **6-step Quickstart**
 > and the iterate loop; this file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
 - **Current API version:** `1.9` (see [Versioning](#versioning)).
 - **Worked examples** — two provider archetypes:
-  - [`examples/mock_vps/`](sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
-  - [`examples/easyenv_workspaces/`](sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
+  - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
+  - [`examples/easyenv_workspaces/`](../src/sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
 
 ---
 
@@ -83,7 +83,7 @@ my-plugin/
   `settings`). They are **shown to the user at install/enable for informed
   consent but are NOT enforced** — plugins run in-process with full privileges.
   Declare every capability you actually use. Full table + the manifest schema in
-  the [canonical guide](docs/plugins/writing-plugins.md#permissions).
+  the [canonical guide](plugins/writing-plugins.md#permissions).
 
 **`__init__.py`**
 
@@ -438,7 +438,7 @@ must be made on the UI thread.
 - **Don't** roll custom password prompts — use `show_ssh_password_dialog`
   (`Adw.Dialog` + header bar; see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs)).
 
-See the full [`mock_vps`](sshpilot/plugins/examples/mock_vps/) example for all of
+See the full [`mock_vps`](../src/sshpilot/plugins/examples/mock_vps/) example for all of
 the above wired together.
 
 ---
@@ -487,5 +487,5 @@ gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})
 - **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.
 - **Let the CLI own its credentials.** If the tool keychains its own token (e.g. `easyenv auth login`), detect state (`auth whoami`) and optionally drive login; don't duplicate the token in `ctx.secrets`.
 
-See [`easyenv_workspaces`](sshpilot/plugins/examples/easyenv_workspaces/) for the
+See [`easyenv_workspaces`](../src/sshpilot/plugins/examples/easyenv_workspaces/) for the
 complete pattern (it bundles a local stub so it runs with no account).

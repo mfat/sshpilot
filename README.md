@@ -202,7 +202,7 @@ top of the GTK stack. Two setups are supported (both mirror PyGObject's official
   toolchain + GTK `-dev` headers).
 
 📖 **Full guide to both approaches, dev/test setup, and troubleshooting:**
-[documentation/running-from-source.md](documentation/running-from-source.md).
+[docs/running-from-source.md](docs/running-from-source.md).
 
 #### ⚡ Quick install (automated)
 
@@ -290,11 +290,11 @@ Other distributions work too — install the equivalent GTK4 / libadwaita / VTE
 `typelib-1_0-WebKit-6_0`) is only needed for the PyXterm.js terminal backend; the
 default VTE backend works without it. Full per-distro detail (and the pure-venv
 approach) is in
-[documentation/running-from-source.md](documentation/running-from-source.md).
+[docs/running-from-source.md](docs/running-from-source.md).
 
 `libsecret` handles secure credential storage on Linux via the Secret Service
 API. macOS contributors should follow
-[documentation/INSTALL-macos.md](documentation/INSTALL-macos.md) for the
+[docs/INSTALL-macos.md](docs/INSTALL-macos.md) for the
 Homebrew GTK stack instead.
 
 #### Step 2 — Create and activate a virtual environment
@@ -379,7 +379,7 @@ Run `python3 run.py --help` for the full list.
 
 Prefer to keep PyGObject out of system packages? The **pure-venv** approach
 (pip-built PyGObject/pycairo in a plain venv) is documented in the
-[full source-install guide](documentation/running-from-source.md#approach-b--pure-venv-pip-built-pygobject).
+[full source-install guide](docs/running-from-source.md#approach-b--pure-venv-pip-built-pygobject).
 
 > **Alternative (not for development):** if you only want to *use* sshPilot, the
 > distribution packages, Flatpak, Homebrew, and AUR builds in
@@ -388,7 +388,7 @@ Prefer to keep PyGObject out of system packages? The **pure-venv** approach
 
 ## Documentation
 - User guide and FAQ: https://github.com/mfat/sshpilot/wiki
-- In-repo developer and platform docs: [documentation/](documentation/)
+- In-repo developer and platform docs: [docs/](docs/)
 - Writing plugins (protocols & UI pages): [docs/plugins/](docs/plugins/writing-plugins.md)
 
 ## Telegram Channel

@@ -272,7 +272,7 @@ If you add a non-password modal from a plugin page or secondary window:
 2. `present_for_modal_dialog(parent)`
 3. Build `Adw.MessageDialog(transient_for=parent, modal=True, …)` and `present()`
 
-Plugins: see **PLUGIN_SDK.md → Advanced UI — credential dialogs** (`ctx.connection_manager`
+Plugins: see **docs/PLUGIN_SDK.md → Advanced UI — credential dialogs** (`ctx.connection_manager`
 for store-password; must run on the UI thread).
 
 ### askpass mechanics (passphrases and login passwords)
@@ -435,14 +435,30 @@ drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
   reintroduce sshpass for the native connection path
 ## Build and Packaging
 
+**Meson is the build system for every Linux package.** It compiles the Blueprint
+`.blp` sources into the bundled GResource and installs the launcher, the Python
+package, the desktop entry, the AppStream metainfo, the icon and
+`sshpilot-agent`. Never re-implement any of that by hand in a packaging file —
+that is exactly how the packaging silently desynced from the tree when the
+sources moved under `src/`.
 
-### Flatpak
-- Use `io.github.mfat.sshpilot.yaml` manifest
-- Never use shell commands to generate scripts in manifest
-- Use `type: script` or include files directly
+| Target | Entry point | Builds with |
+| --- | --- | --- |
+| Flatpak | `flathub/io.github.mfat.sshpilot.yaml` (in-tree copy: `flatpak/`) | `buildsystem: meson` |
+| Debian / PPA | `debian/rules` | `dh --buildsystem=meson` |
+| Fedora / COPR | `packaging/fedora/rpm.spec` | `%meson` macros |
+| Arch | `packaging/ArchLinux/PKGBUILD` | `arch-meson` |
+| macOS DMG | `packaging/macos/` | PyInstaller (not Meson) |
 
-### macOS DMG
-- Use version from `__init__.py` for DMG naming
+- The setuptools build (`pyproject.toml`) is kept in parallel for the
+  wheel-based paths only: PyPI, Homebrew and PyInstaller.
+- `meson test` runs the desktop-entry and AppStream validators; the packaging
+  wires it into `%check` / `dh_auto_test`.
+- macOS DMG naming takes its version from `__init__.py`.
+- `scripts/bump-version.sh` is the single writer of the version and changelog
+  across `__init__.py`, `meson.build`, the RPM spec, the metainfo and
+  `debian/changelog`. Both `scripts/release.sh` and the Release workflow call
+  it; never bump a version by hand.
 
 ## Git and Release Guidelines
 - Project tags follow format `vX.Y.Z` (e.g., `v2.7.1`)
@@ -463,7 +479,7 @@ drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 
 ## Debugging
 
-CLI flags (`sshpilot/main.py::main`):
+CLI flags (`src/sshpilot/main.py::main`):
 - `--verbose` / `-v` — detailed (debug) logging; `--quiet` / `-q` — warnings & errors only.
 - GTK/GLib/Gdk/Pango/VTE **warnings & criticals are captured into the log files by
   default** via `_install_gtk_log_capture()` (logged under the `gtk` logger; also echoed

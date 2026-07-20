@@ -6,6 +6,3 @@ via a guarded try/except and fall back to package-relative discovery.
 
 PKGDATADIR = '@PKGDATADIR@'
 LOCALEDIR = '@LOCALEDIR@'
-VERSION = '@VERSION@'
-PROFILE = '@PROFILE@'
-APP_ID = '@APP_ID@'

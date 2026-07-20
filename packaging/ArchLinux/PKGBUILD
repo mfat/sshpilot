@@ -21,7 +21,10 @@ optdepends=('inetutils: Telnet protocol support'
             'kubectl: Kubernetes protocol support'
             'docker: Docker/Podman protocol support'
             'picocom: Serial console protocol support'
-            'python-pykeepass: KeePass (.kdbx) secret backend')
+            'python-pykeepass: KeePass (.kdbx) secret backend'
+            # python-wakeonlan is AUR-only; Wake-on-LAN reports itself
+            # unavailable without it.
+            'python-wakeonlan: Wake-on-LAN support')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('103f974bffda9eee035cb4986126cb5d06b01f55e8975c4cd114293187f692c4')
 

@@ -39,9 +39,11 @@ build-deb-local.sh
 # Test output
 *.log
 .pytest_cache/
+.ruff_cache/
 
 # Editors / tools
 .history/
+.cursor/
 .vscode/
 .claude/
 .DS_Store

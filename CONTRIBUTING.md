@@ -12,7 +12,7 @@ the GTK stack. Two setups are supported — a **hybrid** one (system PyGObject +
 `--system-site-packages` venv; recommended) and a **pure venv** one (pip-built
 PyGObject). Both are covered step by step, with system prerequisites and
 troubleshooting, in
-[documentation/running-from-source.md](documentation/running-from-source.md).
+[docs/running-from-source.md](docs/running-from-source.md).
 
 In short, for the recommended hybrid setup once the system prerequisites are
 installed:
@@ -96,6 +96,6 @@ sshPilot is extensible via plugins (new protocols and UI pages). Start with the
   protocol backends). Open an issue first to discuss; expect a security review,
   since plugins run in-process with full privileges.
 
-Built-ins live under `sshpilot/plugins/builtin/<id>/`; remember to add their
+Built-ins live under `src/sshpilot/plugins/builtin/<id>/`; remember to add their
 `plugin.json` to `[tool.setuptools.package-data]` in `pyproject.toml` (a test
 enforces this).

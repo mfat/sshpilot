@@ -22,7 +22,7 @@ a key read from `~/.ssh/id_ed25519`, etc.
 | `Identity` dataclass, `IdentityProvider` ABC, `IdentityManager`, `get_identity_manager()` | `sshpilot/identity.py` |
 | `SystemAgentProvider` | `sshpilot/providers/system_agent.py` |
 | `FileKeyProvider` | `sshpilot/providers/file_key.py` |
-| Plugin access (`ctx.identities`) | `sshpilot/plugins/api.py` (see `PLUGIN_SDK.md`) |
+| Plugin access (`ctx.identities`) | `src/sshpilot/plugins/api.py` (see `PLUGIN_SDK.md`) |
 
 ## The contract
 

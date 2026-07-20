@@ -12,7 +12,7 @@ plugins (for protocol backends, use [`../template/`](../template/) instead).
    the page factory, so you can unit-test without a display.
 
 See [../writing-plugins.md ▸ Event-driven & UI plugins](../writing-plugins.md#event-driven--ui-plugins)
-for the full guide, and [`../../../plugins/`](../../../plugins/) for richer
+for the full guide, and [the plugins repo](https://github.com/mfat/sshpilot-plugins) for richer
 examples (auto-group, notes, health).
 
 ## Install (to try it)

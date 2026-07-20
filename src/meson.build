@@ -52,9 +52,6 @@ gnome.compile_resources(app_id,
 conf = configuration_data()
 conf.set('PKGDATADIR', pkgdatadir)
 conf.set('LOCALEDIR', localedir)
-conf.set('VERSION', meson.project_version())
-conf.set('PROFILE', get_option('profile'))
-conf.set('APP_ID', app_id)
 
 configure_file(
   input: 'build_config.py.in',

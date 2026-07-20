@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 #      polling surfaces such as the Docker Console.
 # 1.10: ctx.identities — read-only view of SSH identities from the configured
 #      identity providers (ctx.identities.list() / .is_agent_available()),
-#      paralleling ctx.secrets. See sshpilot.identity / IDENTITY_PROVIDERS.md.
+#      paralleling ctx.secrets. See sshpilot.identity / docs/IDENTITY_PROVIDERS.md.
 # 1.11: ctx.run_local_command / ctx.open_local_command_terminal — captured and
 #      streamed/interactive commands on the local machine (Flatpak-host aware).
 # 1.12: ctx.ensure_local_forward(nickname, remote_port) — local port forwarded

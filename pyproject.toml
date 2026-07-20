@@ -29,6 +29,10 @@ dependencies = [
     # adapter reports unavailable if it (or its deps: lxml/pycryptodomex/argon2-cffi)
     # is missing, so the rest of the app is unaffected.
     "pykeepass>=4.0",
+    # Wake-on-LAN. Imported lazily; wol.py reports the feature unavailable if it
+    # is missing, which is how the distro packages ship on Fedora/Arch (not
+    # packaged there).
+    "wakeonlan>=3.0.0",
 ]
 
 [project.optional-dependencies]

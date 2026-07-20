@@ -13,7 +13,7 @@ ssh-agent, or passwords in Bitwarden while a key is read from
 ``~/.ssh/id_ed25519``.
 
 Two concrete providers ship today (:mod:`sshpilot.providers.system_agent` and
-:mod:`sshpilot.providers.file_key`); ``IDENTITY_PROVIDERS.md`` documents the
+:mod:`sshpilot.providers.file_key`); ``docs/IDENTITY_PROVIDERS.md`` documents the
 contract that future providers (e.g. a Bitwarden agent, PKCS#11) must honour.
 """
 
