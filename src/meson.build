@@ -72,6 +72,11 @@ install_subdir('sshpilot',
   # its own from po/ into localedir, so shipping these too would be a second,
   # staler copy of the same thing.
   exclude_directories: ['resources/ui', 'plugins/examples', 'locale'],
+  # The committed bundle is the fallback main.py uses for pip/checkout runs that
+  # never see Meson. Meson compiles and installs its own into pkgdatadir, which
+  # main.py prefers, so shipping this one too is 3.4 MB of the same bytes twice
+  # -- rpmlint fails the build on it (files-duplicated-waste).
+  exclude_files: ['resources/sshpilot.gresource'],
 )
 
 # Generated launcher installed as `sshpilot` in bindir.
