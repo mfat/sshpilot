@@ -174,6 +174,32 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 
 ## Minimum Requirements
 
+### Operating system
+
+The binding constraint on Linux is **libadwaita 1.5** (GNOME 46), which Debian 12
+and Ubuntu 22.04 do not ship. Derivatives follow their base — Linux Mint 22.x,
+Pop!_OS 24.04, Zorin 18 and elementary OS 8 are all Ubuntu 24.04.
+
+| Platform | Minimum | Notes |
+|----------|---------|-------|
+| Debian | 13 (trixie) | 12 (bookworm) ships libadwaita 1.2 |
+| Ubuntu | 24.04 (noble) | 22.04 has libadwaita 1.1 and no `gir1.2-vte-3.91` |
+| Fedora | 43 | COPR also builds for ELN and Rawhide |
+| RHEL / CentOS Stream | 10 (with EPEL) | COPR chroots `epel-10`, `rhel+epel-10` |
+| Arch Linux | rolling | via AUR |
+| Any distro, via Flatpak | — | self-contained on the GNOME 50 runtime |
+| macOS | 14 (Sonoma) | both DMGs; Apple Silicon and Intel |
+
+The `.app` bundles declare `LSMinimumSystemVersion 12.0`, but the GTK libraries
+inside them are built against the macOS 14 SDK (`minos 14.0`), so 12 and 13 will
+not run them.
+
+The Launchpad PPA builds for noble, questing and resolute; the GitHub-Pages APT
+repo publishes one `Architecture: all` package (amd64 and arm64 indexes) that
+installs on any of the Debian/Ubuntu rows above.
+
+### Libraries
+
 | Component    | Minimum Version |
 |---------------|----------------|
 | GTK 4         | 4.6            |
