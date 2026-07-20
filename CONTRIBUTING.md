@@ -26,6 +26,32 @@ python3 run.py
 
 Supported/tested Python versions are 3.12 and 3.13 (CI matrix).
 
+## Building and installing with Meson
+
+Meson is the primary build system (the setuptools build is kept in parallel for
+the wheel-based packagers). It is what compiles the Blueprint `.blp` sources into
+the bundled GResource, merges the translations, and installs the app the way a
+distro would:
+
+```bash
+meson setup builddir --prefix=/usr
+meson compile -C builddir
+meson test -C builddir      # validates the .desktop and AppStream metainfo
+sudo meson install -C builddir
+```
+
+Build dependencies beyond the runtime GTK stack: `meson`, `ninja`,
+`blueprint-compiler`, the glib tools (`glib-compile-resources`), `gettext`, and —
+for the validation tests — `desktop-file-utils` and `appstream`.
+
+Installing this way generates `sshpilot/build_config.py`, which points the app at
+the GResource and translations under the install prefix. Running from source has
+no such file and falls back to the in-tree paths, so both work side by side.
+
+Use `--prefix` pointed at a scratch directory to inspect an install without
+touching the system. `meson dist -C builddir` produces the release tarball.
+The `Meson build` CI workflow runs all of the above on every PR.
+
 ## Running the tests
 
 Install the development/test dependencies in the same venv, then run the suite
@@ -45,7 +71,7 @@ expected.
 CI runs [Ruff](https://docs.astral.sh/ruff/). Match it locally before pushing:
 
 ```bash
-ruff check sshpilot/ tests/
+ruff check src/ tests/
 ```
 
 ## Plugins

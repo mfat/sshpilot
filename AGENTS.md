@@ -531,14 +531,18 @@ These notes cover non-obvious caveats for this VM. Standard commands live in
   only — the app still runs).
 - **`pytest` runs headless against a stubbed `gi`** (see `tests/conftest.py`,
   which injects dummy GTK modules when `gi` is not already imported). The
-  default `pytest` collects only `tests/`. There are **pre-existing** failures
-  and collection errors on `main` (mostly terminal/window test modules whose
-  needs exceed the stub, plus a few tests referencing methods not on
-  `Connection`); ~498 tests pass. These are not caused by the environment. CI
-  does not run the test suite (only packaging workflows exist).
+  default `pytest` collects only `tests/`. The suite is green (1677 passed, 40
+  skipped); CI runs it on every PR in `.github/workflows/tests.yml`, alongside
+  Ruff (`lint.yml`), the type check (`typecheck.yml`), and the Meson build
+  (`meson.yml`).
 - **Nickname field forbids whitespace.** When creating a connection in the GUI,
   the Save button silently stays disabled if the nickname contains a space
   ("no whitespaces allowed"); use e.g. `DemoServer`, not `Demo Server`.
-- **The GResource bundle (`sshpilot/resources/sshpilot.gresource`) is committed**
-  and loaded at startup (the app exits if it cannot load it). Only rebuild it
-  with `./build_gresource.sh` if you change files under `sshpilot/resources/`.
+- **The GResource bundle (`src/sshpilot/resources/sshpilot.gresource`) is
+  committed** and loaded at startup (the app exits if it cannot load it). Rebuild
+  it with `scripts/build_gresource.sh` if you change anything under
+  `src/sshpilot/resources/` — including the Blueprint `.blp` sources, which
+  compile to the `.ui` files inside the bundle. `lint.yml` fails the PR if the
+  committed artifacts drift from their sources. The Meson build compiles the same
+  resources itself into `builddir/`, so it never reads the committed bundle; a
+  source-tree run does.
