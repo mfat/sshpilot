@@ -1114,6 +1114,9 @@ class PreferencesWindow(Adw.Dialog):
         interface_page.add(interface_appearance_group)
         interface_page.add(color_override_group)
 
+        # Initialize color button states from saved accent override
+        self.refresh_color_buttons()
+
     def _add_interface_window_group(self, interface_page):
         """Add the Window preferences group."""
         # Window group
@@ -1834,6 +1837,7 @@ class PreferencesWindow(Adw.Dialog):
 
         self._add_security_secrets_group(security_page)
         self._add_security_identity_group(security_page)
+        self._secrets_page_id = self._page_id("Security & Credentials")
         return security_page
 
 
