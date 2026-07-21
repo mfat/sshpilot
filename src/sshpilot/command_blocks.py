@@ -13,7 +13,7 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Pango
 
 from .context_menu import IconContextMenu
-from .dnd_payload import content_provider_for_payload
+from .dnd_payload import content_provider_for_payload, set_internal_drag_icon
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -1225,7 +1225,12 @@ class CommandBlocksPanel(Gtk.Box):
                 'has_placeholders': _cmd.get('has_placeholders', False),
             })
 
+        def _on_begin(src, _drag):
+            # macOS string payloads render as drag text unless we set an icon.
+            set_internal_drag_icon(src, row)
+
         drag_source.connect('prepare', _on_prepare)
+        drag_source.connect('drag-begin', _on_begin)
         row.add_controller(drag_source)
 
     # ------------------------------------------------------------------

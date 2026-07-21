@@ -16,6 +16,7 @@ from .dnd_payload import (
     content_provider_for_payload,
     decode_dnd_payload,
     new_internal_drop_target,
+    set_internal_drag_icon,
 )
 from .platform_utils import is_macos
 from .connection_manager import Connection
@@ -900,16 +901,10 @@ class GroupRow(Gtk.ListBoxRow):
         )
 
     def _on_drag_begin(self, source, drag):
-        # macOS supplies its own drag preview; custom DragIcon can also trip
-        # AppKit during beginDraggingSessionWithItems.
-        if not is_macos():
-            try:
-                icon = Gtk.DragIcon.get_for_drag(drag)
-                image = Gtk.Image.new_from_icon_name("folder-symbolic")
-                image.set_icon_size(Gtk.IconSize.LARGE)
-                icon.set_child(image)
-            except Exception as e:
-                logger.debug(f"Could not set group drag icon: {e}")
+        # macOS string payloads render as drag text unless we set an icon.
+        set_internal_drag_icon(
+            source, self, drag=drag, icon_name="folder-symbolic"
+        )
         try:
             window = self.get_root()
             if window:
@@ -1719,14 +1714,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         return content_provider_for_payload(data)
 
     def _on_drag_begin(self, source, drag):
-        if not is_macos():
-            try:
-                icon = Gtk.DragIcon.get_for_drag(drag)
-                image = Gtk.Image.new_from_icon_name("computer-symbolic")
-                image.set_icon_size(Gtk.IconSize.LARGE)
-                icon.set_child(image)
-            except Exception as e:
-                logger.debug(f"Could not set drag icon: {e}")
+        # macOS string payloads render as drag text unless we set an icon.
+        set_internal_drag_icon(
+            source, self, drag=drag, icon_name="computer-symbolic"
+        )
         try:
             window = self.get_root()
             if window:
