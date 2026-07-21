@@ -405,13 +405,8 @@ class PreferencesWindow(Adw.Dialog):
                 title = row.get_title() or ""
                 self._update_header_title(title)
     
-    def _build_terminal_preferences_page(self):
-        """Build the Terminal preferences page."""
-        # Create Terminal preferences page
-        terminal_page = Adw.PreferencesPage()
-        terminal_page.set_title(_("Terminal"))
-        terminal_page.set_icon_name("utilities-terminal-symbolic")
-
+    def _add_terminal_appearance_groups(self, terminal_page):
+        """Add Terminal appearance and color-scheme preview groups."""
         # Terminal appearance group
         appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
 
@@ -484,6 +479,8 @@ class PreferencesWindow(Adw.Dialog):
         appearance_group.add(preview_group)
         terminal_page.add(appearance_group)
 
+    def _add_terminal_backend_group(self, terminal_page):
+        """Add the Terminal backend selection group."""
         # Terminal backend selection group
         backend_group = Adw.PreferencesGroup(title=_("Backend"))
 
@@ -522,6 +519,8 @@ class PreferencesWindow(Adw.Dialog):
         backend_group.add(self.backend_row)
         terminal_page.add(backend_group)
 
+    def _add_terminal_input_groups(self, terminal_page):
+        """Add Terminal keyboard and mouse behavior groups."""
         keyboard_group = Adw.PreferencesGroup(title=_("Keyboard"))
 
         self.pass_through_switch = Adw.SwitchRow()
@@ -587,6 +586,8 @@ class PreferencesWindow(Adw.Dialog):
 
         terminal_page.add(mouse_group)
 
+    def _add_terminal_preferred_group(self, terminal_page):
+        """Add the Preferred Terminal group when external terminals are available."""
         # Preferred Terminal group (shown when external terminals are available)
         if not should_hide_external_terminal_options():
             terminal_choice_group = Adw.PreferencesGroup(title=_("Preferred Terminal"))
@@ -667,15 +668,21 @@ class PreferencesWindow(Adw.Dialog):
 
             terminal_page.add(terminal_choice_group)
 
+    def _build_terminal_preferences_page(self):
+        """Build the Terminal preferences page."""
+        terminal_page = Adw.PreferencesPage()
+        terminal_page.set_title(_("Terminal"))
+        terminal_page.set_icon_name("utilities-terminal-symbolic")
+
+        self._add_terminal_appearance_groups(terminal_page)
+        self._add_terminal_backend_group(terminal_page)
+        self._add_terminal_input_groups(terminal_page)
+        self._add_terminal_preferred_group(terminal_page)
         return terminal_page
 
-    def _build_groups_preferences_page(self):
-        """Build the Groups preferences page."""
-        # Create Groups preferences page
-        groups_page = Adw.PreferencesPage()
-        groups_page.set_title(_("Groups"))
-        groups_page.set_icon_name("folder-open-symbolic")
 
+    def _add_group_appearance_group(self, groups_page):
+        """Add the Group Appearance preferences group."""
         group_appearance_group = Adw.PreferencesGroup(title=_("Group Appearance"))
 
         # Sidebar group color display mode
@@ -774,6 +781,8 @@ class PreferencesWindow(Adw.Dialog):
 
         groups_page.add(group_appearance_group)
 
+    def _add_group_layout_group(self, groups_page):
+        """Add the Group Layout preferences group and previews."""
         # Group display layout section (shown after appearance options)
         group_layout_group = Adw.PreferencesGroup(title=_("Group Layout"))
 
@@ -908,15 +917,19 @@ class PreferencesWindow(Adw.Dialog):
         group_layout_group.add(self.group_display_preview_row)
         groups_page.add(group_layout_group)
 
+    def _build_groups_preferences_page(self):
+        """Build the Groups preferences page."""
+        groups_page = Adw.PreferencesPage()
+        groups_page.set_title(_("Groups"))
+        groups_page.set_icon_name("folder-open-symbolic")
+
+        self._add_group_appearance_group(groups_page)
+        self._add_group_layout_group(groups_page)
         return groups_page
 
-    def _build_interface_preferences_page(self):
-        """Build the Interface preferences page."""
-        # Create Interface preferences page
-        interface_page = Adw.PreferencesPage()
-        interface_page.set_title(_("Interface"))
-        interface_page.set_icon_name("applications-graphics-symbolic")
 
+    def _add_interface_language_group(self, interface_page):
+        """Add the Language preferences group."""
         # Language — first group on the page. Always shown: "System Default"
         # plus every catalogue that can actually be loaded (English included,
         # it being the source language and the way back from a translation).
@@ -952,7 +965,8 @@ class PreferencesWindow(Adw.Dialog):
         language_group.add(self.language_row)
         interface_page.add(language_group)
 
-        # App startup behavior
+    def _add_interface_startup_group(self, interface_page):
+        """Add the App Startup preferences group."""
         startup_group = Adw.PreferencesGroup(title=_("App Startup"))
 
         # Radio buttons for startup behavior
@@ -1040,6 +1054,8 @@ class PreferencesWindow(Adw.Dialog):
 
         interface_page.add(startup_group)
 
+    def _add_interface_appearance_groups(self, interface_page):
+        """Add Interface appearance and color-override groups."""
         # Appearance group
         interface_appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
 
@@ -1098,9 +1114,8 @@ class PreferencesWindow(Adw.Dialog):
         interface_page.add(interface_appearance_group)
         interface_page.add(color_override_group)
 
-        # Initialize color button states
-        self.refresh_color_buttons()
-
+    def _add_interface_window_group(self, interface_page):
+        """Add the Window preferences group."""
         # Window group
         window_group = Adw.PreferencesGroup(title=_("Window"))
 
@@ -1113,6 +1128,8 @@ class PreferencesWindow(Adw.Dialog):
         window_group.add(remember_size_switch)
         interface_page.add(window_group)
 
+    def _add_interface_sidebar_groups(self, interface_page):
+        """Add Sidebar and Sidebar behavior preferences groups."""
         # Sidebar group (at bottom of Interface page)
         sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
 
@@ -1268,6 +1285,8 @@ class PreferencesWindow(Adw.Dialog):
 
         interface_page.add(sidebar_behavior_group)
 
+    def _add_interface_headerbar_and_tips_groups(self, interface_page):
+        """Add Header Bar Buttons and Tips preferences groups."""
         # Header bar button visibility
         headerbar_group = Adw.PreferencesGroup(title=_("Header Bar Buttons"))
 
@@ -1323,7 +1342,20 @@ class PreferencesWindow(Adw.Dialog):
         tips_group.add(show_tips_switch)
         interface_page.add(tips_group)
 
+    def _build_interface_preferences_page(self):
+        """Build the Interface preferences page."""
+        interface_page = Adw.PreferencesPage()
+        interface_page.set_title(_("Interface"))
+        interface_page.set_icon_name("applications-graphics-symbolic")
+
+        self._add_interface_language_group(interface_page)
+        self._add_interface_startup_group(interface_page)
+        self._add_interface_appearance_groups(interface_page)
+        self._add_interface_window_group(interface_page)
+        self._add_interface_sidebar_groups(interface_page)
+        self._add_interface_headerbar_and_tips_groups(interface_page)
         return interface_page
+
 
     def _build_shortcuts_preferences_page(self):
         """Build the Shortcuts preferences page."""
@@ -1435,19 +1467,8 @@ class PreferencesWindow(Adw.Dialog):
 
         return shortcuts_page
 
-    def _build_advanced_and_security_pages(self):
-        """Build Advanced and Security & Credentials pages (interleaved groups)."""
-        # Advanced SSH settings
-        advanced_page = Adw.PreferencesPage()
-        advanced_page.set_title(_("Advanced"))
-        advanced_page.set_icon_name("applications-system-symbolic")
-
-        # Security & Credentials page — secret storage + identity provider live here
-        # (built below alongside the Advanced page, then registered as its own page).
-        security_page = Adw.PreferencesPage()
-        security_page.set_title(_("Security & Credentials"))
-        security_page.set_icon_name("dialog-password-symbolic")
-
+    def _add_advanced_operation_mode_group(self, advanced_page):
+        """Add the Operation Mode group to the Advanced page."""
         # Operation mode selection
         operation_group = Adw.PreferencesGroup(title=_("Operation Mode"))
 
@@ -1491,6 +1512,57 @@ class PreferencesWindow(Adw.Dialog):
 
         advanced_page.add(operation_group)
 
+    def _add_advanced_behavior_group(self, advanced_page):
+        """Add the Application Behavior group to the Advanced page."""
+        # Application behavior group
+        behavior_group = Adw.PreferencesGroup(title=_("Application Behavior"))
+
+        # Confirm before disconnecting
+        self.confirm_disconnect_switch = Adw.SwitchRow()
+        self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
+        self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
+        self.confirm_disconnect_switch.set_active(
+            self.config.get_setting('confirm-disconnect', True)
+        )
+        self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
+        behavior_group.add(self.confirm_disconnect_switch)
+
+        # ssh.agent_preload_keys stays on by default (no Preferences toggle):
+        # the terminal worker force-unlocks configured identities into the
+        # agent so locked gcr keys cannot fall through to the system askpass.
+
+        advanced_page.add(behavior_group)
+
+    def _add_advanced_logging_group(self, advanced_page):
+        """Add the Logging group to the Advanced page."""
+        # Logging group ------------------------------------------------
+        logging_group = Adw.PreferencesGroup(title=_("Logging"))
+        logging_group.set_description(
+            _("Controls how verbose sshPilot is in the console and the rotated log file. "
+            "The command-line flags --verbose / --quiet always override this.")
+        )
+
+        self.logging_level_row = Adw.ComboRow()
+        self.logging_level_row.set_title(_("Log Level"))
+        self.logging_level_row.set_subtitle(
+            _("Default is concise; switch to Debug if you're filing a bug or chasing an issue")
+        )
+        log_levels_model = Gtk.StringList()
+        log_levels_model.append("Info — concise (recommended)")
+        log_levels_model.append("Debug — verbose")
+        self.logging_level_row.set_model(log_levels_model)
+        saved_level = str(
+            self.config.get_setting('logging.level', 'info') or 'info'
+        ).lower()
+        self.logging_level_row.set_selected(1 if saved_level == 'debug' else 0)
+        self.logging_level_row.connect(
+            'notify::selected', self.on_logging_level_changed
+        )
+        logging_group.add(self.logging_level_row)
+        advanced_page.add(logging_group)
+
+    def _add_security_secrets_group(self, security_page):
+        """Add the Secret Storage group to the Security page."""
         # Secret storage backend selection
         secrets_group = Adw.PreferencesGroup(
             title=_("Secret Storage"),
@@ -1676,7 +1748,9 @@ class PreferencesWindow(Adw.Dialog):
         self._update_secret_rows_visibility(current_backend, defer_status_probe=True)
 
         security_page.add(secrets_group)
-        self._secrets_page_id = self._page_id("Security & Credentials")
+
+    def _add_security_identity_group(self, security_page):
+        """Add the Identity Provider group to the Security page."""
 
         # --- SSH identity provider (parallel to Secret Storage) ---
         identity_group = Adw.PreferencesGroup(
@@ -1741,53 +1815,27 @@ class PreferencesWindow(Adw.Dialog):
 
         security_page.add(identity_group)
 
-        # Application behavior group
-        behavior_group = Adw.PreferencesGroup(title=_("Application Behavior"))
+    def _build_advanced_preferences_page(self):
+        """Build the Advanced preferences page."""
+        advanced_page = Adw.PreferencesPage()
+        advanced_page.set_title(_("Advanced"))
+        advanced_page.set_icon_name("applications-system-symbolic")
 
-        # Confirm before disconnecting
-        self.confirm_disconnect_switch = Adw.SwitchRow()
-        self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
-        self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
-        self.confirm_disconnect_switch.set_active(
-            self.config.get_setting('confirm-disconnect', True)
-        )
-        self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
-        behavior_group.add(self.confirm_disconnect_switch)
+        self._add_advanced_operation_mode_group(advanced_page)
+        self._add_advanced_behavior_group(advanced_page)
+        self._add_advanced_logging_group(advanced_page)
+        return advanced_page
 
-        # ssh.agent_preload_keys stays on by default (no Preferences toggle):
-        # the terminal worker force-unlocks configured identities into the
-        # agent so locked gcr keys cannot fall through to the system askpass.
+    def _build_security_preferences_page(self):
+        """Build the Security & Credentials preferences page."""
+        security_page = Adw.PreferencesPage()
+        security_page.set_title(_("Security & Credentials"))
+        security_page.set_icon_name("dialog-password-symbolic")
 
-        advanced_page.add(behavior_group)
+        self._add_security_secrets_group(security_page)
+        self._add_security_identity_group(security_page)
+        return security_page
 
-        # Logging group ------------------------------------------------
-        logging_group = Adw.PreferencesGroup(title=_("Logging"))
-        logging_group.set_description(
-            _("Controls how verbose sshPilot is in the console and the rotated log file. "
-            "The command-line flags --verbose / --quiet always override this.")
-        )
-
-        self.logging_level_row = Adw.ComboRow()
-        self.logging_level_row.set_title(_("Log Level"))
-        self.logging_level_row.set_subtitle(
-            _("Default is concise; switch to Debug if you're filing a bug or chasing an issue")
-        )
-        log_levels_model = Gtk.StringList()
-        log_levels_model.append("Info — concise (recommended)")
-        log_levels_model.append("Debug — verbose")
-        self.logging_level_row.set_model(log_levels_model)
-        saved_level = str(
-            self.config.get_setting('logging.level', 'info') or 'info'
-        ).lower()
-        self.logging_level_row.set_selected(1 if saved_level == 'debug' else 0)
-        self.logging_level_row.connect(
-            'notify::selected', self.on_logging_level_changed
-        )
-        logging_group.add(self.logging_level_row)
-        advanced_page.add(logging_group)
-
-        # File management preferences moved to dedicated page
-        return (advanced_page, security_page)
 
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
@@ -2124,7 +2172,8 @@ class PreferencesWindow(Adw.Dialog):
             groups_page = self._build_groups_preferences_page()
             interface_page = self._build_interface_preferences_page()
             shortcuts_page = self._build_shortcuts_preferences_page()
-            advanced_page, security_page = self._build_advanced_and_security_pages()
+            advanced_page = self._build_advanced_preferences_page()
+            security_page = self._build_security_preferences_page()
             ssh_settings_page = self._build_ssh_settings_preferences_page()
             file_management_page = self._build_file_management_preferences_page()
             updates_page = self._build_updates_preferences_page()

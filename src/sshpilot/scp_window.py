@@ -1185,15 +1185,15 @@ class ScpWindowController:
                 else host_value
             )
 
-            copy = self._scp_transfer_copy(direction, target, destination)
-            title_text = copy['title_text']
-            running_text = copy['running_text']
-            success_text = copy['success_text']
-            failure_text = copy['failure_text']
-            start_message = copy['start_message']
-            success_message = copy['success_message']
-            failure_message = copy['failure_message']
-            result_heading_fail = copy['result_heading_fail']
+            transfer_copy = self._scp_transfer_copy(direction, target, destination)
+            title_text = transfer_copy['title_text']
+            running_text = transfer_copy['running_text']
+            success_text = transfer_copy['success_text']
+            failure_text = transfer_copy['failure_text']
+            start_message = transfer_copy['start_message']
+            success_message = transfer_copy['success_message']
+            failure_message = transfer_copy['failure_message']
+            result_heading_fail = transfer_copy['result_heading_fail']
 
             dlg = ScpTransferDialog(title_text)
 

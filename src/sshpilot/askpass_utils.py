@@ -1020,7 +1020,14 @@ def _handle_presence_prompt(prompt: str, log_fn) -> "str | None":
 
 def _handle_confirm_prompt(prompt: str, log_fn) -> "str | None":
     return _prompt_via_main_or_dialog(
-        prompt, log_fn, _route_confirm_to_main_app, _run_confirm_dialog,
+        prompt,
+        log_fn,
+        _route_confirm_to_main_app,
+        _run_confirm_dialog,
+        success_log="ASKPASS: Returning confirm response from main-app dialog",
+        cancel_log="ASKPASS: user cancelled confirm prompt",
+        dialog_success_log="ASKPASS: Returning confirm response from GUI dialog",
+        dialog_cancel_log="ASKPASS: No confirm response; exiting with code 1",
     )
 
 
