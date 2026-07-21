@@ -2,12 +2,16 @@
 
 `sshpilot/command_converter.py` turns a complete `ssh ...` command line — or a
 bare `user@host` — into a sshPilot **connection-data dict**. It was extracted
-from the former *Quick Connect* feature when that UI was removed; the parsing
-logic was worth keeping because it lets a user paste a real SSH command and get a
-fully populated connection.
+from the former *Quick Connect* feature when that UI was removed.
 
-The module has **no UI of its own yet**. It is documented here so it can be
-wired into the new-connection flow (or a paste/import action) later.
+## Where it is used
+
+- **CLI connect** (`sshpilot.cli_connect`): `sshpilot -p 2222 user@host` (and
+  similar) is parsed here so the live session argv and the optional “Save as
+  new connection” dialog share the same fields. See `sshpilot.cli_connect` and
+  `sshpilot.unsaved_host`.
+- Still suitable for a future “Paste SSH command” entry in the new-connection
+  dialog.
 
 ## Public API
 
@@ -52,36 +56,20 @@ The returned dict matches what the connection dialog and
 
 ## Design notes
 
-- **No verbatim execution.** Unlike Quick Connect, the converter does *not*
-  keep the raw command around to run as-is. Everything is decomposed into
-  structured fields that get written to `~/.ssh/config` through the normal
-  connection path, keeping the SSH config as the single source of truth (see
-  `docs/architecture.md` → *SSH Connection & Authentication Architecture*).
-- **Parsing only.** The module does not connect, write config, or touch the
-  keyring. It is a pure function returning data; callers decide what to do with
-  it (construct a `Connection`, pre-fill `ConnectionDialog`, etc.).
+- **CLI live sessions** pass the original `ssh` argv through to OpenSSH in the
+  VTE. The converter still fills structured fields for the save dialog /
+  ssh_config persistence path.
+- **Parsing only** in this module: it does not connect, write config, or touch
+  the keyring. Callers decide what to do with the data.
 - **IPv6-aware forwardings.** `-L`/`-R`/`-D` specs accept bracketed IPv6 bind
   addresses (e.g. `[::1]:8080:localhost:80`).
 
-## Wiring it into a UI later
+## Related modules
 
-A reasonable re-introduction would be a "Paste SSH command" entry in the
-new-connection dialog:
+- `sshpilot.cli_connect` — CLI argv → resolve → open tab (or fail without
+  starting a connection).
+- `sshpilot.unsaved_host` — detect whether hostname/IP+user is already in ssh
+  config (save-prompt helper; does not create connections).
 
-```python
-from sshpilot.command_converter import parse_ssh_command
-from sshpilot.connection_dialog import ConnectionDialog
-
-data = parse_ssh_command(text)
-if data is None:
-    ...  # show "could not parse" feedback
-elif "error" in data:
-    ...  # show data["error"] inline
-else:
-    dialog = ConnectionDialog(window, connection=Connection(data),
-                              connection_manager=window.connection_manager)
-    dialog.is_editing = False
-    dialog.present()
-```
-
-Tests live in `tests/test_command_converter.py`.
+Tests live in `tests/test_command_converter.py`, `tests/test_cli_connect.py`,
+and `tests/test_unsaved_host.py`.
