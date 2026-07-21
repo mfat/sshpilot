@@ -148,6 +148,17 @@ ssh: connect to host 188.121.117.208 port 22: Connection timed out"""
     ('debug1: Authenticated to host ([1.2.3.4]:22) using "publickey".', 'connected'),
     ('mahdi@server:~$ ', 'connected'),
     ('', 'pending'),
+    # An unanswered auth prompt is not evidence of a session: it is drawn
+    # before authentication succeeds (the passphrase one before a single packet
+    # is sent), so the indicator must stay CONNECTING until the login lands.
+    ("pilot@127.0.0.1's password: ", 'pending'),
+    ('Password: ', 'pending'),
+    ("Enter passphrase for key '/home/mahdi/.ssh/id_ed25519': ", 'pending'),
+    ('(pilot@127.0.0.1) Verification code: ', 'pending'),
+    ("Warning: Permanently added '[127.0.0.1]:2203' (ED25519) to the list of "
+     "known hosts.\npilot@127.0.0.1's password: ", 'pending'),
+    # ...but the prompt must not mask real evidence that arrives after it.
+    ("pilot@127.0.0.1's password: \npilot@rig:~$ ", 'connected'),
 ])
 def test_scan_connect_evidence(text, expected):
     try:

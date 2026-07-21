@@ -97,6 +97,23 @@ _SSH_NOISE_PREFIXES = (
     'trying ',
 )
 
+# Substrings that make a line an unanswered auth prompt. These are output — by
+# the local ssh client or by the server's keyboard-interactive stack — *before*
+# the session is authenticated, so they must never count as evidence of a live
+# session. Without this, a connection parked on a password/OTP prompt is shown
+# as Connected the moment the prompt is drawn.
+_SSH_PROMPT_MARKERS = (
+    'password:',
+    'passphrase for key',
+    'verification code:',
+    'one-time password',
+    'one time password',
+    'enter pin',
+    'pin for',
+    '(yes/no',
+    'authenticator',
+)
+
 
 class TerminalWidget(Gtk.Box):
     """A terminal widget that uses VTE for display and system SSH client for connections"""
@@ -1305,6 +1322,10 @@ class TerminalWidget(Gtk.Box):
             if not stripped:
                 continue
             if stripped.startswith(_SSH_NOISE_PREFIXES):
+                continue
+            # An auth prompt is drawn before authentication succeeds — keep
+            # waiting instead of promoting a session nobody has logged into yet.
+            if any(marker in stripped for marker in _SSH_PROMPT_MARKERS):
                 continue
             return 'connected'
 
