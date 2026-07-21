@@ -6,98 +6,89 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="SshPilotPreferencesWindow" parent="AdwDialog">
+  <template class="SshPilotPreferencesWindow" parent="AdwNavigationPage">
     <property name="title" translatable="yes">Settings</property>
-    <property name="content-width">820</property>
-    <property name="content-height">600</property>
-    <property name="width-request">448</property>
-    <property name="height-request">294</property>
-    <child>
-      <object class="AdwBreakpoint">
-        <condition>max-width: 628sp</condition>
-        <setter object="overlay_split_view" property="collapsed">true</setter>
-      </object>
-    </child>
+    <property name="tag">settings</property>
+    <property name="can-pop">true</property>
     <property name="child">
-      <object class="AdwOverlaySplitView" id="overlay_split_view">
-        <property name="sidebar">
-          <object class="AdwToolbarView">
-            <child type="top">
-              <object class="AdwHeaderBar" id="sidebar_header_bar">
-                <property name="show-start-title-buttons">false</property>
-                <property name="show-end-title-buttons">false</property>
-                <style>
-                  <class name="flat"/>
-                </style>
-                <property name="title-widget">
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Settings</property>
-                    <property name="single-line-mode">true</property>
-                    <property name="xalign">0</property>
-                    <style>
-                      <class name="title"/>
-                    </style>
+      <object class="AdwBreakpointBin">
+        <property name="width-request">360</property>
+        <property name="height-request">200</property>
+        <child>
+          <object class="AdwBreakpoint">
+            <condition>max-width: 628sp</condition>
+            <setter object="split_view" property="collapsed">true</setter>
+          </object>
+        </child>
+        <property name="child">
+          <object class="AdwNavigationSplitView" id="split_view">
+            <property name="min-sidebar-width">180</property>
+            <property name="max-sidebar-width">280</property>
+            <property name="sidebar-width-fraction">0.25</property>
+            <property name="sidebar">
+              <object class="AdwNavigationPage" id="sidebar_page">
+                <property name="title" translatable="yes">Settings</property>
+                <property name="tag">prefs-sidebar</property>
+                <property name="child">
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar" id="sidebar_header_bar">
+                        <property name="show-start-title-buttons">false</property>
+                        <property name="show-end-title-buttons">false</property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </child>
+                    <property name="content">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">2</property>
+                        <property name="vscrollbar-policy">1</property>
+                        <child>
+                          <object class="GtkListBox" id="sidebar">
+                            <property name="selection-mode">1</property>
+                            <property name="activate-on-single-click">true</property>
+                            <style>
+                              <class name="navigation-sidebar"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
                   </object>
                 </property>
-              </object>
-            </child>
-            <property name="content">
-              <object class="GtkScrolledWindow">
-                <property name="hscrollbar-policy">2</property>
-                <property name="vscrollbar-policy">1</property>
-                <child>
-                  <object class="GtkListBox" id="sidebar">
-                    <property name="selection-mode">1</property>
-                    <property name="activate-on-single-click">true</property>
-                    <style>
-                      <class name="navigation-sidebar"/>
-                    </style>
-                  </object>
-                </child>
               </object>
             </property>
-          </object>
-        </property>
-        <property name="content">
-          <object class="AdwToolbarView">
-            <child type="top">
-              <object class="AdwHeaderBar" id="header_bar">
-                <property name="show-start-title-buttons">true</property>
-                <property name="show-end-title-buttons">true</property>
-                <style>
-                  <class name="flat"/>
-                </style>
-                <child type="start">
-                  <object class="GtkToggleButton" id="show_sidebar_button">
-                    <property name="icon-name">sidebar-show-symbolic</property>
-                    <property name="tooltip-text" translatable="yes">Show Sidebar</property>
-                    <property name="visible" bind-source="overlay_split_view" bind-property="collapsed" bind-flags="sync-create"/>
-                    <property name="active" bind-source="overlay_split_view" bind-property="show-sidebar" bind-flags="sync-create|bidirectional"/>
-                  </object>
-                </child>
-                <property name="title-widget">
-                  <object class="GtkLabel" id="header_title_label">
-                    <property name="label"></property>
-                    <property name="single-line-mode">true</property>
-                    <property name="xalign">0</property>
-                    <style>
-                      <class name="title"/>
-                    </style>
+            <property name="content">
+              <object class="AdwNavigationPage" id="content_page">
+                <property name="title" translatable="yes">Settings</property>
+                <property name="tag">prefs-content</property>
+                <property name="child">
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar" id="header_bar">
+                        <property name="show-start-title-buttons">true</property>
+                        <property name="show-end-title-buttons">true</property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </child>
+                    <property name="content">
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">2</property>
+                        <property name="vscrollbar-policy">1</property>
+                        <child>
+                          <object class="GtkStack" id="content_stack">
+                            <property name="hexpand">true</property>
+                            <property name="vexpand">true</property>
+                            <property name="transition-type">1</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
                   </object>
                 </property>
-              </object>
-            </child>
-            <property name="content">
-              <object class="GtkScrolledWindow">
-                <property name="hscrollbar-policy">2</property>
-                <property name="vscrollbar-policy">1</property>
-                <child>
-                  <object class="GtkStack" id="content_stack">
-                    <property name="hexpand">true</property>
-                    <property name="vexpand">true</property>
-                    <property name="transition-type">1</property>
-                  </object>
-                </child>
               </object>
             </property>
           </object>

@@ -435,7 +435,7 @@ def _terminal_host_candidates(window):
     except Exception:
         pass
     try:
-        # Adw.Dialog (Preferences) is a widget inside its parent window.
+        # Settings is a NavigationPage inside MainWindow; climb to the root.
         add(window.get_root())
     except Exception:
         pass
@@ -461,27 +461,50 @@ def _resolve_main_window(window):
     return None
 
 
-def _hide_preferences_windows(window) -> List[Gtk.Window]:
-    """Hide Settings so the main window and terminal tab are not covered."""
-    hidden: List[Gtk.Window] = []
-    for w in _terminal_host_candidates(window):
-        if w.__class__.__name__ != "PreferencesWindow":
+def _hide_preferences_windows(window) -> list:
+    """Leave Settings mode so the work UI (tabs) is visible.
+
+    Returns a list of main windows that were in Settings mode (so callers can
+    re-enter via ``_restore_preferences_windows``).
+    """
+    left = []
+    main = _resolve_main_window(window)
+    candidates = [main] if main is not None else []
+    for host in _terminal_host_candidates(window):
+        if host not in candidates:
+            candidates.append(host)
+    for host in candidates:
+        if host is None:
             continue
-        try:
-            if w.get_visible():
-                w.set_visible(False)
-                hidden.append(w)
-        except Exception:
-            pass
-    return hidden
+        leave = getattr(host, 'leave_preferences', None)
+        if callable(leave):
+            try:
+                if leave():
+                    left.append(host)
+            except Exception:
+                pass
+        elif host.__class__.__name__ == 'PreferencesWindow':
+            # Legacy path: Preferences was a separate widget; no longer used.
+            parent = getattr(host, 'parent_window', None)
+            leave_parent = getattr(parent, 'leave_preferences', None) if parent else None
+            if callable(leave_parent):
+                try:
+                    if leave_parent():
+                        left.append(parent)
+                except Exception:
+                    pass
+    return left
 
 
-def _restore_preferences_windows(windows: List[Gtk.Window]) -> None:
-    for w in windows:
-        try:
-            w.set_visible(True)
-        except Exception:
-            pass
+def _restore_preferences_windows(windows) -> None:
+    """Re-enter Settings mode on windows that left it for a terminal reveal."""
+    for host in windows:
+        show = getattr(host, 'show_preferences', None)
+        if callable(show):
+            try:
+                show()
+            except Exception:
+                pass
 
 
 def _present_main_window(window) -> None:
@@ -510,15 +533,15 @@ def _toast_main(window, message: str) -> None:
         logger.debug("Bitwarden setup toast failed", exc_info=True)
 
 
-def _reveal_terminal_workspace(window) -> List[Gtk.Window]:
-    """Hide Settings and raise the main window before opening a terminal tab."""
+def _reveal_terminal_workspace(window) -> list:
+    """Leave Settings mode and raise the main window before opening a terminal tab."""
     hidden = _hide_preferences_windows(window)
     _present_main_window(window)
     return hidden
 
 
 def _wrap_on_ready(on_ready: Callable[[bool], None],
-                   hidden: List[Gtk.Window]) -> Callable[[bool], None]:
+                   hidden: list) -> Callable[[bool], None]:
     def _done(ok: bool) -> None:
         _restore_preferences_windows(hidden)
         on_ready(ok)
@@ -533,7 +556,7 @@ def _resolve_terminal_manager(window):
     return None
 
 
-def _open_local_terminal(window, *, title: str) -> Tuple[bool, List[Gtk.Window]]:
+def _open_local_terminal(window, *, title: str) -> Tuple[bool, list]:
     hidden = _reveal_terminal_workspace(window)
     manager = _resolve_terminal_manager(window)
     if manager is None:
@@ -764,15 +787,11 @@ def _modal_parent(window):
     """Return the window that should own Bitwarden setup modals.
 
     Prefer the initiating window when it is visible, so dialogs stack above it;
-    ``resolve_app_modal_parent`` always picks MainWindow, which used to leave
-    setup alerts behind Settings on Wayland. Fall back to the app modal parent
-    only when the initiator is missing or not visible.
+    ``resolve_app_modal_parent`` always picks MainWindow. Fall back to the app
+    modal parent only when the initiator is missing or not visible.
 
-    Note the ``parent_window()`` unwrap: callers pass whatever they hold, and
-    Preferences is now an ``Adw.Dialog`` — a widget inside MainWindow — so for
-    that caller this resolves to MainWindow itself. That is the correct owner:
-    a transient modal floats above MainWindow and therefore above the
-    Preferences dialog drawn inside it.
+    Settings is an ``Adw.NavigationPage`` inside MainWindow; ``parent_window()``
+    unwraps it to MainWindow, which is the correct modal owner.
     """
     try:
         from .window import present_for_modal_dialog, resolve_app_modal_parent

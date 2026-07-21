@@ -36,8 +36,8 @@ def parent_window(parent):
     """Return a ``Gtk.Window`` for APIs that require one, given a window *or* a widget.
 
     ``transient_for``, :class:`Gtk.FileDialog` and friends only accept a
-    :class:`Gtk.Window`. Callers may hold a widget instead — Preferences is an
-    :class:`Adw.Dialog`, which lives *inside* its parent window — so resolve the
+    :class:`Gtk.Window`. Callers may hold a widget instead — Settings is an
+    :class:`Adw.NavigationPage` inside the main window — so resolve the
     widget's root. Windows pass through untouched and ``None`` stays ``None``.
 
     This is the cheap structural unwrap. Use :func:`resolve_app_modal_parent`
@@ -505,31 +505,39 @@ class WindowConfigDialogsMixin:
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
 
-    def show_preferences(self):
-        """Show preferences dialog"""
-        logger.info("Show preferences dialog")
-        existing = getattr(self, '_preferences_window', None)
-        if existing is not None:
+    def show_preferences(self, page_id=None):
+        """Enter Settings mode (pushes onto the main NavigationView).
+
+        ``page_id`` optionally selects a preferences page by stack id
+        (e.g. ``plugins``, ``security-&-credentials``).
+        """
+        logger.info("Show preferences")
+        nav = getattr(self, 'nav_view', None)
+        if nav is None:
+            logger.error('NavigationView unavailable; cannot open Settings mode')
+            return
+
+        prefs = getattr(self, '_preferences_window', None)
+        if prefs is None:
             try:
-                # Adw.Dialog.present() takes the parent to present over.
-                existing.present(self)
+                # Imported lazily so the heavy Preferences module stays off the
+                # startup path — only needed when Settings is opened.
+                from .preferences import PreferencesWindow
+                prefs = PreferencesWindow(self, self.config)
+                self._preferences_window = prefs
+            except Exception as e:
+                logger.error(f"Failed to create preferences page: {e}")
                 return
-            except Exception:
-                self._preferences_window = None
+
         try:
-            # Imported lazily so the heavy Preferences module stays off the
-            # startup path — it's only needed when the dialog is opened.
-            from .preferences import PreferencesWindow
-            preferences_window = PreferencesWindow(self, self.config)
-            self._preferences_window = preferences_window
-            # Adw.Dialog emits 'closed' rather than a window's 'close-request'.
-            preferences_window.connect(
-                'closed',
-                lambda _d: setattr(self, '_preferences_window', None),
-            )
-            preferences_window.present(self)
+            visible = nav.get_visible_page()
+            if visible is not prefs:
+                # Re-push after a previous pop (page stays alive for reuse).
+                nav.push(prefs)
+            if page_id:
+                prefs.select_page(page_id)
         except Exception as e:
-            logger.error(f"Failed to show preferences dialog: {e}")
+            logger.error(f"Failed to show preferences: {e}")
 
     def _simple_dialog(self, heading, body):
         d = Adw.MessageDialog(transient_for=self, modal=True, heading=heading, body=body)
