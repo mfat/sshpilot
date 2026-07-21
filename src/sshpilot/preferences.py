@@ -1,4 +1,4 @@
-"""Preferences dialog and font selection utilities."""
+"""Preferences UI (main-window Settings mode) and font selection utilities."""
 
 import os
 import functools
@@ -222,24 +222,27 @@ def _detect_pyxterm_backend():
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/preferences_window.ui")
-class PreferencesWindow(Adw.Dialog):
-    """Preferences dialog.
+class PreferencesWindow(Adw.NavigationPage):
+    """Settings mode page for the main window.
 
-    An ``Adw.Dialog`` (not a top-level window): libadwaita presents it over the
-    parent window, so it stacks correctly on Wayland and collapses with the
-    parent instead of being a second window in the shell. ``self.get_root()``
-    is the presenting window once presented — use it wherever a ``Gtk.Window``
-    is required (e.g. ``transient_for``).
+    An ``Adw.NavigationPage`` pushed onto the window's ``Adw.NavigationView``.
+    It replaces the work UI (connection sidebar + tabs) for the duration of the
+    mode; HeaderBar Back / Esc pops back to work. Internally an
+    ``Adw.NavigationSplitView`` hosts the category list and preference pages
+    (collapses to list↔detail on narrow widths).
+
+    ``self.get_root()`` is the main window once the page is in the tree — use it
+    wherever a ``Gtk.Window`` is required (e.g. ``transient_for``).
     """
 
     __gtype_name__ = "SshPilotPreferencesWindow"
 
-    overlay_split_view = Gtk.Template.Child()
+    split_view = Gtk.Template.Child()
+    sidebar_page = Gtk.Template.Child()
+    content_page = Gtk.Template.Child()
     sidebar_header_bar = Gtk.Template.Child()
     sidebar = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
-    show_sidebar_button = Gtk.Template.Child()
-    header_title_label = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
 
     def __init__(self, parent_window, config):
@@ -277,54 +280,31 @@ class PreferencesWindow(Adw.Dialog):
 
         self.connect('destroy', self._on_destroy)
 
-        # Use a consistent title for the window and header regardless of parent
         self._base_header_title = _("Settings")
-
-        # Set window properties with modern Adwaita structure
         self.set_title(self._base_header_title)
-        self.set_content_width(820)   # wide enough to show the sidebar
-        self.set_content_height(600)
 
-        # Create custom layout with sidebar
         self.setup_navigation_layout()
-        
-        # Initialize the preferences UI
         self.setup_preferences()
-        
-        # Apply any existing color overrides
         self.apply_color_overrides()
 
-        # Save on close to persist advanced SSH settings. Adw.Dialog emits
-        # 'closed' (after dismissal); 'close-request' is a Gtk.Window signal and
-        # would never fire here.
-        self.connect('closed', self.on_close_request)
         self.connect('map', self._on_preferences_map)
-    
+
     def setup_navigation_layout(self):
         """Configure the split-view layout (skeleton lives in the template)."""
-        # Sidebar width sizing stays in Python: the SP length unit is only set
-        # when the Adw.LengthUnit enum exists on this libadwaita version.
         try:
-            self.overlay_split_view.set_sidebar_width_fraction(0.25)
-            self.overlay_split_view.set_min_sidebar_width(180)
-            self.overlay_split_view.set_max_sidebar_width(280)
             if hasattr(Adw, 'LengthUnit'):
-                self.overlay_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
+                self.split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
         except Exception as e:
-            logger.debug(f"Failed to set OverlaySplitView sidebar width properties: {e}")
+            logger.debug(f"Failed to set NavigationSplitView sidebar width unit: {e}")
 
         try:
-            self.overlay_split_view.set_show_sidebar(True)
+            self.split_view.set_show_content(True)
         except Exception as e:
-            logger.debug(f"Failed to set OverlaySplitView show_sidebar: {e}")
+            logger.debug(f"Failed to set NavigationSplitView show_content: {e}")
 
-        # Connect sidebar selection to content stack
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
 
-        # Store pages for later reference
         self.pages = {}
-
-        # Ensure the header defaults to the base preferences title
         self._update_header_title()
 
     def on_sidebar_row_selected(self, listbox, row):
@@ -334,12 +314,11 @@ class PreferencesWindow(Adw.Dialog):
             changed = page_name != getattr(self, '_selected_page_name', None)
             self._selected_page_name = page_name
             self.content_stack.set_visible_child_name(page_name)
-            # Collapsed, the sidebar is an overlay over the page: dismiss it once
-            # a page is chosen, the way a navigation sidebar behaves. Only on an
-            # actual change -- revealing the sidebar re-emits row-selected for
-            # the row that is already selected, which would slam it shut again.
-            if changed and self.overlay_split_view.get_collapsed():
-                self.overlay_split_view.set_show_sidebar(False)
+            # Collapsed: show the detail page. Only on a real change — selecting
+            # the already-selected row (e.g. when returning to the list) must not
+            # immediately bounce back to content.
+            if changed and self.split_view.get_collapsed():
+                self.split_view.set_show_content(True)
             if page_name == getattr(self, '_secrets_page_id', None):
                 self._ensure_secrets_page_probes()
             if isinstance(row, Adw.ActionRow):
@@ -347,20 +326,31 @@ class PreferencesWindow(Adw.Dialog):
                 self._update_header_title(title)
 
     def _update_header_title(self, page_title: Optional[str] = None):
-        """Update the content area header label dynamically based on selected page.
-        
-        Sidebar always shows "Preferences", content area shows the page title.
-        """
-        header_label = getattr(self, "header_title_label", None)
-        if header_label:
-            # Content area shows the page title, or "Preferences" if no page selected
-            if page_title:
-                header_label.set_label(page_title)
-            else:
-                header_label.set_label(self._base_header_title)
-
-        # Keep window title static as "Preferences" only
+        """Set the content NavigationPage title (HeaderBar picks it up)."""
+        title = page_title or self._base_header_title
+        try:
+            self.content_page.set_title(title)
+        except Exception:
+            pass
+        # Keep the outer Settings page title stable for Back tooltips / stack.
         self.set_title(self._base_header_title)
+
+    def select_page(self, page_id: Optional[str]) -> bool:
+        """Select a preferences page by stack id (e.g. ``plugins``).
+
+        Returns True if a matching sidebar row was found and selected.
+        """
+        if not page_id:
+            return False
+        row = self.sidebar.get_first_child()
+        while row is not None:
+            if row.get_name() == page_id:
+                self.sidebar.select_row(row)
+                if self.split_view.get_collapsed():
+                    self.split_view.set_show_content(True)
+                return True
+            row = row.get_next_sibling()
+        return False
 
     @staticmethod
     def _page_id(title):
@@ -405,1691 +395,1782 @@ class PreferencesWindow(Adw.Dialog):
                 title = row.get_title() or ""
                 self._update_header_title(title)
     
+    def _add_terminal_appearance_groups(self, terminal_page):
+        """Add Terminal appearance and color-scheme preview groups."""
+        # Terminal appearance group
+        appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
+
+        # Font selection row
+        self.font_row = Adw.ActionRow()
+        self.font_row.set_title(_("Font"))
+        current_font = self.config.get_setting('terminal.font', 'Monospace 12')
+        self.font_row.set_subtitle(current_font)
+
+        font_button = Gtk.Button()
+        font_button.set_label(_("Choose"))
+        font_button.set_valign(Gtk.Align.CENTER)
+        font_button.connect('clicked', self.on_font_button_clicked)
+        self.font_row.add_suffix(font_button)
+
+        appearance_group.add(self.font_row)
+
+        # Terminal color scheme
+        self.color_scheme_row = Adw.ComboRow()
+        self.color_scheme_row.set_title(_("Color Scheme"))
+        self.color_scheme_row.set_subtitle(_("Terminal color theme"))
+
+        # Names come straight from Config.terminal_themes (single source of truth)
+        themes = getattr(self.config, 'terminal_themes', {}) or {}
+        color_schemes = Gtk.StringList()
+        for key in SCHEME_KEYS:
+            color_schemes.append(themes.get(key, {}).get('name', key))
+        self.color_scheme_row.set_model(color_schemes)
+
+        # Select the saved scheme; fall back to the first entry if unknown
+        current_scheme_key = self.config.get_setting('terminal.theme', 'default')
+        try:
+            current_index = SCHEME_KEYS.index(current_scheme_key)
+        except ValueError:
+            current_index = 0
+            self.config.set_setting('terminal.theme', SCHEME_KEYS[0])
+        self.color_scheme_row.set_selected(current_index)
+
+        self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
+
+        appearance_group.add(self.color_scheme_row)
+
+        self._initialize_encoding_selector(appearance_group)
+
+        # Color scheme preview
+        preview_group = Adw.PreferencesGroup(title=_("Preview"))
+        preview_group.set_margin_top(18)  # Add more spacing above "Preview" label
+
+        # Create preview terminal widget
+        self.color_preview_terminal = Gtk.DrawingArea()
+        self.color_preview_terminal.set_draw_func(self.draw_color_preview)
+        self.color_preview_terminal.set_size_request(400, 120)
+        self.color_preview_terminal.add_css_class("terminal-preview")
+
+        # Create a standard Adwaita container with rounded corners
+        preview_container = Adw.Bin()
+        preview_container.add_css_class("card")
+        preview_container.set_margin_top(6)  # Reduce spacing between label and preview
+
+        # Add some margin around the preview
+        preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        preview_box.set_margin_top(12)
+        preview_box.set_margin_bottom(12)
+        preview_box.set_margin_start(12)
+        preview_box.set_margin_end(12)
+        preview_box.append(self.color_preview_terminal)
+
+        preview_container.set_child(preview_box)
+        preview_group.add(preview_container)
+        appearance_group.add(preview_group)
+        terminal_page.add(appearance_group)
+
+    def _add_terminal_backend_group(self, terminal_page):
+        """Add the Terminal backend selection group."""
+        # Terminal backend selection group
+        backend_group = Adw.PreferencesGroup(title=_("Backend"))
+
+        # Build backend choices
+        self._backend_choice_data = self._build_backend_choices()
+
+        # Create combo row for backend selection
+        self.backend_row = Adw.ComboRow()
+        self.backend_row.set_title(_("Terminal Backend"))
+        self.backend_row.set_subtitle(_("Choose the terminal rendering backend"))
+
+        # Create model from choices
+        backend_model = Gtk.StringList()
+        for choice in self._backend_choice_data:
+            backend_model.append(choice['label'])
+        self.backend_row.set_model(backend_model)
+
+        # Set current backend
+        current_backend = self.config.get_setting('terminal.backend', 'vte')
+        # Reset to VTE if pyxterm is configured on macOS (not supported)
+        if is_macos() and current_backend and current_backend.lower() == 'pyxterm':
+            current_backend = 'vte'
+            self.config.set_setting('terminal.backend', 'vte')
+        current_index = 0
+        for i, choice in enumerate(self._backend_choice_data):
+            if choice['id'] == current_backend:
+                current_index = i
+                break
+        self.backend_row.set_selected(current_index)
+        self._backend_last_valid_index = current_index
+        self._update_backend_row_subtitle(current_index)
+
+        # Connect change handler
+        self.backend_row.connect('notify::selected', self._on_backend_row_changed)
+
+        backend_group.add(self.backend_row)
+        terminal_page.add(backend_group)
+
+    def _add_terminal_input_groups(self, terminal_page):
+        """Add Terminal keyboard and mouse behavior groups."""
+        keyboard_group = Adw.PreferencesGroup(title=_("Keyboard"))
+
+        self.pass_through_switch = Adw.SwitchRow()
+        self.pass_through_switch.set_title(_("Terminal Shortcut Pass-through"))
+        self.pass_through_switch.set_subtitle(
+            _("Disable all keyboard shortcuts, pass all key events directly to terminal")
+        )
+        pass_through_active = bool(self.config.get_setting('terminal.pass_through_mode', False))
+        self._pass_through_enabled = pass_through_active
+        self.pass_through_switch.set_active(pass_through_active)
+        self.pass_through_switch.connect('notify::active', self.on_pass_through_mode_toggled)
+        keyboard_group.add(self.pass_through_switch)
+
+        self.autocomplete_switch = Adw.SwitchRow()
+        self.autocomplete_switch.set_title(_("Command autocomplete"))
+        self.autocomplete_switch.set_subtitle(
+            _("Suggest commands from history and snippets as you type (embedded terminal)")
+        )
+        self.autocomplete_switch.set_active(
+            bool(self.config.get_setting('terminal.autocomplete', True))
+        )
+        self.autocomplete_switch.connect('notify::active', self.on_autocomplete_toggled)
+        keyboard_group.add(self.autocomplete_switch)
+
+        self.autocomplete_remote_switch = Adw.SwitchRow()
+        self.autocomplete_remote_switch.set_title(_("Suggest from remote history"))
+        self.autocomplete_remote_switch.set_subtitle(
+            _("Also fetch the remote host's shell history over SSH (applies to new tabs)")
+        )
+        self.autocomplete_remote_switch.set_active(
+            bool(self.config.get_setting('terminal.autocomplete_remote', False))
+        )
+        self.autocomplete_remote_switch.connect(
+            'notify::active', self.on_autocomplete_remote_toggled)
+        keyboard_group.add(self.autocomplete_remote_switch)
+
+        terminal_page.add(keyboard_group)
+
+        # Mouse behavior group
+        mouse_group = Adw.PreferencesGroup(title=_("Mouse"))
+
+        self.copy_on_select_switch = Adw.SwitchRow()
+        self.copy_on_select_switch.set_title(_("Copy on selection"))
+        self.copy_on_select_switch.set_subtitle(
+            _("Automatically copy selected text to the clipboard")
+        )
+        copy_on_select_active = bool(self.config.get_setting('terminal.copy_on_select', False))
+        self.copy_on_select_switch.set_active(copy_on_select_active)
+        self.copy_on_select_switch.connect('notify::active', self.on_copy_on_select_toggled)
+        mouse_group.add(self.copy_on_select_switch)
+
+        self.paste_on_right_click_switch = Adw.SwitchRow()
+        self.paste_on_right_click_switch.set_title(_("Paste on right-click"))
+        self.paste_on_right_click_switch.set_subtitle(
+            _("Right-click pastes; Shift+right-click opens the menu")
+        )
+        paste_on_right_click_active = bool(self.config.get_setting('terminal.paste_on_right_click', False))
+        self.paste_on_right_click_switch.set_active(paste_on_right_click_active)
+        self.paste_on_right_click_switch.connect(
+            'notify::active', self.on_paste_on_right_click_toggled
+        )
+        mouse_group.add(self.paste_on_right_click_switch)
+
+        terminal_page.add(mouse_group)
+
+    def _add_terminal_preferred_group(self, terminal_page):
+        """Add the Preferred Terminal group when external terminals are available."""
+        # Preferred Terminal group (shown when external terminals are available)
+        if not should_hide_external_terminal_options():
+            terminal_choice_group = Adw.PreferencesGroup(title=_("Preferred Terminal"))
+
+            # Radio buttons for terminal choice
+            self.builtin_terminal_radio = Gtk.CheckButton(label=_("Use built-in terminal"))
+            self.builtin_terminal_radio.set_can_focus(True)
+            self.external_terminal_radio = Gtk.CheckButton(label=_("Use other terminal"))
+            self.external_terminal_radio.set_can_focus(True)
+
+            # Make them behave like radio buttons
+            self.external_terminal_radio.set_group(self.builtin_terminal_radio)
+
+            # Set current preference
+            use_external = self.config.get_setting('use-external-terminal', False)
+            if use_external:
+                self.external_terminal_radio.set_active(True)
+            else:
+                self.builtin_terminal_radio.set_active(True)
+
+            # Connect radio button changes
+            self.builtin_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
+            self.external_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
+
+            # Add radio buttons to group
+            terminal_choice_group.add(self.builtin_terminal_radio)
+            terminal_choice_group.add(self.external_terminal_radio)
+
+            # External terminal dropdown and custom path
+            self.external_terminal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.external_terminal_box.set_margin_start(24)
+            self.external_terminal_box.set_margin_top(6)
+            self.external_terminal_box.set_margin_bottom(6)
+
+            # Terminal dropdown
+            self.terminal_dropdown = Gtk.DropDown()
+            self.terminal_dropdown.set_can_focus(True)
+
+            # Populate dropdown with available terminals
+            self._populate_terminal_dropdown()
+
+            # Set current selection
+            current_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
+
+            # Connect dropdown changes
+            self.terminal_dropdown.connect('notify::selected', self.on_terminal_dropdown_changed)
+
+            # Custom path entry (initially hidden)
+            self.custom_terminal_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self.custom_terminal_entry = Gtk.Entry()
+            self.custom_terminal_entry.set_placeholder_text("/usr/bin/gnome-terminal")
+            self.custom_terminal_entry.set_can_focus(True)
+
+            # Set current custom path if any
+            custom_path = self.config.get_setting('custom-terminal-path', '')
+            if custom_path:
+                self.custom_terminal_entry.set_text(custom_path)
+
+            # Connect custom path changes
+            self.custom_terminal_entry.connect('changed', self.on_custom_terminal_path_changed)
+
+            self.custom_terminal_box.append(self.custom_terminal_entry)
+
+            # Add dropdown and custom path to box
+            self.external_terminal_box.append(self.terminal_dropdown)
+            self.external_terminal_box.append(self.custom_terminal_box)
+
+            # Now set the dropdown selection and show/hide custom path entry
+            self._set_terminal_dropdown_selection(current_terminal)
+
+            # Initial sensitivity will be set by radio button state
+
+            # Add to group
+            terminal_choice_group.add(self.external_terminal_box)
+
+            # Set initial sensitivity based on radio button state
+            self.external_terminal_box.set_sensitive(self.external_terminal_radio.get_active())
+
+            terminal_page.add(terminal_choice_group)
+
+    def _build_terminal_preferences_page(self):
+        """Build the Terminal preferences page."""
+        terminal_page = Adw.PreferencesPage()
+        terminal_page.set_title(_("Terminal"))
+        terminal_page.set_icon_name("utilities-terminal-symbolic")
+
+        self._add_terminal_appearance_groups(terminal_page)
+        self._add_terminal_backend_group(terminal_page)
+        self._add_terminal_input_groups(terminal_page)
+        self._add_terminal_preferred_group(terminal_page)
+        return terminal_page
+
+
+    def _add_group_appearance_group(self, groups_page):
+        """Add the Group Appearance preferences group."""
+        group_appearance_group = Adw.PreferencesGroup(title=_("Group Appearance"))
+
+        # Sidebar group color display mode
+        self._group_color_display_values = ['fill', 'badge', 'bar', 'dot']
+        self.group_color_display_row = Adw.ComboRow()
+        self.group_color_display_row.set_title(_("Sidebar Group Colors"))
+        self.group_color_display_row.set_subtitle(
+            _("Choose how group colors are shown in the sidebar")
+        )
+
+        color_display_options = Gtk.StringList()
+        color_display_options.append("Colored Rows")
+        color_display_options.append("Color Badges")
+        color_display_options.append("Accent Bars")
+        color_display_options.append("Color Dots")
+        self.group_color_display_row.set_model(color_display_options)
+
+        current_mode = 'fill'
+        try:
+            current_mode = str(
+                self.config.get_setting('ui.group_color_display', 'fill')
+            ).lower()
+        except Exception:
+            current_mode = 'fill'
+        if current_mode not in self._group_color_display_values:
+            current_mode = 'fill'
+
+        self._group_display_sync = True
+        try:
+            self.group_color_display_row.set_selected(
+                self._group_color_display_values.index(current_mode)
+            )
+        finally:
+            self._group_display_sync = False
+
+        self.group_color_display_row.connect(
+            'notify::selected', self.on_group_color_display_changed
+        )
+
+        group_appearance_group.add(self.group_color_display_row)
+
+        # Toggle for extending group colors to member connection rows
+        self.child_rows_color_row = Adw.SwitchRow()
+        self.child_rows_color_row.set_title(_("Use Group Color for Child Rows"))
+        self.child_rows_color_row.set_subtitle(
+            _("Apply the group's color to its connection rows as well")
+        )
+        try:
+            child_rows_pref = bool(
+                self.config.get_setting('ui.group_color_child_rows', False)
+            )
+        except Exception:
+            child_rows_pref = False
+        self.child_rows_color_row.set_active(child_rows_pref)
+        self.child_rows_color_row.connect(
+            'notify::active', self.on_group_color_child_rows_toggled
+        )
+        group_appearance_group.add(self.child_rows_color_row)
+
+        # Toggle for coloring tabs using group colors
+        self.tab_group_color_row = Adw.SwitchRow()
+        self.tab_group_color_row.set_title(_("Show Group Color in Tabs"))
+        self.tab_group_color_row.set_subtitle(
+            _("Show the selected group's color badge in the terminal tabs")
+        )
+        try:
+            tab_pref = bool(
+                self.config.get_setting('ui.use_group_color_in_tab', False)
+            )
+        except Exception:
+            tab_pref = False
+        self.tab_group_color_row.set_active(tab_pref)
+        self.tab_group_color_row.connect(
+            'notify::active', self.on_use_group_color_in_tab_toggled
+        )
+        group_appearance_group.add(self.tab_group_color_row)
+
+        # Toggle for applying group colors inside terminals
+        self.terminal_group_color_row = Adw.SwitchRow()
+        self.terminal_group_color_row.set_title(_("Use Group Color in Terminals"))
+        self.terminal_group_color_row.set_subtitle(
+            _("Use parent group's color as terminal background")
+        )
+        try:
+            terminal_pref = bool(
+                self.config.get_setting('ui.use_group_color_in_terminal', False)
+            )
+        except Exception:
+            terminal_pref = False
+        self.terminal_group_color_row.set_active(terminal_pref)
+        self.terminal_group_color_row.connect(
+            'notify::active', self.on_use_group_color_in_terminal_toggled
+        )
+        group_appearance_group.add(self.terminal_group_color_row)
+
+
+        groups_page.add(group_appearance_group)
+
+    def _add_group_layout_group(self, groups_page):
+        """Add the Group Layout preferences group and previews."""
+        # Group display layout section (shown after appearance options)
+        group_layout_group = Adw.PreferencesGroup(title=_("Group Layout"))
+
+        self._group_display_preview_rows = {}
+        _install_group_display_preview_css()
+
+        self._group_display_modes = ['fullwidth', 'nested']
+        self.group_display_toggle_row = Adw.ActionRow()
+        self.group_display_toggle_row.set_title(_("Group Display"))
+        self.group_display_toggle_row.set_subtitle(
+            _("Choose how grouped connections appear in the sidebar")
+        )
+        self.group_display_toggle_row.set_activatable(False)
+        try:
+            self.group_display_toggle_row.set_focusable(False)
+        except Exception:
+            pass
+
+        self.group_display_toggle_group = None
+        self._group_display_toggle_controller = None
+
+        if hasattr(Adw, 'ToggleGroup') and hasattr(Adw.ToggleGroup, 'new'):
+            toggle_group = Adw.ToggleGroup.new()
+            toggle_group.set_orientation(Gtk.Orientation.HORIZONTAL)
+            toggle_group.add_css_class('linked')
+            toggle_group.set_hexpand(True)
+            try:
+                toggle_group.set_homogeneous(True)
+            except Exception:
+                pass
+
+            self.group_display_toggle_fullwidth = Adw.Toggle.new()
+            self.group_display_toggle_fullwidth.props.name = 'fullwidth'
+            self.group_display_toggle_fullwidth.set_label(_('Fullwidth'))
+
+            self.group_display_toggle_nested = Adw.Toggle.new()
+            self.group_display_toggle_nested.props.name = 'nested'
+            self.group_display_toggle_nested.set_label(_('Nested'))
+
+            toggle_group.add(self.group_display_toggle_fullwidth)
+            toggle_group.add(self.group_display_toggle_nested)
+            self.group_display_toggle_row.set_child(toggle_group)
+
+            self.group_display_toggle_group = toggle_group
+            self._group_display_toggle_controller = toggle_group
+        else:
+            fallback_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+            fallback_box.add_css_class('linked')
+            fallback_box.set_hexpand(True)
+
+            self.group_display_toggle_fullwidth = Gtk.ToggleButton(label=_('Fullwidth'))
+            self.group_display_toggle_fullwidth.props.name = 'fullwidth'
+            self.group_display_toggle_fullwidth.set_hexpand(True)
+
+            self.group_display_toggle_nested = Gtk.ToggleButton(label=_('Nested'))
+            self.group_display_toggle_nested.props.name = 'nested'
+            self.group_display_toggle_nested.set_hexpand(True)
+
+            fallback_box.append(self.group_display_toggle_fullwidth)
+            fallback_box.append(self.group_display_toggle_nested)
+            self.group_display_toggle_row.set_child(fallback_box)
+
+            buttons = {
+                'fullwidth': self.group_display_toggle_fullwidth,
+                'nested': self.group_display_toggle_nested,
+            }
+            self._group_display_toggle_controller = _GroupDisplayToggleFallback(buttons)
+
+        current_display_mode = 'nested'
+        try:
+            current_display_mode = str(
+                self.config.get_setting('ui.group_row_display', 'nested')
+            ).lower()
+        except Exception:
+            current_display_mode = 'nested'
+        if current_display_mode not in self._group_display_modes:
+            current_display_mode = 'nested'
+
+        self._group_display_toggle_sync = True
+        try:
+            if self._group_display_toggle_controller:
+                self._group_display_toggle_controller.set_active_name(current_display_mode)
+        finally:
+            self._group_display_toggle_sync = False
+
+        if isinstance(self._group_display_toggle_controller, _GroupDisplayToggleFallback):
+            self._group_display_toggle_controller.connect(
+                self.on_group_row_display_changed
+            )
+        elif self.group_display_toggle_group is not None:
+            self.group_display_toggle_group.connect(
+                'notify::active-name', self.on_group_row_display_changed
+            )
+
+        group_layout_group.add(self.group_display_toggle_row)
+
+        # Preview showing both layout styles
+        self.group_display_preview_row = Adw.ActionRow()
+        self.group_display_preview_row.set_title(_("Layout Preview"))
+        self.group_display_preview_row.set_activatable(False)
+        try:
+            self.group_display_preview_row.set_focusable(False)
+        except Exception:
+            pass
+
+        preview_stack = Gtk.Stack()
+        preview_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        preview_stack.set_transition_duration(150)
+
+        preview_stack.set_margin_top(4)
+        preview_stack.set_margin_bottom(4)
+
+        preview_fullwidth_wrapper, preview_fullwidth_row = self._create_group_display_preview(
+            'fullwidth', 'Fullwidth'
+        )
+        preview_nested_wrapper, preview_nested_row = self._create_group_display_preview(
+            'nested', 'Nested'
+        )
+
+        preview_stack.add_named(preview_fullwidth_wrapper, 'fullwidth')
+        preview_stack.add_named(preview_nested_wrapper, 'nested')
+
+        self.group_display_preview_row.set_child(preview_stack)
+        self._group_display_preview_rows = {
+            'fullwidth': preview_fullwidth_row,
+            'nested': preview_nested_row,
+        }
+        self._group_display_preview_stack = preview_stack
+
+        self._update_group_display_preview(current_display_mode)
+
+        group_layout_group.add(self.group_display_preview_row)
+        groups_page.add(group_layout_group)
+
+    def _build_groups_preferences_page(self):
+        """Build the Groups preferences page."""
+        groups_page = Adw.PreferencesPage()
+        groups_page.set_title(_("Groups"))
+        groups_page.set_icon_name("folder-open-symbolic")
+
+        self._add_group_appearance_group(groups_page)
+        self._add_group_layout_group(groups_page)
+        return groups_page
+
+
+    def _add_interface_language_group(self, interface_page):
+        """Add the Language preferences group."""
+        # Language — first group on the page. Always shown: "System Default"
+        # plus every catalogue that can actually be loaded (English included,
+        # it being the source language and the way back from a translation).
+        language_group = Adw.PreferencesGroup(title=_("Language"))
+
+        self.language_row = Adw.ComboRow()
+        self.language_row.set_title(_("Interface Language"))
+        self.language_row.set_subtitle(_("Takes effect after restarting SSH Pilot"))
+
+        language_names = Gtk.StringList()
+        language_names.append(_("System Default"))
+        self._language_codes = ['']
+        for code, display_name in available_languages():
+            language_names.append(display_name)
+            self._language_codes.append(code)
+        self.language_row.set_model(language_names)
+
+        saved_language = self.config.get_setting('ui.language', '')
+        if saved_language and saved_language not in self._language_codes:
+            # The catalogue went away (uninstalled, or the setting came from
+            # another machine). Showing "System Default" while the config
+            # still names the missing language would keep applying it at
+            # every start, so clear it to match what the row now says.
+            logger.info("Interface language %r is no longer installed; "
+                        "falling back to the system default", saved_language)
+            self.config.set_setting('ui.language', '')
+            saved_language = ''
+        self.language_row.set_selected(
+            self._language_codes.index(saved_language)
+            if saved_language in self._language_codes else 0)
+
+        self.language_row.connect('notify::selected', self.on_language_changed)
+        language_group.add(self.language_row)
+        interface_page.add(language_group)
+
+    def _add_interface_startup_group(self, interface_page):
+        """Add the App Startup preferences group."""
+        startup_group = Adw.PreferencesGroup(title=_("App Startup"))
+
+        # Radio buttons for startup behavior
+        self.terminal_startup_radio = Gtk.CheckButton(label=_("Show Terminal"))
+        self.terminal_startup_radio.set_can_focus(True)
+        self.welcome_startup_radio = Gtk.CheckButton(label=_("Show Start Page"))
+        self.welcome_startup_radio.set_can_focus(True)
+        self.previous_session_startup_radio = Gtk.CheckButton(label=_("Restore previous session"))
+        self.previous_session_startup_radio.set_can_focus(True)
+        self.saved_session_startup_radio = Gtk.CheckButton(label=_("Open a saved session"))
+        self.saved_session_startup_radio.set_can_focus(True)
+
+        # Make them behave like radio buttons
+        self.welcome_startup_radio.set_group(self.terminal_startup_radio)
+        self.previous_session_startup_radio.set_group(self.terminal_startup_radio)
+        self.saved_session_startup_radio.set_group(self.terminal_startup_radio)
+
+        # Set current preference (default to welcome/start page)
+        startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
+        if startup_behavior == 'terminal':
+            self.terminal_startup_radio.set_active(True)
+        elif startup_behavior == 'previous-session':
+            self.previous_session_startup_radio.set_active(True)
+        elif startup_behavior == 'saved-session':
+            self.saved_session_startup_radio.set_active(True)
+        else:
+            self.welcome_startup_radio.set_active(True)
+
+        # Selector for which saved session to open on startup. This is built
+        # as a plain (non-row) widget so it stacks directly below the
+        # "Open a saved session" radio rather than being hoisted into the
+        # group's internal list box above the bare check buttons.
+        self._startup_session_names = []
+        try:
+            session_manager = getattr(self.parent_window, 'session_manager', None)
+            if session_manager is not None:
+                self._startup_session_names = list(session_manager.list_session_names())
+        except Exception:
+            self._startup_session_names = []
+
+        session_model = Gtk.StringList()
+        if self._startup_session_names:
+            for name in self._startup_session_names:
+                session_model.append(name)
+        else:
+            session_model.append("(no saved sessions)")
+
+        self.startup_session_row = Gtk.DropDown()
+        self.startup_session_row.set_model(session_model)
+        self.startup_session_row.set_valign(Gtk.Align.CENTER)
+
+        self.startup_session_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.startup_session_box.set_margin_start(24)
+        self.startup_session_box.set_margin_top(2)
+        session_label = Gtk.Label(label=_("Saved session"))
+        session_label.set_xalign(0)
+        session_label.set_hexpand(True)
+        self.startup_session_box.append(session_label)
+        self.startup_session_box.append(self.startup_session_row)
+
+        selected_session = self.config.get_setting('app-startup-session-name', '')
+        if selected_session in self._startup_session_names:
+            self.startup_session_row.set_selected(
+                self._startup_session_names.index(selected_session)
+            )
+        self.startup_session_box.set_sensitive(
+            bool(self._startup_session_names)
+            and self.saved_session_startup_radio.get_active()
+        )
+
+        # Connect radio button changes
+        self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+        self.welcome_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+        self.previous_session_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+        self.saved_session_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+        self.startup_session_row.connect('notify::selected', self.on_startup_session_changed)
+
+        # Add radio buttons to group, with the saved-session selector placed
+        # immediately below its corresponding radio option.
+        startup_group.add(self.terminal_startup_radio)
+        startup_group.add(self.welcome_startup_radio)
+        startup_group.add(self.previous_session_startup_radio)
+        startup_group.add(self.saved_session_startup_radio)
+        startup_group.add(self.startup_session_box)
+
+        interface_page.add(startup_group)
+
+    def _add_interface_appearance_groups(self, interface_page):
+        """Add Interface appearance and color-override groups."""
+        # Appearance group
+        interface_appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
+
+        # Theme selection
+        self.theme_row = Adw.ComboRow()
+        self.theme_row.set_title(_("Application Theme"))
+        self.theme_row.set_subtitle(_("Choose light, dark, or follow system theme"))
+
+        themes = Gtk.StringList()
+        themes.append("Follow System")
+        themes.append("Light")
+        themes.append("Dark")
+        self.theme_row.set_model(themes)
+
+        # Load saved theme preference
+        saved_theme = self.config.get_setting('app-theme', 'default')
+        theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
+        self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
+
+        self.theme_row.connect('notify::selected', self.on_theme_changed)
+
+        interface_appearance_group.add(self.theme_row)
+
+
+        # Color overrides section
+        color_override_group = Adw.PreferencesGroup(title=_("Color Overrides"))
+        color_override_group.set_description(_("Override the accent color"))
+
+        # Accent color override
+        self.accent_color_row = Adw.ActionRow()
+        self.accent_color_row.set_title(_("Accent Color"))
+        self.accent_color_row.set_subtitle(_("Override the accent color for highlights"))
+
+        self.accent_color_button = Gtk.ColorButton()
+        self.accent_color_button.set_use_alpha(False)
+        self.accent_color_button.set_tooltip_text(_("Choose accent color"))
+        self.accent_color_button.set_valign(Gtk.Align.CENTER)
+        self.accent_color_button.set_size_request(60, 32)
+        self.accent_color_button.connect('color-set', self.on_accent_color_changed)
+        self.accent_color_row.add_suffix(self.accent_color_button)
+        color_override_group.add(self.accent_color_row)
+
+        # Reset colors button
+        reset_colors_row = Adw.ActionRow()
+        reset_colors_row.set_title(_("Reset to Default"))
+        reset_colors_row.set_subtitle(_("Remove the accent override and use the system accent"))
+
+        reset_button = Gtk.Button()
+        reset_button.set_label(_("Reset"))
+        reset_button.add_css_class("destructive-action")
+        reset_button.set_valign(Gtk.Align.CENTER)
+        reset_button.connect('clicked', self.on_reset_colors_clicked)
+        reset_colors_row.add_suffix(reset_button)
+        color_override_group.add(reset_colors_row)
+
+        interface_page.add(interface_appearance_group)
+        interface_page.add(color_override_group)
+
+        # Initialize color button states from saved accent override
+        self.refresh_color_buttons()
+
+    def _add_interface_window_group(self, interface_page):
+        """Add the Window preferences group."""
+        # Window group
+        window_group = Adw.PreferencesGroup(title=_("Window"))
+
+        # Remember window size switch
+        remember_size_switch = Adw.SwitchRow()
+        remember_size_switch.set_title(_("Remember Window Size"))
+        remember_size_switch.set_subtitle(_("Restore window size on startup"))
+        remember_size_switch.set_active(True)
+
+        window_group.add(remember_size_switch)
+        interface_page.add(window_group)
+
+    def _add_interface_sidebar_groups(self, interface_page):
+        """Add Sidebar and Sidebar behavior preferences groups."""
+        # Sidebar group (at bottom of Interface page)
+        sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
+
+        # Maximum width slider
+        max_width_row = Adw.ActionRow()
+        max_width_row.set_title(_("Maximum Width"))
+
+        # Load saved value or use default
+        saved_max_width = self.config.get_setting('ui.max-sidebar-width', 280)
+
+        # Create a scale/slider for max width (100-800 sp)
+        max_width_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 100, 800, 10)
+        max_width_scale.set_draw_value(True)
+        max_width_scale.set_value_pos(Gtk.PositionType.RIGHT)
+        max_width_scale.set_size_request(200, -1)
+        max_width_scale.set_valign(Gtk.Align.CENTER)
+        max_width_scale.set_value(float(saved_max_width))
+
+        # Update subtitle with current value
+        def update_subtitle(value):
+            max_width_row.set_subtitle(
+                _("Adjust the maximum width of the sidebar ({width} sp)").format(width=int(value)))
+
+        update_subtitle(saved_max_width)
+
+        # Connect change handler
+        def on_max_width_changed(scale):
+            value = int(scale.get_value())
+            update_subtitle(value)
+            self.config.set_setting('ui.max-sidebar-width', value)
+            # Update main window if available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_max_width'):
+                self.parent_window.update_sidebar_max_width(value)
+
+        max_width_scale.connect('value-changed', on_max_width_changed)
+
+        max_width_row.add_suffix(max_width_scale)
+        sidebar_group.add(max_width_row)
+
+        flat_rows_switch = Adw.SwitchRow()
+        flat_rows_switch.set_title(_("Flat Sidebar Rows"))
+        flat_rows_switch.set_subtitle(
+            _("Use flat list rows instead of cards in the connection sidebar")
+        )
+        flat_rows_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_flat_rows', False))
+        )
+        flat_rows_switch.connect(
+            'notify::active', self.on_sidebar_flat_rows_changed
+        )
+        sidebar_group.add(flat_rows_switch)
+
+        # Display user@hostname toggle
+        show_user_hostname_switch = Adw.SwitchRow()
+        show_user_hostname_switch.set_title(_("Display user@hostname"))
+        show_user_hostname_switch.set_subtitle(_("Show username@hostname in connection rows"))
+        show_user_hostname_switch.set_active(
+            self.config.get_setting('ui.sidebar_show_user_hostname', True)
+        )
+        show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
+        sidebar_group.add(show_user_hostname_switch)
+
+        # Display connection count in groups toggle
+        show_group_count_switch = Adw.SwitchRow()
+        show_group_count_switch.set_title(_("Display Connection Count in Groups"))
+        show_group_count_switch.set_subtitle(_("Show the number of connections in each group"))
+        show_group_count_switch.set_active(
+            self.config.get_setting('ui.sidebar_show_group_count', True)
+        )
+        show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
+        sidebar_group.add(show_group_count_switch)
+
+        # Display connection status toggle
+        show_status_switch = Adw.SwitchRow()
+        show_status_switch.set_title(_("Display Connection Status"))
+        show_status_switch.set_subtitle(_("Show connection status indicator in connection rows"))
+        show_status_switch.set_active(
+            self.config.get_setting('ui.sidebar_show_connection_status', True)
+        )
+        show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
+        sidebar_group.add(show_status_switch)
+
+        # Display port forwarding labels toggle
+        show_port_forwarding_switch = Adw.SwitchRow()
+        show_port_forwarding_switch.set_title(_("Display Port Forwarding Labels"))
+        show_port_forwarding_switch.set_subtitle(_("Show port forwarding indicators (L/R/D) in connection rows"))
+        show_port_forwarding_switch.set_active(
+            self.config.get_setting('ui.sidebar_show_port_forwarding', True)
+        )
+        show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
+        sidebar_group.add(show_port_forwarding_switch)
+
+        # Display connection icon toggle
+        show_connection_icon_switch = Adw.SwitchRow()
+        show_connection_icon_switch.set_title(_("Display Connection Icon"))
+        show_connection_icon_switch.set_subtitle(_("Show the computer icon in connection rows"))
+        show_connection_icon_switch.set_active(
+            self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        )
+        show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
+        sidebar_group.add(show_connection_icon_switch)
+
+        # Display group icon toggle
+        show_group_icon_switch = Adw.SwitchRow()
+        show_group_icon_switch.set_title(_("Display Group Icon"))
+        show_group_icon_switch.set_subtitle(_("Show the folder icon in group rows"))
+        show_group_icon_switch.set_active(
+            self.config.get_setting('ui.sidebar_show_group_icon', True)
+        )
+        show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
+        sidebar_group.add(show_group_icon_switch)
+
+        interface_page.add(sidebar_group)
+
+        # Sidebar behavior
+        sidebar_behavior_group = Adw.PreferencesGroup(title=_("Sidebar behavior"))
+
+        hide_on_startup_switch = Adw.SwitchRow()
+        hide_on_startup_switch.set_title(_("Hide Sidebar on Startup"))
+        hide_on_startup_switch.set_subtitle(_("Start with the sidebar collapsed"))
+        hide_on_startup_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_hide_on_startup', False))
+        )
+        hide_on_startup_switch.connect(
+            'notify::active',
+            lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_startup', bool(r.get_active())),
+        )
+        sidebar_behavior_group.add(hide_on_startup_switch)
+
+        hide_on_terminal_switch = Adw.SwitchRow()
+        hide_on_terminal_switch.set_title(_("Hide When a Terminal Opens"))
+        hide_on_terminal_switch.set_subtitle(_("Collapse the sidebar when any session opens, including local terminals"))
+        hide_on_terminal_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_hide_on_terminal_open', False))
+        )
+        hide_on_terminal_switch.connect(
+            'notify::active',
+            lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_terminal_open', bool(r.get_active())),
+        )
+        sidebar_behavior_group.add(hide_on_terminal_switch)
+
+        show_when_no_tabs_switch = Adw.SwitchRow()
+        show_when_no_tabs_switch.set_title(_("Show When No Tab Is Open"))
+        show_when_no_tabs_switch.set_subtitle(_("Reveal the sidebar when returning to the welcome screen"))
+        show_when_no_tabs_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_when_no_tabs', False))
+        )
+        show_when_no_tabs_switch.connect(
+            'notify::active',
+            lambda r, _p: self.config.set_setting('ui.sidebar_show_when_no_tabs', bool(r.get_active())),
+        )
+        sidebar_behavior_group.add(show_when_no_tabs_switch)
+
+        interface_page.add(sidebar_behavior_group)
+
+    def _add_interface_headerbar_and_tips_groups(self, interface_page):
+        """Add Header Bar Buttons and Tips preferences groups."""
+        # Header bar button visibility
+        headerbar_group = Adw.PreferencesGroup(title=_("Header Bar Buttons"))
+
+        def _add_headerbar_switch(title, subtitle, key, default=True):
+            row = Adw.SwitchRow()
+            row.set_title(title)
+            row.set_subtitle(subtitle)
+            row.set_active(bool(self.config.get_setting(key, default)))
+
+            def _on_toggled(r, _p, _k=key):
+                self.config.set_setting(_k, bool(r.get_active()))
+                if self.parent_window and hasattr(self.parent_window, 'update_headerbar_buttons'):
+                    self.parent_window.update_headerbar_buttons()
+
+            row.connect('notify::active', _on_toggled)
+            headerbar_group.add(row)
+
+        _add_headerbar_switch(
+            "Split View Button",
+            "Show the split-view button (the grid icon that starts a split view)",
+            'ui.headerbar_show_split_view',
+            default=False,
+        )
+        _add_headerbar_switch(
+            "Commands Button",
+            "Show the command snippets toggle button",
+            'ui.headerbar_show_commands',
+        )
+        _add_headerbar_switch(
+            "Theme Menu",
+            "Show the application theme menu beside the commands button",
+            'ui.headerbar_show_theme_toggle',
+        )
+        _add_headerbar_switch(
+            "Local Terminal Button",
+            "Show the button that opens a local terminal",
+            'ui.headerbar_show_local_terminal',
+        )
+
+        interface_page.add(headerbar_group)
+
+        # Tips group at the bottom of the Interface page. Lets users
+        # re-enable the terminal tips banner after dismissing it with
+        # "Don't show again".
+        tips_group = Adw.PreferencesGroup(title=_("Tips"))
+        show_tips_switch = Adw.SwitchRow()
+        show_tips_switch.set_title(_("Show Terminal Tips"))
+        show_tips_switch.set_subtitle(_("Show usage tips in a banner when a terminal opens"))
+        show_tips_switch.set_active(
+            bool(self.config.get_setting('terminal.show_tips', True))
+        )
+        show_tips_switch.connect('notify::active', self.on_show_tips_toggled)
+        tips_group.add(show_tips_switch)
+        interface_page.add(tips_group)
+
+    def _build_interface_preferences_page(self):
+        """Build the Interface preferences page."""
+        interface_page = Adw.PreferencesPage()
+        interface_page.set_title(_("Interface"))
+        interface_page.set_icon_name("applications-graphics-symbolic")
+
+        self._add_interface_language_group(interface_page)
+        self._add_interface_startup_group(interface_page)
+        self._add_interface_appearance_groups(interface_page)
+        self._add_interface_window_group(interface_page)
+        self._add_interface_sidebar_groups(interface_page)
+        self._add_interface_headerbar_and_tips_groups(interface_page)
+        return interface_page
+
+
+    def _build_shortcuts_preferences_page(self):
+        """Build the Shortcuts preferences page."""
+        # Shortcuts page with inline editor
+        shortcuts_page = Adw.PreferencesPage()
+        shortcuts_page.set_title(_("Shortcuts"))
+        shortcuts_page.set_icon_name("preferences-desktop-keyboard-shortcuts-symbolic")
+
+        shortcuts_intro_group = Adw.PreferencesGroup(title=_("Keyboard Shortcuts"))
+
+        shortcuts_button_row = Adw.ActionRow()
+        shortcuts_button_row.set_title(_("Shortcut Overview"))
+        shortcuts_button_row.set_subtitle(_("Open the shortcuts window for a full reference"))
+
+        shortcuts_button = Gtk.Button(label=_("Open"))
+        try:
+            shortcuts_button.add_css_class("flat")
+        except Exception:
+            pass
+        shortcuts_button.set_valign(Gtk.Align.CENTER)
+        shortcuts_button.connect('clicked', self.on_view_shortcuts_clicked)
+        shortcuts_button_row.add_suffix(shortcuts_button)
+        shortcuts_button_row.set_activatable_widget(shortcuts_button)
+
+        self._shortcuts_row = shortcuts_button_row
+        self._shortcuts_button = shortcuts_button
+
+        shortcuts_intro_group.add(shortcuts_button_row)
+        shortcuts_page.add(shortcuts_intro_group)
+
+        try:
+            self.shortcuts_editor_page = ShortcutsPreferencesPage(
+                parent_widget=self.parent_window,
+                app=self.parent_window.get_application() if self.parent_window else None,
+                config=self.config,
+                owner_window=self.parent_window,
+            )
+
+            groups_added = len(list(self.shortcuts_editor_page.iter_groups()))
+            self.shortcuts_editor_page.create_editor_widget()
+
+            notice_widget = getattr(
+                self.shortcuts_editor_page, 'get_pass_through_notice_widget', None
+            )
+            if callable(notice_widget):
+                notice_widget = notice_widget()
+            if notice_widget is not None:
+                parent = notice_widget.get_parent()
+                if parent is not None:
+                    remove_method = getattr(parent, 'remove', None)
+                    if callable(remove_method):
+                        remove_method(notice_widget)
+                    else:
+                        remove_child = getattr(parent, 'remove_child', None)
+                        if callable(remove_child):
+                            remove_child(notice_widget)
+
+                # Create a preferences group for the notice widget
+                # Adw.PreferencesGroup accepts Adw.ActionRow, so we need to wrap it
+                notice_group = Adw.PreferencesGroup()
+
+                # Try to add the widget directly first (works for some widget types)
+                try:
+                    notice_group.add(notice_widget)
+                except (TypeError, AttributeError):
+                    # If direct add fails, wrap in an ActionRow
+                    # For Banner/Label widgets, we'll create a simple row
+                    notice_row = Adw.ActionRow()
+                    notice_row.set_activatable(False)
+                    notice_row.set_selectable(False)
+                    # Set the notice widget as the child of the row
+                    notice_row.set_child(notice_widget)
+                    notice_group.add(notice_row)
+
+                shortcuts_page.add(notice_group)
+
+            for group in self.shortcuts_editor_page.iter_groups():
+                parent = group.get_parent()
+                if parent is not None:
+                    remove_method = getattr(parent, 'remove', None)
+                    if callable(remove_method):
+                        remove_method(group)
+                    else:
+                        remove_child = getattr(parent, 'remove_child', None)
+                        if callable(remove_child):
+                            remove_child(group)
+                shortcuts_page.add(group)
+            logger.debug(
+                "Added shortcut editor widget with %d groups", groups_added
+            )
+
+            try:
+                self.shortcuts_editor_page.set_pass_through_enabled(
+                    getattr(self, '_pass_through_enabled', False)
+                )
+            except Exception:
+                pass
+
+            logger.info(f"Shortcut editor successfully added to preferences with {groups_added} groups")
+        except Exception as e:
+            logger.error(f"Failed to create shortcut editor: {e}", exc_info=True)
+            # Add a fallback message to the shortcuts page
+            fallback_group = Adw.PreferencesGroup(title=_("Shortcut Editor"))
+            fallback_row = Adw.ActionRow()
+            fallback_row.set_title(_("Shortcut Editor Unavailable"))
+            fallback_row.set_subtitle(_("The shortcut editor could not be loaded. Please check the logs for details."))
+            fallback_group.add(fallback_row)
+            shortcuts_page.add(fallback_group)
+
+        return shortcuts_page
+
+    def _add_advanced_operation_mode_group(self, advanced_page):
+        """Add the Operation Mode group to the Advanced page."""
+        # Operation mode selection
+        operation_group = Adw.PreferencesGroup(title=_("Operation Mode"))
+
+
+        # Default mode row
+        self.default_mode_row = Adw.ActionRow()
+        self.default_mode_row.set_title(_("Default Mode"))
+        self.default_mode_row.set_subtitle(_("SSH Pilot loads and modifies ~/.ssh/config"))
+        self.default_mode_radio = Gtk.CheckButton()
+
+
+        # Isolated mode row
+        self.isolated_mode_row = Adw.ActionRow()
+        self.isolated_mode_row.set_title(_("Isolated Mode"))
+        config_path = get_config_dir()
+        self.isolated_mode_row.set_subtitle(
+            _("SSH Pilot stores its configuration file in {path}/").format(path=config_path)
+        )
+        self.isolated_mode_radio = Gtk.CheckButton()
+
+        # Group the radios for exclusive selection
+        self.isolated_mode_radio.set_group(self.default_mode_radio)
+
+        self.default_mode_row.add_prefix(self.default_mode_radio)
+        self.default_mode_row.set_activatable_widget(self.default_mode_radio)
+
+        operation_group.add(self.default_mode_row)
+
+        self.isolated_mode_row.add_prefix(self.isolated_mode_radio)
+        self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
+        operation_group.add(self.isolated_mode_row)
+
+        use_isolated = bool(self.config.get_setting('ssh.use_isolated_config', False))
+        self.isolated_mode_radio.set_active(use_isolated)
+        self.default_mode_radio.set_active(not use_isolated)
+
+        self.default_mode_radio.connect('toggled', self.on_operation_mode_toggled)
+        self.isolated_mode_radio.connect('toggled', self.on_operation_mode_toggled)
+
+        self._update_operation_mode_styles()
+
+        advanced_page.add(operation_group)
+
+    def _add_advanced_behavior_group(self, advanced_page):
+        """Add the Application Behavior group to the Advanced page."""
+        # Application behavior group
+        behavior_group = Adw.PreferencesGroup(title=_("Application Behavior"))
+
+        # Confirm before disconnecting
+        self.confirm_disconnect_switch = Adw.SwitchRow()
+        self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
+        self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
+        self.confirm_disconnect_switch.set_active(
+            self.config.get_setting('confirm-disconnect', True)
+        )
+        self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
+        behavior_group.add(self.confirm_disconnect_switch)
+
+        # ssh.agent_preload_keys stays on by default (no Preferences toggle):
+        # the terminal worker force-unlocks configured identities into the
+        # agent so locked gcr keys cannot fall through to the system askpass.
+
+        advanced_page.add(behavior_group)
+
+    def _add_advanced_logging_group(self, advanced_page):
+        """Add the Logging group to the Advanced page."""
+        # Logging group ------------------------------------------------
+        logging_group = Adw.PreferencesGroup(title=_("Logging"))
+        logging_group.set_description(
+            _("Controls how verbose sshPilot is in the console and the rotated log file. "
+            "The command-line flags --verbose / --quiet always override this.")
+        )
+
+        self.logging_level_row = Adw.ComboRow()
+        self.logging_level_row.set_title(_("Log Level"))
+        self.logging_level_row.set_subtitle(
+            _("Default is concise; switch to Debug if you're filing a bug or chasing an issue")
+        )
+        log_levels_model = Gtk.StringList()
+        log_levels_model.append("Info — concise (recommended)")
+        log_levels_model.append("Debug — verbose")
+        self.logging_level_row.set_model(log_levels_model)
+        saved_level = str(
+            self.config.get_setting('logging.level', 'info') or 'info'
+        ).lower()
+        self.logging_level_row.set_selected(1 if saved_level == 'debug' else 0)
+        self.logging_level_row.connect(
+            'notify::selected', self.on_logging_level_changed
+        )
+        logging_group.add(self.logging_level_row)
+        advanced_page.add(logging_group)
+
+    def _add_security_secrets_group(self, security_page):
+        """Add the Secret Storage group to the Security page."""
+        # Secret storage backend selection
+        secrets_group = Adw.PreferencesGroup(
+            title=_("Secret Storage"),
+            description=_(
+                "Where sshPilot stores passwords and key passphrases. "
+                "Switching does not migrate existing secrets.\n"
+                "Note: Bitwarden/Vaultwarden keep the unlocked session token in the "
+                "environment while sshPilot runs, so other programs running as your "
+                "user can read the vault until you quit."
+            ),
+        )
+        self.secret_backend_row = Adw.ComboRow()
+        self.secret_backend_row.set_title(_("Secret storage backend"))
+        try:
+            from .secret_storage import get_secret_manager
+            self._secret_backend_mgr = get_secret_manager()
+            registered = self._secret_backend_mgr.registered_backends()
+        except Exception:
+            self._secret_backend_mgr = None
+            registered = []
+        current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
+        if current_backend.strip().lower() == 'vaultwarden':
+            current_backend = 'bitwarden'   # merged into one bw backend
+        self._secret_backend_labels = {
+            'libsecret': _("System keyring (libsecret)"),
+            'keyring': _("System keyring"),
+            'pass': _("pass (password store)"),
+            'bitwarden': _("Bitwarden / Vaultwarden (bw CLI)"),
+            'rbw': _("Bitwarden via rbw (agent)"),
+            'keepassxc': _("KeePass database (.kdbx)"),
+            'agent': _("SSH Agent Only"),
+        }
+        # Offer EVERY registered backend (not just the available ones). Unavailable
+        # ones are labelled so the choice is honest.
+        preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
+        ordered_names = [n for n in preferred_order if n in registered]
+        ordered_names += [n for n in registered if n not in preferred_order]
+        self._secret_backend_ids = ['auto'] + ordered_names
+        self._secret_backend_ordered = ordered_names
+        # Keep an unknown saved backend visible so the UI matches the config.
+        if current_backend not in self._secret_backend_ids:
+            self._secret_backend_ids.append(current_backend)
+            self._secret_backend_ordered = ordered_names + [current_backend]
+        # Probing availability (keyring/keepassxc is_available) costs ~400ms on
+        # the main thread, so show every backend without the "(unavailable)"
+        # suffix now and refine off-thread once the window is up.
+        self._set_secret_backend_model(set(self._secret_backend_ids))
+        try:
+            current_index = self._secret_backend_ids.index(current_backend)
+        except ValueError:
+            current_index = 0
+        self.secret_backend_row.set_selected(current_index)
+        self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
+        secrets_group.add(self.secret_backend_row)
+
+        self.bw_status_row = Adw.ActionRow()
+        self.bw_status_row.set_title(_("Bitwarden status"))
+        self.bw_status_row.set_subtitle(_("Checking…"))
+        self._bw_status_btn = Gtk.Button(label=_("Set up…"))
+        self._bw_status_btn.set_valign(Gtk.Align.CENTER)
+        self._bw_status_btn.connect('clicked', self.on_bw_setup_clicked)
+        self.bw_status_row.add_suffix(self._bw_status_btn)
+        self._bw_logout_btn = Gtk.Button(label=_("Log out"))
+        self._bw_logout_btn.set_valign(Gtk.Align.CENTER)
+        self._bw_logout_btn.add_css_class('destructive-action')
+        self._bw_logout_btn.connect('clicked', self.on_bw_logout_clicked)
+        self.bw_status_row.add_suffix(self._bw_logout_btn)
+        secrets_group.add(self.bw_status_row)
+
+        # rbw (github.com/doy/rbw) status + setup — only shown for the rbw backend.
+        self.rbw_status_row = Adw.ActionRow()
+        self.rbw_status_row.set_title(_("rbw status"))
+        self.rbw_status_row.set_subtitle(_("Checking…"))
+        self._rbw_status_btn = Gtk.Button(label=_("Set up…"))
+        self._rbw_status_btn.set_valign(Gtk.Align.CENTER)
+        self._rbw_status_btn.connect('clicked', self.on_rbw_setup_clicked)
+        self.rbw_status_row.add_suffix(self._rbw_status_btn)
+        self._rbw_lock_btn = Gtk.Button(label=_("Lock"))
+        self._rbw_lock_btn.set_valign(Gtk.Align.CENTER)
+        self._rbw_lock_btn.connect('clicked', self.on_rbw_lock_clicked)
+        self.rbw_status_row.add_suffix(self._rbw_lock_btn)
+        secrets_group.add(self.rbw_status_row)
+
+        # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR) — a data dir for a
+        # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
+        # Only shown when the Bitwarden backend is selected.
+        self.bw_profile_row = Adw.EntryRow(title=_("bw data directory (account/profile)"))
+        self.bw_profile_row.set_text(
+            str(self.config.get_setting('secrets.bitwarden.profile', '') or '')
+        )
+        try:
+            from .platform_utils import is_flatpak
+            flatpak_note = _(
+                " Under Flatpak, use the host path (e.g. /home/you/.config/Bitwarden CLI) "
+                "or leave empty for the host default — the app runs `bw` on the host."
+            ) if is_flatpak() else ""
+            self.bw_profile_row.set_tooltip_text(_(
+                "Optional. Path to a `bw` data directory (BITWARDENCLI_APPDATA_DIR) for "
+                "a specific account. Empty = the default account. Leave empty for a "
+                "single Bitwarden account.{flatpak_note}"
+            ).format(flatpak_note=flatpak_note))
+        except Exception:
+            pass
+        browse_btn = Gtk.Button(icon_name='folder-open-symbolic')
+        browse_btn.set_valign(Gtk.Align.CENTER)
+        browse_btn.add_css_class('flat')
+        browse_btn.set_tooltip_text(_("Choose data directory"))
+        browse_btn.connect('clicked', self.on_bw_profile_browse)
+        self.bw_profile_row.add_suffix(browse_btn)
+        self.bw_profile_row.connect('changed', self.on_bw_profile_changed)
+        secrets_group.add(self.bw_profile_row)
+
+        # KeePass (.kdbx) database + optional key file — only shown for the KeePassXC
+        # backend. The master password is typed per launch (not stored here).
+        self.kdbx_db_row = Adw.EntryRow(title=_("KeePass database (.kdbx)"))
+        self.kdbx_db_row.set_text(
+            str(self.config.get_setting('secrets.keepassxc.database', '') or ''))
+        kdbx_new_btn = Gtk.Button(icon_name='document-new-symbolic')
+        kdbx_new_btn.set_valign(Gtk.Align.CENTER)
+        kdbx_new_btn.add_css_class('flat')
+        kdbx_new_btn.set_tooltip_text(_("Create new database"))
+        kdbx_new_btn.connect('clicked', self.on_kdbx_create_database)
+        self.kdbx_db_row.add_suffix(kdbx_new_btn)
+        kdbx_db_btn = Gtk.Button(icon_name='document-open-symbolic')
+        kdbx_db_btn.set_valign(Gtk.Align.CENTER)
+        kdbx_db_btn.add_css_class('flat')
+        kdbx_db_btn.set_tooltip_text(_("Choose database file"))
+        kdbx_db_btn.connect('clicked', self.on_kdbx_database_browse)
+        self.kdbx_db_row.add_suffix(kdbx_db_btn)
+        self.kdbx_db_row.connect('changed', self.on_kdbx_database_changed)
+        secrets_group.add(self.kdbx_db_row)
+
+        self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
+        self.kdbx_keyfile_row.set_text(
+            str(self.config.get_setting('secrets.keepassxc.keyfile', '') or ''))
+        kdbx_kf_btn = Gtk.Button(icon_name='document-open-symbolic')
+        kdbx_kf_btn.set_valign(Gtk.Align.CENTER)
+        kdbx_kf_btn.add_css_class('flat')
+        kdbx_kf_btn.set_tooltip_text(_("Choose key file"))
+        kdbx_kf_btn.connect('clicked', self.on_kdbx_keyfile_browse)
+        self.kdbx_keyfile_row.add_suffix(kdbx_kf_btn)
+        self.kdbx_keyfile_row.connect('changed', self.on_kdbx_keyfile_changed)
+        secrets_group.add(self.kdbx_keyfile_row)
+
+        # Idle minutes before a session-backed vault (Bitwarden/Vaultwarden)
+        # re-asks for the master password. 0 = keep unlocked until app exit.
+        self.secret_session_timeout_row = Adw.SpinRow.new_with_range(0, 1440, 5)
+        self.secret_session_timeout_row.set_title(_("Vault lock timeout (minutes)"))
+        self.secret_session_timeout_row.set_subtitle(
+            _("Re-ask for the master password after this idle time. 0 = until app exits.")
+        )
+        self.secret_session_timeout_row.set_value(
+            int(self.config.get_setting('secrets.session_timeout', 0) or 0)
+        )
+        self.secret_session_timeout_row.connect(
+            'notify::value', self.on_secret_session_timeout_changed
+        )
+        secrets_group.add(self.secret_session_timeout_row)
+
+        # Forget a remembered master password (saved in the OS keyring via the unlock
+        # dialog's "Remember" option). This is the only way to clear it once saved,
+        # since auto-unlock then skips the dialog. Shown for session-backed backends.
+        self.forget_master_row = Adw.ActionRow(title=_("Saved master password"))
+        forget_btn = Gtk.Button(label=_("Forget"))
+        forget_btn.set_valign(Gtk.Align.CENTER)
+        forget_btn.add_css_class('destructive-action')
+        forget_btn.connect('clicked', self.on_forget_master_password)
+        self.forget_master_row.add_suffix(forget_btn)
+        self._forget_master_btn = forget_btn
+        secrets_group.add(self.forget_master_row)
+
+        self.agent_no_store_row = Adw.ActionRow()
+        self.agent_no_store_row.set_title(_("No secret storage"))
+        self.agent_no_store_row.set_subtitle(_(
+            "Passwords and passphrases are not saved by sshPilot. Use ssh-agent "
+            "and SSH's own prompts instead."
+        ))
+        secrets_group.add(self.agent_no_store_row)
+
+        # Show the bw/timeout/forget rows only when they apply to the
+        # currently-selected backend. Backend probes (``bw status``, rbw, …)
+        # run only when the user opens this page — not on every Settings open.
+        self._update_secret_rows_visibility(current_backend, defer_status_probe=True)
+
+        security_page.add(secrets_group)
+
+    def _add_security_identity_group(self, security_page):
+        """Add the Identity Provider group to the Security page."""
+
+        # --- SSH identity provider (parallel to Secret Storage) ---
+        identity_group = Adw.PreferencesGroup(
+            title=_("SSH Identity"),
+            description=_(
+                "Default identity provider whose agent/keys are offered to "
+                "connections. The per-connection key is set on each connection "
+                "(IdentityFile); this is the global default."
+            ),
+        )
+        self.identity_provider_row = Adw.ComboRow()
+        self.identity_provider_row.set_title(_("Default SSH agent"))
+        try:
+            from .identity import get_identity_manager
+            _imgr = get_identity_manager()
+            id_registered = _imgr.registered_providers()
+            id_available = {p.name for p in _imgr.available_providers()}
+        except Exception:
+            id_registered = ['system-agent']
+            id_available = set()
+        id_labels = {'onepassword': _("1Password")}
+        current_provider = str(
+            self.config.get_setting('identity.provider', 'auto')
+        ).strip().lower()
+        # 'auto' already means the system ssh-agent, so it is not listed twice;
+        # 'file-key' is per-key, not a global default. 'custom' is a free-form socket.
+        id_order = [n for n in id_registered
+                    if n not in ('system-agent', 'file-key')]
+        self._identity_provider_ids = ['auto'] + id_order + ['custom']
+        id_model = Gtk.StringList()
+        id_model.append(_("Automatic (system ssh-agent)"))
+        for name in id_order:
+            label = id_labels.get(name, name)
+            if name not in id_available:
+                label = _("{provider} (unavailable)").format(provider=label)
+            id_model.append(label)
+        id_model.append(_("Custom socket…"))
+        if current_provider not in self._identity_provider_ids:
+            self._identity_provider_ids.append(current_provider)
+            id_model.append(_("{provider} (unavailable)").format(
+                provider=id_labels.get(current_provider, current_provider)))
+        self.identity_provider_row.set_model(id_model)
+        try:
+            id_index = self._identity_provider_ids.index(current_provider)
+        except ValueError:
+            id_index = 0
+        self.identity_provider_row.set_selected(id_index)
+        self.identity_provider_row.connect(
+            'notify::selected', self.on_identity_provider_changed)
+        identity_group.add(self.identity_provider_row)
+
+        # Custom agent socket — only shown when "Custom socket…" is selected. Written
+        # as a global `Host *` IdentityAgent directive to ~/.ssh/config.
+        self.identity_agent_socket_row = Adw.EntryRow(
+            title=_("Custom agent socket (IdentityAgent)"))
+        self.identity_agent_socket_row.set_text(
+            str(self.config.get_setting('identity.agent_socket', '') or ''))
+        self.identity_agent_socket_row.connect(
+            'changed', self.on_identity_agent_socket_changed)
+        identity_group.add(self.identity_agent_socket_row)
+        self._update_identity_rows_visibility(current_provider)
+
+        security_page.add(identity_group)
+
+    def _build_advanced_preferences_page(self):
+        """Build the Advanced preferences page."""
+        advanced_page = Adw.PreferencesPage()
+        advanced_page.set_title(_("Advanced"))
+        advanced_page.set_icon_name("applications-system-symbolic")
+
+        self._add_advanced_operation_mode_group(advanced_page)
+        self._add_advanced_behavior_group(advanced_page)
+        self._add_advanced_logging_group(advanced_page)
+        return advanced_page
+
+    def _build_security_preferences_page(self):
+        """Build the Security & Credentials preferences page."""
+        security_page = Adw.PreferencesPage()
+        security_page.set_title(_("Security & Credentials"))
+        security_page.set_icon_name("dialog-password-symbolic")
+
+        self._add_security_secrets_group(security_page)
+        self._add_security_identity_group(security_page)
+        self._secrets_page_id = self._page_id("Security & Credentials")
+        return security_page
+
+
+    def _build_ssh_settings_preferences_page(self):
+        """Build the SSH Options preferences page."""
+        ssh_settings_page = Adw.PreferencesPage()
+        ssh_settings_page.set_title("SSH")
+        ssh_settings_page.set_icon_name("network-workgroup-symbolic")
+
+        help_group = Adw.PreferencesGroup()
+        help_row = Adw.ActionRow()
+        help_row.set_title(_("Custom SSH Options"))
+        help_row.set_subtitle(
+            _("These settings override values from your ~/.ssh/config.")
+        )
+        if hasattr(help_row, "set_activatable"):
+            help_row.set_activatable(False)
+        if hasattr(help_row, "set_selectable"):
+            help_row.set_selectable(False)
+        help_group.add(help_row)
+
+        advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
+
+        # Connect timeout
+        self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
+        self.connect_timeout_row.set_title(_("Connect Timeout (s)"))
+        connect_timeout_value = self.config.get_setting('ssh.connection_timeout', None)
+        try:
+            connect_timeout_value = int(connect_timeout_value)
+        except (TypeError, ValueError):
+            connect_timeout_value = 0
+        if connect_timeout_value < 0:
+            connect_timeout_value = 0
+        self.connect_timeout_row.set_value(connect_timeout_value)
+        advanced_group.add(self.connect_timeout_row)
+
+        # Connection attempts
+        self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
+        self.connection_attempts_row.set_title(_("Connection Attempts"))
+        connection_attempts_value = self.config.get_setting('ssh.connection_attempts', None)
+        try:
+            connection_attempts_value = int(connection_attempts_value)
+        except (TypeError, ValueError):
+            connection_attempts_value = 0
+        if connection_attempts_value < 0:
+            connection_attempts_value = 0
+        self.connection_attempts_row.set_value(connection_attempts_value)
+        advanced_group.add(self.connection_attempts_row)
+
+        # Default keepalive opt-out. When on (default) and the user hasn't
+        # set an explicit ServerAlive interval below or in ~/.ssh/config,
+        # SSH Pilot applies a sane default so dropped links are detected.
+        self.apply_default_keepalive_row = Adw.SwitchRow()
+        self.apply_default_keepalive_row.set_title(_("Apply default keepalive"))
+        self.apply_default_keepalive_row.set_subtitle(
+            _("Detect dropped connections automatically when no ServerAlive "
+            "value is set here or in ~/.ssh/config. Explicit values always win.")
+        )
+        self.apply_default_keepalive_row.set_active(
+            bool(self.config.get_setting('ssh.apply_default_keepalive', True))
+        )
+        advanced_group.add(self.apply_default_keepalive_row)
+
+        # Keepalive interval
+        self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
+        self.keepalive_interval_row.set_title(_("ServerAlive Interval (s)"))
+        keepalive_interval_value = self.config.get_setting('ssh.keepalive_interval', None)
+        try:
+            keepalive_interval_value = int(keepalive_interval_value)
+        except (TypeError, ValueError):
+            keepalive_interval_value = 0
+        if keepalive_interval_value < 0:
+            keepalive_interval_value = 0
+        self.keepalive_interval_row.set_value(keepalive_interval_value)
+        advanced_group.add(self.keepalive_interval_row)
+
+        # Keepalive count max
+        self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
+        self.keepalive_count_row.set_title(_("ServerAlive CountMax"))
+        keepalive_count_value = self.config.get_setting('ssh.keepalive_count_max', None)
+        try:
+            keepalive_count_value = int(keepalive_count_value)
+        except (TypeError, ValueError):
+            keepalive_count_value = 0
+        if keepalive_count_value < 0:
+            keepalive_count_value = 0
+        self.keepalive_count_row.set_value(keepalive_count_value)
+        advanced_group.add(self.keepalive_count_row)
+
+        # Strict host key checking
+        self.strict_host_row = Adw.ComboRow()
+        self.strict_host_row.set_title(_("StrictHostKeyChecking"))
+        strict_model = Gtk.StringList()
+        for item in ["accept-new", "yes", "no", "ask"]:
+            strict_model.append(item)
+        self.strict_host_row.set_model(strict_model)
+        # Map current value
+        current_strict = str(self.config.get_setting('ssh.strict_host_key_checking', 'accept-new'))
+        try:
+            idx = ["accept-new", "yes", "no", "ask"].index(current_strict)
+        except ValueError:
+            idx = 0
+        self.strict_host_row.set_selected(idx)
+        advanced_group.add(self.strict_host_row)
+
+        # BatchMode (non-interactive)
+        self.batch_mode_row = Adw.SwitchRow()
+        self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
+        self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', False)))
+        advanced_group.add(self.batch_mode_row)
+
+        # Compression
+        self.compression_row = Adw.SwitchRow()
+        self.compression_row.set_title(_("Enable Compression (-C)"))
+        self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', False)))
+        advanced_group.add(self.compression_row)
+
+        # Connection multiplexing (ControlMaster). When on, the first
+        # connection to a host opens a master socket that later connections
+        # reuse (no re-handshake) — faster reconnects and chatty operations.
+        self.controlmaster_row = Adw.SwitchRow()
+        self.controlmaster_row.set_title(_("Enable SSH connection multiplexing"))
+        self.controlmaster_row.set_subtitle(
+            _("Reuse one connection per host (ControlMaster) for faster reconnects")
+        )
+        self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
+        advanced_group.add(self.controlmaster_row)
+
+        # SSH verbosity (-v levels)
+        self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
+        self.verbosity_row.set_title(_("SSH Verbosity (-v)"))
+        self.verbosity_row.set_value(int(self.config.get_setting('ssh.verbosity', 0)))
+        advanced_group.add(self.verbosity_row)
+
+        # Debug logging toggle
+        self.debug_enabled_row = Adw.SwitchRow()
+        self.debug_enabled_row.set_title(_("Enable SSH Debug Logging"))
+        self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
+        advanced_group.add(self.debug_enabled_row)
+
+
+        # Reset button
+        # Add spacing before reset button
+        advanced_group.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
+        # Use Adw.ActionRow for proper spacing and layout
+        reset_row = Adw.ActionRow()
+        reset_row.set_title(_("Reset Advanced SSH Settings"))
+        reset_row.set_subtitle(_("Restore all advanced SSH settings to their default values"))
+
+        reset_btn = Gtk.Button.new_with_label("Reset")
+        reset_btn.add_css_class('destructive-action')
+        reset_btn.set_valign(Gtk.Align.CENTER)
+        reset_btn.connect('clicked', self.on_reset_advanced_ssh)
+        reset_row.add_suffix(reset_btn)
+
+        advanced_group.add(reset_row)
+
+        ssh_settings_page.add(help_group)
+        ssh_settings_page.add(advanced_group)
+
+        # Ensure shortcut overview controls reflect current state
+        self._set_shortcut_controls_enabled(not self._pass_through_enabled)
+
+        return ssh_settings_page
+
+    def _build_file_management_preferences_page(self):
+        """Build the File Management preferences page."""
+        # Create File Management preferences page
+        file_management_page = Adw.PreferencesPage()
+        file_management_page.set_title(_("File Management"))
+        file_management_page.set_icon_name("folder-symbolic")
+
+        # File Management group
+        if has_internal_file_manager():
+            file_manager_group = Adw.PreferencesGroup(title=_("File Manager Options"))
+            file_manager_group.set_description(
+                _("These preferences only affect sshPilot's built-in SFTP file manager.")
+            )
+
+            self.force_internal_file_manager_row = None
+            if should_show_force_internal_file_manager_toggle():
+                self.force_internal_file_manager_row = Adw.SwitchRow()
+                self.force_internal_file_manager_row.set_title(_("Always Use Built-in File Manager"))
+                self.force_internal_file_manager_row.set_subtitle(
+                    _("Use the in-app file manager even when system integrations are available")
+                )
+                self.force_internal_file_manager_row.set_active(
+                    bool(self.config.get_setting('file_manager.force_internal', False))
+                )
+                self.force_internal_file_manager_row.connect(
+                    'notify::active', self.on_force_internal_file_manager_changed
+                )
+
+                file_manager_group.add(self.force_internal_file_manager_row)
+
+            self.open_file_manager_externally_row = Adw.SwitchRow()
+            self.open_file_manager_externally_row.set_title(_("Open File Manager in Separate Window"))
+            self.open_file_manager_externally_row.set_subtitle(
+                _("Show the built-in file manager in its own window instead of a tab")
+            )
+            self.open_file_manager_externally_row.set_active(
+                bool(self.config.get_setting('file_manager.open_externally', False))
+            )
+            self.open_file_manager_externally_row.connect(
+                'notify::active', self.on_open_file_manager_externally_changed
+            )
+
+            file_manager_group.add(self.open_file_manager_externally_row)
+
+            file_manager_defaults = {}
+            try:
+                defaults = self.config.get_default_config()
+                file_manager_defaults = defaults.get('file_manager', {}) if isinstance(defaults, dict) else {}
+            except Exception:
+                file_manager_defaults = {}
+
+            file_manager_config: Dict[str, Any] = {}
+            if hasattr(self.config, 'get_file_manager_config'):
+                try:
+                    file_manager_config = self.config.get_file_manager_config() or {}
+                except Exception as exc:
+                    logger.debug("Failed to read file manager configuration: %s", exc)
+                    file_manager_config = {}
+
+            def _fm_default_int(key: str, fallback: int = 0) -> int:
+                value = 0
+                if isinstance(file_manager_defaults, dict):
+                    try:
+                        value = int(file_manager_defaults.get(key, fallback))
+                    except (TypeError, ValueError):
+                        value = fallback
+                else:
+                    value = fallback
+                return value if value >= 0 else fallback
+
+            def _fm_config_int(key: str, fallback: int) -> int:
+                if isinstance(file_manager_config, dict):
+                    try:
+                        value = int(file_manager_config.get(key, fallback))
+                    except (TypeError, ValueError):
+                        value = fallback
+                    if value < 0:
+                        return fallback
+                    return value
+                return fallback
+
+            keepalive_interval_default = _fm_default_int('sftp_keepalive_interval', 0)
+            keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
+            keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
+
+            sftp_advanced_group = Adw.PreferencesGroup(title=_("Advanced SFTP Settings"))
+            sftp_advanced_group.set_description(
+                _("Fine-tune options that only apply to sshPilot's built-in SFTP file manager.")
+            )
+
+
+            self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
+            self.sftp_keepalive_interval_row.set_title(_("SFTP Keepalive Interval (seconds)"))
+            self.sftp_keepalive_interval_row.set_subtitle(
+                _("How often the built-in file manager sends keepalives. "
+                "Set to 0 to disable.")
+            )
+            self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
+            sftp_advanced_group.add(self.sftp_keepalive_interval_row)
+
+
+            keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
+            keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
+            keepalive_count_value = max(0, min(keepalive_count_value, 10))
+
+            self.sftp_keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
+            self.sftp_keepalive_count_row.set_title(_("SFTP Keepalive Retry Limit"))
+            self.sftp_keepalive_count_row.set_subtitle(
+                _("Number of failed keepalives tolerated by the built-in file "
+                "manager before raising an error.")
+            )
+            self.sftp_keepalive_count_row.set_value(keepalive_count_value)
+            sftp_advanced_group.add(self.sftp_keepalive_count_row)
+
+
+            connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
+            connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
+            connect_timeout_value = max(0, min(connect_timeout_value, 600))
+
+            self.sftp_connect_timeout_row = Adw.SpinRow.new_with_range(0, 600, 1)
+            self.sftp_connect_timeout_row.set_title(_("SFTP Connection Timeout (seconds)"))
+            self.sftp_connect_timeout_row.set_subtitle(
+                _("Time allowed for the built-in file manager to establish a "
+                "session; 0 uses the default.")
+            )
+            self.sftp_connect_timeout_row.set_value(connect_timeout_value)
+            sftp_advanced_group.add(self.sftp_connect_timeout_row)
+
+
+            self._update_external_file_manager_row()
+            file_management_page.add(file_manager_group)
+            file_management_page.add(sftp_advanced_group)
+        else:
+            # If no internal file manager, create empty page with message
+            no_file_manager_group = Adw.PreferencesGroup(title=_("File Manager"))
+            no_file_manager_row = Adw.ActionRow()
+            no_file_manager_row.set_title(_("File Manager Not Available"))
+            no_file_manager_row.set_subtitle(_("Built-in file manager is not available on this system"))
+            no_file_manager_group.add(no_file_manager_row)
+            file_management_page.add(no_file_manager_group)
+        return file_management_page
+
+    def _build_updates_preferences_page(self):
+        """Build the Updates preferences page."""
+        # Updates page
+        updates_page = Adw.PreferencesPage()
+        updates_page.set_title(_("Updates"))
+        updates_page.set_icon_name("software-update-available-symbolic")
+
+        updates_group = Adw.PreferencesGroup(title=_("Update Notifications"))
+        updates_group.set_description(_("Configure how SSH Pilot checks for updates"))
+
+        # Check for updates on startup switch
+        self.check_updates_switch = Adw.SwitchRow()
+        self.check_updates_switch.set_title(_("Check for updates on startup"))
+        self.check_updates_switch.set_subtitle(_("Automatically check for new versions when the application starts"))
+        self.check_updates_switch.set_active(
+            self.config.get_setting('updates.check_on_startup', True)
+        )
+        self.check_updates_switch.connect('notify::active', self.on_check_updates_changed)
+        updates_group.add(self.check_updates_switch)
+
+        updates_page.add(updates_group)
+        return updates_page
+
     def setup_preferences(self):
         """Set up preferences UI with current values"""
         try:
-            # Create Terminal preferences page
-            terminal_page = Adw.PreferencesPage()
-            terminal_page.set_title(_("Terminal"))
-            terminal_page.set_icon_name("utilities-terminal-symbolic")
-            
-            # Terminal appearance group
-            appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
-            
-            # Font selection row
-            self.font_row = Adw.ActionRow()
-            self.font_row.set_title(_("Font"))
-            current_font = self.config.get_setting('terminal.font', 'Monospace 12')
-            self.font_row.set_subtitle(current_font)
-            
-            font_button = Gtk.Button()
-            font_button.set_label(_("Choose"))
-            font_button.set_valign(Gtk.Align.CENTER)
-            font_button.connect('clicked', self.on_font_button_clicked)
-            self.font_row.add_suffix(font_button)
-            
-            appearance_group.add(self.font_row)
-            
-            # Terminal color scheme
-            self.color_scheme_row = Adw.ComboRow()
-            self.color_scheme_row.set_title(_("Color Scheme"))
-            self.color_scheme_row.set_subtitle(_("Terminal color theme"))
-            
-            # Names come straight from Config.terminal_themes (single source of truth)
-            themes = getattr(self.config, 'terminal_themes', {}) or {}
-            color_schemes = Gtk.StringList()
-            for key in SCHEME_KEYS:
-                color_schemes.append(themes.get(key, {}).get('name', key))
-            self.color_scheme_row.set_model(color_schemes)
-
-            # Select the saved scheme; fall back to the first entry if unknown
-            current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-            try:
-                current_index = SCHEME_KEYS.index(current_scheme_key)
-            except ValueError:
-                current_index = 0
-                self.config.set_setting('terminal.theme', SCHEME_KEYS[0])
-            self.color_scheme_row.set_selected(current_index)
-
-            self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
-
-            appearance_group.add(self.color_scheme_row)
-
-            self._initialize_encoding_selector(appearance_group)
-
-            # Color scheme preview
-            preview_group = Adw.PreferencesGroup(title=_("Preview"))
-            preview_group.set_margin_top(18)  # Add more spacing above "Preview" label
-            
-            # Create preview terminal widget
-            self.color_preview_terminal = Gtk.DrawingArea()
-            self.color_preview_terminal.set_draw_func(self.draw_color_preview)
-            self.color_preview_terminal.set_size_request(400, 120)
-            self.color_preview_terminal.add_css_class("terminal-preview")
-            
-            # Create a standard Adwaita container with rounded corners
-            preview_container = Adw.Bin()
-            preview_container.add_css_class("card")
-            preview_container.set_margin_top(6)  # Reduce spacing between label and preview
-            
-            # Add some margin around the preview
-            preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            preview_box.set_margin_top(12)
-            preview_box.set_margin_bottom(12)
-            preview_box.set_margin_start(12)
-            preview_box.set_margin_end(12)
-            preview_box.append(self.color_preview_terminal)
-            
-            preview_container.set_child(preview_box)
-            preview_group.add(preview_container)
-            appearance_group.add(preview_group)
-            terminal_page.add(appearance_group)
-
-            # Terminal backend selection group
-            backend_group = Adw.PreferencesGroup(title=_("Backend"))
-            
-            # Build backend choices
-            self._backend_choice_data = self._build_backend_choices()
-            
-            # Create combo row for backend selection
-            self.backend_row = Adw.ComboRow()
-            self.backend_row.set_title(_("Terminal Backend"))
-            self.backend_row.set_subtitle(_("Choose the terminal rendering backend"))
-            
-            # Create model from choices
-            backend_model = Gtk.StringList()
-            for choice in self._backend_choice_data:
-                backend_model.append(choice['label'])
-            self.backend_row.set_model(backend_model)
-            
-            # Set current backend
-            current_backend = self.config.get_setting('terminal.backend', 'vte')
-            # Reset to VTE if pyxterm is configured on macOS (not supported)
-            if is_macos() and current_backend and current_backend.lower() == 'pyxterm':
-                current_backend = 'vte'
-                self.config.set_setting('terminal.backend', 'vte')
-            current_index = 0
-            for i, choice in enumerate(self._backend_choice_data):
-                if choice['id'] == current_backend:
-                    current_index = i
-                    break
-            self.backend_row.set_selected(current_index)
-            self._backend_last_valid_index = current_index
-            self._update_backend_row_subtitle(current_index)
-            
-            # Connect change handler
-            self.backend_row.connect('notify::selected', self._on_backend_row_changed)
-            
-            backend_group.add(self.backend_row)
-            terminal_page.add(backend_group)
-
-            keyboard_group = Adw.PreferencesGroup(title=_("Keyboard"))
-
-            self.pass_through_switch = Adw.SwitchRow()
-            self.pass_through_switch.set_title(_("Terminal Shortcut Pass-through"))
-            self.pass_through_switch.set_subtitle(
-                _("Disable all keyboard shortcuts, pass all key events directly to terminal")
-            )
-            pass_through_active = bool(self.config.get_setting('terminal.pass_through_mode', False))
-            self._pass_through_enabled = pass_through_active
-            self.pass_through_switch.set_active(pass_through_active)
-            self.pass_through_switch.connect('notify::active', self.on_pass_through_mode_toggled)
-            keyboard_group.add(self.pass_through_switch)
-
-            self.autocomplete_switch = Adw.SwitchRow()
-            self.autocomplete_switch.set_title(_("Command autocomplete"))
-            self.autocomplete_switch.set_subtitle(
-                _("Suggest commands from history and snippets as you type (embedded terminal)")
-            )
-            self.autocomplete_switch.set_active(
-                bool(self.config.get_setting('terminal.autocomplete', True))
-            )
-            self.autocomplete_switch.connect('notify::active', self.on_autocomplete_toggled)
-            keyboard_group.add(self.autocomplete_switch)
-
-            self.autocomplete_remote_switch = Adw.SwitchRow()
-            self.autocomplete_remote_switch.set_title(_("Suggest from remote history"))
-            self.autocomplete_remote_switch.set_subtitle(
-                _("Also fetch the remote host's shell history over SSH (applies to new tabs)")
-            )
-            self.autocomplete_remote_switch.set_active(
-                bool(self.config.get_setting('terminal.autocomplete_remote', False))
-            )
-            self.autocomplete_remote_switch.connect(
-                'notify::active', self.on_autocomplete_remote_toggled)
-            keyboard_group.add(self.autocomplete_remote_switch)
-
-            terminal_page.add(keyboard_group)
-
-            # Mouse behavior group
-            mouse_group = Adw.PreferencesGroup(title=_("Mouse"))
-
-            self.copy_on_select_switch = Adw.SwitchRow()
-            self.copy_on_select_switch.set_title(_("Copy on selection"))
-            self.copy_on_select_switch.set_subtitle(
-                _("Automatically copy selected text to the clipboard")
-            )
-            copy_on_select_active = bool(self.config.get_setting('terminal.copy_on_select', False))
-            self.copy_on_select_switch.set_active(copy_on_select_active)
-            self.copy_on_select_switch.connect('notify::active', self.on_copy_on_select_toggled)
-            mouse_group.add(self.copy_on_select_switch)
-
-            self.paste_on_right_click_switch = Adw.SwitchRow()
-            self.paste_on_right_click_switch.set_title(_("Paste on right-click"))
-            self.paste_on_right_click_switch.set_subtitle(
-                _("Right-click pastes; Shift+right-click opens the menu")
-            )
-            paste_on_right_click_active = bool(self.config.get_setting('terminal.paste_on_right_click', False))
-            self.paste_on_right_click_switch.set_active(paste_on_right_click_active)
-            self.paste_on_right_click_switch.connect(
-                'notify::active', self.on_paste_on_right_click_toggled
-            )
-            mouse_group.add(self.paste_on_right_click_switch)
-
-            terminal_page.add(mouse_group)
-
-            # Preferred Terminal group (shown when external terminals are available)
-            if not should_hide_external_terminal_options():
-                terminal_choice_group = Adw.PreferencesGroup(title=_("Preferred Terminal"))
-                
-                # Radio buttons for terminal choice
-                self.builtin_terminal_radio = Gtk.CheckButton(label=_("Use built-in terminal"))
-                self.builtin_terminal_radio.set_can_focus(True)
-                self.external_terminal_radio = Gtk.CheckButton(label=_("Use other terminal"))
-                self.external_terminal_radio.set_can_focus(True)
-                
-                # Make them behave like radio buttons
-                self.external_terminal_radio.set_group(self.builtin_terminal_radio)
-                
-                # Set current preference
-                use_external = self.config.get_setting('use-external-terminal', False)
-                if use_external:
-                    self.external_terminal_radio.set_active(True)
-                else:
-                    self.builtin_terminal_radio.set_active(True)
-                
-                # Connect radio button changes
-                self.builtin_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
-                self.external_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
-                
-                # Add radio buttons to group
-                terminal_choice_group.add(self.builtin_terminal_radio)
-                terminal_choice_group.add(self.external_terminal_radio)
-                
-                # External terminal dropdown and custom path
-                self.external_terminal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-                self.external_terminal_box.set_margin_start(24)
-                self.external_terminal_box.set_margin_top(6)
-                self.external_terminal_box.set_margin_bottom(6)
-                
-                # Terminal dropdown
-                self.terminal_dropdown = Gtk.DropDown()
-                self.terminal_dropdown.set_can_focus(True)
-                
-                # Populate dropdown with available terminals
-                self._populate_terminal_dropdown()
-                
-                # Set current selection
-                current_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
-                
-                # Connect dropdown changes
-                self.terminal_dropdown.connect('notify::selected', self.on_terminal_dropdown_changed)
-                
-                # Custom path entry (initially hidden)
-                self.custom_terminal_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-                self.custom_terminal_entry = Gtk.Entry()
-                self.custom_terminal_entry.set_placeholder_text("/usr/bin/gnome-terminal")
-                self.custom_terminal_entry.set_can_focus(True)
-                
-                # Set current custom path if any
-                custom_path = self.config.get_setting('custom-terminal-path', '')
-                if custom_path:
-                    self.custom_terminal_entry.set_text(custom_path)
-                
-                # Connect custom path changes
-                self.custom_terminal_entry.connect('changed', self.on_custom_terminal_path_changed)
-                
-                self.custom_terminal_box.append(self.custom_terminal_entry)
-                
-                # Add dropdown and custom path to box
-                self.external_terminal_box.append(self.terminal_dropdown)
-                self.external_terminal_box.append(self.custom_terminal_box)
-                
-                # Now set the dropdown selection and show/hide custom path entry
-                self._set_terminal_dropdown_selection(current_terminal)
-                
-                # Initial sensitivity will be set by radio button state
-                
-                # Add to group
-                terminal_choice_group.add(self.external_terminal_box)
-                
-                # Set initial sensitivity based on radio button state
-                self.external_terminal_box.set_sensitive(self.external_terminal_radio.get_active())
-                
-                terminal_page.add(terminal_choice_group)
-            
-            # Create Groups preferences page
-            groups_page = Adw.PreferencesPage()
-            groups_page.set_title(_("Groups"))
-            groups_page.set_icon_name("folder-open-symbolic")
-
-            group_appearance_group = Adw.PreferencesGroup(title=_("Group Appearance"))
-
-            # Sidebar group color display mode
-            self._group_color_display_values = ['fill', 'badge', 'bar', 'dot']
-            self.group_color_display_row = Adw.ComboRow()
-            self.group_color_display_row.set_title(_("Sidebar Group Colors"))
-            self.group_color_display_row.set_subtitle(
-                _("Choose how group colors are shown in the sidebar")
-            )
-
-            color_display_options = Gtk.StringList()
-            color_display_options.append("Colored Rows")
-            color_display_options.append("Color Badges")
-            color_display_options.append("Accent Bars")
-            color_display_options.append("Color Dots")
-            self.group_color_display_row.set_model(color_display_options)
-
-            current_mode = 'fill'
-            try:
-                current_mode = str(
-                    self.config.get_setting('ui.group_color_display', 'fill')
-                ).lower()
-            except Exception:
-                current_mode = 'fill'
-            if current_mode not in self._group_color_display_values:
-                current_mode = 'fill'
-
-            self._group_display_sync = True
-            try:
-                self.group_color_display_row.set_selected(
-                    self._group_color_display_values.index(current_mode)
-                )
-            finally:
-                self._group_display_sync = False
-
-            self.group_color_display_row.connect(
-                'notify::selected', self.on_group_color_display_changed
-            )
-
-            group_appearance_group.add(self.group_color_display_row)
-
-            # Toggle for extending group colors to member connection rows
-            self.child_rows_color_row = Adw.SwitchRow()
-            self.child_rows_color_row.set_title(_("Use Group Color for Child Rows"))
-            self.child_rows_color_row.set_subtitle(
-                _("Apply the group's color to its connection rows as well")
-            )
-            try:
-                child_rows_pref = bool(
-                    self.config.get_setting('ui.group_color_child_rows', False)
-                )
-            except Exception:
-                child_rows_pref = False
-            self.child_rows_color_row.set_active(child_rows_pref)
-            self.child_rows_color_row.connect(
-                'notify::active', self.on_group_color_child_rows_toggled
-            )
-            group_appearance_group.add(self.child_rows_color_row)
-
-            # Toggle for coloring tabs using group colors
-            self.tab_group_color_row = Adw.SwitchRow()
-            self.tab_group_color_row.set_title(_("Show Group Color in Tabs"))
-            self.tab_group_color_row.set_subtitle(
-                _("Show the selected group's color badge in the terminal tabs")
-            )
-            try:
-                tab_pref = bool(
-                    self.config.get_setting('ui.use_group_color_in_tab', False)
-                )
-            except Exception:
-                tab_pref = False
-            self.tab_group_color_row.set_active(tab_pref)
-            self.tab_group_color_row.connect(
-                'notify::active', self.on_use_group_color_in_tab_toggled
-            )
-            group_appearance_group.add(self.tab_group_color_row)
-
-            # Toggle for applying group colors inside terminals
-            self.terminal_group_color_row = Adw.SwitchRow()
-            self.terminal_group_color_row.set_title(_("Use Group Color in Terminals"))
-            self.terminal_group_color_row.set_subtitle(
-                _("Use parent group's color as terminal background")
-            )
-            try:
-                terminal_pref = bool(
-                    self.config.get_setting('ui.use_group_color_in_terminal', False)
-                )
-            except Exception:
-                terminal_pref = False
-            self.terminal_group_color_row.set_active(terminal_pref)
-            self.terminal_group_color_row.connect(
-                'notify::active', self.on_use_group_color_in_terminal_toggled
-            )
-            group_appearance_group.add(self.terminal_group_color_row)
-
-
-            groups_page.add(group_appearance_group)
-
-            # Group display layout section (shown after appearance options)
-            group_layout_group = Adw.PreferencesGroup(title=_("Group Layout"))
-
-            self._group_display_preview_rows = {}
-            _install_group_display_preview_css()
-
-            self._group_display_modes = ['fullwidth', 'nested']
-            self.group_display_toggle_row = Adw.ActionRow()
-            self.group_display_toggle_row.set_title(_("Group Display"))
-            self.group_display_toggle_row.set_subtitle(
-                _("Choose how grouped connections appear in the sidebar")
-            )
-            self.group_display_toggle_row.set_activatable(False)
-            try:
-                self.group_display_toggle_row.set_focusable(False)
-            except Exception:
-                pass
-
-            self.group_display_toggle_group = None
-            self._group_display_toggle_controller = None
-
-            if hasattr(Adw, 'ToggleGroup') and hasattr(Adw.ToggleGroup, 'new'):
-                toggle_group = Adw.ToggleGroup.new()
-                toggle_group.set_orientation(Gtk.Orientation.HORIZONTAL)
-                toggle_group.add_css_class('linked')
-                toggle_group.set_hexpand(True)
-                try:
-                    toggle_group.set_homogeneous(True)
-                except Exception:
-                    pass
-
-                self.group_display_toggle_fullwidth = Adw.Toggle.new()
-                self.group_display_toggle_fullwidth.props.name = 'fullwidth'
-                self.group_display_toggle_fullwidth.set_label(_('Fullwidth'))
-
-                self.group_display_toggle_nested = Adw.Toggle.new()
-                self.group_display_toggle_nested.props.name = 'nested'
-                self.group_display_toggle_nested.set_label(_('Nested'))
-
-                toggle_group.add(self.group_display_toggle_fullwidth)
-                toggle_group.add(self.group_display_toggle_nested)
-                self.group_display_toggle_row.set_child(toggle_group)
-
-                self.group_display_toggle_group = toggle_group
-                self._group_display_toggle_controller = toggle_group
-            else:
-                fallback_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-                fallback_box.add_css_class('linked')
-                fallback_box.set_hexpand(True)
-
-                self.group_display_toggle_fullwidth = Gtk.ToggleButton(label=_('Fullwidth'))
-                self.group_display_toggle_fullwidth.props.name = 'fullwidth'
-                self.group_display_toggle_fullwidth.set_hexpand(True)
-
-                self.group_display_toggle_nested = Gtk.ToggleButton(label=_('Nested'))
-                self.group_display_toggle_nested.props.name = 'nested'
-                self.group_display_toggle_nested.set_hexpand(True)
-
-                fallback_box.append(self.group_display_toggle_fullwidth)
-                fallback_box.append(self.group_display_toggle_nested)
-                self.group_display_toggle_row.set_child(fallback_box)
-
-                buttons = {
-                    'fullwidth': self.group_display_toggle_fullwidth,
-                    'nested': self.group_display_toggle_nested,
-                }
-                self._group_display_toggle_controller = _GroupDisplayToggleFallback(buttons)
-
-            current_display_mode = 'nested'
-            try:
-                current_display_mode = str(
-                    self.config.get_setting('ui.group_row_display', 'nested')
-                ).lower()
-            except Exception:
-                current_display_mode = 'nested'
-            if current_display_mode not in self._group_display_modes:
-                current_display_mode = 'nested'
-
-            self._group_display_toggle_sync = True
-            try:
-                if self._group_display_toggle_controller:
-                    self._group_display_toggle_controller.set_active_name(current_display_mode)
-            finally:
-                self._group_display_toggle_sync = False
-
-            if isinstance(self._group_display_toggle_controller, _GroupDisplayToggleFallback):
-                self._group_display_toggle_controller.connect(
-                    self.on_group_row_display_changed
-                )
-            elif self.group_display_toggle_group is not None:
-                self.group_display_toggle_group.connect(
-                    'notify::active-name', self.on_group_row_display_changed
-                )
-
-            group_layout_group.add(self.group_display_toggle_row)
-
-            # Preview showing both layout styles
-            self.group_display_preview_row = Adw.ActionRow()
-            self.group_display_preview_row.set_title(_("Layout Preview"))
-            self.group_display_preview_row.set_activatable(False)
-            try:
-                self.group_display_preview_row.set_focusable(False)
-            except Exception:
-                pass
-
-            preview_stack = Gtk.Stack()
-            preview_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-            preview_stack.set_transition_duration(150)
-
-            preview_stack.set_margin_top(4)
-            preview_stack.set_margin_bottom(4)
-
-            preview_fullwidth_wrapper, preview_fullwidth_row = self._create_group_display_preview(
-                'fullwidth', 'Fullwidth'
-            )
-            preview_nested_wrapper, preview_nested_row = self._create_group_display_preview(
-                'nested', 'Nested'
-            )
-
-            preview_stack.add_named(preview_fullwidth_wrapper, 'fullwidth')
-            preview_stack.add_named(preview_nested_wrapper, 'nested')
-
-            self.group_display_preview_row.set_child(preview_stack)
-            self._group_display_preview_rows = {
-                'fullwidth': preview_fullwidth_row,
-                'nested': preview_nested_row,
-            }
-            self._group_display_preview_stack = preview_stack
-
-            self._update_group_display_preview(current_display_mode)
-
-            group_layout_group.add(self.group_display_preview_row)
-            groups_page.add(group_layout_group)
-
-            # Create Interface preferences page
-            interface_page = Adw.PreferencesPage()
-            interface_page.set_title(_("Interface"))
-            interface_page.set_icon_name("applications-graphics-symbolic")
-
-            # Language — first group on the page. Always shown: "System Default"
-            # plus every catalogue that can actually be loaded (English included,
-            # it being the source language and the way back from a translation).
-            language_group = Adw.PreferencesGroup(title=_("Language"))
-
-            self.language_row = Adw.ComboRow()
-            self.language_row.set_title(_("Interface Language"))
-            self.language_row.set_subtitle(_("Takes effect after restarting SSH Pilot"))
-
-            language_names = Gtk.StringList()
-            language_names.append(_("System Default"))
-            self._language_codes = ['']
-            for code, display_name in available_languages():
-                language_names.append(display_name)
-                self._language_codes.append(code)
-            self.language_row.set_model(language_names)
-
-            saved_language = self.config.get_setting('ui.language', '')
-            if saved_language and saved_language not in self._language_codes:
-                # The catalogue went away (uninstalled, or the setting came from
-                # another machine). Showing "System Default" while the config
-                # still names the missing language would keep applying it at
-                # every start, so clear it to match what the row now says.
-                logger.info("Interface language %r is no longer installed; "
-                            "falling back to the system default", saved_language)
-                self.config.set_setting('ui.language', '')
-                saved_language = ''
-            self.language_row.set_selected(
-                self._language_codes.index(saved_language)
-                if saved_language in self._language_codes else 0)
-
-            self.language_row.connect('notify::selected', self.on_language_changed)
-            language_group.add(self.language_row)
-            interface_page.add(language_group)
-
-            # App startup behavior
-            startup_group = Adw.PreferencesGroup(title=_("App Startup"))
-
-            # Radio buttons for startup behavior
-            self.terminal_startup_radio = Gtk.CheckButton(label=_("Show Terminal"))
-            self.terminal_startup_radio.set_can_focus(True)
-            self.welcome_startup_radio = Gtk.CheckButton(label=_("Show Start Page"))
-            self.welcome_startup_radio.set_can_focus(True)
-            self.previous_session_startup_radio = Gtk.CheckButton(label=_("Restore previous session"))
-            self.previous_session_startup_radio.set_can_focus(True)
-            self.saved_session_startup_radio = Gtk.CheckButton(label=_("Open a saved session"))
-            self.saved_session_startup_radio.set_can_focus(True)
-
-            # Make them behave like radio buttons
-            self.welcome_startup_radio.set_group(self.terminal_startup_radio)
-            self.previous_session_startup_radio.set_group(self.terminal_startup_radio)
-            self.saved_session_startup_radio.set_group(self.terminal_startup_radio)
-
-            # Set current preference (default to welcome/start page)
-            startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
-            if startup_behavior == 'terminal':
-                self.terminal_startup_radio.set_active(True)
-            elif startup_behavior == 'previous-session':
-                self.previous_session_startup_radio.set_active(True)
-            elif startup_behavior == 'saved-session':
-                self.saved_session_startup_radio.set_active(True)
-            else:
-                self.welcome_startup_radio.set_active(True)
-
-            # Selector for which saved session to open on startup. This is built
-            # as a plain (non-row) widget so it stacks directly below the
-            # "Open a saved session" radio rather than being hoisted into the
-            # group's internal list box above the bare check buttons.
-            self._startup_session_names = []
-            try:
-                session_manager = getattr(self.parent_window, 'session_manager', None)
-                if session_manager is not None:
-                    self._startup_session_names = list(session_manager.list_session_names())
-            except Exception:
-                self._startup_session_names = []
-
-            session_model = Gtk.StringList()
-            if self._startup_session_names:
-                for name in self._startup_session_names:
-                    session_model.append(name)
-            else:
-                session_model.append("(no saved sessions)")
-
-            self.startup_session_row = Gtk.DropDown()
-            self.startup_session_row.set_model(session_model)
-            self.startup_session_row.set_valign(Gtk.Align.CENTER)
-
-            self.startup_session_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            self.startup_session_box.set_margin_start(24)
-            self.startup_session_box.set_margin_top(2)
-            session_label = Gtk.Label(label=_("Saved session"))
-            session_label.set_xalign(0)
-            session_label.set_hexpand(True)
-            self.startup_session_box.append(session_label)
-            self.startup_session_box.append(self.startup_session_row)
-
-            selected_session = self.config.get_setting('app-startup-session-name', '')
-            if selected_session in self._startup_session_names:
-                self.startup_session_row.set_selected(
-                    self._startup_session_names.index(selected_session)
-                )
-            self.startup_session_box.set_sensitive(
-                bool(self._startup_session_names)
-                and self.saved_session_startup_radio.get_active()
-            )
-
-            # Connect radio button changes
-            self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
-            self.welcome_startup_radio.connect('toggled', self.on_startup_behavior_changed)
-            self.previous_session_startup_radio.connect('toggled', self.on_startup_behavior_changed)
-            self.saved_session_startup_radio.connect('toggled', self.on_startup_behavior_changed)
-            self.startup_session_row.connect('notify::selected', self.on_startup_session_changed)
-
-            # Add radio buttons to group, with the saved-session selector placed
-            # immediately below its corresponding radio option.
-            startup_group.add(self.terminal_startup_radio)
-            startup_group.add(self.welcome_startup_radio)
-            startup_group.add(self.previous_session_startup_radio)
-            startup_group.add(self.saved_session_startup_radio)
-            startup_group.add(self.startup_session_box)
-
-            interface_page.add(startup_group)
-
-            # Appearance group
-            interface_appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
-
-            # Theme selection
-            self.theme_row = Adw.ComboRow()
-            self.theme_row.set_title(_("Application Theme"))
-            self.theme_row.set_subtitle(_("Choose light, dark, or follow system theme"))
-
-            themes = Gtk.StringList()
-            themes.append("Follow System")
-            themes.append("Light")
-            themes.append("Dark")
-            self.theme_row.set_model(themes)
-            
-            # Load saved theme preference
-            saved_theme = self.config.get_setting('app-theme', 'default')
-            theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
-            self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
-
-            self.theme_row.connect('notify::selected', self.on_theme_changed)
-
-            interface_appearance_group.add(self.theme_row)
-
-
-            # Color overrides section
-            color_override_group = Adw.PreferencesGroup(title=_("Color Overrides"))
-            color_override_group.set_description(_("Override the accent color"))
-
-            # Accent color override
-            self.accent_color_row = Adw.ActionRow()
-            self.accent_color_row.set_title(_("Accent Color"))
-            self.accent_color_row.set_subtitle(_("Override the accent color for highlights"))
-
-            self.accent_color_button = Gtk.ColorButton()
-            self.accent_color_button.set_use_alpha(False)
-            self.accent_color_button.set_tooltip_text(_("Choose accent color"))
-            self.accent_color_button.set_valign(Gtk.Align.CENTER)
-            self.accent_color_button.set_size_request(60, 32)
-            self.accent_color_button.connect('color-set', self.on_accent_color_changed)
-            self.accent_color_row.add_suffix(self.accent_color_button)
-            color_override_group.add(self.accent_color_row)
-            
-            # Reset colors button
-            reset_colors_row = Adw.ActionRow()
-            reset_colors_row.set_title(_("Reset to Default"))
-            reset_colors_row.set_subtitle(_("Remove the accent override and use the system accent"))
-            
-            reset_button = Gtk.Button()
-            reset_button.set_label(_("Reset"))
-            reset_button.add_css_class("destructive-action")
-            reset_button.set_valign(Gtk.Align.CENTER)
-            reset_button.connect('clicked', self.on_reset_colors_clicked)
-            reset_colors_row.add_suffix(reset_button)
-            color_override_group.add(reset_colors_row)
-
-            interface_page.add(interface_appearance_group)
-            interface_page.add(color_override_group)
-
-            # Initialize color button states
-            self.refresh_color_buttons()
-            
-            # Window group
-            window_group = Adw.PreferencesGroup(title=_("Window"))
-
-            # Remember window size switch
-            remember_size_switch = Adw.SwitchRow()
-            remember_size_switch.set_title(_("Remember Window Size"))
-            remember_size_switch.set_subtitle(_("Restore window size on startup"))
-            remember_size_switch.set_active(True)
-            
-            window_group.add(remember_size_switch)
-            interface_page.add(window_group)
-
-            # Sidebar group (at bottom of Interface page)
-            sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
-            
-            # Maximum width slider
-            max_width_row = Adw.ActionRow()
-            max_width_row.set_title(_("Maximum Width"))
-            
-            # Load saved value or use default
-            saved_max_width = self.config.get_setting('ui.max-sidebar-width', 280)
-            
-            # Create a scale/slider for max width (100-800 sp)
-            max_width_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 100, 800, 10)
-            max_width_scale.set_draw_value(True)
-            max_width_scale.set_value_pos(Gtk.PositionType.RIGHT)
-            max_width_scale.set_size_request(200, -1)
-            max_width_scale.set_valign(Gtk.Align.CENTER)
-            max_width_scale.set_value(float(saved_max_width))
-            
-            # Update subtitle with current value
-            def update_subtitle(value):
-                max_width_row.set_subtitle(
-                    _("Adjust the maximum width of the sidebar ({width} sp)").format(width=int(value)))
-            
-            update_subtitle(saved_max_width)
-            
-            # Connect change handler
-            def on_max_width_changed(scale):
-                value = int(scale.get_value())
-                update_subtitle(value)
-                self.config.set_setting('ui.max-sidebar-width', value)
-                # Update main window if available
-                if self.parent_window and hasattr(self.parent_window, 'update_sidebar_max_width'):
-                    self.parent_window.update_sidebar_max_width(value)
-            
-            max_width_scale.connect('value-changed', on_max_width_changed)
-            
-            max_width_row.add_suffix(max_width_scale)
-            sidebar_group.add(max_width_row)
-
-            flat_rows_switch = Adw.SwitchRow()
-            flat_rows_switch.set_title(_("Flat Sidebar Rows"))
-            flat_rows_switch.set_subtitle(
-                _("Use flat list rows instead of cards in the connection sidebar")
-            )
-            flat_rows_switch.set_active(
-                bool(self.config.get_setting('ui.sidebar_flat_rows', False))
-            )
-            flat_rows_switch.connect(
-                'notify::active', self.on_sidebar_flat_rows_changed
-            )
-            sidebar_group.add(flat_rows_switch)
-            
-            # Display user@hostname toggle
-            show_user_hostname_switch = Adw.SwitchRow()
-            show_user_hostname_switch.set_title(_("Display user@hostname"))
-            show_user_hostname_switch.set_subtitle(_("Show username@hostname in connection rows"))
-            show_user_hostname_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_user_hostname', True)
-            )
-            show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
-            sidebar_group.add(show_user_hostname_switch)
-            
-            # Display connection count in groups toggle
-            show_group_count_switch = Adw.SwitchRow()
-            show_group_count_switch.set_title(_("Display Connection Count in Groups"))
-            show_group_count_switch.set_subtitle(_("Show the number of connections in each group"))
-            show_group_count_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_group_count', True)
-            )
-            show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
-            sidebar_group.add(show_group_count_switch)
-            
-            # Display connection status toggle
-            show_status_switch = Adw.SwitchRow()
-            show_status_switch.set_title(_("Display Connection Status"))
-            show_status_switch.set_subtitle(_("Show connection status indicator in connection rows"))
-            show_status_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_connection_status', True)
-            )
-            show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
-            sidebar_group.add(show_status_switch)
-            
-            # Display port forwarding labels toggle
-            show_port_forwarding_switch = Adw.SwitchRow()
-            show_port_forwarding_switch.set_title(_("Display Port Forwarding Labels"))
-            show_port_forwarding_switch.set_subtitle(_("Show port forwarding indicators (L/R/D) in connection rows"))
-            show_port_forwarding_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_port_forwarding', True)
-            )
-            show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
-            sidebar_group.add(show_port_forwarding_switch)
-            
-            # Display connection icon toggle
-            show_connection_icon_switch = Adw.SwitchRow()
-            show_connection_icon_switch.set_title(_("Display Connection Icon"))
-            show_connection_icon_switch.set_subtitle(_("Show the computer icon in connection rows"))
-            show_connection_icon_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_connection_icon', True)
-            )
-            show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
-            sidebar_group.add(show_connection_icon_switch)
-
-            # Display group icon toggle
-            show_group_icon_switch = Adw.SwitchRow()
-            show_group_icon_switch.set_title(_("Display Group Icon"))
-            show_group_icon_switch.set_subtitle(_("Show the folder icon in group rows"))
-            show_group_icon_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_group_icon', True)
-            )
-            show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
-            sidebar_group.add(show_group_icon_switch)
-            
-            interface_page.add(sidebar_group)
-
-            # Sidebar behavior
-            sidebar_behavior_group = Adw.PreferencesGroup(title=_("Sidebar behavior"))
-
-            hide_on_startup_switch = Adw.SwitchRow()
-            hide_on_startup_switch.set_title(_("Hide Sidebar on Startup"))
-            hide_on_startup_switch.set_subtitle(_("Start with the sidebar collapsed"))
-            hide_on_startup_switch.set_active(
-                bool(self.config.get_setting('ui.sidebar_hide_on_startup', False))
-            )
-            hide_on_startup_switch.connect(
-                'notify::active',
-                lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_startup', bool(r.get_active())),
-            )
-            sidebar_behavior_group.add(hide_on_startup_switch)
-
-            hide_on_terminal_switch = Adw.SwitchRow()
-            hide_on_terminal_switch.set_title(_("Hide When a Terminal Opens"))
-            hide_on_terminal_switch.set_subtitle(_("Collapse the sidebar when any session opens, including local terminals"))
-            hide_on_terminal_switch.set_active(
-                bool(self.config.get_setting('ui.sidebar_hide_on_terminal_open', False))
-            )
-            hide_on_terminal_switch.connect(
-                'notify::active',
-                lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_terminal_open', bool(r.get_active())),
-            )
-            sidebar_behavior_group.add(hide_on_terminal_switch)
-
-            show_when_no_tabs_switch = Adw.SwitchRow()
-            show_when_no_tabs_switch.set_title(_("Show When No Tab Is Open"))
-            show_when_no_tabs_switch.set_subtitle(_("Reveal the sidebar when returning to the welcome screen"))
-            show_when_no_tabs_switch.set_active(
-                bool(self.config.get_setting('ui.sidebar_show_when_no_tabs', False))
-            )
-            show_when_no_tabs_switch.connect(
-                'notify::active',
-                lambda r, _p: self.config.set_setting('ui.sidebar_show_when_no_tabs', bool(r.get_active())),
-            )
-            sidebar_behavior_group.add(show_when_no_tabs_switch)
-
-            interface_page.add(sidebar_behavior_group)
-
-            # Header bar button visibility
-            headerbar_group = Adw.PreferencesGroup(title=_("Header Bar Buttons"))
-
-            def _add_headerbar_switch(title, subtitle, key, default=True):
-                row = Adw.SwitchRow()
-                row.set_title(title)
-                row.set_subtitle(subtitle)
-                row.set_active(bool(self.config.get_setting(key, default)))
-
-                def _on_toggled(r, _p, _k=key):
-                    self.config.set_setting(_k, bool(r.get_active()))
-                    if self.parent_window and hasattr(self.parent_window, 'update_headerbar_buttons'):
-                        self.parent_window.update_headerbar_buttons()
-
-                row.connect('notify::active', _on_toggled)
-                headerbar_group.add(row)
-
-            _add_headerbar_switch(
-                "Split View Button",
-                "Show the split-view button (the grid icon that starts a split view)",
-                'ui.headerbar_show_split_view',
-                default=False,
-            )
-            _add_headerbar_switch(
-                "Commands Button",
-                "Show the command snippets toggle button",
-                'ui.headerbar_show_commands',
-            )
-            _add_headerbar_switch(
-                "Theme Menu",
-                "Show the application theme menu beside the commands button",
-                'ui.headerbar_show_theme_toggle',
-            )
-            _add_headerbar_switch(
-                "Local Terminal Button",
-                "Show the button that opens a local terminal",
-                'ui.headerbar_show_local_terminal',
-            )
-
-            interface_page.add(headerbar_group)
-
-            # Tips group at the bottom of the Interface page. Lets users
-            # re-enable the terminal tips banner after dismissing it with
-            # "Don't show again".
-            tips_group = Adw.PreferencesGroup(title=_("Tips"))
-            show_tips_switch = Adw.SwitchRow()
-            show_tips_switch.set_title(_("Show Terminal Tips"))
-            show_tips_switch.set_subtitle(_("Show usage tips in a banner when a terminal opens"))
-            show_tips_switch.set_active(
-                bool(self.config.get_setting('terminal.show_tips', True))
-            )
-            show_tips_switch.connect('notify::active', self.on_show_tips_toggled)
-            tips_group.add(show_tips_switch)
-            interface_page.add(tips_group)
-
-            # Shortcuts page with inline editor
-            shortcuts_page = Adw.PreferencesPage()
-            shortcuts_page.set_title(_("Shortcuts"))
-            shortcuts_page.set_icon_name("preferences-desktop-keyboard-shortcuts-symbolic")
-
-            shortcuts_intro_group = Adw.PreferencesGroup(title=_("Keyboard Shortcuts"))
-
-            shortcuts_button_row = Adw.ActionRow()
-            shortcuts_button_row.set_title(_("Shortcut Overview"))
-            shortcuts_button_row.set_subtitle(_("Open the shortcuts window for a full reference"))
-
-            shortcuts_button = Gtk.Button(label=_("Open"))
-            try:
-                shortcuts_button.add_css_class("flat")
-            except Exception:
-                pass
-            shortcuts_button.set_valign(Gtk.Align.CENTER)
-            shortcuts_button.connect('clicked', self.on_view_shortcuts_clicked)
-            shortcuts_button_row.add_suffix(shortcuts_button)
-            shortcuts_button_row.set_activatable_widget(shortcuts_button)
-
-            self._shortcuts_row = shortcuts_button_row
-            self._shortcuts_button = shortcuts_button
-
-            shortcuts_intro_group.add(shortcuts_button_row)
-            shortcuts_page.add(shortcuts_intro_group)
-
-            try:
-                self.shortcuts_editor_page = ShortcutsPreferencesPage(
-                    parent_widget=self.parent_window,
-                    app=self.parent_window.get_application() if self.parent_window else None,
-                    config=self.config,
-                    owner_window=self.parent_window,
-                )
-
-                groups_added = len(list(self.shortcuts_editor_page.iter_groups()))
-                self.shortcuts_editor_page.create_editor_widget()
-
-                notice_widget = getattr(
-                    self.shortcuts_editor_page, 'get_pass_through_notice_widget', None
-                )
-                if callable(notice_widget):
-                    notice_widget = notice_widget()
-                if notice_widget is not None:
-                    parent = notice_widget.get_parent()
-                    if parent is not None:
-                        remove_method = getattr(parent, 'remove', None)
-                        if callable(remove_method):
-                            remove_method(notice_widget)
-                        else:
-                            remove_child = getattr(parent, 'remove_child', None)
-                            if callable(remove_child):
-                                remove_child(notice_widget)
-
-                    # Create a preferences group for the notice widget
-                    # Adw.PreferencesGroup accepts Adw.ActionRow, so we need to wrap it
-                    notice_group = Adw.PreferencesGroup()
-                    
-                    # Try to add the widget directly first (works for some widget types)
-                    try:
-                        notice_group.add(notice_widget)
-                    except (TypeError, AttributeError):
-                        # If direct add fails, wrap in an ActionRow
-                        # For Banner/Label widgets, we'll create a simple row
-                        notice_row = Adw.ActionRow()
-                        notice_row.set_activatable(False)
-                        notice_row.set_selectable(False)
-                        # Set the notice widget as the child of the row
-                        notice_row.set_child(notice_widget)
-                        notice_group.add(notice_row)
-                    
-                    shortcuts_page.add(notice_group)
-
-                for group in self.shortcuts_editor_page.iter_groups():
-                    parent = group.get_parent()
-                    if parent is not None:
-                        remove_method = getattr(parent, 'remove', None)
-                        if callable(remove_method):
-                            remove_method(group)
-                        else:
-                            remove_child = getattr(parent, 'remove_child', None)
-                            if callable(remove_child):
-                                remove_child(group)
-                    shortcuts_page.add(group)
-                logger.debug(
-                    "Added shortcut editor widget with %d groups", groups_added
-                )
-
-                try:
-                    self.shortcuts_editor_page.set_pass_through_enabled(
-                        getattr(self, '_pass_through_enabled', False)
-                    )
-                except Exception:
-                    pass
-
-                logger.info(f"Shortcut editor successfully added to preferences with {groups_added} groups")
-            except Exception as e:
-                logger.error(f"Failed to create shortcut editor: {e}", exc_info=True)
-                # Add a fallback message to the shortcuts page
-                fallback_group = Adw.PreferencesGroup(title=_("Shortcut Editor"))
-                fallback_row = Adw.ActionRow()
-                fallback_row.set_title(_("Shortcut Editor Unavailable"))
-                fallback_row.set_subtitle(_("The shortcut editor could not be loaded. Please check the logs for details."))
-                fallback_group.add(fallback_row)
-                shortcuts_page.add(fallback_group)
-
-            # Advanced SSH settings
-            advanced_page = Adw.PreferencesPage()
-            advanced_page.set_title(_("Advanced"))
-            advanced_page.set_icon_name("applications-system-symbolic")
-
-            # Security & Credentials page — secret storage + identity provider live here
-            # (built below alongside the Advanced page, then registered as its own page).
-            security_page = Adw.PreferencesPage()
-            security_page.set_title(_("Security & Credentials"))
-            security_page.set_icon_name("dialog-password-symbolic")
-
-            # Operation mode selection
-            operation_group = Adw.PreferencesGroup(title=_("Operation Mode"))
-
-
-            # Default mode row
-            self.default_mode_row = Adw.ActionRow()
-            self.default_mode_row.set_title(_("Default Mode"))
-            self.default_mode_row.set_subtitle(_("SSH Pilot loads and modifies ~/.ssh/config"))
-            self.default_mode_radio = Gtk.CheckButton()
-
-
-            # Isolated mode row
-            self.isolated_mode_row = Adw.ActionRow()
-            self.isolated_mode_row.set_title(_("Isolated Mode"))
-            config_path = get_config_dir()
-            self.isolated_mode_row.set_subtitle(
-                _("SSH Pilot stores its configuration file in {path}/").format(path=config_path)
-            )
-            self.isolated_mode_radio = Gtk.CheckButton()
-
-            # Group the radios for exclusive selection
-            self.isolated_mode_radio.set_group(self.default_mode_radio)
-
-            self.default_mode_row.add_prefix(self.default_mode_radio)
-            self.default_mode_row.set_activatable_widget(self.default_mode_radio)
-
-            operation_group.add(self.default_mode_row)
-
-            self.isolated_mode_row.add_prefix(self.isolated_mode_radio)
-            self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
-            operation_group.add(self.isolated_mode_row)
-
-            use_isolated = bool(self.config.get_setting('ssh.use_isolated_config', False))
-            self.isolated_mode_radio.set_active(use_isolated)
-            self.default_mode_radio.set_active(not use_isolated)
-
-            self.default_mode_radio.connect('toggled', self.on_operation_mode_toggled)
-            self.isolated_mode_radio.connect('toggled', self.on_operation_mode_toggled)
-
-            self._update_operation_mode_styles()
-
-            advanced_page.add(operation_group)
-
-            # Secret storage backend selection
-            secrets_group = Adw.PreferencesGroup(
-                title=_("Secret Storage"),
-                description=_(
-                    "Where sshPilot stores passwords and key passphrases. "
-                    "Switching does not migrate existing secrets.\n"
-                    "Note: Bitwarden/Vaultwarden keep the unlocked session token in the "
-                    "environment while sshPilot runs, so other programs running as your "
-                    "user can read the vault until you quit."
-                ),
-            )
-            self.secret_backend_row = Adw.ComboRow()
-            self.secret_backend_row.set_title(_("Secret storage backend"))
-            try:
-                from .secret_storage import get_secret_manager
-                self._secret_backend_mgr = get_secret_manager()
-                registered = self._secret_backend_mgr.registered_backends()
-            except Exception:
-                self._secret_backend_mgr = None
-                registered = []
-            current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
-            if current_backend.strip().lower() == 'vaultwarden':
-                current_backend = 'bitwarden'   # merged into one bw backend
-            self._secret_backend_labels = {
-                'libsecret': _("System keyring (libsecret)"),
-                'keyring': _("System keyring"),
-                'pass': _("pass (password store)"),
-                'bitwarden': _("Bitwarden / Vaultwarden (bw CLI)"),
-                'rbw': _("Bitwarden via rbw (agent)"),
-                'keepassxc': _("KeePass database (.kdbx)"),
-                'agent': _("SSH Agent Only"),
-            }
-            # Offer EVERY registered backend (not just the available ones). Unavailable
-            # ones are labelled so the choice is honest.
-            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
-            ordered_names = [n for n in preferred_order if n in registered]
-            ordered_names += [n for n in registered if n not in preferred_order]
-            self._secret_backend_ids = ['auto'] + ordered_names
-            self._secret_backend_ordered = ordered_names
-            # Keep an unknown saved backend visible so the UI matches the config.
-            if current_backend not in self._secret_backend_ids:
-                self._secret_backend_ids.append(current_backend)
-                self._secret_backend_ordered = ordered_names + [current_backend]
-            # Probing availability (keyring/keepassxc is_available) costs ~400ms on
-            # the main thread, so show every backend without the "(unavailable)"
-            # suffix now and refine off-thread once the window is up.
-            self._set_secret_backend_model(set(self._secret_backend_ids))
-            try:
-                current_index = self._secret_backend_ids.index(current_backend)
-            except ValueError:
-                current_index = 0
-            self.secret_backend_row.set_selected(current_index)
-            self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
-            secrets_group.add(self.secret_backend_row)
-
-            self.bw_status_row = Adw.ActionRow()
-            self.bw_status_row.set_title(_("Bitwarden status"))
-            self.bw_status_row.set_subtitle(_("Checking…"))
-            self._bw_status_btn = Gtk.Button(label=_("Set up…"))
-            self._bw_status_btn.set_valign(Gtk.Align.CENTER)
-            self._bw_status_btn.connect('clicked', self.on_bw_setup_clicked)
-            self.bw_status_row.add_suffix(self._bw_status_btn)
-            self._bw_logout_btn = Gtk.Button(label=_("Log out"))
-            self._bw_logout_btn.set_valign(Gtk.Align.CENTER)
-            self._bw_logout_btn.add_css_class('destructive-action')
-            self._bw_logout_btn.connect('clicked', self.on_bw_logout_clicked)
-            self.bw_status_row.add_suffix(self._bw_logout_btn)
-            secrets_group.add(self.bw_status_row)
-
-            # rbw (github.com/doy/rbw) status + setup — only shown for the rbw backend.
-            self.rbw_status_row = Adw.ActionRow()
-            self.rbw_status_row.set_title(_("rbw status"))
-            self.rbw_status_row.set_subtitle(_("Checking…"))
-            self._rbw_status_btn = Gtk.Button(label=_("Set up…"))
-            self._rbw_status_btn.set_valign(Gtk.Align.CENTER)
-            self._rbw_status_btn.connect('clicked', self.on_rbw_setup_clicked)
-            self.rbw_status_row.add_suffix(self._rbw_status_btn)
-            self._rbw_lock_btn = Gtk.Button(label=_("Lock"))
-            self._rbw_lock_btn.set_valign(Gtk.Align.CENTER)
-            self._rbw_lock_btn.connect('clicked', self.on_rbw_lock_clicked)
-            self.rbw_status_row.add_suffix(self._rbw_lock_btn)
-            secrets_group.add(self.rbw_status_row)
-
-            # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR) — a data dir for a
-            # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
-            # Only shown when the Bitwarden backend is selected.
-            self.bw_profile_row = Adw.EntryRow(title=_("bw data directory (account/profile)"))
-            self.bw_profile_row.set_text(
-                str(self.config.get_setting('secrets.bitwarden.profile', '') or '')
-            )
-            try:
-                from .platform_utils import is_flatpak
-                flatpak_note = _(
-                    " Under Flatpak, use the host path (e.g. /home/you/.config/Bitwarden CLI) "
-                    "or leave empty for the host default — the app runs `bw` on the host."
-                ) if is_flatpak() else ""
-                self.bw_profile_row.set_tooltip_text(_(
-                    "Optional. Path to a `bw` data directory (BITWARDENCLI_APPDATA_DIR) for "
-                    "a specific account. Empty = the default account. Leave empty for a "
-                    "single Bitwarden account.{flatpak_note}"
-                ).format(flatpak_note=flatpak_note))
-            except Exception:
-                pass
-            browse_btn = Gtk.Button(icon_name='folder-open-symbolic')
-            browse_btn.set_valign(Gtk.Align.CENTER)
-            browse_btn.add_css_class('flat')
-            browse_btn.set_tooltip_text(_("Choose data directory"))
-            browse_btn.connect('clicked', self.on_bw_profile_browse)
-            self.bw_profile_row.add_suffix(browse_btn)
-            self.bw_profile_row.connect('changed', self.on_bw_profile_changed)
-            secrets_group.add(self.bw_profile_row)
-
-            # KeePass (.kdbx) database + optional key file — only shown for the KeePassXC
-            # backend. The master password is typed per launch (not stored here).
-            self.kdbx_db_row = Adw.EntryRow(title=_("KeePass database (.kdbx)"))
-            self.kdbx_db_row.set_text(
-                str(self.config.get_setting('secrets.keepassxc.database', '') or ''))
-            kdbx_new_btn = Gtk.Button(icon_name='document-new-symbolic')
-            kdbx_new_btn.set_valign(Gtk.Align.CENTER)
-            kdbx_new_btn.add_css_class('flat')
-            kdbx_new_btn.set_tooltip_text(_("Create new database"))
-            kdbx_new_btn.connect('clicked', self.on_kdbx_create_database)
-            self.kdbx_db_row.add_suffix(kdbx_new_btn)
-            kdbx_db_btn = Gtk.Button(icon_name='document-open-symbolic')
-            kdbx_db_btn.set_valign(Gtk.Align.CENTER)
-            kdbx_db_btn.add_css_class('flat')
-            kdbx_db_btn.set_tooltip_text(_("Choose database file"))
-            kdbx_db_btn.connect('clicked', self.on_kdbx_database_browse)
-            self.kdbx_db_row.add_suffix(kdbx_db_btn)
-            self.kdbx_db_row.connect('changed', self.on_kdbx_database_changed)
-            secrets_group.add(self.kdbx_db_row)
-
-            self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
-            self.kdbx_keyfile_row.set_text(
-                str(self.config.get_setting('secrets.keepassxc.keyfile', '') or ''))
-            kdbx_kf_btn = Gtk.Button(icon_name='document-open-symbolic')
-            kdbx_kf_btn.set_valign(Gtk.Align.CENTER)
-            kdbx_kf_btn.add_css_class('flat')
-            kdbx_kf_btn.set_tooltip_text(_("Choose key file"))
-            kdbx_kf_btn.connect('clicked', self.on_kdbx_keyfile_browse)
-            self.kdbx_keyfile_row.add_suffix(kdbx_kf_btn)
-            self.kdbx_keyfile_row.connect('changed', self.on_kdbx_keyfile_changed)
-            secrets_group.add(self.kdbx_keyfile_row)
-
-            # Idle minutes before a session-backed vault (Bitwarden/Vaultwarden)
-            # re-asks for the master password. 0 = keep unlocked until app exit.
-            self.secret_session_timeout_row = Adw.SpinRow.new_with_range(0, 1440, 5)
-            self.secret_session_timeout_row.set_title(_("Vault lock timeout (minutes)"))
-            self.secret_session_timeout_row.set_subtitle(
-                _("Re-ask for the master password after this idle time. 0 = until app exits.")
-            )
-            self.secret_session_timeout_row.set_value(
-                int(self.config.get_setting('secrets.session_timeout', 0) or 0)
-            )
-            self.secret_session_timeout_row.connect(
-                'notify::value', self.on_secret_session_timeout_changed
-            )
-            secrets_group.add(self.secret_session_timeout_row)
-
-            # Forget a remembered master password (saved in the OS keyring via the unlock
-            # dialog's "Remember" option). This is the only way to clear it once saved,
-            # since auto-unlock then skips the dialog. Shown for session-backed backends.
-            self.forget_master_row = Adw.ActionRow(title=_("Saved master password"))
-            forget_btn = Gtk.Button(label=_("Forget"))
-            forget_btn.set_valign(Gtk.Align.CENTER)
-            forget_btn.add_css_class('destructive-action')
-            forget_btn.connect('clicked', self.on_forget_master_password)
-            self.forget_master_row.add_suffix(forget_btn)
-            self._forget_master_btn = forget_btn
-            secrets_group.add(self.forget_master_row)
-
-            self.agent_no_store_row = Adw.ActionRow()
-            self.agent_no_store_row.set_title(_("No secret storage"))
-            self.agent_no_store_row.set_subtitle(_(
-                "Passwords and passphrases are not saved by sshPilot. Use ssh-agent "
-                "and SSH's own prompts instead."
-            ))
-            secrets_group.add(self.agent_no_store_row)
-
-            # Show the bw/timeout/forget rows only when they apply to the
-            # currently-selected backend. Backend probes (``bw status``, rbw, …)
-            # run only when the user opens this page — not on every Settings open.
-            self._update_secret_rows_visibility(current_backend, defer_status_probe=True)
-
-            security_page.add(secrets_group)
-            self._secrets_page_id = self._page_id("Security & Credentials")
-
-            # --- SSH identity provider (parallel to Secret Storage) ---
-            identity_group = Adw.PreferencesGroup(
-                title=_("SSH Identity"),
-                description=_(
-                    "Default identity provider whose agent/keys are offered to "
-                    "connections. The per-connection key is set on each connection "
-                    "(IdentityFile); this is the global default."
-                ),
-            )
-            self.identity_provider_row = Adw.ComboRow()
-            self.identity_provider_row.set_title(_("Default SSH agent"))
-            try:
-                from .identity import get_identity_manager
-                _imgr = get_identity_manager()
-                id_registered = _imgr.registered_providers()
-                id_available = {p.name for p in _imgr.available_providers()}
-            except Exception:
-                id_registered = ['system-agent']
-                id_available = set()
-            id_labels = {'onepassword': _("1Password")}
-            current_provider = str(
-                self.config.get_setting('identity.provider', 'auto')
-            ).strip().lower()
-            # 'auto' already means the system ssh-agent, so it is not listed twice;
-            # 'file-key' is per-key, not a global default. 'custom' is a free-form socket.
-            id_order = [n for n in id_registered
-                        if n not in ('system-agent', 'file-key')]
-            self._identity_provider_ids = ['auto'] + id_order + ['custom']
-            id_model = Gtk.StringList()
-            id_model.append(_("Automatic (system ssh-agent)"))
-            for name in id_order:
-                label = id_labels.get(name, name)
-                if name not in id_available:
-                    label = _("{provider} (unavailable)").format(provider=label)
-                id_model.append(label)
-            id_model.append(_("Custom socket…"))
-            if current_provider not in self._identity_provider_ids:
-                self._identity_provider_ids.append(current_provider)
-                id_model.append(_("{provider} (unavailable)").format(
-                    provider=id_labels.get(current_provider, current_provider)))
-            self.identity_provider_row.set_model(id_model)
-            try:
-                id_index = self._identity_provider_ids.index(current_provider)
-            except ValueError:
-                id_index = 0
-            self.identity_provider_row.set_selected(id_index)
-            self.identity_provider_row.connect(
-                'notify::selected', self.on_identity_provider_changed)
-            identity_group.add(self.identity_provider_row)
-
-            # Custom agent socket — only shown when "Custom socket…" is selected. Written
-            # as a global `Host *` IdentityAgent directive to ~/.ssh/config.
-            self.identity_agent_socket_row = Adw.EntryRow(
-                title=_("Custom agent socket (IdentityAgent)"))
-            self.identity_agent_socket_row.set_text(
-                str(self.config.get_setting('identity.agent_socket', '') or ''))
-            self.identity_agent_socket_row.connect(
-                'changed', self.on_identity_agent_socket_changed)
-            identity_group.add(self.identity_agent_socket_row)
-            self._update_identity_rows_visibility(current_provider)
-
-            security_page.add(identity_group)
-
-            # Application behavior group
-            behavior_group = Adw.PreferencesGroup(title=_("Application Behavior"))
-            
-            # Confirm before disconnecting
-            self.confirm_disconnect_switch = Adw.SwitchRow()
-            self.confirm_disconnect_switch.set_title(_("Confirm before disconnecting"))
-            self.confirm_disconnect_switch.set_subtitle(_("Show a confirmation dialog when disconnecting from a host"))
-            self.confirm_disconnect_switch.set_active(
-                self.config.get_setting('confirm-disconnect', True)
-            )
-            self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
-            behavior_group.add(self.confirm_disconnect_switch)
-
-            # ssh.agent_preload_keys stays on by default (no Preferences toggle):
-            # the terminal worker force-unlocks configured identities into the
-            # agent so locked gcr keys cannot fall through to the system askpass.
-
-            advanced_page.add(behavior_group)
-
-            # Logging group ------------------------------------------------
-            logging_group = Adw.PreferencesGroup(title=_("Logging"))
-            logging_group.set_description(
-                _("Controls how verbose sshPilot is in the console and the rotated log file. "
-                "The command-line flags --verbose / --quiet always override this.")
-            )
-
-            self.logging_level_row = Adw.ComboRow()
-            self.logging_level_row.set_title(_("Log Level"))
-            self.logging_level_row.set_subtitle(
-                _("Default is concise; switch to Debug if you're filing a bug or chasing an issue")
-            )
-            log_levels_model = Gtk.StringList()
-            log_levels_model.append("Info — concise (recommended)")
-            log_levels_model.append("Debug — verbose")
-            self.logging_level_row.set_model(log_levels_model)
-            saved_level = str(
-                self.config.get_setting('logging.level', 'info') or 'info'
-            ).lower()
-            self.logging_level_row.set_selected(1 if saved_level == 'debug' else 0)
-            self.logging_level_row.connect(
-                'notify::selected', self.on_logging_level_changed
-            )
-            logging_group.add(self.logging_level_row)
-            advanced_page.add(logging_group)
-
-            # File management preferences moved to dedicated page
-
-            ssh_settings_page = Adw.PreferencesPage()
-            ssh_settings_page.set_title("SSH")
-            ssh_settings_page.set_icon_name("network-workgroup-symbolic")
-
-            help_group = Adw.PreferencesGroup()
-            help_row = Adw.ActionRow()
-            help_row.set_title(_("Custom SSH Options"))
-            help_row.set_subtitle(
-                _("These settings override values from your ~/.ssh/config.")
-            )
-            if hasattr(help_row, "set_activatable"):
-                help_row.set_activatable(False)
-            if hasattr(help_row, "set_selectable"):
-                help_row.set_selectable(False)
-            help_group.add(help_row)
-
-            advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
-
-            # Connect timeout
-            self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
-            self.connect_timeout_row.set_title(_("Connect Timeout (s)"))
-            connect_timeout_value = self.config.get_setting('ssh.connection_timeout', None)
-            try:
-                connect_timeout_value = int(connect_timeout_value)
-            except (TypeError, ValueError):
-                connect_timeout_value = 0
-            if connect_timeout_value < 0:
-                connect_timeout_value = 0
-            self.connect_timeout_row.set_value(connect_timeout_value)
-            advanced_group.add(self.connect_timeout_row)
-
-            # Connection attempts
-            self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
-            self.connection_attempts_row.set_title(_("Connection Attempts"))
-            connection_attempts_value = self.config.get_setting('ssh.connection_attempts', None)
-            try:
-                connection_attempts_value = int(connection_attempts_value)
-            except (TypeError, ValueError):
-                connection_attempts_value = 0
-            if connection_attempts_value < 0:
-                connection_attempts_value = 0
-            self.connection_attempts_row.set_value(connection_attempts_value)
-            advanced_group.add(self.connection_attempts_row)
-
-            # Default keepalive opt-out. When on (default) and the user hasn't
-            # set an explicit ServerAlive interval below or in ~/.ssh/config,
-            # SSH Pilot applies a sane default so dropped links are detected.
-            self.apply_default_keepalive_row = Adw.SwitchRow()
-            self.apply_default_keepalive_row.set_title(_("Apply default keepalive"))
-            self.apply_default_keepalive_row.set_subtitle(
-                _("Detect dropped connections automatically when no ServerAlive "
-                "value is set here or in ~/.ssh/config. Explicit values always win.")
-            )
-            self.apply_default_keepalive_row.set_active(
-                bool(self.config.get_setting('ssh.apply_default_keepalive', True))
-            )
-            advanced_group.add(self.apply_default_keepalive_row)
-
-            # Keepalive interval
-            self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
-            self.keepalive_interval_row.set_title(_("ServerAlive Interval (s)"))
-            keepalive_interval_value = self.config.get_setting('ssh.keepalive_interval', None)
-            try:
-                keepalive_interval_value = int(keepalive_interval_value)
-            except (TypeError, ValueError):
-                keepalive_interval_value = 0
-            if keepalive_interval_value < 0:
-                keepalive_interval_value = 0
-            self.keepalive_interval_row.set_value(keepalive_interval_value)
-            advanced_group.add(self.keepalive_interval_row)
-
-            # Keepalive count max
-            self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
-            self.keepalive_count_row.set_title(_("ServerAlive CountMax"))
-            keepalive_count_value = self.config.get_setting('ssh.keepalive_count_max', None)
-            try:
-                keepalive_count_value = int(keepalive_count_value)
-            except (TypeError, ValueError):
-                keepalive_count_value = 0
-            if keepalive_count_value < 0:
-                keepalive_count_value = 0
-            self.keepalive_count_row.set_value(keepalive_count_value)
-            advanced_group.add(self.keepalive_count_row)
-
-            # Strict host key checking
-            self.strict_host_row = Adw.ComboRow()
-            self.strict_host_row.set_title(_("StrictHostKeyChecking"))
-            strict_model = Gtk.StringList()
-            for item in ["accept-new", "yes", "no", "ask"]:
-                strict_model.append(item)
-            self.strict_host_row.set_model(strict_model)
-            # Map current value
-            current_strict = str(self.config.get_setting('ssh.strict_host_key_checking', 'accept-new'))
-            try:
-                idx = ["accept-new", "yes", "no", "ask"].index(current_strict)
-            except ValueError:
-                idx = 0
-            self.strict_host_row.set_selected(idx)
-            advanced_group.add(self.strict_host_row)
-
-            # BatchMode (non-interactive)
-            self.batch_mode_row = Adw.SwitchRow()
-            self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
-            self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', False)))
-            advanced_group.add(self.batch_mode_row)
-
-            # Compression
-            self.compression_row = Adw.SwitchRow()
-            self.compression_row.set_title(_("Enable Compression (-C)"))
-            self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', False)))
-            advanced_group.add(self.compression_row)
-
-            # Connection multiplexing (ControlMaster). When on, the first
-            # connection to a host opens a master socket that later connections
-            # reuse (no re-handshake) — faster reconnects and chatty operations.
-            self.controlmaster_row = Adw.SwitchRow()
-            self.controlmaster_row.set_title(_("Enable SSH connection multiplexing"))
-            self.controlmaster_row.set_subtitle(
-                _("Reuse one connection per host (ControlMaster) for faster reconnects")
-            )
-            self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
-            advanced_group.add(self.controlmaster_row)
-
-            # SSH verbosity (-v levels)
-            self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
-            self.verbosity_row.set_title(_("SSH Verbosity (-v)"))
-            self.verbosity_row.set_value(int(self.config.get_setting('ssh.verbosity', 0)))
-            advanced_group.add(self.verbosity_row)
-
-            # Debug logging toggle
-            self.debug_enabled_row = Adw.SwitchRow()
-            self.debug_enabled_row.set_title(_("Enable SSH Debug Logging"))
-            self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
-            advanced_group.add(self.debug_enabled_row)
-
-
-            # Reset button
-            # Add spacing before reset button
-            advanced_group.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-            
-            # Use Adw.ActionRow for proper spacing and layout
-            reset_row = Adw.ActionRow()
-            reset_row.set_title(_("Reset Advanced SSH Settings"))
-            reset_row.set_subtitle(_("Restore all advanced SSH settings to their default values"))
-            
-            reset_btn = Gtk.Button.new_with_label("Reset")
-            reset_btn.add_css_class('destructive-action')
-            reset_btn.set_valign(Gtk.Align.CENTER)
-            reset_btn.connect('clicked', self.on_reset_advanced_ssh)
-            reset_row.add_suffix(reset_btn)
-            
-            advanced_group.add(reset_row)
-
-            ssh_settings_page.add(help_group)
-            ssh_settings_page.add(advanced_group)
-
-            # Ensure shortcut overview controls reflect current state
-            self._set_shortcut_controls_enabled(not self._pass_through_enabled)
-
-            # Create File Management preferences page
-            file_management_page = Adw.PreferencesPage()
-            file_management_page.set_title(_("File Management"))
-            file_management_page.set_icon_name("folder-symbolic")
-            
-            # File Management group
-            if has_internal_file_manager():
-                file_manager_group = Adw.PreferencesGroup(title=_("File Manager Options"))
-                file_manager_group.set_description(
-                    _("These preferences only affect sshPilot's built-in SFTP file manager.")
-                )
-
-                self.force_internal_file_manager_row = None
-                if should_show_force_internal_file_manager_toggle():
-                    self.force_internal_file_manager_row = Adw.SwitchRow()
-                    self.force_internal_file_manager_row.set_title(_("Always Use Built-in File Manager"))
-                    self.force_internal_file_manager_row.set_subtitle(
-                        _("Use the in-app file manager even when system integrations are available")
-                    )
-                    self.force_internal_file_manager_row.set_active(
-                        bool(self.config.get_setting('file_manager.force_internal', False))
-                    )
-                    self.force_internal_file_manager_row.connect(
-                        'notify::active', self.on_force_internal_file_manager_changed
-                    )
-
-                    file_manager_group.add(self.force_internal_file_manager_row)
-
-                self.open_file_manager_externally_row = Adw.SwitchRow()
-                self.open_file_manager_externally_row.set_title(_("Open File Manager in Separate Window"))
-                self.open_file_manager_externally_row.set_subtitle(
-                    _("Show the built-in file manager in its own window instead of a tab")
-                )
-                self.open_file_manager_externally_row.set_active(
-                    bool(self.config.get_setting('file_manager.open_externally', False))
-                )
-                self.open_file_manager_externally_row.connect(
-                    'notify::active', self.on_open_file_manager_externally_changed
-                )
-
-                file_manager_group.add(self.open_file_manager_externally_row)
-
-                file_manager_defaults = {}
-                try:
-                    defaults = self.config.get_default_config()
-                    file_manager_defaults = defaults.get('file_manager', {}) if isinstance(defaults, dict) else {}
-                except Exception:
-                    file_manager_defaults = {}
-
-                file_manager_config: Dict[str, Any] = {}
-                if hasattr(self.config, 'get_file_manager_config'):
-                    try:
-                        file_manager_config = self.config.get_file_manager_config() or {}
-                    except Exception as exc:
-                        logger.debug("Failed to read file manager configuration: %s", exc)
-                        file_manager_config = {}
-
-                def _fm_default_int(key: str, fallback: int = 0) -> int:
-                    value = 0
-                    if isinstance(file_manager_defaults, dict):
-                        try:
-                            value = int(file_manager_defaults.get(key, fallback))
-                        except (TypeError, ValueError):
-                            value = fallback
-                    else:
-                        value = fallback
-                    return value if value >= 0 else fallback
-
-                def _fm_config_int(key: str, fallback: int) -> int:
-                    if isinstance(file_manager_config, dict):
-                        try:
-                            value = int(file_manager_config.get(key, fallback))
-                        except (TypeError, ValueError):
-                            value = fallback
-                        if value < 0:
-                            return fallback
-                        return value
-                    return fallback
-
-                keepalive_interval_default = _fm_default_int('sftp_keepalive_interval', 0)
-                keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
-                keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
-
-                sftp_advanced_group = Adw.PreferencesGroup(title=_("Advanced SFTP Settings"))
-                sftp_advanced_group.set_description(
-                    _("Fine-tune options that only apply to sshPilot's built-in SFTP file manager.")
-                )
-
-
-                self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
-                self.sftp_keepalive_interval_row.set_title(_("SFTP Keepalive Interval (seconds)"))
-                self.sftp_keepalive_interval_row.set_subtitle(
-                    _("How often the built-in file manager sends keepalives. "
-                    "Set to 0 to disable.")
-                )
-                self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
-                sftp_advanced_group.add(self.sftp_keepalive_interval_row)
-
-
-                keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
-                keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
-                keepalive_count_value = max(0, min(keepalive_count_value, 10))
-
-                self.sftp_keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
-                self.sftp_keepalive_count_row.set_title(_("SFTP Keepalive Retry Limit"))
-                self.sftp_keepalive_count_row.set_subtitle(
-                    _("Number of failed keepalives tolerated by the built-in file "
-                    "manager before raising an error.")
-                )
-                self.sftp_keepalive_count_row.set_value(keepalive_count_value)
-                sftp_advanced_group.add(self.sftp_keepalive_count_row)
-
-
-                connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
-                connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
-                connect_timeout_value = max(0, min(connect_timeout_value, 600))
-
-                self.sftp_connect_timeout_row = Adw.SpinRow.new_with_range(0, 600, 1)
-                self.sftp_connect_timeout_row.set_title(_("SFTP Connection Timeout (seconds)"))
-                self.sftp_connect_timeout_row.set_subtitle(
-                    _("Time allowed for the built-in file manager to establish a "
-                    "session; 0 uses the default.")
-                )
-                self.sftp_connect_timeout_row.set_value(connect_timeout_value)
-                sftp_advanced_group.add(self.sftp_connect_timeout_row)
-
-
-                self._update_external_file_manager_row()
-                file_management_page.add(file_manager_group)
-                file_management_page.add(sftp_advanced_group)
-            else:
-                # If no internal file manager, create empty page with message
-                no_file_manager_group = Adw.PreferencesGroup(title=_("File Manager"))
-                no_file_manager_row = Adw.ActionRow()
-                no_file_manager_row.set_title(_("File Manager Not Available"))
-                no_file_manager_row.set_subtitle(_("Built-in file manager is not available on this system"))
-                no_file_manager_group.add(no_file_manager_row)
-                file_management_page.add(no_file_manager_group)
-
-            # Updates page
-            updates_page = Adw.PreferencesPage()
-            updates_page.set_title(_("Updates"))
-            updates_page.set_icon_name("software-update-available-symbolic")
-            
-            updates_group = Adw.PreferencesGroup(title=_("Update Notifications"))
-            updates_group.set_description(_("Configure how SSH Pilot checks for updates"))
-            
-            # Check for updates on startup switch
-            self.check_updates_switch = Adw.SwitchRow()
-            self.check_updates_switch.set_title(_("Check for updates on startup"))
-            self.check_updates_switch.set_subtitle(_("Automatically check for new versions when the application starts"))
-            self.check_updates_switch.set_active(
-                self.config.get_setting('updates.check_on_startup', True)
-            )
-            self.check_updates_switch.connect('notify::active', self.on_check_updates_changed)
-            updates_group.add(self.check_updates_switch)
-            
-            updates_page.add(updates_group)
+            terminal_page = self._build_terminal_preferences_page()
+            groups_page = self._build_groups_preferences_page()
+            interface_page = self._build_interface_preferences_page()
+            shortcuts_page = self._build_shortcuts_preferences_page()
+            advanced_page = self._build_advanced_preferences_page()
+            security_page = self._build_security_preferences_page()
+            ssh_settings_page = self._build_ssh_settings_preferences_page()
+            file_management_page = self._build_file_management_preferences_page()
+            updates_page = self._build_updates_preferences_page()
 
             # Add pages to the custom layout
             self.add_page_to_layout(N_("Interface"), "applications-graphics-symbolic", interface_page)
@@ -2105,27 +2186,22 @@ class PreferencesWindow(Adw.Dialog):
             command_blocks_page = self._create_command_blocks_page()
             self.add_page_to_layout(N_("Command Blocks"), "view-list-symbolic", command_blocks_page)
             self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", advanced_page)
-            
+
             logger.info("Preferences window initialized")
         except Exception as e:
             logger.error(f"Failed to setup preferences: {e}")
 
     def on_close_request(self, *args):
-        """Persist settings when the preferences dialog closes.
-
-        Connected to Adw.Dialog::closed. The return value is ignored there (it
-        cannot veto); vetoing would need ::close-attempt plus :can-close.
-        """
+        """Persist settings when leaving Settings mode (NavigationView pop)."""
         try:
             if hasattr(self, 'shortcuts_editor_page'):
                 self.shortcuts_editor_page.flush_changes()
             self.save_advanced_ssh_settings()
-            # Ensure preferences are flushed to disk
             if hasattr(self.config, 'save_json_config'):
                 self.config.save_json_config()
         except Exception:
             pass
-        return False  # allow close
+        return False
 
     def on_view_shortcuts_clicked(self, _button):
         """Open the standalone shortcuts window from preferences."""
@@ -4032,7 +4108,9 @@ class PreferencesWindow(Adw.Dialog):
         ui = getattr(host, 'ui', None) if host else None
         if ui is not None:
             ui.open_page(full_id)
-        self.close()
+        # Leave Settings so the plugin tab (under work mode) is visible.
+        if self.parent_window and hasattr(self.parent_window, 'leave_preferences'):
+            self.parent_window.leave_preferences()
 
     def _mark_plugin_restart_needed(self, row=None):
         """Subtitle + dialog: plugins load/unload only on the next launch."""

@@ -1453,638 +1453,665 @@ class FileManagerWindow(Adw.Window):
 
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action in {"copy", "cut"} and isinstance(payload, dict):
-            entries = list(payload.get("entries") or [])
-            if not entries:
-                pane.show_toast("Nothing selected")
-                return
+            self._op_copy_cut(pane, action, payload)
+        elif action == "paste":
+            self._op_paste(pane, payload)
+        elif action == "mkdir":
+            self._op_mkdir(pane)
+        elif action == "newfile":
+            self._op_newfile(pane)
+        elif action == "rename" and isinstance(payload, dict):
+            self._op_rename(pane, payload)
+        elif action == "delete" and isinstance(payload, dict):
+            self._op_delete(pane, payload)
+        elif action == "upload":
+            self._op_upload(pane, payload, user_data)
+        elif action == "download" and isinstance(payload, dict):
+            self._op_download(pane, payload, user_data)
+        else:
+            logger.debug(
+                "unknown file-manager action %r (payload_type=%s)",
+                action,
+                type(payload).__name__,
+            )
 
-            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
-            if pane is self._left_pane:
-                # Use the actual current path instead of the display path from path entry
-                # This handles Flatpak portal paths correctly
-                current_path = getattr(pane, '_current_path', None)
-                if current_path:
-                    directory = current_path
-                else:
-                    directory = self._normalize_local_path(directory)
+    def _op_copy_cut(self, pane, action, payload) -> None:
+        entries = list(payload.get("entries") or [])
+        if not entries:
+            pane.show_toast("Nothing selected")
+            return
+
+        directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+        if pane is self._left_pane:
+            # Use the actual current path instead of the display path from path entry
+            # This handles Flatpak portal paths correctly
+            current_path = getattr(pane, '_current_path', None)
+            if current_path:
+                directory = current_path
             else:
-                directory = directory or "/"
+                directory = self._normalize_local_path(directory)
+        else:
+            directory = directory or "/"
 
-            self._clipboard_entries = [dataclasses.replace(entry) for entry in entries]
-            self._clipboard_directory = directory
-            self._clipboard_source_pane = pane
-            self._clipboard_operation = action
+        self._clipboard_entries = [dataclasses.replace(entry) for entry in entries]
+        self._clipboard_directory = directory
+        self._clipboard_source_pane = pane
+        self._clipboard_operation = action
+        self._update_paste_targets()
+
+        if len(entries) == 1:
+            message = f"{'Cut' if action == 'cut' else 'Copied'} {entries[0].name}"
+        else:
+            message = f"{'Cut' if action == 'cut' else 'Copied'} {len(entries)} items"
+        pane.show_toast(message)
+
+    def _op_paste(self, pane, payload) -> None:
+        if not self._clipboard_entries or self._clipboard_source_pane is None:
+            pane.show_toast("Clipboard is empty")
+            return
+
+        destination = ""
+        force_move = False
+        if isinstance(payload, dict):
+            destination = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            force_move = bool(payload.get("force_move"))
+        
+        # For local pane destinations, use actual current path instead of display path
+        if pane is self._left_pane:
+            current_path = getattr(pane, '_current_path', None)
+            if current_path:
+                destination = current_path
+            else:
+                destination = self._normalize_local_path(destination or pane.toolbar.path_entry.get_text() or "/")
+        else:
+            destination = pane.toolbar.path_entry.get_text() or "/"
+
+        move_requested = force_move or self._clipboard_operation == "cut"
+        source_pane = self._clipboard_source_pane
+        source_dir = self._clipboard_directory or "/"
+        entries = list(self._clipboard_entries)
+
+        if source_pane is self._left_pane and pane is self._left_pane:
+            self._perform_local_clipboard_operation(entries, source_dir, destination, move_requested)
+        elif source_pane is self._right_pane and pane is self._right_pane:
+            self._perform_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+        elif source_pane is self._left_pane and pane is self._right_pane:
+            self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+        elif source_pane is self._right_pane and pane is self._left_pane:
+            self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
+        else:
+            pane.show_toast("Paste target is unavailable")
+            return
+
+        if move_requested:
+            self._clear_clipboard()
+        else:
             self._update_paste_targets()
 
-            if len(entries) == 1:
-                message = f"{'Cut' if action == 'cut' else 'Copied'} {entries[0].name}"
-            else:
-                message = f"{'Cut' if action == 'cut' else 'Copied'} {len(entries)} items"
-            pane.show_toast(message)
-            return
+    def _op_mkdir(self, pane) -> None:
+        dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
+        entry = Gtk.Entry()
+        entry.set_text(_("New Folder"))
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("Create"))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
 
-        if action == "paste":
-            if not self._clipboard_entries or self._clipboard_source_pane is None:
-                pane.show_toast("Clipboard is empty")
-                return
-
-            destination = ""
-            force_move = False
-            if isinstance(payload, dict):
-                destination = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
-                force_move = bool(payload.get("force_move"))
-            
-            # For local pane destinations, use actual current path instead of display path
-            if pane is self._left_pane:
-                current_path = getattr(pane, '_current_path', None)
-                if current_path:
-                    destination = current_path
-                else:
-                    destination = self._normalize_local_path(destination or pane.toolbar.path_entry.get_text() or "/")
-            else:
-                destination = pane.toolbar.path_entry.get_text() or "/"
-
-            move_requested = force_move or self._clipboard_operation == "cut"
-            source_pane = self._clipboard_source_pane
-            source_dir = self._clipboard_directory or "/"
-            entries = list(self._clipboard_entries)
-
-            if source_pane is self._left_pane and pane is self._left_pane:
-                self._perform_local_clipboard_operation(entries, source_dir, destination, move_requested)
-            elif source_pane is self._right_pane and pane is self._right_pane:
-                self._perform_remote_clipboard_operation(entries, source_dir, destination, move_requested)
-            elif source_pane is self._left_pane and pane is self._right_pane:
-                self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
-            elif source_pane is self._right_pane and pane is self._left_pane:
-                self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
-            else:
-                pane.show_toast("Paste target is unavailable")
-                return
-
-            if move_requested:
-                self._clear_clipboard()
-            else:
-                self._update_paste_targets()
-            return
-
-        if action == "mkdir":
-            dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
-            entry = Gtk.Entry()
-            entry.set_text(_("New Folder"))
-            dialog.set_extra_child(entry)
-            dialog.add_response("cancel", _("Cancel"))
-            dialog.add_response("ok", _("Create"))
-            dialog.set_default_response("ok")
-            dialog.set_close_response("cancel")
-
-            def _on_response(_dialog, response: str) -> None:
-                if response == "ok":
-                    name = entry.get_text().strip()
-                    if name:
-                        current_dir = pane.toolbar.path_entry.get_text() or "/"
-                        if pane is self._left_pane:
-                            target_dir = self._normalize_local_path(current_dir)
-                            new_path = os.path.join(target_dir, name)
-                        else:
-                            new_path = posixpath.join(current_dir or "/", name)
-                        if pane is self._left_pane:
-                            try:
-                                os.makedirs(new_path, exist_ok=False)
-                            except FileExistsError:
-                                pane.show_toast("Folder already exists")
-                            except Exception as exc:
-                                pane.show_toast(str(exc))
-                            else:
-                                # Refresh local listing
-                                self._pending_highlights[self._left_pane] = name
-                                self._load_local(os.path.dirname(new_path) or "/")
-                        else:
-                            future = self._manager.mkdir(new_path)
-                            
-                            # Simple direct refresh after operation completes
-                            def _on_mkdir_done(completed_future):
-                                try:
-                                    completed_future.result()  # Check for errors
-                                    logger.debug(f"mkdir completed successfully, refreshing pane")
-                                    # Direct refresh of the current directory
-                                    GLib.idle_add(lambda: self._force_refresh_pane(pane, highlight_name=name))
-                                except Exception as e:
-                                    logger.error(f"mkdir failed: {e}")
-                            
-                            future.add_done_callback(_on_mkdir_done)
-                dialog.close()
-
-            def _focus_entry():
-                entry.grab_focus()
-                entry.select_region(0, -1)  # Select all text
-
-            def _on_entry_activate(_entry):
-                # Trigger the "ok" response when Enter is pressed
-                _on_response(dialog, "ok")
-
-            entry.connect("activate", _on_entry_activate)
-            dialog.connect("response", _on_response)
-            dialog.present()
-            # Focus the entry after the dialog is shown
-            GLib.idle_add(_focus_entry)
-        elif action == "newfile":
-            dialog = Adw.AlertDialog.new("New File", "Enter a name for the new file")
-            entry = Gtk.Entry()
-            entry.set_text("untitled.txt")
-            dialog.set_extra_child(entry)
-            dialog.add_response("cancel", _("Cancel"))
-            dialog.add_response("ok", _("Create"))
-            dialog.set_default_response("ok")
-            dialog.set_close_response("cancel")
-
-            def _on_response(_dialog, response: str) -> None:
-                if response == "ok":
-                    name = entry.get_text().strip()
-                    if name:
-                        current_dir = pane.toolbar.path_entry.get_text() or "/"
-                        if pane is self._left_pane:
-                            target_dir = self._normalize_local_path(current_dir)
-                            new_path = os.path.join(target_dir, name)
-                            try:
-                                with open(new_path, "x"):
-                                    pass
-                            except FileExistsError:
-                                pane.show_toast("File already exists")
-                            except Exception as exc:
-                                pane.show_toast(str(exc))
-                            else:
-                                self._pending_highlights[self._left_pane] = name
-                                self._load_local(os.path.dirname(new_path) or "/")
-                                self._open_path_in_editor(pane, new_path, name)
-                        else:
-                            new_path = posixpath.join(current_dir or "/", name)
-                            future = self._manager.touch(new_path)
-
-                            def _on_touch_done(completed_future, p=new_path, n=name) -> None:
-                                try:
-                                    completed_future.result()
-                                except FileExistsError:
-                                    GLib.idle_add(pane.show_toast, "File already exists")
-                                    return
-                                except Exception as e:
-                                    GLib.idle_add(pane.show_toast, f"Failed to create file: {e}")
-                                    return
-
-                                def _after() -> bool:
-                                    self._force_refresh_pane(pane, highlight_name=n)
-                                    self._open_path_in_editor(pane, p, n)
-                                    return False
-
-                                GLib.idle_add(_after)
-
-                            future.add_done_callback(_on_touch_done)
-                dialog.close()
-
-            def _focus_entry():
-                entry.grab_focus()
-                # Pre-select the base name (before the extension) for quick typing.
-                text = entry.get_text()
-                dot = text.rfind(".")
-                entry.select_region(0, dot if dot > 0 else -1)
-
-            def _on_entry_activate(_entry):
-                _on_response(dialog, "ok")
-
-            entry.connect("activate", _on_entry_activate)
-            dialog.connect("response", _on_response)
-            dialog.present()
-            GLib.idle_add(_focus_entry)
-        elif action == "rename" and isinstance(payload, dict):
-            entries = payload.get("entries") or []
-            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
-            if not entries:
-                return
-
-            entry = entries[0]
-
-            if pane is self._left_pane:
-                base_dir = self._normalize_local_path(directory)
-                source = os.path.join(base_dir, entry.name)
-                join = os.path.join
-            else:
-                base_dir = directory or "/"
-                source = posixpath.join(base_dir, entry.name)
-                join = posixpath.join
-
-            dialog = Adw.AlertDialog.new("Rename Item", f"Enter a new name for {entry.name}")
-            name_entry = Gtk.Entry()
-            name_entry.set_text(entry.name)
-            dialog.set_extra_child(name_entry)
-            dialog.add_response("cancel", _("Cancel"))
-            dialog.add_response("ok", _("Rename"))
-            dialog.set_default_response("ok")
-            dialog.set_close_response("cancel")
-
-            def _on_rename(_dialog, response: str) -> None:
-                if response != "ok":
-                    dialog.close()
-                    return
-                new_name = name_entry.get_text().strip()
-                if not new_name:
-                    pane.show_toast("Name cannot be empty")
-                    dialog.close()
-                    return
-                if new_name == entry.name:
-                    dialog.close()
-                    return
-                target = join(base_dir, new_name)
-                if pane is self._left_pane:
-                    try:
-                        os.rename(source, target)
-                    except Exception as exc:
-                        pane.show_toast(str(exc))
+        def _on_response(_dialog, response: str) -> None:
+            if response == "ok":
+                name = entry.get_text().strip()
+                if name:
+                    current_dir = pane.toolbar.path_entry.get_text() or "/"
+                    if pane is self._left_pane:
+                        target_dir = self._normalize_local_path(current_dir)
+                        new_path = os.path.join(target_dir, name)
                     else:
-                        pane.show_toast(f"Renamed to {new_name}")
-                        self._pending_highlights[self._left_pane] = new_name
-                        self._load_local(base_dir)
-                else:
-                    future = self._manager.rename(source, target)
-                    
-                    # Simple direct refresh after operation completes
-                    def _on_rename_done(completed_future):
+                        new_path = posixpath.join(current_dir or "/", name)
+                    if pane is self._left_pane:
                         try:
-                            completed_future.result()  # Check for errors
-                            logger.debug(f"rename completed successfully, refreshing pane")
-                            # Direct refresh of the current directory
-                            GLib.idle_add(lambda: self._force_refresh_pane(pane, highlight_name=new_name))
-                        except Exception as e:
-                            logger.error(f"rename failed: {e}")
-                    
-                    future.add_done_callback(_on_rename_done)
-                    pane.show_toast(f"Renaming to {new_name}…")
-                dialog.close()
-
-            def _focus_entry():
-                name_entry.grab_focus()
-                name_entry.select_region(0, -1)  # Select all text
-
-            def _on_entry_activate(_entry):
-                # Trigger the "ok" response when Enter is pressed
-                _on_rename(dialog, "ok")
-
-            name_entry.connect("activate", _on_entry_activate)
-            dialog.connect("response", _on_rename)
-            dialog.present()
-            # Focus the entry after the dialog is shown
-            GLib.idle_add(_focus_entry)
-        elif action == "delete" and isinstance(payload, dict):
-            entries = payload.get("entries") or []
-            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
-            if not entries:
-                return
-
-            if pane is self._left_pane:
-                base_dir = self._normalize_local_path(directory)
-            else:
-                base_dir = directory or "/"
-
-            count = len(entries)
-            if count == 1:
-                message = f"Delete {entries[0].name}?"
-                title = "Delete Item"
-            else:
-                message = f"Delete {count} items?"
-                title = "Delete Items"
-
-            dialog = Adw.AlertDialog.new(title, message)
-            dialog.add_response("cancel", _("Cancel"))
-            dialog.add_response("ok", _("Delete"))
-            dialog.set_default_response("cancel")
-            dialog.set_close_response("cancel")
-
-            def _on_delete(_dialog, response: str) -> None:
-                if response != "ok":
-                    dialog.close()
-                    return
-                if pane is self._left_pane:
-                    deleted = 0
-                    errors: List[str] = []
-                    for selected_entry in entries:
-                        target_path = os.path.join(base_dir, selected_entry.name)
-                        try:
-                            if selected_entry.is_dir:
-                                shutil.rmtree(target_path)
-                            else:
-                                os.remove(target_path)
-                            deleted += 1
-                        except FileNotFoundError:
-                            errors.append(f"{selected_entry.name} no longer exists")
+                            os.makedirs(new_path, exist_ok=False)
+                        except FileExistsError:
+                            pane.show_toast("Folder already exists")
                         except Exception as exc:
-                            errors.append(str(exc))
-                    if deleted:
-                        message = (
-                            "Deleted 1 item"
-                            if deleted == 1
-                            else f"Deleted {deleted} items"
-                        )
-                        pane.show_toast(message)
-                        self._load_local(base_dir)
-                    if errors:
-                        pane.show_toast(errors[0])
-                else:
-                    # Delete entries sequentially to avoid race conditions and hangs
-                    errors: List[str] = []
-                    total_count = len(entries)
-                    
-                    logger.info(f"Starting sequential deletion of {total_count} remote entries")
-                    
-                    def _delete_next(index: int) -> None:
-                        """Delete the next entry in the list, then continue with the next one."""
-                        if index >= total_count:
-                            # All deletions complete
-                            logger.info(f"All {total_count} deletions completed, refreshing pane")
-                            GLib.idle_add(
-                                lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
-                            )
-                            return
+                            pane.show_toast(str(exc))
+                        else:
+                            # Refresh local listing
+                            self._pending_highlights[self._left_pane] = name
+                            self._load_local(os.path.dirname(new_path) or "/")
+                    else:
+                        future = self._manager.mkdir(new_path)
                         
-                        selected_entry = entries[index]
-                        target_path = posixpath.join(base_dir, selected_entry.name)
-                        entry_name = selected_entry.name
-                        
-                        logger.info(f"Deleting {index + 1}/{total_count}: '{entry_name}'")
-                        
-                        def _on_delete_done(future_result: Future) -> None:
+                        # Simple direct refresh after operation completes
+                        def _on_mkdir_done(completed_future):
                             try:
-                                future_result.result()  # Check for errors
-                                logger.info(f"Successfully deleted '{entry_name}'")
+                                completed_future.result()  # Check for errors
+                                logger.debug(f"mkdir completed successfully, refreshing pane")
+                                # Direct refresh of the current directory
+                                GLib.idle_add(lambda: self._force_refresh_pane(pane, highlight_name=name))
                             except Exception as e:
-                                error_msg = f"Failed to delete {entry_name}: {e!s}"
-                                logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
-                                errors.append(error_msg)
-                            
-                            # Continue with next deletion on the main loop
-                            GLib.idle_add(lambda: _delete_next(index + 1))
+                                logger.error(f"mkdir failed: {e}")
                         
+                        future.add_done_callback(_on_mkdir_done)
+            dialog.close()
+
+        def _focus_entry():
+            entry.grab_focus()
+            entry.select_region(0, -1)  # Select all text
+
+        def _on_entry_activate(_entry):
+            # Trigger the "ok" response when Enter is pressed
+            _on_response(dialog, "ok")
+
+        entry.connect("activate", _on_entry_activate)
+        dialog.connect("response", _on_response)
+        dialog.present()
+        # Focus the entry after the dialog is shown
+        GLib.idle_add(_focus_entry)
+
+    def _op_newfile(self, pane) -> None:
+        dialog = Adw.AlertDialog.new("New File", "Enter a name for the new file")
+        entry = Gtk.Entry()
+        entry.set_text("untitled.txt")
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("Create"))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_dialog, response: str) -> None:
+            if response == "ok":
+                name = entry.get_text().strip()
+                if name:
+                    current_dir = pane.toolbar.path_entry.get_text() or "/"
+                    if pane is self._left_pane:
+                        target_dir = self._normalize_local_path(current_dir)
+                        new_path = os.path.join(target_dir, name)
                         try:
-                            future = self._manager.remove(target_path)
-                            future.add_done_callback(_on_delete_done)
+                            with open(new_path, "x"):
+                                pass
+                        except FileExistsError:
+                            pane.show_toast("File already exists")
                         except Exception as exc:
-                            logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
-                            errors.append(f"Failed to delete {entry_name}: {exc!s}")
-                            GLib.idle_add(lambda: _delete_next(index + 1))
-                    
-                    # Start sequential deletion
-                    _delete_next(0)
-                    
-                    pane.show_toast(
-                        "Deleting 1 item…" if count == 1 else f"Deleting {count} items…"
-                    )
-                dialog.close()
-
-            dialog.connect("response", _on_delete)
-            
-            # Get the correct parent widget (handles both embedded tab and separate window cases)
-            # Adw.AlertDialog.present() accepts a Gtk.Widget, so we can pass the embedded parent directly
-            try:
-                dialog_parent = self
-                if self._embedded_parent is not None:
-                    # If embedded as a tab, use the parent widget directly
-                    dialog_parent = self._embedded_parent
-                else:
-                    # If standalone window, try to get transient parent if any
-                    try:
-                        transient = self.get_transient_for()
-                        if transient is not None:
-                            dialog_parent = transient
-                    except Exception:
-                        pass
-                
-                dialog.present(dialog_parent)  # Present with correct parent to center properly
-            except Exception as e:
-                # Fallback: present without parent if there's an error
-                logger.error(f"Failed to present delete dialog with parent: {e}", exc_info=True)
-                dialog.present()  # Present without parent as fallback
-        elif action == "upload":
-            # Upload can be triggered from either pane, but we need to determine the target pane
-            if pane is self._left_pane:
-                # Upload from local to remote
-                target_pane = self._right_pane
-            elif pane is self._right_pane:
-                # Upload from local to remote (when triggered from remote pane)
-                target_pane = pane
-            else:
-                return
-
-            remote_root = target_pane.toolbar.path_entry.get_text() or "/"
-            raw_items: object | None = None
-
-            move_sources: List[pathlib.Path] = []
-            move_source_dir: Optional[str] = None
-            if isinstance(user_data, dict):
-                move_sources = list(user_data.get("move_sources") or [])
-                move_source_dir = user_data.get("move_source_dir")
-            move_sources_set = {path.resolve() for path in move_sources}
-
-            if isinstance(payload, dict):
-                destination = payload.get("destination")
-                if isinstance(destination, pathlib.Path):
-                    remote_root = destination.as_posix()
-                elif isinstance(destination, str) and destination:
-                    remote_root = destination
-                raw_items = payload.get("paths")
-            else:
-                raw_items = payload
-
-            paths: List[pathlib.Path] = []
-
-            def _collect(item: object | None) -> None:
-                if item is None:
-                    return
-                if isinstance(item, (list, tuple, set, frozenset)):
-                    for value in item:
-                        _collect(value)
-                    return
-                if isinstance(item, pathlib.Path):
-                    paths.append(item)
-                elif isinstance(item, Gio.File):
-                    local_path = item.get_path()
-                    if local_path:
-                        paths.append(pathlib.Path(local_path))
-                elif isinstance(item, str):
-                    paths.append(pathlib.Path(item))
-
-            _collect(raw_items)
-
-            if not paths:
-                pane.show_toast("No files selected for upload")
-                return
-
-            available_paths: List[pathlib.Path] = []
-            missing: List[pathlib.Path] = []
-            for candidate in paths:
-                try:
-                    if candidate.exists():
-                        available_paths.append(candidate)
-                    else:
-                        missing.append(candidate)
-                except OSError:
-                    missing.append(candidate)
-
-            if missing and not available_paths:
-                pane.show_toast("Selected items are not accessible")
-                return
-            if missing and available_paths:
-                pane.show_toast(f"Skipping inaccessible items: {missing[0].name}")
-
-            # Prepare list of files to transfer for conflict checking
-            files_to_transfer = []
-            for path_obj in available_paths:
-                destination = posixpath.join(remote_root or "/", path_obj.name)
-                files_to_transfer.append((str(path_obj), destination))
-            
-            # Check for conflicts and handle accordingly  
-            def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
-                if not resolved_files:
-                    logger.warning("_proceed_with_upload: No files to upload")
-                    return
-                
-                # Check if manager is still available and connected
-                if self._manager is None:
-                    pane.show_toast("Upload failed: Connection lost")
-                    logger.error("_proceed_with_upload: Manager is None")
-                    return
-                
-                # Check if SFTP connection is still valid
-                try:
-                    with self._manager._lock:
-                        if self._manager._sftp is None:
-                            pane.show_toast("Upload failed: Connection closed. Please reconnect.")
-                            logger.error("_proceed_with_upload: SFTP connection is None")
-                            return
-                except Exception as e:
-                    logger.error(f"_proceed_with_upload: Error checking connection: {e}")
-                    pane.show_toast(f"Upload failed: {e!s}")
-                    return
-                
-                total_files = len(resolved_files)
-                logger.info(
-                    "Starting upload of %d file%s",
-                    total_files, "" if total_files == 1 else "s",
-                )
-                
-                for local_path_str, destination in resolved_files:
-                    path_obj = pathlib.Path(local_path_str)
-
-                    try:
-                        logger.debug(f"_proceed_with_upload: Starting upload of {path_obj.name}")
-                        if path_obj.is_dir():
-                            future = self._manager.upload_directory(path_obj, destination)
+                            pane.show_toast(str(exc))
                         else:
-                            future = self._manager.upload(path_obj, destination)
+                            self._pending_highlights[self._left_pane] = name
+                            self._load_local(os.path.dirname(new_path) or "/")
+                            self._open_path_in_editor(pane, new_path, name)
+                    else:
+                        new_path = posixpath.join(current_dir or "/", name)
+                        future = self._manager.touch(new_path)
 
-                        # Show progress dialog for upload (pass total_files for multi-file support)
-                        self._show_progress_dialog(
-                            "upload", path_obj.name, future,
-                            total_files=total_files,
-                            source_path=str(path_obj),
-                            destination_path=destination,
-                        )
-                        self._attach_refresh(
-                            future,
-                            refresh_remote=target_pane,
-                            highlight_name=path_obj.name,
-                        )
-                        if move_sources_set and path_obj.resolve() in move_sources_set:
-                            cleanup_dir = move_source_dir or str(path_obj.parent)
-                            self._schedule_local_move_cleanup(future, path_obj, cleanup_dir)
+                        def _on_touch_done(completed_future, p=new_path, n=name) -> None:
+                            try:
+                                completed_future.result()
+                            except FileExistsError:
+                                GLib.idle_add(pane.show_toast, "File already exists")
+                                return
+                            except Exception as e:
+                                GLib.idle_add(pane.show_toast, f"Failed to create file: {e}")
+                                return
+
+                            def _after() -> bool:
+                                self._force_refresh_pane(pane, highlight_name=n)
+                                self._open_path_in_editor(pane, p, n)
+                                return False
+
+                            GLib.idle_add(_after)
+
+                        future.add_done_callback(_on_touch_done)
+            dialog.close()
+
+        def _focus_entry():
+            entry.grab_focus()
+            # Pre-select the base name (before the extension) for quick typing.
+            text = entry.get_text()
+            dot = text.rfind(".")
+            entry.select_region(0, dot if dot > 0 else -1)
+
+        def _on_entry_activate(_entry):
+            _on_response(dialog, "ok")
+
+        entry.connect("activate", _on_entry_activate)
+        dialog.connect("response", _on_response)
+        dialog.present()
+        GLib.idle_add(_focus_entry)
+
+    def _op_rename(self, pane, payload) -> None:
+        entries = payload.get("entries") or []
+        directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+        if not entries:
+            return
+
+        entry = entries[0]
+
+        if pane is self._left_pane:
+            base_dir = self._normalize_local_path(directory)
+            source = os.path.join(base_dir, entry.name)
+            join = os.path.join
+        else:
+            base_dir = directory or "/"
+            source = posixpath.join(base_dir, entry.name)
+            join = posixpath.join
+
+        dialog = Adw.AlertDialog.new("Rename Item", f"Enter a new name for {entry.name}")
+        name_entry = Gtk.Entry()
+        name_entry.set_text(entry.name)
+        dialog.set_extra_child(name_entry)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("Rename"))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+
+        def _on_rename(_dialog, response: str) -> None:
+            if response != "ok":
+                dialog.close()
+                return
+            new_name = name_entry.get_text().strip()
+            if not new_name:
+                pane.show_toast("Name cannot be empty")
+                dialog.close()
+                return
+            if new_name == entry.name:
+                dialog.close()
+                return
+            target = join(base_dir, new_name)
+            if pane is self._left_pane:
+                try:
+                    os.rename(source, target)
+                except Exception as exc:
+                    pane.show_toast(str(exc))
+                else:
+                    pane.show_toast(f"Renamed to {new_name}")
+                    self._pending_highlights[self._left_pane] = new_name
+                    self._load_local(base_dir)
+            else:
+                future = self._manager.rename(source, target)
+                
+                # Simple direct refresh after operation completes
+                def _on_rename_done(completed_future):
+                    try:
+                        completed_future.result()  # Check for errors
+                        logger.debug(f"rename completed successfully, refreshing pane")
+                        # Direct refresh of the current directory
+                        GLib.idle_add(lambda: self._force_refresh_pane(pane, highlight_name=new_name))
                     except Exception as e:
-                        error_msg = str(e)
-                        logger.error(f"_proceed_with_upload: Error uploading {path_obj.name}: {error_msg}", exc_info=True)
-                        pane.show_toast(f"Error uploading {path_obj.name}: {error_msg}")
+                        logger.error(f"rename failed: {e}")
+                
+                future.add_done_callback(_on_rename_done)
+                pane.show_toast(f"Renaming to {new_name}…")
+            dialog.close()
 
-            self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
-        elif action == "download" and isinstance(payload, dict):
-            logger.debug("=== DOWNLOAD OPERATION CALLED ===")
-            logger.debug("Payload: %s", payload)
+        def _focus_entry():
+            name_entry.grab_focus()
+            name_entry.select_region(0, -1)  # Select all text
 
-            if pane is self._left_pane and payload.get("entries"):
+        def _on_entry_activate(_entry):
+            # Trigger the "ok" response when Enter is pressed
+            _on_rename(dialog, "ok")
+
+        name_entry.connect("activate", _on_entry_activate)
+        dialog.connect("response", _on_rename)
+        dialog.present()
+        # Focus the entry after the dialog is shown
+        GLib.idle_add(_focus_entry)
+
+    def _op_delete(self, pane, payload) -> None:
+        entries = payload.get("entries") or []
+        directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+        if not entries:
+            return
+
+        if pane is self._left_pane:
+            base_dir = self._normalize_local_path(directory)
+        else:
+            base_dir = directory or "/"
+
+        count = len(entries)
+        if count == 1:
+            message = f"Delete {entries[0].name}?"
+            title = "Delete Item"
+        else:
+            message = f"Delete {count} items?"
+            title = "Delete Items"
+
+        dialog = Adw.AlertDialog.new(title, message)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("Delete"))
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def _on_delete(_dialog, response: str) -> None:
+            if response != "ok":
+                dialog.close()
+                return
+            if pane is self._left_pane:
+                deleted = 0
+                errors: List[str] = []
+                for selected_entry in entries:
+                    target_path = os.path.join(base_dir, selected_entry.name)
+                    try:
+                        if selected_entry.is_dir:
+                            shutil.rmtree(target_path)
+                        else:
+                            os.remove(target_path)
+                        deleted += 1
+                    except FileNotFoundError:
+                        errors.append(f"{selected_entry.name} no longer exists")
+                    except Exception as exc:
+                        errors.append(str(exc))
+                if deleted:
+                    message = (
+                        "Deleted 1 item"
+                        if deleted == 1
+                        else f"Deleted {deleted} items"
+                    )
+                    pane.show_toast(message)
+                    self._load_local(base_dir)
+                if errors:
+                    pane.show_toast(errors[0])
+            else:
+                # Delete entries sequentially to avoid race conditions and hangs
+                errors: List[str] = []
+                total_count = len(entries)
+                
+                logger.info(f"Starting sequential deletion of {total_count} remote entries")
+                
+                def _delete_next(index: int) -> None:
+                    """Delete the next entry in the list, then continue with the next one."""
+                    if index >= total_count:
+                        # All deletions complete
+                        logger.info(f"All {total_count} deletions completed, refreshing pane")
+                        GLib.idle_add(
+                            lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
+                        )
+                        return
+                    
+                    selected_entry = entries[index]
+                    target_path = posixpath.join(base_dir, selected_entry.name)
+                    entry_name = selected_entry.name
+                    
+                    logger.info(f"Deleting {index + 1}/{total_count}: '{entry_name}'")
+                    
+                    def _on_delete_done(future_result: Future) -> None:
+                        try:
+                            future_result.result()  # Check for errors
+                            logger.info(f"Successfully deleted '{entry_name}'")
+                        except Exception as e:
+                            error_msg = f"Failed to delete {entry_name}: {e!s}"
+                            logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
+                            errors.append(error_msg)
+                        
+                        # Continue with next deletion on the main loop
+                        GLib.idle_add(lambda: _delete_next(index + 1))
+                    
+                    try:
+                        future = self._manager.remove(target_path)
+                        future.add_done_callback(_on_delete_done)
+                    except Exception as exc:
+                        logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
+                        errors.append(f"Failed to delete {entry_name}: {exc!s}")
+                        GLib.idle_add(lambda: _delete_next(index + 1))
+                
+                # Start sequential deletion
+                _delete_next(0)
+                
+                pane.show_toast(
+                    "Deleting 1 item…" if count == 1 else f"Deleting {count} items…"
+                )
+            dialog.close()
+
+        dialog.connect("response", _on_delete)
+        
+        # Get the correct parent widget (handles both embedded tab and separate window cases)
+        # Adw.AlertDialog.present() accepts a Gtk.Widget, so we can pass the embedded parent directly
+        try:
+            dialog_parent = self
+            if self._embedded_parent is not None:
+                # If embedded as a tab, use the parent widget directly
+                dialog_parent = self._embedded_parent
+            else:
+                # If standalone window, try to get transient parent if any
+                try:
+                    transient = self.get_transient_for()
+                    if transient is not None:
+                        dialog_parent = transient
+                except Exception:
+                    pass
+            
+            dialog.present(dialog_parent)  # Present with correct parent to center properly
+        except Exception as e:
+            # Fallback: present without parent if there's an error
+            logger.error(f"Failed to present delete dialog with parent: {e}", exc_info=True)
+            dialog.present()  # Present without parent as fallback
+
+    def _op_upload(self, pane, payload, user_data=None) -> None:
+        # Upload can be triggered from either pane, but we need to determine the target pane
+        if pane is self._left_pane:
+            # Upload from local to remote
+            target_pane = self._right_pane
+        elif pane is self._right_pane:
+            # Upload from local to remote (when triggered from remote pane)
+            target_pane = pane
+        else:
+            return
+
+        remote_root = target_pane.toolbar.path_entry.get_text() or "/"
+        raw_items: object | None = None
+
+        move_sources: List[pathlib.Path] = []
+        move_source_dir: Optional[str] = None
+        if isinstance(user_data, dict):
+            move_sources = list(user_data.get("move_sources") or [])
+            move_source_dir = user_data.get("move_source_dir")
+        move_sources_set = {path.resolve() for path in move_sources}
+
+        if isinstance(payload, dict):
+            destination = payload.get("destination")
+            if isinstance(destination, pathlib.Path):
+                remote_root = destination.as_posix()
+            elif isinstance(destination, str) and destination:
+                remote_root = destination
+            raw_items = payload.get("paths")
+        else:
+            raw_items = payload
+
+        paths: List[pathlib.Path] = []
+
+        def _collect(item: object | None) -> None:
+            if item is None:
+                return
+            if isinstance(item, (list, tuple, set, frozenset)):
+                for value in item:
+                    _collect(value)
+                return
+            if isinstance(item, pathlib.Path):
+                paths.append(item)
+            elif isinstance(item, Gio.File):
+                local_path = item.get_path()
+                if local_path:
+                    paths.append(pathlib.Path(local_path))
+            elif isinstance(item, str):
+                paths.append(pathlib.Path(item))
+
+        _collect(raw_items)
+
+        if not paths:
+            pane.show_toast("No files selected for upload")
+            return
+
+        available_paths: List[pathlib.Path] = []
+        missing: List[pathlib.Path] = []
+        for candidate in paths:
+            try:
+                if candidate.exists():
+                    available_paths.append(candidate)
+                else:
+                    missing.append(candidate)
+            except OSError:
+                missing.append(candidate)
+
+        if missing and not available_paths:
+            pane.show_toast("Selected items are not accessible")
+            return
+        if missing and available_paths:
+            pane.show_toast(f"Skipping inaccessible items: {missing[0].name}")
+
+        # Prepare list of files to transfer for conflict checking
+        files_to_transfer = []
+        for path_obj in available_paths:
+            destination = posixpath.join(remote_root or "/", path_obj.name)
+            files_to_transfer.append((str(path_obj), destination))
+        
+        # Check for conflicts and handle accordingly  
+        def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
+            if not resolved_files:
+                logger.warning("_proceed_with_upload: No files to upload")
+                return
+            
+            # Check if manager is still available and connected
+            if self._manager is None:
+                pane.show_toast("Upload failed: Connection lost")
+                logger.error("_proceed_with_upload: Manager is None")
+                return
+            
+            # Check if SFTP connection is still valid
+            try:
+                with self._manager._lock:
+                    if self._manager._sftp is None:
+                        pane.show_toast("Upload failed: Connection closed. Please reconnect.")
+                        logger.error("_proceed_with_upload: SFTP connection is None")
+                        return
+            except Exception as e:
+                logger.error(f"_proceed_with_upload: Error checking connection: {e}")
+                pane.show_toast(f"Upload failed: {e!s}")
+                return
+            
+            total_files = len(resolved_files)
+            logger.info(
+                "Starting upload of %d file%s",
+                total_files, "" if total_files == 1 else "s",
+            )
+            
+            for local_path_str, destination in resolved_files:
+                path_obj = pathlib.Path(local_path_str)
+
+                try:
+                    logger.debug(f"_proceed_with_upload: Starting upload of {path_obj.name}")
+                    if path_obj.is_dir():
+                        future = self._manager.upload_directory(path_obj, destination)
+                    else:
+                        future = self._manager.upload(path_obj, destination)
+
+                    # Show progress dialog for upload (pass total_files for multi-file support)
+                    self._show_progress_dialog(
+                        "upload", path_obj.name, future,
+                        total_files=total_files,
+                        source_path=str(path_obj),
+                        destination_path=destination,
+                    )
+                    self._attach_refresh(
+                        future,
+                        refresh_remote=target_pane,
+                        highlight_name=path_obj.name,
+                    )
+                    if move_sources_set and path_obj.resolve() in move_sources_set:
+                        cleanup_dir = move_source_dir or str(path_obj.parent)
+                        self._schedule_local_move_cleanup(future, path_obj, cleanup_dir)
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"_proceed_with_upload: Error uploading {path_obj.name}: {error_msg}", exc_info=True)
+                    pane.show_toast(f"Error uploading {path_obj.name}: {error_msg}")
+
+        self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
+
+    def _op_download(self, pane, payload, user_data=None) -> None:
+        logger.debug("=== DOWNLOAD OPERATION CALLED ===")
+        logger.debug("Payload: %s", payload)
+
+        if pane is self._left_pane and payload.get("entries"):
+            remote_pane = getattr(self, "_right_pane", None)
+            if isinstance(remote_pane, FilePane):
+                pane = remote_pane
+
+        move_remote_sources: List[str] = []
+        move_remote_pane: Optional[FilePane] = None
+        if isinstance(user_data, dict):
+            move_remote_sources = list(user_data.get("move_remote_sources") or [])
+            move_remote_pane = user_data.get("move_remote_pane")
+        move_remote_set = set(move_remote_sources)
+
+        entries = payload.get("entries") or []
+        directory = payload.get("directory")
+        logger.debug("Entries to download: %s", [e.name for e in entries])
+        logger.debug("Directory: %s", directory)
+        if not directory:
+            if pane is self._right_pane:
+                directory = pane.toolbar.path_entry.get_text() or "/"
+            else:
                 remote_pane = getattr(self, "_right_pane", None)
                 if isinstance(remote_pane, FilePane):
-                    pane = remote_pane
-
-            move_remote_sources: List[str] = []
-            move_remote_pane: Optional[FilePane] = None
-            if isinstance(user_data, dict):
-                move_remote_sources = list(user_data.get("move_remote_sources") or [])
-                move_remote_pane = user_data.get("move_remote_pane")
-            move_remote_set = set(move_remote_sources)
-
-            entries = payload.get("entries") or []
-            directory = payload.get("directory")
-            logger.debug("Entries to download: %s", [e.name for e in entries])
-            logger.debug("Directory: %s", directory)
-            if not directory:
-                if pane is self._right_pane:
-                    directory = pane.toolbar.path_entry.get_text() or "/"
+                    directory = remote_pane.toolbar.path_entry.get_text() or "/"
                 else:
-                    remote_pane = getattr(self, "_right_pane", None)
-                    if isinstance(remote_pane, FilePane):
-                        directory = remote_pane.toolbar.path_entry.get_text() or "/"
+                    directory = "/"
+        destination_base = payload.get("destination")
+
+        if not entries or destination_base is None:
+            pane.show_toast("Invalid download request")
+            return
+
+        if not isinstance(destination_base, pathlib.Path):
+            destination_base = pathlib.Path(destination_base)
+
+        # Prepare list of files to transfer for conflict checking
+        files_to_transfer = []
+        for entry in entries:
+            source = posixpath.join(directory or "/", entry.name)
+            target_path = destination_base / entry.name
+            files_to_transfer.append((source, str(target_path)))
+        
+        # Check for conflicts and handle accordingly
+        def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
+            total_files = len(resolved_files)
+            for idx, (source, target_path_str) in enumerate(resolved_files):
+                target_path = pathlib.Path(target_path_str)
+                entry_name = os.path.basename(target_path_str)
+
+                # Find the original entry to check if it's a directory
+                entry_is_dir = False
+                for entry in entries:
+                    if entry.name == entry_name:
+                        entry_is_dir = entry.is_dir
+                        break
+                
+                try:
+                    if entry_is_dir:
+                        future = self._manager.download_directory(source, target_path)
                     else:
-                        directory = "/"
-            destination_base = payload.get("destination")
-
-            if not entries or destination_base is None:
-                pane.show_toast("Invalid download request")
-                return
-
-            if not isinstance(destination_base, pathlib.Path):
-                destination_base = pathlib.Path(destination_base)
-
-            # Prepare list of files to transfer for conflict checking
-            files_to_transfer = []
-            for entry in entries:
-                source = posixpath.join(directory or "/", entry.name)
-                target_path = destination_base / entry.name
-                files_to_transfer.append((source, str(target_path)))
-            
-            # Check for conflicts and handle accordingly
-            def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
-                total_files = len(resolved_files)
-                for idx, (source, target_path_str) in enumerate(resolved_files):
-                    target_path = pathlib.Path(target_path_str)
-                    entry_name = os.path.basename(target_path_str)
-
-                    # Find the original entry to check if it's a directory
-                    entry_is_dir = False
-                    for entry in entries:
-                        if entry.name == entry_name:
-                            entry_is_dir = entry.is_dir
-                            break
-                    
-                    try:
-                        if entry_is_dir:
-                            future = self._manager.download_directory(source, target_path)
-                        else:
-                            future = self._manager.download(source, target_path)
-                        # Pass total_files so dialog can be reused for multiple files
-                        self._show_progress_dialog(
-                            "download", entry_name, future,
-                            total_files=total_files,
-                            source_path=source,
-                            destination_path=str(target_path),
-                        )
-                        self._attach_refresh(
+                        future = self._manager.download(source, target_path)
+                    # Pass total_files so dialog can be reused for multiple files
+                    self._show_progress_dialog(
+                        "download", entry_name, future,
+                        total_files=total_files,
+                        source_path=source,
+                        destination_path=str(target_path),
+                    )
+                    self._attach_refresh(
+                        future,
+                        refresh_local_path=str(destination_base),
+                        highlight_name=entry_name,
+                    )
+                    if move_remote_set and source in move_remote_set:
+                        self._schedule_remote_move_cleanup(
                             future,
-                            refresh_local_path=str(destination_base),
-                            highlight_name=entry_name,
+                            source,
+                            move_remote_pane or pane,
                         )
-                        if move_remote_set and source in move_remote_set:
-                            self._schedule_remote_move_cleanup(
-                                future,
-                                source,
-                                move_remote_pane or pane,
-                            )
-                    except Exception as e:
-                        pane.show_toast(f"Error downloading {entry_name}: {e!s}")
+                except Exception as e:
+                    pane.show_toast(f"Error downloading {entry_name}: {e!s}")
 
-            self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
+        self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
+
 
 
     def _on_window_resize(self, window, pspec) -> None:

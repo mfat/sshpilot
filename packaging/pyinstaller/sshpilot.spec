@@ -231,7 +231,11 @@ block_cipher = None
 
 a = Analysis(
     [entry_py],
-    pathex=[],
+    # The package lives in src/, which is not on the analysis path (PyInstaller
+    # only adds the entry script's dir, ROOT). Without this, `from sshpilot.main
+    # import main` is unresolvable, the whole package is never analyzed, and any
+    # stdlib submodule only it imports (logging.handlers) is missing at runtime.
+    pathex=[os.path.join(ROOT, "src")],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

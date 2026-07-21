@@ -958,6 +958,192 @@ def _run_confirm_dialog(prompt: str, log_fn) -> "str | None":
     return result[0]
 
 
+def _looks_like_login_password(prompt: str, kind: "str | None") -> bool:
+    """True when *prompt* is a login-password ask (not a key passphrase)."""
+    if kind == 'password':
+        return True
+    if kind is not None:
+        return False
+    lowered = prompt.lower()
+    return "password" in lowered and "passphrase" not in lowered
+
+
+def _prompt_via_main_or_dialog(
+    prompt: str,
+    log_fn,
+    route_fn,
+    dialog_fn,
+    *,
+    map_routed=None,
+    success_log: str = "",
+    cancel_log: str = "",
+    dialog_success_log: str = "",
+    dialog_cancel_log: str = "",
+) -> "str | None":
+    """Try main-app IPC first; on fallback run the standalone dialog.
+
+    *map_routed* customizes how a successful IPC value is returned (presence
+    maps any non-None to ``\"\"``). When omitted, *routed* is returned as-is.
+    """
+    handled, routed = route_fn(prompt, log_fn)
+    if handled:
+        if map_routed is not None:
+            return map_routed(routed)
+        if routed is not None:
+            if success_log:
+                log_fn(success_log)
+            return routed
+        if cancel_log:
+            log_fn(cancel_log)
+        return None
+
+    value = dialog_fn(prompt, log_fn)
+    if value is not None:
+        if dialog_success_log:
+            log_fn(dialog_success_log)
+        return value
+    if dialog_cancel_log:
+        log_fn(dialog_cancel_log)
+    return None
+
+
+def _handle_presence_prompt(prompt: str, log_fn) -> "str | None":
+    """FIDO / presence reminder: success is empty string, cancel is None."""
+    return _prompt_via_main_or_dialog(
+        prompt,
+        log_fn,
+        _route_presence_to_main_app,
+        _run_presence_dialog,
+        map_routed=lambda routed: "" if routed is not None else None,
+    )
+
+
+def _handle_confirm_prompt(prompt: str, log_fn) -> "str | None":
+    return _prompt_via_main_or_dialog(
+        prompt,
+        log_fn,
+        _route_confirm_to_main_app,
+        _run_confirm_dialog,
+        success_log="ASKPASS: Returning confirm response from main-app dialog",
+        cancel_log="ASKPASS: user cancelled confirm prompt",
+        dialog_success_log="ASKPASS: Returning confirm response from GUI dialog",
+        dialog_cancel_log="ASKPASS: No confirm response; exiting with code 1",
+    )
+
+
+def _handle_challenge_prompt(
+    prompt: str,
+    log_fn,
+    *,
+    success_log: str = "ASKPASS: Returning interactive response from main-app dialog",
+    dialog_success_log: str = "ASKPASS: Returning interactive response from GUI dialog",
+    dialog_cancel_log: str = "ASKPASS: No interactive response; exiting with code 1",
+) -> "str | None":
+    return _prompt_via_main_or_dialog(
+        prompt,
+        log_fn,
+        _route_challenge_to_main_app,
+        _run_challenge_dialog,
+        success_log=success_log,
+        cancel_log="ASKPASS: user cancelled interactive prompt",
+        dialog_success_log=dialog_success_log,
+        dialog_cancel_log=dialog_cancel_log,
+    )
+
+
+def _handle_password_prompt(prompt: str, log_fn) -> "str | None":
+    """Resolve from store, else ask via main app / standalone password dialog."""
+    value = _resolve_askpass_password(log_fn)
+    if value:
+        log_fn("ASKPASS: Returning password to caller")
+        return value
+    # No vault/session password — ask the user. prefer does not fall back
+    # to the TTY (same as MFA), so a dialog is required.
+    log_fn("ASKPASS: no stored password; asking user")
+
+    def _password_dialog(p, log):
+        # Standalone fallback: password-appropriate default so an empty prompt
+        # does not read as "verification code" (OTP/challenge default).
+        return _run_challenge_dialog(p or _standalone_password_label(), log)
+
+    return _prompt_via_main_or_dialog(
+        prompt,
+        log_fn,
+        _route_password_to_main_app,
+        _password_dialog,
+        success_log="ASKPASS: Returning password from main-app dialog",
+        cancel_log="ASKPASS: user cancelled password prompt",
+        dialog_success_log="ASKPASS: Returning password from GUI dialog",
+        dialog_cancel_log="ASKPASS: No password available; exiting with code 1",
+    )
+
+
+def _resolve_passphrase_for_askpass(key_path: str, log_fn) -> "str | None":
+    """Resolve a key passphrase from session file, local store, or main-app IPC."""
+    # Check one-shot session passphrase written by the main app
+    session_passphrase_file = os.environ.get("SSHPILOT_SESSION_PASSPHRASE_FILE", "")
+    if session_passphrase_file and os.path.exists(session_passphrase_file):
+        try:
+            with open(session_passphrase_file, encoding="utf-8") as f:
+                session_passphrase = f.read().strip()
+            if session_passphrase:
+                log_fn("ASKPASS: Found session passphrase from secure temp file")
+                try:
+                    os.unlink(session_passphrase_file)
+                except Exception:
+                    pass
+                return session_passphrase
+        except Exception as exc:
+            log_fn(f"ASKPASS: Error reading session passphrase file: {exc}")
+
+    # Resolve from storage. Two routes:
+    #   * local — read the selected backend in this subprocess. Instant for the
+    #     platform stores (libsecret/keyring), but for a session vault
+    #     (Bitwarden/Vaultwarden) it cold-starts `bw` (~1-2s) because the
+    #     in-memory vault cache lives in the *main* process, not here.
+    #   * main-app IPC — ask the running app, which already holds the unlocked
+    #     vault in memory (near-instant, no `bw` spawn).
+    # Session vault: IPC first. Platform stores: local first.
+    try:
+        from .secret_storage import get_secret_manager
+        _selected = (os.environ.get("SSHPILOT_SECRET_BACKEND") or "auto").strip().lower()
+        # Session backends (bw) hold the vault only in the main process, so IPC
+        # is the only warm route. rbw has a shared agent, but a local `rbw get`
+        # still costs ~1s per connect on a large vault — prefer IPC for it too.
+        prefer_ipc = bool(get_secret_manager().is_session_backed(_selected)) or _selected == "rbw"
+    except Exception:
+        prefer_ipc = False
+
+    def _resolve_local():
+        for candidate in _get_key_path_lookup_candidates(key_path):
+            passphrase = lookup_passphrase(candidate)
+            if passphrase:
+                log_fn(f"ASKPASS: Found passphrase for {candidate}")
+                return passphrase
+            log_fn(f"ASKPASS: No passphrase found for {candidate}")
+        return None
+
+    def _resolve_main_app():
+        value = _lookup_via_main_app(key_path, log_fn)
+        if value:
+            log_fn("ASKPASS: passphrase resolved via main-app cache")
+        return value
+
+    resolvers = ((_resolve_main_app, _resolve_local) if prefer_ipc
+                 else (_resolve_local, _resolve_main_app))
+    for resolve in resolvers:
+        value = resolve()
+        if value:
+            log_fn("ASKPASS: Returning passphrase to caller")
+            return value
+
+    # No stored passphrase — defer to SSH / the OS / ssh-agent.
+    # Login-password and MFA use the graphical path above; unstored key
+    # passphrases do not.
+    log_fn("ASKPASS: No stored passphrase; deferring to system/SSH")
+    return None
+
+
 def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
@@ -991,9 +1177,7 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     if (os.environ.get("SSHPILOT_ASKPASS_AUTOFILL_ONLY") or "").strip() == "1":
         only_kind = classify_prompt(prompt)
         lowered = prompt.lower()
-        if only_kind == 'password' or (
-                only_kind is None and "password" in lowered
-                and "passphrase" not in lowered):
+        if _looks_like_login_password(prompt, only_kind):
             value = _resolve_askpass_password(_log)
             _log("ASKPASS: autofill-only mode; "
                  + ("answered from store" if value else "no stored password, declining"))
@@ -1016,91 +1200,38 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     # Official OpenSSH askpass UI hints (see readpass.c / notify_start).
     if hint == "none":
         _log("ASKPASS: SSH_ASKPASS_PROMPT=none (FIDO presence reminder)")
-        handled, routed = _route_presence_to_main_app(prompt, _log)
-        if handled:
-            return "" if routed is not None else None
-        return _run_presence_dialog(prompt, _log)
+        return _handle_presence_prompt(prompt, _log)
 
     if hint == "confirm":
         _log("ASKPASS: SSH_ASKPASS_PROMPT=confirm (yes/no)")
-        handled, routed = _route_confirm_to_main_app(prompt, _log)
-        if handled:
-            return routed
-        return _run_confirm_dialog(prompt, _log)
+        return _handle_confirm_prompt(prompt, _log)
 
     kind = classify_prompt(prompt)
     if kind == 'presence':
         _log("ASKPASS: presence prompt (classifier); reminder UI")
-        handled, routed = _route_presence_to_main_app(prompt, _log)
-        if handled:
-            return "" if routed is not None else None
-        return _run_presence_dialog(prompt, _log)
+        return _handle_presence_prompt(prompt, _log)
 
     if kind == 'interactive':
         # OpenSSH with SSH_ASKPASS_REQUIRE=prefer does NOT fall back to the
         # TTY when askpass fails — declining here leaves the user with no way
         # to enter an OTP. Prompt them (never autofill MFA from the vault).
         _log("ASKPASS: interactive prompt (OTP/PIN); asking user")
-        handled, routed = _route_challenge_to_main_app(prompt, _log)
-        if handled:
-            if routed is not None:
-                _log("ASKPASS: Returning interactive response from main-app dialog")
-                return routed
-            _log("ASKPASS: user cancelled interactive prompt")
-            return None
-        value = _run_challenge_dialog(prompt, _log)
-        if value is not None:
-            _log("ASKPASS: Returning interactive response from GUI dialog")
-            return value
-        _log("ASKPASS: No interactive response; exiting with code 1")
-        return None
+        return _handle_challenge_prompt(prompt, _log)
 
-    if kind == 'password' or (
-            kind is None
-            and "password" in prompt.lower()
-            and "passphrase" not in prompt.lower()):
-        value = _resolve_askpass_password(_log)
-        if value:
-            _log("ASKPASS: Returning password to caller")
-            return value
-        # No vault/session password — ask the user. prefer does not fall back
-        # to the TTY (same as MFA), so a dialog is required.
-        _log("ASKPASS: no stored password; asking user")
-        handled, routed = _route_password_to_main_app(prompt, _log)
-        if handled:
-            if routed is not None:
-                _log("ASKPASS: Returning password from main-app dialog")
-                return routed
-            _log("ASKPASS: user cancelled password prompt")
-            return None
-        # Standalone fallback (main app unreachable). Give the entry a
-        # password-appropriate default so an empty prompt does not read as
-        # "verification code" (that default belongs to the OTP/challenge path).
-        value = _run_challenge_dialog(prompt or _standalone_password_label(), _log)
-        if value is not None:
-            _log("ASKPASS: Returning password from GUI dialog")
-            return value
-        _log("ASKPASS: No password available; exiting with code 1")
-        return None
+    if _looks_like_login_password(prompt, kind):
+        return _handle_password_prompt(prompt, _log)
 
     if kind != 'passphrase' and "passphrase" not in prompt.lower():
         # Unknown keyboard-interactive / custom MFA text: prefer a typed
         # challenge dialog over exiting 1 (OpenSSH will not fall back to the
         # TTY once askpass was invoked under REQUIRE=prefer).
         _log("ASKPASS: unrecognized prompt; treating as interactive challenge")
-        handled, routed = _route_challenge_to_main_app(prompt, _log)
-        if handled:
-            if routed is not None:
-                _log("ASKPASS: Returning response from main-app dialog")
-                return routed
-            _log("ASKPASS: user cancelled interactive prompt")
-            return None
-        value = _run_challenge_dialog(prompt, _log)
-        if value is not None:
-            _log("ASKPASS: Returning response from GUI dialog")
-            return value
-        _log("ASKPASS: No interactive response; exiting with code 1")
-        return None
+        return _handle_challenge_prompt(
+            prompt,
+            _log,
+            success_log="ASKPASS: Returning response from main-app dialog",
+            dialog_success_log="ASKPASS: Returning response from GUI dialog",
+        )
 
     key_path = _extract_key_path(prompt)
     if not key_path:
@@ -1108,71 +1239,8 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         return None
 
     _log(f"ASKPASS: Extracted key path: {key_path}")
+    return _resolve_passphrase_for_askpass(key_path, _log)
 
-    # Check one-shot session passphrase written by the main app
-    session_passphrase_file = os.environ.get("SSHPILOT_SESSION_PASSPHRASE_FILE", "")
-    if session_passphrase_file and os.path.exists(session_passphrase_file):
-        try:
-            with open(session_passphrase_file, encoding="utf-8") as f:
-                session_passphrase = f.read().strip()
-            if session_passphrase:
-                _log("ASKPASS: Found session passphrase from secure temp file")
-                try:
-                    os.unlink(session_passphrase_file)
-                except Exception:
-                    pass
-                return session_passphrase
-        except Exception as exc:
-            _log(f"ASKPASS: Error reading session passphrase file: {exc}")
-
-    # Resolve the passphrase from storage. Two routes:
-    #   * local — read the selected backend in this subprocess. Instant for the platform
-    #     stores (libsecret/keyring), but for a session vault (Bitwarden/Vaultwarden) it
-    #     cold-starts `bw` (~1-2s) because the in-memory vault cache lives in the *main*
-    #     process, not here.
-    #   * main-app IPC — ask the running app, which already holds the unlocked vault in
-    #     memory, to resolve from its warm cache (near-instant, no `bw` spawn).
-    # So for a session vault try IPC first (cache hit) and fall back to the local `bw`
-    # lookup; for platform stores do the instant local read first.
-    try:
-        from .secret_storage import get_secret_manager
-        _selected = (os.environ.get("SSHPILOT_SECRET_BACKEND") or "auto").strip().lower()
-        # Session backends (bw) hold the vault only in the main process, so IPC is the
-        # only warm route. rbw has a shared agent, but a local `rbw get` still costs ~1s
-        # per connect on a large vault — the main app's value cache (via IPC) makes repeat
-        # connects instant, so prefer IPC for it too.
-        prefer_ipc = bool(get_secret_manager().is_session_backed(_selected)) or _selected == "rbw"
-    except Exception:
-        prefer_ipc = False
-
-    def _resolve_local():
-        for candidate in _get_key_path_lookup_candidates(key_path):
-            passphrase = lookup_passphrase(candidate)
-            if passphrase:
-                _log(f"ASKPASS: Found passphrase for {candidate}")
-                return passphrase
-            _log(f"ASKPASS: No passphrase found for {candidate}")
-        return None
-
-    def _resolve_main_app():
-        value = _lookup_via_main_app(key_path, _log)
-        if value:
-            _log("ASKPASS: passphrase resolved via main-app cache")
-        return value
-
-    resolvers = ((_resolve_main_app, _resolve_local) if prefer_ipc
-                 else (_resolve_local, _resolve_main_app))
-    for resolve in resolvers:
-        value = resolve()
-        if value:
-            _log("ASKPASS: Returning passphrase to caller")
-            return value
-
-    # No stored passphrase — defer to SSH / the OS / ssh-agent (TTY or system
-    # prompt). Login-password and MFA prompts use the graphical askpass path
-    # above; unstored key passphrases do not.
-    _log("ASKPASS: No stored passphrase; deferring to system/SSH")
-    return None
 
 
 def run_askpass_and_write(prompt: str) -> int:

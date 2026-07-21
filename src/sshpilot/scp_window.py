@@ -434,6 +434,82 @@ class ScpWindowController:
             identity_agent_disabled=identity_agent_disabled,
         )
 
+    def _scp_download_default_dir(self) -> str:
+        """Return a sensible default local Downloads path for SCP downloads."""
+        try:
+            default_download_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+        except Exception:
+            default_download_dir = None
+        if not default_download_dir:
+            try:
+                default_download_dir = str(Path.home() / 'Downloads')
+            except Exception:
+                default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
+        return default_download_dir
+
+    @staticmethod
+    def _scp_transfer_copy(direction: str, target: str, destination: str) -> dict:
+        """UI copy strings for an SCP upload/download transfer dialog."""
+        if direction == 'upload':
+            return {
+                'title_text': _('Upload files (scp)'),
+                'running_text': _('Uploading to {target}:{path}').format(
+                    target=target, path=destination,
+                ),
+                'success_text': _('Uploaded to {target}:{path}').format(
+                    target=target, path=destination,
+                ),
+                'failure_text': _('Failed to upload to {target}:{path}').format(
+                    target=target, path=destination,
+                ),
+                'start_message': _('Starting upload…'),
+                'success_message': _('Upload finished successfully.'),
+                'failure_message': _('Upload failed. See output above.'),
+                'result_heading_fail': _('Upload failed'),
+            }
+        if direction == 'download':
+            return {
+                'title_text': _('Download files (scp)'),
+                'running_text': _('Downloading from {target}').format(target=target),
+                'success_text': _('Downloaded to {dest}').format(dest=destination),
+                'failure_text': _('Failed to download from {target}').format(
+                    target=target,
+                ),
+                'start_message': _('Starting download…'),
+                'success_message': _('Download finished successfully.'),
+                'failure_message': _('Download failed. See output above.'),
+                'result_heading_fail': _('Download failed'),
+            }
+        raise ValueError(f'Unsupported scp direction: {direction}')
+
+    def _prepare_scp_spawn_env(self) -> dict:
+        """Build the environment for spawning scp in the transfer terminal."""
+        env = os.environ.copy()
+        # Apply the auth env from resolve_native_auth (askpass for passphrases
+        # and stored login passwords; MFA stays on this VTE via prefer).
+        from .scp_utils import _apply_native_auth_env
+        _scp_auth = getattr(self, '_scp_auth', None)
+        if _scp_auth is not None:
+            _apply_native_auth_env(env, _scp_auth)
+            self._scp_auth = None
+            logger.debug(
+                "SCP: applied resolved auth env (askpass=%s)",
+                _scp_auth.use_askpass,
+            )
+
+        if os.path.exists('/app/bin'):
+            current_path = env.get('PATH', '')
+            if '/app/bin' not in current_path:
+                env['PATH'] = f"/app/bin:{current_path}"
+
+        logger.debug(
+            "SCP: Final environment variables: SSH_ASKPASS=%s, "
+            "SSH_ASKPASS_REQUIRE=%s",
+            env.get('SSH_ASKPASS', 'NOT_SET'),
+            env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET'),
+        )
+        return env
+
     def _prompt_scp_download(self, connection):
         """Show a simple file picker that downloads selected remote files via scp."""
         from .window import _show_password_passphrase_dialog
@@ -485,15 +561,7 @@ class ScpWindowController:
             # Get display name for password prompts
             display_name = profile.alias or f"{username}@{host_value}"
 
-            try:
-                default_download_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
-            except Exception:
-                default_download_dir = None
-            if not default_download_dir:
-                try:
-                    default_download_dir = str(Path.home() / 'Downloads')
-                except Exception:
-                    default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
+            default_download_dir = self._scp_download_default_dir()
 
             dialog = ScpDownloadWindow(self.window, subtitle=display_name)
             # Register with the app so routed askpass prompts can find this
@@ -1117,34 +1185,15 @@ class ScpWindowController:
                 else host_value
             )
 
-            if direction == 'upload':
-                title_text = _('Upload files (scp)')
-                running_text = _('Uploading to {target}:{path}').format(
-                    target=target, path=destination,
-                )
-                success_text = _('Uploaded to {target}:{path}').format(
-                    target=target, path=destination,
-                )
-                failure_text = _('Failed to upload to {target}:{path}').format(
-                    target=target, path=destination,
-                )
-                start_message = _('Starting upload…')
-                success_message = _('Upload finished successfully.')
-                failure_message = _('Upload failed. See output above.')
-                result_heading_fail = _('Upload failed')
-            elif direction == 'download':
-                title_text = _('Download files (scp)')
-                running_text = _('Downloading from {target}').format(target=target)
-                success_text = _('Downloaded to {dest}').format(dest=destination)
-                failure_text = _('Failed to download from {target}').format(
-                    target=target,
-                )
-                start_message = _('Starting download…')
-                success_message = _('Download finished successfully.')
-                failure_message = _('Download failed. See output above.')
-                result_heading_fail = _('Download failed')
-            else:
-                raise ValueError(f'Unsupported scp direction: {direction}')
+            transfer_copy = self._scp_transfer_copy(direction, target, destination)
+            title_text = transfer_copy['title_text']
+            running_text = transfer_copy['running_text']
+            success_text = transfer_copy['success_text']
+            failure_text = transfer_copy['failure_text']
+            start_message = transfer_copy['start_message']
+            success_message = transfer_copy['success_message']
+            failure_message = transfer_copy['failure_message']
+            result_heading_fail = transfer_copy['result_heading_fail']
 
             dlg = ScpTransferDialog(title_text)
 
@@ -1249,31 +1298,7 @@ class ScpWindowController:
                 known_hosts_path=self.window.connection_manager.known_hosts_path,
             )
 
-            env = os.environ.copy()
-            # Apply the auth env from resolve_native_auth (askpass for passphrases
-            # and stored login passwords; MFA stays on this VTE via prefer).
-            from .scp_utils import _apply_native_auth_env
-            _scp_auth = getattr(self, '_scp_auth', None)
-            if _scp_auth is not None:
-                _apply_native_auth_env(env, _scp_auth)
-                self._scp_auth = None
-                logger.debug(
-                    "SCP: applied resolved auth env (askpass=%s)",
-                    _scp_auth.use_askpass,
-                )
-
-            if os.path.exists('/app/bin'):
-                current_path = env.get('PATH', '')
-                if '/app/bin' not in current_path:
-                    env['PATH'] = f"/app/bin:{current_path}"
-
-            logger.debug(
-                "SCP: Final environment variables: SSH_ASKPASS=%s, "
-                "SSH_ASKPASS_REQUIRE=%s",
-                env.get('SSH_ASKPASS', 'NOT_SET'),
-                env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET'),
-            )
-            env_dict = dict(env)
+            env_dict = self._prepare_scp_spawn_env()
 
             def _feed_colored_line(text: str, color: str):
                 colors = {

@@ -68,7 +68,7 @@ def has_internal_file_manager() -> bool:
 
 # --- "should hide/show X" capability helpers -------------------------------
 # These live here (not in preferences.py) so callers that only need a boolean
-# don't drag the full Preferences dialog module onto the startup import path.
+# don't drag the full Preferences module onto the startup import path.
 
 def macos_third_party_terminal_available() -> bool:
     """Check if a third-party terminal is available on macOS."""
