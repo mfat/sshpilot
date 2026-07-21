@@ -3428,13 +3428,8 @@ def _expand_toolbar_button(button: Gtk.Widget) -> Gtk.Widget:
     return button
 
 
-def build_sidebar(window):
-    """Set up the sidebar with connection list"""
-    sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    # Ensure sidebar box expands to use full allocated width from NavigationSplitView
-    sidebar_box.set_hexpand(True)
-    sidebar_box.set_vexpand(True)
-    
+def _build_sidebar_header(window, sidebar_box):
+    """Build the sidebar action header (add/search/filter/sort/menu)."""
     # Sidebar header
     header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     header.set_hexpand(True)
@@ -3601,6 +3596,8 @@ def build_sidebar(window):
     header_handle.set_child(header)
     sidebar_box.append(header_handle)
 
+def _build_sidebar_search(window, sidebar_box):
+    """Build the collapsible connection search entry."""
     # Search container
     search_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     search_container.add_css_class('search-container')
@@ -3633,6 +3630,8 @@ def build_sidebar(window):
     
     sidebar_box.append(search_container)
 
+def _create_sidebar_connection_list(window, sidebar_box):
+    """Create the connection ListBox and wire selection/DnD."""
     # Connection list
     window.connection_scrolled = Gtk.ScrolledWindow()
     window.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -3684,6 +3683,8 @@ def build_sidebar(window):
     # Set up drag and drop for reordering
     setup_connection_list_dnd(window)
 
+def _attach_connection_list_context_menu(window):
+    """Attach right-click context menu and middle-click open handlers."""
     # Right-click context menu using simple gesture without coordinate detection
     try:
         # Use a simple gesture but avoid all coordinate-based operations
@@ -4049,7 +4050,9 @@ def build_sidebar(window):
         window.connection_list.add_controller(middle_click)
     except Exception:
         pass
-    
+
+def _attach_connection_list_shortcuts(window):
+    """Attach Ctrl/Cmd+Enter shortcut to open selected connections."""
     # Add keyboard controller for Ctrl/⌘+Enter to open new connection
     try:
         key_controller = Gtk.ShortcutController()
@@ -4080,10 +4083,9 @@ def build_sidebar(window):
         logger.debug(
             f"Failed to add {get_primary_modifier_label()}+Enter shortcut: {e}"
         )
-    
-    window.connection_scrolled.set_child(window.connection_list)
-    sidebar_box.append(window.connection_scrolled)
-    
+
+def _build_sidebar_toolbar(window, sidebar_box):
+    """Build connection and group toolbars at the bottom of the sidebar."""
     # Sidebar toolbar
     toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     toolbar.set_hexpand(True)
@@ -4206,6 +4208,8 @@ def build_sidebar(window):
     
     sidebar_box.append(toolbar)
 
+def _assemble_sidebar_shell(window, sidebar_box):
+    """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
     # Sidebar header: title + window controls (GNOME split-view pattern)
     window.sidebar_header_bar = Adw.HeaderBar()
     window.sidebar_header_bar.add_css_class('flat')
@@ -4225,6 +4229,25 @@ def build_sidebar(window):
 
     window._set_sidebar_widget(sidebar_toolbar_view)
     logger.debug("Set sidebar widget")
+
+def build_sidebar(window):
+    """Set up the sidebar with connection list"""
+    sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    # Ensure sidebar box expands to use full allocated width from NavigationSplitView
+    sidebar_box.set_hexpand(True)
+    sidebar_box.set_vexpand(True)
+
+    _build_sidebar_header(window, sidebar_box)
+    _build_sidebar_search(window, sidebar_box)
+    _create_sidebar_connection_list(window, sidebar_box)
+    _attach_connection_list_context_menu(window)
+    _attach_connection_list_shortcuts(window)
+
+    window.connection_scrolled.set_child(window.connection_list)
+    sidebar_box.append(window.connection_scrolled)
+
+    _build_sidebar_toolbar(window, sidebar_box)
+    _assemble_sidebar_shell(window, sidebar_box)
 
 
 __all__ = ["ConnectionRow", "GroupRow", "build_sidebar"]
