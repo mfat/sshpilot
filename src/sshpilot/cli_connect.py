@@ -26,8 +26,9 @@ from .ssh_connection_builder import SSHConnectionCommand
 
 logger = logging.getLogger(__name__)
 
-# Connection.data flag: opened from CLI; on success may offer save-if-new.
-CLI_CONNECT_FLAG = '__cli_connect'
+# Connection.data flags for CLI-opened sessions
+CLI_CONNECT_FLAG = '__cli_connect'   # ephemeral from parser; may offer save
+CLI_SESSION_FLAG = '__cli_session'   # opened via CLI; fail like ssh (no leftover tab)
 
 
 @dataclass
@@ -59,6 +60,9 @@ def build_ssh_argv(tokens: Sequence[str]) -> List[str]:
     if not parts:
         return []
     if parts[0] == 'ssh':
+        return list(parts)
+    # Do not wrap other remote tools as ``ssh scp ...`` — refuse like ssh.
+    if parts[0] in ('scp', 'sftp', 'rsync', 'ssh-copy-id'):
         return list(parts)
     return ['ssh', *parts]
 

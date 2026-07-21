@@ -50,6 +50,24 @@ def test_resolve_user_at_host_is_ephemeral():
     assert list(resolved.connection.ssh_cmd) == ['ssh', 'root@example.com']
 
 
+def test_resolve_rejects_non_ssh_like_command():
+    mgr = SimpleNamespace(find_connection_by_nickname=lambda name: None)
+    try:
+        resolve_cli_connect(['scp', 'file', 'user@host:/tmp'], mgr)
+        assert False, 'expected ValueError'
+    except ValueError as exc:
+        assert 'SSH' in str(exc) or 'ssh' in str(exc).lower()
+
+
+def test_resolve_rejects_empty():
+    mgr = SimpleNamespace(find_connection_by_nickname=lambda name: None)
+    try:
+        resolve_cli_connect([], mgr)
+        assert False, 'expected ValueError'
+    except ValueError:
+        pass
+
+
 def test_resolve_full_ssh_options():
     mgr = SimpleNamespace(find_connection_by_nickname=lambda name: None)
     resolved = resolve_cli_connect(['-p', '2222', '-i', '~/.ssh/id_ed25519', 'user@host'], mgr)

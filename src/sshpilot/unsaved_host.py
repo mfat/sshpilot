@@ -1,11 +1,11 @@
-"""Shared helpers for detecting unsaved / new SSH connections.
+"""Detect whether an SSH host/user is already saved in ssh config.
 
-Used by the CLI connect flow (and available for other entry points) to decide
-whether a live session should offer "Save as new connection".
+This module does **not** create connections. It only answers “is this
+hostname/IP (+ username) already represented among saved SSH connections?”
+so callers (CLI connect, and others later) can decide whether to offer
+“Save as new connection”.
 
-A connection is considered **new** when its resolved hostname/IP is not present
-in the loaded SSH config connections, or when the hostname exists but not with
-this username. Resolution prefers ``ssh -G`` via
+Resolution prefers ``ssh -G`` via
 :func:`ssh_config_utils.get_effective_ssh_config` when available.
 """
 
@@ -100,7 +100,7 @@ def identity_key(hostname: str, username: str) -> str:
     return f"{(hostname or '').lower()}|{(username or '')}"
 
 
-def is_new_connection(
+def is_unsaved_host(
     connection: Any,
     connection_manager: Any,
     *,
@@ -108,7 +108,7 @@ def is_new_connection(
 ) -> bool:
     """Return True when *connection* is not already represented in ssh config.
 
-    New means:
+    Unsaved means:
     - resolved hostname/IP does not appear among saved SSH connections, or
     - that hostname exists but not with this username.
     """
@@ -145,6 +145,10 @@ def is_new_connection(
             return False
 
     return True
+
+
+# Back-compat alias (prefer is_unsaved_host).
+is_new_connection = is_unsaved_host
 
 
 class SavePromptDismissals:

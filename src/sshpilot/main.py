@@ -193,8 +193,10 @@ class SshPilotApplication(Adw.Application):
 
         # CLI connect handoff (primary + secondary instances)
         self._pending_cli_ssh_tokens = None
-        from .new_connection import SavePromptDismissals
+        from .unsaved_host import SavePromptDismissals
         self.save_prompt_dismissals = SavePromptDismissals()
+        # Last CLI connect outcome for do_command_line exit status (ssh-like).
+        self._cli_connect_status = 0
 
         # Set up logging
         self.setup_logging()
@@ -483,7 +485,8 @@ class SshPilotApplication(Adw.Application):
         """Handle argv for first launch and single-instance handoff.
 
         Remaining tokens after sshPilot options are treated as an OpenSSH-style
-        destination and opened in a terminal tab.
+        destination and opened in a terminal tab. On failure, behave like ssh:
+        print to stderr, do not leave a failed tab, return a non-zero status.
         """
         from .cli_connect import parse_sshpilot_cli
 
@@ -499,10 +502,35 @@ class SshPilotApplication(Adw.Application):
             except Exception:
                 return 1
 
+        if not opts.ssh_tokens:
+            self.activate()
+            return 0
+
+        # Validate the ssh-like argv before activating UI work when possible.
+        # Full resolve still needs the window's ConnectionManager (Host aliases).
+        self._cli_connect_status = 0
         self.activate()
-        if opts.ssh_tokens:
-            self._queue_cli_connect(list(opts.ssh_tokens))
-        return 0
+        ok = self._run_cli_connect(list(opts.ssh_tokens))
+        return 0 if ok else 255
+
+    def _run_cli_connect(self, tokens) -> bool:
+        """Resolve and open a CLI target; return True on handoff success."""
+        window = self.window or self.props.active_window
+        if window is None or not hasattr(window, 'open_cli_connect'):
+            # Window not ready — queue and treat as accepted handoff; the
+            # idle flush reports parse/open failures to stderr itself.
+            self._queue_cli_connect(tokens)
+            return True
+        try:
+            window.present()
+        except Exception:
+            pass
+        try:
+            return bool(window.open_cli_connect(tokens))
+        except Exception:
+            logger.exception('Failed to open CLI connection')
+            print('sshpilot: failed to open connection', file=sys.stderr)
+            return False
 
     def _queue_cli_connect(self, tokens):
         self._pending_cli_ssh_tokens = list(tokens)
@@ -522,9 +550,12 @@ class SshPilotApplication(Adw.Application):
         except Exception:
             pass
         try:
-            window.open_cli_connect(tokens)
+            ok = window.open_cli_connect(tokens)
+            self._cli_connect_status = 0 if ok else 255
         except Exception:
             logger.exception('Failed to open CLI connection')
+            print('sshpilot: failed to open connection', file=sys.stderr)
+            self._cli_connect_status = 255
         return False
 
     def on_shutdown(self, app):

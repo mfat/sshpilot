@@ -1,11 +1,11 @@
-"""Tests for shared new-connection detection."""
+"""Tests for unsaved-host detection (not connection creation)."""
 
 from types import SimpleNamespace
 
-from sshpilot.new_connection import (
+from sshpilot.unsaved_host import (
     SavePromptDismissals,
     identity_key,
-    is_new_connection,
+    is_unsaved_host,
     resolve_connection_host_user,
 )
 
@@ -42,18 +42,18 @@ def test_identity_key_format():
     assert identity_key('Host', 'User') == 'host|User'
 
 
-def test_is_new_when_manager_empty(monkeypatch):
+def test_is_unsaved_when_manager_empty(monkeypatch):
     monkeypatch.setattr(
-        'sshpilot.new_connection.get_effective_ssh_config',
+        'sshpilot.unsaved_host.get_effective_ssh_config',
         lambda host, config_file=None: {'hostname': '1.2.3.4', 'user': 'alice'},
     )
     target = _conn(hostname='1.2.3.4', host='1.2.3.4', username='alice')
-    assert is_new_connection(target, _Mgr([])) is True
+    assert is_unsaved_host(target, _Mgr([])) is True
 
 
-def test_not_new_when_same_host_and_user(monkeypatch):
+def test_not_unsaved_when_same_host_and_user(monkeypatch):
     monkeypatch.setattr(
-        'sshpilot.new_connection.get_effective_ssh_config',
+        'sshpilot.unsaved_host.get_effective_ssh_config',
         lambda host, config_file=None: {
             'hostname': 'example.com',
             'user': 'alice',
@@ -61,38 +61,34 @@ def test_not_new_when_same_host_and_user(monkeypatch):
     )
     saved = _conn(hostname='example.com', host='prod', username='alice', nickname='prod')
     target = _conn(hostname='example.com', host='example.com', username='alice')
-    assert is_new_connection(target, _Mgr([saved])) is False
+    assert is_unsaved_host(target, _Mgr([saved])) is False
 
 
-def test_new_when_same_host_different_user(monkeypatch):
+def test_unsaved_when_same_host_different_user(monkeypatch):
     def fake_g(host, config_file=None):
-        if host in ('prod', 'example.com'):
-            # Saved connection resolves to example.com as alice via its alias;
-            # target uses explicit root@example.com.
-            if host == 'prod':
-                return {'hostname': 'example.com', 'user': 'alice'}
-            return {'hostname': 'example.com', 'user': 'root'}
-        return {}
+        if host == 'prod':
+            return {'hostname': 'example.com', 'user': 'alice'}
+        return {'hostname': 'example.com', 'user': 'root'}
 
-    monkeypatch.setattr('sshpilot.new_connection.get_effective_ssh_config', fake_g)
+    monkeypatch.setattr('sshpilot.unsaved_host.get_effective_ssh_config', fake_g)
     saved = _conn(hostname='example.com', host='prod', username='alice', nickname='prod')
     target = _conn(hostname='example.com', host='example.com', username='root')
-    assert is_new_connection(target, _Mgr([saved])) is True
+    assert is_unsaved_host(target, _Mgr([saved])) is True
 
 
-def test_new_when_hostname_missing_from_config(monkeypatch):
+def test_unsaved_when_hostname_missing_from_config(monkeypatch):
     monkeypatch.setattr(
-        'sshpilot.new_connection.get_effective_ssh_config',
+        'sshpilot.unsaved_host.get_effective_ssh_config',
         lambda host, config_file=None: {'hostname': host, 'user': 'bob'},
     )
     saved = _conn(hostname='a.example', host='a', username='bob', nickname='a')
     target = _conn(hostname='b.example', host='b.example', username='bob')
-    assert is_new_connection(target, _Mgr([saved])) is True
+    assert is_unsaved_host(target, _Mgr([saved])) is True
 
 
 def test_dismissals_are_session_scoped(monkeypatch):
     monkeypatch.setattr(
-        'sshpilot.new_connection.get_effective_ssh_config',
+        'sshpilot.unsaved_host.get_effective_ssh_config',
         lambda host, config_file=None: {'hostname': 'h', 'user': 'u'},
     )
     d = SavePromptDismissals()
@@ -104,7 +100,7 @@ def test_dismissals_are_session_scoped(monkeypatch):
 
 def test_resolve_falls_back_to_connection_fields(monkeypatch):
     monkeypatch.setattr(
-        'sshpilot.new_connection.get_effective_ssh_config',
+        'sshpilot.unsaved_host.get_effective_ssh_config',
         lambda host, config_file=None: {},
     )
     conn = _conn(hostname='Raw.Host', host='alias', username='sam')

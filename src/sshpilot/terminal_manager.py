@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import logging
 import threading
@@ -199,6 +200,16 @@ class TerminalManager:
             terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
             terminal.connect('connection-lost', self.on_terminal_disconnected)
             terminal.connect('title-changed', self.on_terminal_title_changed)
+
+            # CLI sessions: abandon the tab on failure (like ssh exiting — no
+            # leftover failed session UI). Interactive auth still uses the tab
+            # until ssh succeeds or the child exits unsuccessfully.
+            from .cli_connect import CLI_SESSION_FLAG
+            conn_data = getattr(connection, 'data', None) or {}
+            if conn_data.get(CLI_SESSION_FLAG):
+                terminal._cli_session = True
+                terminal._cli_ever_connected = False
+                terminal.connect('connection-failed', self._on_cli_terminal_failed)
 
             # One-shot PTY auto-fill: answer a known remote prompt (e.g. a sudo
             # password) by typing the response when the prompt appears. Set
@@ -920,8 +931,50 @@ class TerminalManager:
 
         self._maybe_offer_save_connection(terminal)
 
+        if getattr(terminal, '_cli_session', False):
+            terminal._cli_ever_connected = True
+
+    def _on_cli_terminal_failed(self, terminal, error_message=''):
+        """CLI connect failed before a usable session — close the tab like ssh."""
+        self._abandon_cli_terminal(terminal, error_message)
+
+    def _abandon_cli_terminal(self, terminal, error_message=''):
+        """Close a CLI-owned tab and report the failure on stderr."""
+        if not getattr(terminal, '_cli_session', False):
+            return
+        if getattr(terminal, '_cli_abandoned', False):
+            return
+        terminal._cli_abandoned = True
+        message = (error_message or getattr(terminal, 'last_error_message', None)
+                   or 'Connection failed')
+        try:
+            print(f'sshpilot: {message}', file=sys.stderr)
+        except Exception:
+            pass
+        window = self.window
+        try:
+            page = window._page_for_child(terminal) if hasattr(window, '_page_for_child') else None
+            if page is not None:
+                window.tab_view.close_page(page)
+        except Exception:
+            logger.debug('Failed to close CLI failed tab', exc_info=True)
+        try:
+            connection = getattr(terminal, 'connection', None)
+            if connection is not None:
+                if connection in window.active_terminals and window.active_terminals[connection] is terminal:
+                    del window.active_terminals[connection]
+                if terminal in window.terminal_to_connection:
+                    del window.terminal_to_connection[terminal]
+                terms = window.connection_to_terminals.get(connection) or []
+                if terminal in terms:
+                    terms.remove(terminal)
+                if connection in window.connection_to_terminals and not window.connection_to_terminals[connection]:
+                    del window.connection_to_terminals[connection]
+        except Exception:
+            pass
+
     def _maybe_offer_save_connection(self, terminal):
-        """After a successful CLI/ad-hoc connect, offer to save if the host is new."""
+        """After a successful CLI/ad-hoc connect, offer to save if the host is unsaved."""
         try:
             connection = getattr(terminal, 'connection', None)
             if connection is None:
@@ -931,7 +984,7 @@ class TerminalManager:
             if not data.get(CLI_CONNECT_FLAG):
                 return
 
-            from .new_connection import SavePromptDismissals, is_new_connection
+            from .unsaved_host import SavePromptDismissals, is_unsaved_host
 
             window = self.window
             app = window.get_application() if hasattr(window, 'get_application') else None
@@ -945,7 +998,7 @@ class TerminalManager:
             cfg_path = getattr(mgr, 'ssh_config_path', None) if mgr else None
             if dismissals.is_connection_dismissed(connection, config_file=cfg_path):
                 return
-            if not is_new_connection(connection, mgr, config_file=cfg_path):
+            if not is_unsaved_host(connection, mgr, config_file=cfg_path):
                 return
 
             def _on_save(term):
@@ -991,6 +1044,13 @@ class TerminalManager:
                 host.dispatch_session_closed(terminal)
         except Exception:
             logger.exception("Plugin session_closed dispatch failed")
+
+        # CLI session that never reached CONNECTED: ssh exited like a failed
+        # command — do not leave a failed tab around.
+        if (getattr(terminal, '_cli_session', False)
+                and not getattr(terminal, '_cli_ever_connected', False)):
+            err = getattr(terminal, 'last_error_message', None) or 'Connection failed'
+            GLib.idle_add(self._abandon_cli_terminal, terminal, err)
 
     def on_terminal_title_changed(self, terminal, title):
         page = self.window._page_for_child(terminal)

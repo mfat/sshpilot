@@ -2937,38 +2937,40 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         dialog.present()
 
     def open_cli_connect(self, ssh_tokens):
-        """Open a terminal tab from CLI ssh-like tokens (single target)."""
-        from .cli_connect import describe_cli_error, resolve_cli_connect
+        """Open a terminal tab from CLI ssh-like tokens (single target).
+
+        On resolve/parse failure: print to stderr like ssh, do **not** open a
+        tab, return False. Runtime SSH failures for CLI sessions close the tab
+        (see TerminalManager).
+        """
+        from .cli_connect import (
+            CLI_SESSION_FLAG,
+            describe_cli_error,
+            resolve_cli_connect,
+        )
 
         try:
             resolved = resolve_cli_connect(ssh_tokens, self.connection_manager)
         except ValueError as exc:
             message = describe_cli_error(exc)
-            logger.warning('CLI connect failed: %s', message)
-            try:
-                if hasattr(self, 'toast_overlay') and self.toast_overlay:
-                    self.toast_overlay.add_toast(Adw.Toast.new(message))
-            except Exception:
-                pass
-            try:
-                self._error_dialog(_('Could not open connection'), message)
-            except Exception:
-                pass
+            # Match ssh: message on stderr, no session/tab.
+            print(f'sshpilot: {message}', file=sys.stderr)
+            logger.warning('CLI connect refused: %s', message)
             return False
 
         try:
+            data = getattr(resolved.connection, 'data', None)
+            if not isinstance(data, dict):
+                resolved.connection.data = {}
+                data = resolved.connection.data
+            data[CLI_SESSION_FLAG] = True
             self.terminal_manager.connect_to_host(
                 resolved.connection, force_new=True)
             return True
         except Exception as exc:
+            message = describe_cli_error(exc)
+            print(f'sshpilot: {message}', file=sys.stderr)
             logger.error('CLI connect open failed: %s', exc, exc_info=True)
-            try:
-                self._error_dialog(
-                    _('Could not open connection'),
-                    describe_cli_error(exc),
-                )
-            except Exception:
-                pass
             return False
 
     def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
