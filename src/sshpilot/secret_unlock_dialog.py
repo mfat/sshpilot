@@ -14,7 +14,6 @@ off the main thread.
 """
 
 import logging
-import os
 import threading
 from gettext import gettext as _
 
@@ -23,13 +22,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
-from .secret_storage import (
-    get_secret_manager,
-    master_password_spec,
-    remember_master_password_enabled,
-    selected_master_spec,
-    set_remember_master_password,
-)
+from .secret_storage import get_secret_manager
 from .window_dialogs import parent_window
 
 logger = logging.getLogger(__name__)
@@ -325,6 +318,10 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
     unlock was needed), and ``False`` when it merely **rode** an already-open prompt. The
     connect flow uses this to avoid silently proceeding on a *ridden* prompt that resolves
     still-locked (e.g. a startup unlock the user cancelled).
+
+    The master password is never written to the OS keyring / Keychain: alternative backends
+    exist specifically to avoid that. After unlock it lives only in the in-process session
+    (KDBX ``SSHPILOT_KDBX_KEY``, Bitwarden ``BW_SESSION``) until idle timeout or exit.
     """
     global _unlock_in_progress
     manager = get_secret_manager()
@@ -343,9 +340,6 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
                 return bool(manager.selected_needs_login())
             except Exception:
                 return False
-
-        def _master_spec():
-            return selected_master_spec(manager)
     else:
         target = manager.get_backend(backend) if isinstance(backend, str) else backend
 
@@ -357,12 +351,6 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
                 return bool(target is not None and target.needs_login())
             except Exception:
                 return False
-
-        def _master_spec():
-            name = (getattr(target, "name", "") or "session").strip().lower()
-            profile = (os.environ.get("SSHPILOT_KDBX_DATABASE", "") if name == "keepassxc"
-                       else os.environ.get("BITWARDENCLI_APPDATA_DIR", ""))
-            return master_password_spec(name, profile)
 
         _needs_unlock = bool(
             target is not None and getattr(target, "session_backed", False)
@@ -412,10 +400,7 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
     _spinner = [None]
 
     # -- run the unlock (spinner + worker) for a given password -----------
-    def _run_unlock(password, *, source, remember):
-        # ``source`` is 'manual' (typed in the entry dialog, ``remember`` = checkbox) or
-        # 'saved' (a master password read from the keyring → auto-unlock). The spinner is
-        # always shown, so startup still displays the "Unlocking…" alert when auto-unlocking.
+    def _run_unlock(password):
         def _worker(set_status):
             ok = False
             needs_login = False
@@ -443,30 +428,7 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
             close, spin = _spinner[0] if _spinner[0] is not None else (lambda: None, None)
 
             if ok:
-                # Persist the "remember" choice on a manual unlock; a saved password that
-                # just worked stays as-is. Only touch the OS keyring when the user has
-                # opted in (or is clearing a previous opt-in) — otherwise macOS shows a
-                # Keychain unlock prompt even for a pure .kdbx vault.
-                if source == 'manual':
-                    try:
-                        if remember:
-                            if manager.store_in_keyring(_master_spec(), password):
-                                set_remember_master_password(True)
-                        elif remember_master_password_enabled():
-                            manager.delete_in_keyring(_master_spec())
-                            set_remember_master_password(False)
-                    except Exception:
-                        logger.debug("persisting master password failed", exc_info=True)
                 on_spinner_closed = lambda *_a: _finish(True)
-            elif source == 'saved':
-                # The saved password is stale (e.g. the master password changed). Forget it
-                # and fall back to a manual entry dialog — no error popup.
-                try:
-                    manager.delete_in_keyring(_master_spec())
-                except Exception:
-                    pass
-                set_remember_master_password(False)
-                on_spinner_closed = lambda *_a: _show_password_dialog()
             elif needs_login:
                 from .bitwarden_setup import _prompt_gui_login
 
@@ -530,22 +492,7 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
         # set_activates_default() convenience method — set it via the property so
         # Enter triggers the dialog's default response.
         entry.set_property('activates-default', True)
-        remember_check = Gtk.CheckButton(label=_("Remember master password"))
-        remember_check.set_active(remember_master_password_enabled())
-        caption = Gtk.Label(label=_("Stored in your system keyring."))
-        caption.set_xalign(0)
-        caption.set_wrap(True)
-        caption.set_margin_start(28)
-        for css in ("dim-label", "caption"):
-            try:
-                caption.add_css_class(css)
-            except Exception:
-                pass
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.append(entry)
-        box.append(remember_check)
-        box.append(caption)
-        dialog.set_extra_child(box)
+        dialog.set_extra_child(entry)
 
         dialog.add_response('cancel', _("Cancel"))
         dialog.add_response('unlock', _("Unlock"))
@@ -575,9 +522,8 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
                 _cancel_finish_if_ready()
                 return
             password = entry.get_text() or ''
-            remember = bool(remember_check.get_active())
             # _run_unlock shows the spinner once this dialog has closed.
-            _run_unlock(password, source='manual', remember=remember)
+            _run_unlock(password)
 
         def _on_pw_closed(_d):
             _pw_closed_fired[0] = True
@@ -603,17 +549,5 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
 
         GLib.idle_add(_focus_entry)
 
-    # Auto-unlock with a saved master password (still shows the spinner), else prompt.
-    # Gate the keyring probe on the remember opt-in so session vaults (esp. keepassxc
-    # on macOS) never open Keychain unless the user asked to save the master password.
-    saved = None
-    if remember_master_password_enabled():
-        try:
-            saved = manager.lookup_in_keyring(_master_spec())
-        except Exception:
-            logger.debug("saved master password lookup failed", exc_info=True)
-    if saved:
-        _run_unlock(saved, source='saved', remember=True)
-    else:
-        _show_password_dialog()
+    _show_password_dialog()
     return True   # this call owns the (newly shown) prompt

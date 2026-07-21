@@ -1733,18 +1733,6 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         secrets_group.add(self.secret_session_timeout_row)
 
-        # Forget a remembered master password (saved in the OS keyring via the unlock
-        # dialog's "Remember" option). This is the only way to clear it once saved,
-        # since auto-unlock then skips the dialog. Shown for session-backed backends.
-        self.forget_master_row = Adw.ActionRow(title=_("Saved master password"))
-        forget_btn = Gtk.Button(label=_("Forget"))
-        forget_btn.set_valign(Gtk.Align.CENTER)
-        forget_btn.add_css_class('destructive-action')
-        forget_btn.connect('clicked', self.on_forget_master_password)
-        self.forget_master_row.add_suffix(forget_btn)
-        self._forget_master_btn = forget_btn
-        secrets_group.add(self.forget_master_row)
-
         self.agent_no_store_row = Adw.ActionRow()
         self.agent_no_store_row.set_title(_("No secret storage"))
         self.agent_no_store_row.set_subtitle(_(
@@ -1753,7 +1741,7 @@ class PreferencesWindow(Adw.NavigationPage):
         ))
         secrets_group.add(self.agent_no_store_row)
 
-        # Show the bw/timeout/forget rows only when they apply to the
+        # Show the bw/timeout rows only when they apply to the
         # currently-selected backend. Backend probes (``bw status``, rbw, …)
         # run only when the user opens this page — not on every Settings open.
         self._update_secret_rows_visibility(current_backend, defer_status_probe=True)
@@ -2581,9 +2569,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     getattr(self, attr).set_visible(name == 'keepassxc')
             if hasattr(self, 'secret_session_timeout_row'):
                 self.secret_session_timeout_row.set_visible(session)
-            if hasattr(self, 'forget_master_row'):
-                self.forget_master_row.set_visible(session)
-                self._refresh_forget_master_row()
             if hasattr(self, 'agent_no_store_row'):
                 self.agent_no_store_row.set_visible(name == 'agent')
             if hasattr(self, 'secret_backend_row'):
@@ -2596,6 +2581,11 @@ class PreferencesWindow(Adw.NavigationPage):
                     hint = _("Uses the bw CLI. See bitwarden.com/help/cli.")
                 elif name == 'rbw':
                     hint = _("Uses the rbw CLI + agent. Unlock with rbw (github.com/doy/rbw).")
+                elif name == 'keepassxc':
+                    hint = _(
+                        "Master password is typed per launch (kept in memory only). "
+                        "Optional key file is the KeePass-native second factor."
+                    )
                 else:
                     hint = ""
                 try:
@@ -2604,42 +2594,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     pass
         except Exception as exc:
             logger.debug("Failed to update secret rows visibility: %s", exc)
-
-    def _refresh_forget_master_row(self):
-        """Reflect whether a master password is currently saved in the keyring.
-
-        Uses the remember opt-in flag rather than probing the OS keyring, so opening
-        Preferences with a .kdbx backend does not trigger a macOS Keychain unlock.
-        """
-        if not hasattr(self, 'forget_master_row'):
-            return
-        saved = False
-        try:
-            from .secret_storage import remember_master_password_enabled
-            saved = remember_master_password_enabled()
-        except Exception:
-            saved = False
-        self.forget_master_row.set_subtitle(
-            _("Remembered in your system keyring.") if saved
-            else _("Not saved. Use “Remember master password” when unlocking.")
-        )
-        if hasattr(self, '_forget_master_btn'):
-            self._forget_master_btn.set_sensitive(saved)
-
-    def on_forget_master_password(self, _button):
-        """Delete the remembered master password from the OS keyring."""
-        try:
-            from .secret_storage import (
-                get_secret_manager,
-                selected_master_spec,
-                set_remember_master_password,
-            )
-            get_secret_manager().delete_in_keyring(selected_master_spec())
-            set_remember_master_password(False)
-            logger.info("Forgot saved vault master password")
-        except Exception:
-            logger.debug("Failed to forget master password", exc_info=True)
-        self._refresh_forget_master_row()
 
     def on_secret_backend_changed(self, combo, _pspec):
         """Persist the selected secret storage backend and apply it live."""
@@ -2803,8 +2757,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     self._update_secret_rows_visibility('bitwarden')
                 except Exception:
                     logger.debug("Failed to refresh Bitwarden rows after setup", exc_info=True)
-                if success:
-                    self._refresh_forget_master_row()
 
             run_bitwarden_setup(self, on_done=_done)
         except Exception as exc:
