@@ -708,7 +708,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.debug(f"Failed to check for updates on startup: {e}")
 
-        # One-time operation mode chooser
+        # One-time operation mode chooser (disabled for fresh installs —
+        # see WindowFileManagerMixin._OPERATION_MODE_FIRST_RUN_PROMPT_ENABLED).
+        # Starts in default mode; dialog code is retained but not shown.
         try:
             if self._should_prompt_operation_mode():
                 GLib.idle_add(self._show_operation_mode_dialog)
