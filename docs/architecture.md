@@ -137,9 +137,11 @@ Backend specifics:
   saves it to the **platform keyring** (libsecret/keyring) — never the vault it unlocks —
   via `SecretManager.store_in_keyring`/`lookup_in_keyring`/`delete_in_keyring` and
   `master_password_spec` (keyed by backend + `BITWARDENCLI_APPDATA_DIR` profile,
-  selection-independent). When a saved password exists, `prompt_unlock` auto-unlocks with
-  it but still shows the "Unlocking…" spinner; a stale saved password is dropped and the
-  manual prompt shown.
+  selection-independent). Keyring access is gated by
+  `secrets.remember_master_password` so a session vault (including `keepassxc` on
+  macOS) does not probe Keychain until the user opts in. When that flag is set and a
+  saved password exists, `prompt_unlock` auto-unlocks with it but still shows the
+  "Unlocking…" spinner; a stale saved password is dropped and the manual prompt shown.
 - **`agent`** means *don't store secrets at all*: a null backend. When explicitly
   selected, `SecretManager` consults only it (no fallback/fallthrough) so nothing
   is written to or read from other stores; the user relies on ssh-agent (the existing

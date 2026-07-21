@@ -427,6 +427,30 @@ def selected_master_spec(manager: Optional["SecretManager"] = None) -> SecretSpe
     return master_password_spec(name, profile)
 
 
+# Config gate for OS-keyring access of the vault master password. Without this, every
+# unlock probed Keychain (lookup) and every "don't remember" unlock still called delete —
+# which on macOS surfaces a Keychain unlock prompt even when using a .kdbx backend.
+REMEMBER_MASTER_SETTING = "secrets.remember_master_password"
+
+
+def remember_master_password_enabled() -> bool:
+    """Whether the user opted to keep the vault master password in the OS keyring."""
+    try:
+        from .config import Config
+        return bool(Config().get_setting(REMEMBER_MASTER_SETTING, False))
+    except Exception:
+        return False
+
+
+def set_remember_master_password(enabled: bool) -> None:
+    """Persist the Remember-master-password opt-in (and gate future Keychain probes)."""
+    try:
+        from .config import Config
+        Config().set_setting(REMEMBER_MASTER_SETTING, bool(enabled))
+    except Exception:
+        logger.debug("Failed to persist %s", REMEMBER_MASTER_SETTING, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Session idle timeout (shared by session-backed backends)
 # ---------------------------------------------------------------------------

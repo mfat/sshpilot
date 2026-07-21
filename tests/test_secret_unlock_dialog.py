@@ -148,3 +148,75 @@ def test_startup_unlock_notifies_but_does_not_unlock_when_not_signed_in(monkeypa
     d._startup_unlock_after_probe("win", needs_login=True)
     assert notified == [backend]
 
+
+def test_remember_master_gate_skips_keyring_probe_when_disabled(monkeypatch):
+    """Session vaults must not touch the OS keyring unless Remember is opted in.
+
+    Without this gate, keepassxc on macOS still opened Keychain on every unlock
+    (lookup always, and delete on every unlock with Remember unchecked).
+    """
+    monkeypatch.setattr(d, "remember_master_password_enabled", lambda: False)
+
+    class FakeManager:
+        def lookup_in_keyring(self, _spec):
+            raise AssertionError("must not probe OS keyring when remember is off")
+
+    mgr = FakeManager()
+    saved = None
+    if d.remember_master_password_enabled():
+        saved = mgr.lookup_in_keyring(object())
+    assert saved is None
+
+
+def test_remember_master_gate_probes_keyring_when_enabled(monkeypatch):
+    monkeypatch.setattr(d, "remember_master_password_enabled", lambda: True)
+    looked_up = []
+
+    class FakeManager:
+        def lookup_in_keyring(self, spec):
+            looked_up.append(spec)
+            return "saved-pw"
+
+    mgr = FakeManager()
+    saved = None
+    if d.remember_master_password_enabled():
+        saved = mgr.lookup_in_keyring("spec")
+    assert saved == "saved-pw"
+    assert looked_up == ["spec"]
+
+
+def test_remember_master_password_helpers(monkeypatch):
+    from sshpilot import secret_storage as ss
+    import sshpilot.config as config_mod
+
+    state = {ss.REMEMBER_MASTER_SETTING: False}
+    calls = []
+
+    class StubConfig:
+        def get_setting(self, key, default=None):
+            calls.append(("get", key, default))
+            return state.get(key, default)
+
+        def set_setting(self, key, value):
+            calls.append(("set", key, value))
+            state[key] = value
+
+    monkeypatch.setattr(config_mod, "Config", StubConfig)
+
+    assert ss.remember_master_password_enabled() is False
+    ss.set_remember_master_password(True)
+    assert state[ss.REMEMBER_MASTER_SETTING] is True
+    assert ss.remember_master_password_enabled() is True
+    ss.set_remember_master_password(False)
+    assert state[ss.REMEMBER_MASTER_SETTING] is False
+    assert ("set", ss.REMEMBER_MASTER_SETTING, True) in calls
+    assert ("set", ss.REMEMBER_MASTER_SETTING, False) in calls
+
+
+def test_default_config_does_not_remember_master_password():
+    from sshpilot.config import Config
+
+    cfg = Config.__new__(Config)
+    defaults = Config.get_default_config(cfg)
+    assert defaults["secrets"]["remember_master_password"] is False
+

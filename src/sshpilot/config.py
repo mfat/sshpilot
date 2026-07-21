@@ -155,11 +155,17 @@ class Config(GObject.Object):
                     'profile': '',
                 },
                 # KeePass (.kdbx) backend: path to the database file and an optional key
-                # file. The master password is typed per launch (kept in memory).
+                # file. The master password is typed per launch (kept in memory) unless
+                # the user opts into "Remember master password" (see below).
                 'keepassxc': {
                     'database': '',
                     'keyfile': '',
                 },
+                # When True, the unlock dialog may auto-read / write the vault master
+                # password via the OS keyring (Keychain on macOS). Default False so a
+                # session vault (keepassxc/bitwarden) does not touch Keychain until the
+                # user explicitly checks "Remember master password".
+                'remember_master_password': False,
             },
             'identity': {
                 # Default SSH agent offered to connections. 'auto' = the OS/desktop

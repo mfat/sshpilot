@@ -2606,13 +2606,17 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("Failed to update secret rows visibility: %s", exc)
 
     def _refresh_forget_master_row(self):
-        """Reflect whether a master password is currently saved in the keyring."""
+        """Reflect whether a master password is currently saved in the keyring.
+
+        Uses the remember opt-in flag rather than probing the OS keyring, so opening
+        Preferences with a .kdbx backend does not trigger a macOS Keychain unlock.
+        """
         if not hasattr(self, 'forget_master_row'):
             return
         saved = False
         try:
-            from .secret_storage import get_secret_manager, selected_master_spec
-            saved = bool(get_secret_manager().lookup_in_keyring(selected_master_spec()))
+            from .secret_storage import remember_master_password_enabled
+            saved = remember_master_password_enabled()
         except Exception:
             saved = False
         self.forget_master_row.set_subtitle(
@@ -2625,8 +2629,13 @@ class PreferencesWindow(Adw.NavigationPage):
     def on_forget_master_password(self, _button):
         """Delete the remembered master password from the OS keyring."""
         try:
-            from .secret_storage import get_secret_manager, selected_master_spec
+            from .secret_storage import (
+                get_secret_manager,
+                selected_master_spec,
+                set_remember_master_password,
+            )
             get_secret_manager().delete_in_keyring(selected_master_spec())
+            set_remember_master_password(False)
             logger.info("Forgot saved vault master password")
         except Exception:
             logger.debug("Failed to forget master password", exc_info=True)

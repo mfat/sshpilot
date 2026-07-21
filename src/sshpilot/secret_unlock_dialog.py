@@ -23,7 +23,13 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
-from .secret_storage import get_secret_manager, master_password_spec, selected_master_spec
+from .secret_storage import (
+    get_secret_manager,
+    master_password_spec,
+    remember_master_password_enabled,
+    selected_master_spec,
+    set_remember_master_password,
+)
 from .window_dialogs import parent_window
 
 logger = logging.getLogger(__name__)
@@ -438,13 +444,17 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
 
             if ok:
                 # Persist the "remember" choice on a manual unlock; a saved password that
-                # just worked stays as-is.
+                # just worked stays as-is. Only touch the OS keyring when the user has
+                # opted in (or is clearing a previous opt-in) — otherwise macOS shows a
+                # Keychain unlock prompt even for a pure .kdbx vault.
                 if source == 'manual':
                     try:
                         if remember:
-                            manager.store_in_keyring(_master_spec(), password)
-                        else:
+                            if manager.store_in_keyring(_master_spec(), password):
+                                set_remember_master_password(True)
+                        elif remember_master_password_enabled():
                             manager.delete_in_keyring(_master_spec())
+                            set_remember_master_password(False)
                     except Exception:
                         logger.debug("persisting master password failed", exc_info=True)
                 on_spinner_closed = lambda *_a: _finish(True)
@@ -455,6 +465,7 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
                     manager.delete_in_keyring(_master_spec())
                 except Exception:
                     pass
+                set_remember_master_password(False)
                 on_spinner_closed = lambda *_a: _show_password_dialog()
             elif needs_login:
                 from .bitwarden_setup import _prompt_gui_login
@@ -520,7 +531,7 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
         # Enter triggers the dialog's default response.
         entry.set_property('activates-default', True)
         remember_check = Gtk.CheckButton(label=_("Remember master password"))
-        remember_check.set_active(False)   # opt-in
+        remember_check.set_active(remember_master_password_enabled())
         caption = Gtk.Label(label=_("Stored in your system keyring."))
         caption.set_xalign(0)
         caption.set_wrap(True)
@@ -593,11 +604,14 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
         GLib.idle_add(_focus_entry)
 
     # Auto-unlock with a saved master password (still shows the spinner), else prompt.
+    # Gate the keyring probe on the remember opt-in so session vaults (esp. keepassxc
+    # on macOS) never open Keychain unless the user asked to save the master password.
     saved = None
-    try:
-        saved = manager.lookup_in_keyring(_master_spec())
-    except Exception:
-        logger.debug("saved master password lookup failed", exc_info=True)
+    if remember_master_password_enabled():
+        try:
+            saved = manager.lookup_in_keyring(_master_spec())
+        except Exception:
+            logger.debug("saved master password lookup failed", exc_info=True)
     if saved:
         _run_unlock(saved, source='saved', remember=True)
     else:
