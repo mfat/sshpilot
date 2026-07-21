@@ -2893,12 +2893,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             force_split_from_group: bool = False,
             split_group_source: Optional[str] = None,
             split_original_nickname: Optional[str] = None,
+            as_new: bool = False,
     ):
         """Show connection dialog for adding/editing connections"""
         logger.info(f"Show connection dialog for: {connection}")
 
         # Refresh connection from disk to ensure latest auth method
-        if connection is not None:
+        if connection is not None and not as_new:
             try:
                 self.connection_manager.load_ssh_config()
                 refreshed = self.connection_manager.find_connection_by_nickname(connection.nickname)
@@ -2907,7 +2908,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
 
-        if connection is not None and not skip_group_warning:
+        if connection is not None and not as_new and not skip_group_warning:
             block_info = None
             try:
                 source_path = split_group_source or getattr(connection, 'source', None)
@@ -2930,10 +2931,45 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             force_split_from_group=force_split_from_group,
             split_group_source=split_source_for_dialog,
             split_original_nickname=original_token,
+            as_new=as_new,
         )
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
 
+    def open_cli_connect(self, ssh_tokens):
+        """Open a terminal tab from CLI ssh-like tokens (single target)."""
+        from .cli_connect import describe_cli_error, resolve_cli_connect
+
+        try:
+            resolved = resolve_cli_connect(ssh_tokens, self.connection_manager)
+        except ValueError as exc:
+            message = describe_cli_error(exc)
+            logger.warning('CLI connect failed: %s', message)
+            try:
+                if hasattr(self, 'toast_overlay') and self.toast_overlay:
+                    self.toast_overlay.add_toast(Adw.Toast.new(message))
+            except Exception:
+                pass
+            try:
+                self._error_dialog(_('Could not open connection'), message)
+            except Exception:
+                pass
+            return False
+
+        try:
+            self.terminal_manager.connect_to_host(
+                resolved.connection, force_new=True)
+            return True
+        except Exception as exc:
+            logger.error('CLI connect open failed: %s', exc, exc_info=True)
+            try:
+                self._error_dialog(
+                    _('Could not open connection'),
+                    describe_cli_error(exc),
+                )
+            except Exception:
+                pass
+            return False
 
     def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
         """Present options when editing a grouped host"""

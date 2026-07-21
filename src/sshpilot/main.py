@@ -10,7 +10,6 @@ import faulthandler
 import resource
 import logging
 import threading
-import argparse
 from logging.handlers import RotatingFileHandler
 
 
@@ -172,7 +171,7 @@ class SshPilotApplication(Adw.Application):
                  fatal_warnings: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
-            flags=Gio.ApplicationFlags.FLAGS_NONE
+            flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
 
         # GTK is not thread-safe: Python's *cyclic* garbage collector can run on
@@ -191,6 +190,11 @@ class SshPilotApplication(Adw.Application):
         self.verbose_override = verbose and not quiet
         self.quiet_override = quiet and not verbose
         self.isolated_mode = isolated
+
+        # CLI connect handoff (primary + secondary instances)
+        self._pending_cli_ssh_tokens = None
+        from .new_connection import SavePromptDismissals
+        self.save_prompt_dismissals = SavePromptDismissals()
 
         # Set up logging
         self.setup_logging()
@@ -439,6 +443,12 @@ class SshPilotApplication(Adw.Application):
                     host.dispatch_app_started()
             except Exception:
                 logger.exception("Plugin app_started dispatch failed")
+        else:
+            # Secondary activation / CLI handoff: surface the existing window.
+            try:
+                self.window.present()
+            except Exception:
+                pass
 
         # Start the in-process passphrase-prompt server so SSH askpass prompts
         # render as modal children of the main window instead of stray helper
@@ -468,6 +478,54 @@ class SshPilotApplication(Adw.Application):
             schedule_xterm_prewarm(self.config)
         except Exception as exc:
             logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
+
+    def do_command_line(self, command_line):
+        """Handle argv for first launch and single-instance handoff.
+
+        Remaining tokens after sshPilot options are treated as an OpenSSH-style
+        destination and opened in a terminal tab.
+        """
+        from .cli_connect import parse_sshpilot_cli
+
+        argv = command_line.get_arguments()
+        try:
+            opts = parse_sshpilot_cli(list(argv)[1:])
+        except SystemExit as exc:
+            code = exc.code
+            if code is None:
+                return 0
+            try:
+                return int(code)
+            except Exception:
+                return 1
+
+        self.activate()
+        if opts.ssh_tokens:
+            self._queue_cli_connect(list(opts.ssh_tokens))
+        return 0
+
+    def _queue_cli_connect(self, tokens):
+        self._pending_cli_ssh_tokens = list(tokens)
+        GLib.idle_add(self._flush_pending_cli_connect)
+
+    def _flush_pending_cli_connect(self):
+        tokens = getattr(self, '_pending_cli_ssh_tokens', None)
+        if not tokens:
+            return False
+        window = self.window or self.props.active_window
+        if window is None or not hasattr(window, 'open_cli_connect'):
+            # Window not ready yet — try again on the next idle.
+            return True
+        self._pending_cli_ssh_tokens = None
+        try:
+            window.present()
+        except Exception:
+            pass
+        try:
+            window.open_cli_connect(tokens)
+        except Exception:
+            logger.exception('Failed to open CLI connection')
+        return False
 
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
@@ -1515,70 +1573,30 @@ def main():
         prompt = sys.argv[2] if len(sys.argv) > 2 else ""
         sys.exit(run_askpass_and_write(prompt))
 
-    parser = argparse.ArgumentParser(
-        prog="sshpilot",
-        description="sshPilot — SSH connection manager",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "Logs are written under the state directory\n"
-            "(~/.local/state/sshpilot, or the Flatpak equivalent\n"
-            "~/.var/app/io.github.mfat.sshpilot/.local/state/sshpilot):\n"
-            "  sshpilot.log   all messages (rotating, 10 MB x 5)\n"
-            "  app.log        application messages\n"
-            "  ssh.log        SSH / connection / terminal messages\n"
-            "  crash.log      fatal-signal tracebacks (captured automatically);\n"
-            "                 the previous run's crash is kept as crash.log.previous\n"
-            "                 and offered via the startup dialog / Help > Report a Problem\n"
-            "\n"
-            "GTK/GLib warnings & criticals and uncaught Python exceptions are\n"
-            "always recorded in the logs. Extra diagnostics:\n"
-            "  --diagnostics        use this when filing a bug (verbose + GTK info/debug)\n"
-            "  --log-gtk-warnings   also capture lower-severity GTK/GLib info & debug\n"
-            "  --fatal-warnings     abort at the first GTK/GLib warning with a backtrace\n"
-        ),
-    )
-    verbosity = parser.add_mutually_exclusive_group()
-    verbosity.add_argument(
-        "--verbose", "-v", action="store_true",
-        help="Verbose debug logging (overrides config)",
-    )
-    verbosity.add_argument(
-        "--quiet", "-q", action="store_true",
-        help="Only show warnings and errors (overrides config)",
-    )
-    parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
+    from .cli_connect import parse_sshpilot_cli
 
-    diagnostics = parser.add_argument_group(
-        "diagnostics", "Capture extra logs to help diagnose bugs")
-    diagnostics.add_argument(
-        "--log-gtk-warnings", action="store_true",
-        help="Also capture lower-severity GTK/GLib info & debug messages. "
-             "Warnings & criticals are captured into the log files by default; "
-             "use this for deep GTK/widget tracing.",
-    )
-    diagnostics.add_argument(
-        "--fatal-warnings", action="store_true",
-        help="Abort on the first GTK/GLib warning or critical, writing a full "
-             "backtrace to crash.log and the terminal. Pinpoints the exact "
-             "operation behind a UI corruption or crash. Aggressive: also "
-             "aborts on benign warnings.",
-    )
-    diagnostics.add_argument(
-        "--diagnostics", action="store_true",
-        help="Shorthand for --verbose --log-gtk-warnings. Recommended when "
-             "filing a bug report.",
-    )
-    args = parser.parse_args()
+    # Pre-parse so logging / isolated mode are configured before Gtk starts.
+    # do_command_line parses again for single-instance handoff of ssh tokens.
+    try:
+        opts = parse_sshpilot_cli(sys.argv[1:])
+    except SystemExit as exc:
+        code = exc.code
+        if code is None:
+            return 0
+        try:
+            return int(code)
+        except Exception:
+            return 1
 
-    verbose = args.verbose or args.diagnostics
+    verbose = opts.verbose or opts.diagnostics
     app = SshPilotApplication(
         verbose=verbose,
-        quiet=args.quiet,
-        isolated=args.isolated,
-        log_gtk_warnings=args.log_gtk_warnings or args.diagnostics,
-        fatal_warnings=args.fatal_warnings,
+        quiet=opts.quiet,
+        isolated=opts.isolated,
+        log_gtk_warnings=opts.log_gtk_warnings or opts.diagnostics,
+        fatal_warnings=opts.fatal_warnings,
     )
-    return app.run(None)  # Pass None to use default command line arguments
+    return app.run(sys.argv)
 
 if __name__ == '__main__':
     main()

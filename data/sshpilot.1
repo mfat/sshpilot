@@ -4,12 +4,23 @@ sshpilot \- SSH connection manager with integrated terminal
 .SH SYNOPSIS
 .B sshpilot
 .RI [ OPTIONS ]
+.RI [ SSH_DESTINATION... ]
 .SH DESCRIPTION
 .B sshPilot
 is a GTK4/libadwaita SSH connection manager with an integrated VTE terminal,
 port forwarding and tunnelling, and an SFTP file manager. It stores connection
 profiles, integrates with the system keyring for credentials, and drives the
 native OpenSSH client for every connection.
+.PP
+When a destination is given on the command line, sshPilot opens it in a
+terminal tab using the same forms as OpenSSH (Host alias,
+.IR user@host ,
+or
+.B ssh
+options such as
+.BR \-p ).
+If the resolved hostname/IP (or username for that host) is not already present
+in the SSH config, a successful connect offers to save a new connection.
 .SH OPTIONS
 .TP
 .BR \-\-verbose ", " \-v
@@ -31,6 +42,24 @@ crash.log.
 .B \-\-diagnostics
 Shorthand for \fB\-\-verbose \-\-log\-gtk\-warnings\fR. Recommended when filing
 a bug report.
+.SH SSH DESTINATION
+After sshPilot options, remaining arguments are treated like an
+.B ssh
+command line. Examples:
+.PP
+.nf
+.RS
+sshpilot web
+sshpilot root@example.com
+sshpilot \-p 2222 user@host
+sshpilot ssh \-J bastion user@host
+.RE
+.fi
+.PP
+A bare Host alias that already exists in
+.I ~/.ssh/config
+opens that saved connection. Otherwise the argv is parsed into connection
+fields (via the command converter) and run with OpenSSH in a new tab.
 .SH FILES
 .TP
 .I ~/.ssh/config
