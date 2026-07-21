@@ -887,6 +887,9 @@ class TerminalManager:
                 meta = self.window.config.get_connection_meta(nickname)
                 meta['last_used'] = time.time()
                 self.window.config.set_connection_meta(nickname, meta)
+                welcome = getattr(self.window, 'welcome_view', None)
+                if welcome is not None and hasattr(welcome, 'refresh_recent'):
+                    welcome.refresh_recent()
         except Exception:
             logger.debug("Failed to record last-used time", exc_info=True)
         for row in self.window._rows_for_connection(terminal.connection):
