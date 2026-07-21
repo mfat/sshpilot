@@ -46,6 +46,10 @@ template $SshPilotPreferencesWindow: Adw.NavigationPage {
           Adw.HeaderBar sidebar_header_bar {
             show-start-title-buttons: false;
             show-end-title-buttons: false;
+            // Settings is pushed on the window NavigationView, so every
+            // HeaderBar inside it would otherwise show Back. Keep Back only
+            // on the content header (macOS especially doubles it up).
+            show-back-button: false;
 
             styles [
               "flat",

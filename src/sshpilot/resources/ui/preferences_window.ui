@@ -35,6 +35,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="AdwHeaderBar" id="sidebar_header_bar">
                         <property name="show-start-title-buttons">false</property>
                         <property name="show-end-title-buttons">false</property>
+                        <property name="show-back-button">false</property>
                         <style>
                           <class name="flat"/>
                         </style>
