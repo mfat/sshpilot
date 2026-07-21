@@ -201,6 +201,25 @@ jobs:
           git commit -am "Update Arch PKGBUILD for v$VERSION"
           git push origin '${{ inputs.main_branch }}'
 
+      # Same nudge scripts/release.sh gives: without it the release reaches
+      # ppa:mfat/sshpilot only after Launchpad's scheduled import + daily
+      # recipe build (up to a day later). Non-fatal for the same reason.
+      - name: Trigger the Launchpad PPA build
+        if: inputs.prerelease != true
+        continue-on-error: true
+        env:
+          LP_CREDENTIALS: ${{ secrets.LP_CREDENTIALS }}
+        run: |
+          set -eu
+          if [ -z "$LP_CREDENTIALS" ]; then
+            echo "No LP_CREDENTIALS secret; skipping the PPA nudge."
+            exit 0
+          fi
+          printf '%s' "$LP_CREDENTIALS" > "$RUNNER_TEMP/lp-creds.txt"
+          pip install --quiet launchpadlib
+          LP_CREDENTIALS_FILE="$RUNNER_TEMP/lp-creds.txt" \
+            scripts/trigger-ppa-build.py "$(git rev-parse HEAD)"
+
       - name: Summary
         run: |
           VERSION='${{ steps.check.outputs.version }}'

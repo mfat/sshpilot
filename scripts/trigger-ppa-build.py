@@ -16,6 +16,7 @@ First run opens a browser to authorize the token (cached under
 ~/.local/share/launchpadlib afterwards).
 """
 
+import os
 import sys
 import time
 
@@ -42,7 +43,13 @@ def main(argv):
     if "--timeout" in argv:
         timeout = int(argv[argv.index("--timeout") + 1])
 
-    lp = Launchpad.login_with("sshpilot-release", "production", version="devel")
+    # In CI, point LP_CREDENTIALS_FILE at a stored token to skip the browser.
+    lp = Launchpad.login_with(
+        "sshpilot-release",
+        "production",
+        version="devel",
+        credentials_file=os.environ.get("LP_CREDENTIALS_FILE"),
+    )
     repo = lp.git_repositories.getByPath(path=REPO_PATH)
     if repo is None:
         print(f"ERROR: no Launchpad repository at {REPO_PATH}", file=sys.stderr)
