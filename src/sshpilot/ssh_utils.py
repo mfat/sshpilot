@@ -4,7 +4,7 @@ SSH utilities for building consistent SSH options across the application
 
 import os
 import logging
-from typing import Dict
+from typing import Dict, List, Optional, Tuple
 
 from .platform_utils import is_flatpak
 
@@ -20,6 +20,12 @@ _SSH_AUTH_FAILURE_MARKERS = (
     'authentication failed',
     'too many authentication failures',
 )
+
+_COMBINED_AUTH = (
+    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,'
+    'keyboard-interactive,password'
+)
+_PASSWORD_AUTH = 'PreferredAuthentications=keyboard-interactive,password'
 
 
 def is_ssh_auth_failure_text(text: str) -> bool:
@@ -50,63 +56,51 @@ def ensure_writable_ssh_home(env: Dict[str, str]) -> None:
         env["HOME"] = alt_home
         logger.debug(f"Using temporary HOME for ssh-copy-id: {alt_home}")
 
-def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False):
-    """Build SSH options that match the exact connection settings used for SSH.
-    
-    This function replicates the SSH option building logic from terminal.py
-    to ensure ssh-copy-id and scp use the same settings as SSH connections.
-    
-    Args:
-        connection: The connection object
-        config: Optional config object
-        for_ssh_copy_id: If True, filter out options not supported by ssh-copy-id
-    """
-    options = []
-    
-    # Read SSH behavior from config with sane defaults (same as terminal.py)
+
+def _coerce_positive_int(value, default=None):
+    try:
+        coerced = int(str(value))
+        if coerced <= 0:
+            return default
+        return coerced
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_ssh_cfg(config) -> dict:
     try:
         if config is None:
             from .config import Config
             config = Config()
-        ssh_cfg = config.get_ssh_config() if hasattr(config, 'get_ssh_config') else {}
+        if hasattr(config, 'get_ssh_config'):
+            return config.get_ssh_config() or {}
     except Exception:
-        ssh_cfg = {}
+        pass
+    return {}
 
-    def _coerce_int(value, default=None):
-        try:
-            coerced = int(str(value))
-            if coerced <= 0:
-                return default
-            return coerced
-        except (TypeError, ValueError):
-            return default
 
-    connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
-    connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
-    keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'), None)
-    keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'), None)
-    strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-    auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
-    batch_mode = bool(ssh_cfg.get('batch_mode', False))
-    compression = bool(ssh_cfg.get('compression', False))
-
-    # Determine auth method from connection and whether a password is available
-    password_auth_selected = False
-    has_saved_password = False
+def _auth_flags(connection) -> Tuple[bool, bool, bool]:
+    """Return (password_auth_selected, has_saved_password, using_password)."""
     try:
         # In our UI: 0 = key-based, 1 = password
-        auth_method = getattr(connection, 'auth_method', 0)
-        password_auth_selected = (auth_method == 1)
+        password_auth_selected = getattr(connection, 'auth_method', 0) == 1
         has_saved_password = bool(getattr(connection, 'password', None))
     except Exception:
-        password_auth_selected = False
-        has_saved_password = False
-    using_password = password_auth_selected or (not password_auth_selected and has_saved_password)
+        return False, False, False
+    using_password = password_auth_selected or has_saved_password
+    return password_auth_selected, has_saved_password, using_password
 
-    # Apply advanced args according to stored preferences (same as terminal.py)
-    # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-    if batch_mode and not using_password:
-        options.extend(['-o', 'BatchMode=yes'])
+
+def _append_cfg_int_options(options: List[str], ssh_cfg: dict, for_ssh_copy_id: bool) -> None:
+    """Append timeout / keepalive / host-key options from app SSH preferences."""
+    connect_timeout = _coerce_positive_int(ssh_cfg.get('connection_timeout'))
+    connection_attempts = _coerce_positive_int(ssh_cfg.get('connection_attempts'))
+    keepalive_interval = _coerce_positive_int(ssh_cfg.get('keepalive_interval'))
+    keepalive_count = _coerce_positive_int(ssh_cfg.get('keepalive_count_max'))
+    strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+    auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
+    compression = bool(ssh_cfg.get('compression', False))
+
     if connect_timeout is not None:
         options.extend(['-o', f'ConnectTimeout={connect_timeout}'])
     if connection_attempts is not None:
@@ -119,28 +113,21 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         options.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
     if strict_host:
         options.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+    elif auto_add_host_keys:
+        # Default to accepting new host keys non-interactively on fresh installs
+        options.extend(['-o', 'StrictHostKeyChecking=accept-new'])
     if compression and not for_ssh_copy_id:
         options.append('-C')
 
-    # Default to accepting new host keys non-interactively on fresh installs (same as terminal.py)
-    try:
-        if (not strict_host) and auto_add_host_keys:
-            options.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-    except Exception:
-        pass
 
-    # Ensure SSH exits immediately on failure rather than waiting in background (same as terminal.py)
-    options.extend(['-o', 'ExitOnForwardFailure=yes'])
-    
-    # Only add verbose flag if explicitly enabled in config (same as terminal.py)
-    # Note: ssh-copy-id doesn't support -v flags, only -x for debug
+def _append_verbosity_options(options: List[str], ssh_cfg: dict, for_ssh_copy_id: bool) -> None:
+    """Map app verbosity/debug prefs to ``-v`` / ``LogLevel`` (ssh only)."""
     try:
         verbosity = int(ssh_cfg.get('verbosity', 0))
         debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
         v = max(0, min(3, verbosity))
         if not for_ssh_copy_id:
-            for _ in range(v):
-                options.append('-v')
+            options.extend(['-v'] * v)
         # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
         if v == 1:
             options.extend(['-o', 'LogLevel=VERBOSE'])
@@ -152,77 +139,114 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
             options.extend(['-o', 'LogLevel=DEBUG'])
     except Exception as e:
         logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
-    
-    # Add key file/options only for key-based auth (same as terminal.py)
-    # Note: ssh-copy-id already specifies the key with -i, so we don't add it again
-    if not password_auth_selected:
-        # Get key selection mode
-        key_select_mode = 0
-        try:
-            key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
-            pass
-        
-        # Only add specific key when a dedicated key mode is selected
-        if key_select_mode in (1, 2) and hasattr(connection, 'keyfile') and connection.keyfile and \
-           os.path.isfile(connection.keyfile) and \
-           not connection.keyfile.startswith('Select key file'):
 
-            if not for_ssh_copy_id:
-                options.extend(['-i', connection.keyfile])
-            if key_select_mode == 1:
-                options.extend(['-o', 'IdentitiesOnly=yes'])
-            
-            # Add certificate if specified
-            if hasattr(connection, 'certificate') and connection.certificate and \
-               os.path.isfile(connection.certificate):
-                options.extend(['-o', f'CertificateFile={connection.certificate}'])
 
-            # If a password is available, allow all standard authentication methods
-            if has_saved_password:
-                options.extend([
-                    '-o',
-                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                ])
-        else:
-            # If no specific key or certificate, still append combined auth if password exists
-            if has_saved_password:
-                options.extend([
-                    '-o',
-                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                ])
-    else:
-        # Force password authentication when user chose password auth (same as terminal.py)
-        # But don't disable pubkey auth for ssh-copy-id since we're installing a key
-        options.extend([
-            '-o',
-            'PreferredAuthentications=keyboard-interactive,password',
-        ])
-        if not for_ssh_copy_id and getattr(connection, 'pubkey_auth_no', False):
-            options.extend(['-o', 'PubkeyAuthentication=no'])
-    
-    # Add extra SSH config options from advanced tab (same as terminal.py)
+def _key_select_mode(connection) -> int:
+    try:
+        return int(getattr(connection, 'key_select_mode', 0) or 0)
+    except Exception:
+        return 0
+
+
+def _usable_keyfile(connection) -> Optional[str]:
+    keyfile = getattr(connection, 'keyfile', None)
+    if not keyfile or not os.path.isfile(keyfile):
+        return None
+    if keyfile.startswith('Select key file'):
+        return None
+    return keyfile
+
+
+def _append_key_auth_options(
+    options: List[str],
+    connection,
+    *,
+    has_saved_password: bool,
+    for_ssh_copy_id: bool,
+) -> None:
+    """Identity / certificate options for key-based auth."""
+    key_select_mode = _key_select_mode(connection)
+    keyfile = _usable_keyfile(connection) if key_select_mode in (1, 2) else None
+
+    if keyfile:
+        # ssh-copy-id already specifies the key with -i
+        if not for_ssh_copy_id:
+            options.extend(['-i', keyfile])
+        if key_select_mode == 1:
+            options.extend(['-o', 'IdentitiesOnly=yes'])
+
+        certificate = getattr(connection, 'certificate', None)
+        if certificate and os.path.isfile(certificate):
+            options.extend(['-o', f'CertificateFile={certificate}'])
+
+    if has_saved_password:
+        options.extend(['-o', _COMBINED_AUTH])
+
+
+def _append_password_auth_options(
+    options: List[str],
+    connection,
+    *,
+    for_ssh_copy_id: bool,
+) -> None:
+    options.extend(['-o', _PASSWORD_AUTH])
+    # Don't disable pubkey auth for ssh-copy-id — we're installing a key
+    if not for_ssh_copy_id and getattr(connection, 'pubkey_auth_no', False):
+        options.extend(['-o', 'PubkeyAuthentication=no'])
+
+
+def _append_extra_ssh_config(options: List[str], connection) -> None:
     extra_ssh_config = getattr(connection, 'extra_ssh_config', '').strip()
-    if extra_ssh_config:
-        logger.debug(f"Adding extra SSH config options: {extra_ssh_config}")
-        # Parse and add each extra SSH config option
-        for line in extra_ssh_config.split('\n'):
-            line = line.strip()
-            if line and not line.startswith('#'):  # Skip empty lines and comments
-                # Split on first space to separate option and value
-                parts = line.split(' ', 1)
-                if len(parts) == 2:
-                    option, value = parts
-                    options.extend(['-o', f"{option}={value}"])
-                    logger.debug(f"Added SSH option: {option}={value}")
-                elif len(parts) == 1:
-                    # Option without value (e.g., "Compression yes" becomes "Compression=yes")
-                    option = parts[0]
-                    options.extend(['-o', f"{option}=yes"])
-                    logger.debug(f"Added SSH option: {option}=yes")
+    if not extra_ssh_config:
+        return
+    logger.debug(f"Adding extra SSH config options: {extra_ssh_config}")
+    for line in extra_ssh_config.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split(' ', 1)
+        option = parts[0]
+        value = parts[1] if len(parts) == 2 else 'yes'
+        options.extend(['-o', f"{option}={value}"])
+        logger.debug(f"Added SSH option: {option}={value}")
+
+
+def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False):
+    """Build SSH options that match the exact connection settings used for SSH.
     
-    # Add X11 forwarding if enabled (same as terminal.py) - not supported by ssh-copy-id
-    if hasattr(connection, 'x11_forwarding') and connection.x11_forwarding and not for_ssh_copy_id:
+    This function replicates the SSH option building logic from terminal.py
+    to ensure ssh-copy-id and scp use the same settings as SSH connections.
+    
+    Args:
+        connection: The connection object
+        config: Optional config object
+        for_ssh_copy_id: If True, filter out options not supported by ssh-copy-id
+    """
+    options: List[str] = []
+    ssh_cfg = _load_ssh_cfg(config)
+    password_auth_selected, has_saved_password, using_password = _auth_flags(connection)
+
+    # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+    if bool(ssh_cfg.get('batch_mode', False)) and not using_password:
+        options.extend(['-o', 'BatchMode=yes'])
+
+    _append_cfg_int_options(options, ssh_cfg, for_ssh_copy_id)
+    # Ensure SSH exits immediately on failure rather than waiting in background
+    options.extend(['-o', 'ExitOnForwardFailure=yes'])
+    _append_verbosity_options(options, ssh_cfg, for_ssh_copy_id)
+
+    if password_auth_selected:
+        _append_password_auth_options(options, connection, for_ssh_copy_id=for_ssh_copy_id)
+    else:
+        _append_key_auth_options(
+            options, connection,
+            has_saved_password=has_saved_password,
+            for_ssh_copy_id=for_ssh_copy_id,
+        )
+
+    _append_extra_ssh_config(options, connection)
+
+    if getattr(connection, 'x11_forwarding', False) and not for_ssh_copy_id:
         options.append('-X')
-    
+
     return options
