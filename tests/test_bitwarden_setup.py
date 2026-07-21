@@ -36,25 +36,30 @@ def test_resolve_terminal_manager_missing():
 
 
 def test_hide_and_restore_preferences_window():
-    """Preferences is an Adw.Dialog, i.e. a widget: it is hidden and restored
-    with set_visible(), not the Gtk.Window hide()/show()/present() trio."""
+    """Leaving Settings mode calls leave_preferences; restore re-opens it."""
 
-    class PreferencesWindow:
+    class Main:
         def __init__(self):
-            self.visible = True
+            self.in_prefs = True
+            self.show_count = 0
 
-        def get_visible(self):
-            return self.visible
+        def leave_preferences(self):
+            if self.in_prefs:
+                self.in_prefs = False
+                return True
+            return False
 
-        def set_visible(self, visible):
-            self.visible = bool(visible)
+        def show_preferences(self, page_id=None):
+            self.in_prefs = True
+            self.show_count += 1
 
-    prefs = PreferencesWindow()
-    hidden = bs._hide_preferences_windows(prefs)
-    assert prefs in hidden
-    assert not prefs.get_visible()
-    bs._restore_preferences_windows(hidden)
-    assert prefs.get_visible()
+    main = Main()
+    left = bs._hide_preferences_windows(main)
+    assert main in left
+    assert not main.in_prefs
+    bs._restore_preferences_windows(left)
+    assert main.in_prefs
+    assert main.show_count == 1
 
 
 def test_is_bw_installed_uses_resolve_bw_cli(monkeypatch):

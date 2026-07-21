@@ -1332,8 +1332,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Create main content area
         self.setup_content_area()
 
-        # Add split view to main container
-        main_box.append(self.split_view)
+        # Outer NavigationView: work UI is the root page; Settings is pushed on
+        # top (Telegram-style mode). Back / Esc pops Settings and restores work.
+        self.nav_view = None
+        self._work_page = None
+        if hasattr(Adw, 'NavigationView'):
+            self.nav_view = Adw.NavigationView()
+            self.nav_view.set_hexpand(True)
+            self.nav_view.set_vexpand(True)
+            self._work_page = Adw.NavigationPage.new(self.split_view, _('SSH Pilot'))
+            try:
+                self._work_page.set_tag('work')
+            except Exception:
+                pass
+            try:
+                self._work_page.set_can_pop(False)
+            except Exception:
+                pass
+            self.nav_view.add(self._work_page)
+            try:
+                self.nav_view.connect('popped', self._on_navigation_popped)
+            except Exception:
+                logger.debug('Could not connect NavigationView::popped', exc_info=True)
+            main_box.append(self.nav_view)
+        else:
+            main_box.append(self.split_view)
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -1346,6 +1369,40 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.plugin_host.bind_window(self)
         except Exception:
             logger.exception("Plugin host bind_window failed")
+
+    def _on_navigation_popped(self, _nav_view, page):
+        """Flush Settings when its NavigationPage is popped back to work mode."""
+        prefs = getattr(self, '_preferences_window', None)
+        if prefs is not None and page is prefs:
+            try:
+                prefs.on_close_request()
+            except Exception:
+                logger.debug('Failed to flush preferences on pop', exc_info=True)
+
+    def is_preferences_visible(self) -> bool:
+        """True when Settings mode is the visible NavigationView page."""
+        nav = getattr(self, 'nav_view', None)
+        prefs = getattr(self, '_preferences_window', None)
+        if nav is None or prefs is None:
+            return False
+        try:
+            return nav.get_visible_page() is prefs
+        except Exception:
+            return False
+
+    def leave_preferences(self) -> bool:
+        """Pop Settings mode if it is visible. Returns True if it was showing."""
+        nav = getattr(self, 'nav_view', None)
+        prefs = getattr(self, '_preferences_window', None)
+        if nav is None or prefs is None:
+            return False
+        try:
+            if nav.get_visible_page() is prefs:
+                nav.pop()
+                return True
+        except Exception:
+            logger.debug('Failed to leave preferences mode', exc_info=True)
+        return False
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:

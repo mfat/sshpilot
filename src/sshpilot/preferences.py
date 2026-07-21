@@ -1,4 +1,4 @@
-"""Preferences dialog and font selection utilities."""
+"""Preferences UI (main-window Settings mode) and font selection utilities."""
 
 import os
 import functools
@@ -222,24 +222,27 @@ def _detect_pyxterm_backend():
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/preferences_window.ui")
-class PreferencesWindow(Adw.Dialog):
-    """Preferences dialog.
+class PreferencesWindow(Adw.NavigationPage):
+    """Settings mode page for the main window.
 
-    An ``Adw.Dialog`` (not a top-level window): libadwaita presents it over the
-    parent window, so it stacks correctly on Wayland and collapses with the
-    parent instead of being a second window in the shell. ``self.get_root()``
-    is the presenting window once presented — use it wherever a ``Gtk.Window``
-    is required (e.g. ``transient_for``).
+    An ``Adw.NavigationPage`` pushed onto the window's ``Adw.NavigationView``.
+    It replaces the work UI (connection sidebar + tabs) for the duration of the
+    mode; HeaderBar Back / Esc pops back to work. Internally an
+    ``Adw.NavigationSplitView`` hosts the category list and preference pages
+    (collapses to list↔detail on narrow widths).
+
+    ``self.get_root()`` is the main window once the page is in the tree — use it
+    wherever a ``Gtk.Window`` is required (e.g. ``transient_for``).
     """
 
     __gtype_name__ = "SshPilotPreferencesWindow"
 
-    overlay_split_view = Gtk.Template.Child()
+    split_view = Gtk.Template.Child()
+    sidebar_page = Gtk.Template.Child()
+    content_page = Gtk.Template.Child()
     sidebar_header_bar = Gtk.Template.Child()
     sidebar = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
-    show_sidebar_button = Gtk.Template.Child()
-    header_title_label = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
 
     def __init__(self, parent_window, config):
@@ -277,54 +280,31 @@ class PreferencesWindow(Adw.Dialog):
 
         self.connect('destroy', self._on_destroy)
 
-        # Use a consistent title for the window and header regardless of parent
         self._base_header_title = _("Settings")
-
-        # Set window properties with modern Adwaita structure
         self.set_title(self._base_header_title)
-        self.set_content_width(820)   # wide enough to show the sidebar
-        self.set_content_height(600)
 
-        # Create custom layout with sidebar
         self.setup_navigation_layout()
-        
-        # Initialize the preferences UI
         self.setup_preferences()
-        
-        # Apply any existing color overrides
         self.apply_color_overrides()
 
-        # Save on close to persist advanced SSH settings. Adw.Dialog emits
-        # 'closed' (after dismissal); 'close-request' is a Gtk.Window signal and
-        # would never fire here.
-        self.connect('closed', self.on_close_request)
         self.connect('map', self._on_preferences_map)
-    
+
     def setup_navigation_layout(self):
         """Configure the split-view layout (skeleton lives in the template)."""
-        # Sidebar width sizing stays in Python: the SP length unit is only set
-        # when the Adw.LengthUnit enum exists on this libadwaita version.
         try:
-            self.overlay_split_view.set_sidebar_width_fraction(0.25)
-            self.overlay_split_view.set_min_sidebar_width(180)
-            self.overlay_split_view.set_max_sidebar_width(280)
             if hasattr(Adw, 'LengthUnit'):
-                self.overlay_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
+                self.split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
         except Exception as e:
-            logger.debug(f"Failed to set OverlaySplitView sidebar width properties: {e}")
+            logger.debug(f"Failed to set NavigationSplitView sidebar width unit: {e}")
 
         try:
-            self.overlay_split_view.set_show_sidebar(True)
+            self.split_view.set_show_content(True)
         except Exception as e:
-            logger.debug(f"Failed to set OverlaySplitView show_sidebar: {e}")
+            logger.debug(f"Failed to set NavigationSplitView show_content: {e}")
 
-        # Connect sidebar selection to content stack
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
 
-        # Store pages for later reference
         self.pages = {}
-
-        # Ensure the header defaults to the base preferences title
         self._update_header_title()
 
     def on_sidebar_row_selected(self, listbox, row):
@@ -334,12 +314,11 @@ class PreferencesWindow(Adw.Dialog):
             changed = page_name != getattr(self, '_selected_page_name', None)
             self._selected_page_name = page_name
             self.content_stack.set_visible_child_name(page_name)
-            # Collapsed, the sidebar is an overlay over the page: dismiss it once
-            # a page is chosen, the way a navigation sidebar behaves. Only on an
-            # actual change -- revealing the sidebar re-emits row-selected for
-            # the row that is already selected, which would slam it shut again.
-            if changed and self.overlay_split_view.get_collapsed():
-                self.overlay_split_view.set_show_sidebar(False)
+            # Collapsed: show the detail page. Only on a real change — selecting
+            # the already-selected row (e.g. when returning to the list) must not
+            # immediately bounce back to content.
+            if changed and self.split_view.get_collapsed():
+                self.split_view.set_show_content(True)
             if page_name == getattr(self, '_secrets_page_id', None):
                 self._ensure_secrets_page_probes()
             if isinstance(row, Adw.ActionRow):
@@ -347,20 +326,31 @@ class PreferencesWindow(Adw.Dialog):
                 self._update_header_title(title)
 
     def _update_header_title(self, page_title: Optional[str] = None):
-        """Update the content area header label dynamically based on selected page.
-        
-        Sidebar always shows "Preferences", content area shows the page title.
-        """
-        header_label = getattr(self, "header_title_label", None)
-        if header_label:
-            # Content area shows the page title, or "Preferences" if no page selected
-            if page_title:
-                header_label.set_label(page_title)
-            else:
-                header_label.set_label(self._base_header_title)
-
-        # Keep window title static as "Preferences" only
+        """Set the content NavigationPage title (HeaderBar picks it up)."""
+        title = page_title or self._base_header_title
+        try:
+            self.content_page.set_title(title)
+        except Exception:
+            pass
+        # Keep the outer Settings page title stable for Back tooltips / stack.
         self.set_title(self._base_header_title)
+
+    def select_page(self, page_id: Optional[str]) -> bool:
+        """Select a preferences page by stack id (e.g. ``plugins``).
+
+        Returns True if a matching sidebar row was found and selected.
+        """
+        if not page_id:
+            return False
+        row = self.sidebar.get_first_child()
+        while row is not None:
+            if row.get_name() == page_id:
+                self.sidebar.select_row(row)
+                if self.split_view.get_collapsed():
+                    self.split_view.set_show_content(True)
+                return True
+            row = row.get_next_sibling()
+        return False
 
     @staticmethod
     def _page_id(title):
@@ -2202,21 +2192,16 @@ class PreferencesWindow(Adw.Dialog):
             logger.error(f"Failed to setup preferences: {e}")
 
     def on_close_request(self, *args):
-        """Persist settings when the preferences dialog closes.
-
-        Connected to Adw.Dialog::closed. The return value is ignored there (it
-        cannot veto); vetoing would need ::close-attempt plus :can-close.
-        """
+        """Persist settings when leaving Settings mode (NavigationView pop)."""
         try:
             if hasattr(self, 'shortcuts_editor_page'):
                 self.shortcuts_editor_page.flush_changes()
             self.save_advanced_ssh_settings()
-            # Ensure preferences are flushed to disk
             if hasattr(self.config, 'save_json_config'):
                 self.config.save_json_config()
         except Exception:
             pass
-        return False  # allow close
+        return False
 
     def on_view_shortcuts_clicked(self, _button):
         """Open the standalone shortcuts window from preferences."""
@@ -4123,7 +4108,9 @@ class PreferencesWindow(Adw.Dialog):
         ui = getattr(host, 'ui', None) if host else None
         if ui is not None:
             ui.open_page(full_id)
-        self.close()
+        # Leave Settings so the plugin tab (under work mode) is visible.
+        if self.parent_window and hasattr(self.parent_window, 'leave_preferences'):
+            self.parent_window.leave_preferences()
 
     def _mark_plugin_restart_needed(self, row=None):
         """Subtitle + dialog: plugins load/unload only on the next launch."""

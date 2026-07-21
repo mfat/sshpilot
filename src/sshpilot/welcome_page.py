@@ -426,7 +426,7 @@ class WelcomePage(Gtk.Overlay):
         dialog.set_close_response('close')
         dialog.connect(
             'response',
-            lambda _d, resp: self.window.show_preferences() if resp == 'open' else None,
+            lambda _d, resp: self.window.show_preferences('plugins') if resp == 'open' else None,
         )
         dialog.present(self.window)
 
