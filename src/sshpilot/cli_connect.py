@@ -18,7 +18,7 @@ import logging
 import os
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, List, Sequence
+from typing import Any, List, Optional, Sequence
 
 from .command_converter import parse_ssh_command
 from .connection_manager import Connection
@@ -26,9 +26,8 @@ from .ssh_connection_builder import SSHConnectionCommand
 
 logger = logging.getLogger(__name__)
 
-# Connection.data flags for CLI-opened sessions
-CLI_CONNECT_FLAG = '__cli_connect'   # ephemeral from parser; may offer save
-CLI_SESSION_FLAG = '__cli_session'   # opened via CLI; fail like ssh (no leftover tab)
+# Connection.data flag: ephemeral from parser; may offer save-if-unsaved.
+CLI_CONNECT_FLAG = '__cli_connect'
 
 
 @dataclass
@@ -65,6 +64,30 @@ def build_ssh_argv(tokens: Sequence[str]) -> List[str]:
     if parts[0] in ('scp', 'sftp', 'rsync', 'ssh-copy-id'):
         return list(parts)
     return ['ssh', *parts]
+
+
+def validate_cli_tokens(tokens: Sequence[str]) -> Optional[str]:
+    """Return an error message if *tokens* cannot be an SSH destination.
+
+    Does not need ConnectionManager. Bare Host aliases that look syntactically
+    valid return ``None`` here; :func:`resolve_cli_connect` decides whether
+    they match a saved connection.
+    """
+    parts = [str(t) for t in tokens if t is not None and str(t) != '']
+    if not parts:
+        return 'No SSH destination specified'
+    if parts[0] in ('scp', 'sftp', 'rsync', 'ssh-copy-id'):
+        return 'Only SSH commands are allowed. Example: ssh user@host'
+    if _is_simple_host_alias(parts):
+        return None
+    ssh_argv = build_ssh_argv(parts)
+    command_text = shlex.join(ssh_argv)
+    parsed = parse_ssh_command(command_text)
+    if parsed is None:
+        return f'Could not parse SSH destination: {command_text}'
+    if isinstance(parsed, dict) and parsed.get('error'):
+        return str(parsed['error'])
+    return None
 
 
 def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:

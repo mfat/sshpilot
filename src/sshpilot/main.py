@@ -191,12 +191,9 @@ class SshPilotApplication(Adw.Application):
         self.quiet_override = quiet and not verbose
         self.isolated_mode = isolated
 
-        # CLI connect handoff (primary + secondary instances)
-        self._pending_cli_ssh_tokens = None
+        # Session-scoped dismissals for the post-connect save prompt
         from .unsaved_host import SavePromptDismissals
         self.save_prompt_dismissals = SavePromptDismissals()
-        # Last CLI connect outcome for do_command_line exit status (ssh-like).
-        self._cli_connect_status = 0
 
         # Set up logging
         self.setup_logging()
@@ -485,10 +482,11 @@ class SshPilotApplication(Adw.Application):
         """Handle argv for first launch and single-instance handoff.
 
         Remaining tokens after sshPilot options are treated as an OpenSSH-style
-        destination and opened in a terminal tab. On failure, behave like ssh:
-        print to stderr, do not leave a failed tab, return a non-zero status.
+        destination. On failure: print to the invoking CLI's stderr, do **not**
+        start a connection / open a tab, return 255 (and quit if this was a
+        fresh launch for that failed connect — like ``ssh`` exiting).
         """
-        from .cli_connect import parse_sshpilot_cli
+        from .cli_connect import parse_sshpilot_cli, validate_cli_tokens
 
         argv = command_line.get_arguments()
         try:
@@ -506,57 +504,49 @@ class SshPilotApplication(Adw.Application):
             self.activate()
             return 0
 
-        # Validate the ssh-like argv before activating UI work when possible.
-        # Full resolve still needs the window's ConnectionManager (Host aliases).
-        self._cli_connect_status = 0
+        def _cli_fail(message: str) -> int:
+            text = f'sshpilot: {message}\n'
+            try:
+                command_line.printerr_literal(text)
+            except Exception:
+                print(text, end='', file=sys.stderr)
+            # Fresh launch solely for a failed connect: exit like ssh.
+            # Remote (secondary) invocations only return status to the caller.
+            if not command_line.get_is_remote():
+                GLib.idle_add(self.quit)
+            return 255
+
+        early = validate_cli_tokens(opts.ssh_tokens)
+        if early:
+            return _cli_fail(early)
+
+        # Alias lookup needs ConnectionManager (created with the window).
         self.activate()
-        ok = self._run_cli_connect(list(opts.ssh_tokens))
-        return 0 if ok else 255
-
-    def _run_cli_connect(self, tokens) -> bool:
-        """Resolve and open a CLI target; return True on handoff success."""
         window = self.window or self.props.active_window
         if window is None or not hasattr(window, 'open_cli_connect'):
-            # Window not ready — queue and treat as accepted handoff; the
-            # idle flush reports parse/open failures to stderr itself.
-            self._queue_cli_connect(tokens)
-            return True
+            return _cli_fail('Application window is not ready')
+
         try:
             window.present()
         except Exception:
             pass
-        try:
-            return bool(window.open_cli_connect(tokens))
-        except Exception:
-            logger.exception('Failed to open CLI connection')
-            print('sshpilot: failed to open connection', file=sys.stderr)
-            return False
 
-    def _queue_cli_connect(self, tokens):
-        self._pending_cli_ssh_tokens = list(tokens)
-        GLib.idle_add(self._flush_pending_cli_connect)
+        from .cli_connect import describe_cli_error, resolve_cli_connect
+        try:
+            resolved = resolve_cli_connect(opts.ssh_tokens, window.connection_manager)
+        except ValueError as exc:
+            return _cli_fail(describe_cli_error(exc))
+        except Exception as exc:
+            logger.exception('CLI resolve failed')
+            return _cli_fail(str(exc) or 'failed to resolve destination')
 
-    def _flush_pending_cli_connect(self):
-        tokens = getattr(self, '_pending_cli_ssh_tokens', None)
-        if not tokens:
-            return False
-        window = self.window or self.props.active_window
-        if window is None or not hasattr(window, 'open_cli_connect'):
-            # Window not ready yet — try again on the next idle.
-            return True
-        self._pending_cli_ssh_tokens = None
+        # Only now start a connection / open a tab.
         try:
-            window.present()
-        except Exception:
-            pass
-        try:
-            ok = window.open_cli_connect(tokens)
-            self._cli_connect_status = 0 if ok else 255
-        except Exception:
-            logger.exception('Failed to open CLI connection')
-            print('sshpilot: failed to open connection', file=sys.stderr)
-            self._cli_connect_status = 255
-        return False
+            window.open_cli_connect_resolved(resolved)
+        except Exception as exc:
+            logger.exception('CLI connect open failed')
+            return _cli_fail(str(exc) or 'failed to open connection')
+        return 0
 
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""

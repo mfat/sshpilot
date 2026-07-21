@@ -50,6 +50,14 @@ def test_resolve_user_at_host_is_ephemeral():
     assert list(resolved.connection.ssh_cmd) == ['ssh', 'root@example.com']
 
 
+def test_validate_rejects_scp_and_empty():
+    from sshpilot.cli_connect import validate_cli_tokens
+    assert validate_cli_tokens([]) is not None
+    assert validate_cli_tokens(['scp', 'a', 'b']) is not None
+    assert validate_cli_tokens(['root@host']) is None
+    assert validate_cli_tokens(['myalias']) is None
+
+
 def test_resolve_rejects_non_ssh_like_command():
     mgr = SimpleNamespace(find_connection_by_nickname=lambda name: None)
     try:
