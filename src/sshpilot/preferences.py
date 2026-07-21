@@ -298,14 +298,32 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug(f"Failed to set NavigationSplitView sidebar width unit: {e}")
 
         try:
-            self.split_view.set_show_content(True)
+            self.split_view.connect('notify::collapsed', self._sync_split_show_content)
         except Exception as e:
-            logger.debug(f"Failed to set NavigationSplitView show_content: {e}")
+            logger.debug(f"Failed to connect NavigationSplitView collapsed notify: {e}")
+        self._sync_split_show_content()
 
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
 
         self.pages = {}
         self._update_header_title()
+
+    def _sync_split_show_content(self, *_args):
+        """Keep show_content aligned with layout so Back pops Settings on first press.
+
+        AdwNavigationSplitView handles navigation.pop locally whenever
+        show_content is TRUE (even when not collapsed), so leaving it TRUE on
+        wide layouts makes the first HeaderBar Back a no-op while Esc still pops
+        the outer NavigationView immediately.
+        """
+        try:
+            collapsed = self.split_view.get_collapsed()
+            if not collapsed:
+                self.split_view.set_show_content(False)
+            elif getattr(self, '_selected_page_name', None):
+                self.split_view.set_show_content(True)
+        except Exception as e:
+            logger.debug(f"Failed to sync NavigationSplitView show_content: {e}")
 
     def on_sidebar_row_selected(self, listbox, row):
         """Handle sidebar row selection"""
@@ -2330,6 +2348,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
     def _on_preferences_map(self, *_args):
         """Probe secret backends when Settings is shown on the Security page."""
+        self._sync_split_show_content()
         if self._is_secrets_page_visible():
             self._ensure_secrets_page_probes()
 

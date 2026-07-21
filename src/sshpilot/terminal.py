@@ -95,6 +95,20 @@ _SSH_NOISE_PREFIXES = (
     'pledge',
     # telnet's pre-connect chatter ("Trying 10.0.0.5...")
     'trying ',
+    # First line of ssh's host-key banner, drawn a moment before the
+    # "(yes/no/[fingerprint])?" question it belongs to.
+    'the authenticity of',
+)
+
+# The rest of ssh's host-key banner, which is drawn line by line while the user
+# has not answered anything yet. Matched anywhere in the line, not as a prefix:
+# the fingerprint line starts with the key type ("ED25519 key fingerprint is").
+_SSH_HOSTKEY_BANNER_MARKERS = (
+    'key fingerprint is',
+    'key is not known by any other names',
+    'known by the following other names',
+    # ...and the "<known_hosts file>:<line>: <name>" entries that banner lists.
+    'known_hosts:',
 )
 
 
@@ -1298,13 +1312,36 @@ class TerminalWidget(Gtk.Box):
         if any(marker in text for marker in _SSH_SUCCESS_MARKERS):
             return 'connected'
 
+        # Auth prompts (password, passphrase, OTP/PIN, FIDO touch, host-key
+        # yes/no) are drawn *before* the session is authenticated — the local
+        # client prints the passphrase one before a single packet goes out. The
+        # same classifier the PTY autofill uses decides what is a prompt, so
+        # connect gating and askpass can't drift apart.
+        from .askpass_utils import classify_prompt
+
+        # Waiting on the trailing prompt: nobody has logged in yet, whatever
+        # came before it. This also covers multi-line prompts whose first line
+        # ("The authenticity of host … can't be established.") reads like
+        # remote output on its own.
+        if classify_prompt(text) is not None:
+            return 'pending'
+
         # Any line that isn't ssh's own chatter is remote output (a shell prompt
-        # or MOTD) — strong evidence the session is live.
+        # or MOTD) — strong evidence the session is live. A prompt that is no
+        # longer the trailing line (ssh printed after it) is still not evidence.
         for line in text.splitlines():
             stripped = line.strip()
             if not stripped:
                 continue
             if stripped.startswith(_SSH_NOISE_PREFIXES):
+                continue
+            if any(marker in stripped for marker in _SSH_HOSTKEY_BANNER_MARKERS):
+                continue
+            # The user's own echoed answer to the host-key question, when the
+            # terminal puts it on its own line.
+            if stripped in ('yes', 'no'):
+                continue
+            if classify_prompt(stripped) is not None:
                 continue
             return 'connected'
 
