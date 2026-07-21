@@ -2211,13 +2211,10 @@ class FilePane(Gtk.Box):
     def _on_drag_begin(self, drag_source: Gtk.DragSource, drag: Gdk.Drag) -> None:
         """Called when drag operation begins - set drag icon."""
         logger.debug(f"Drag begin: pane={self._is_remote}")
-        if is_macos():
-            # macOS provides its own drag preview; avoid setting a custom icon.
-            return
-        # Create a simple icon for the drag operation
+        # Always set a custom icon. On macOS, string ContentProviders are
+        # otherwise previewed as the JSON payload text beside the cursor.
         widget = drag_source.get_widget()
         if widget:
-            # Create a paintable from the widget to use as drag icon
             paintable = Gtk.WidgetPaintable.new(widget)
             drag_source.set_icon(paintable, 0, 0)
 
