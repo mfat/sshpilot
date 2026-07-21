@@ -123,6 +123,61 @@ def test_every_page_widget_resolves_a_window_root(gui):
         assert page._transient_parent is None or isinstance(page._transient_parent, Gtk.Window)
 
 
+def test_expanded_split_has_a_close_button_for_start_side_layout(gui):
+    """macOS puts close on the start side; the sidebar header must host it.
+
+    Adw.Dialog + OverlaySplitView only keeps title buttons at the window
+    edges. With the split expanded, start-side buttons live on the sidebar
+    header and end-side buttons on the content header. Disabling the
+    sidebar's title buttons (as the Adw.Dialog conversion briefly did) leaves
+    no place for a start-side close — which is the macOS decoration layout —
+    while GNOME's end-side close still appeared on the content header. See
+    #1085.
+    """
+    from gi.repository import Gtk
+
+    prefs = _open_preferences(gui)
+    split = prefs.overlay_split_view
+    split.set_collapsed(False)
+    split.set_show_sidebar(True)
+    gui.pump(200)
+
+    # Both headers advertise title buttons so OverlaySplitView can pick the
+    # edge that matches the decoration layout.
+    assert prefs.sidebar_header_bar.get_show_start_title_buttons()
+    assert prefs.sidebar_header_bar.get_show_end_title_buttons()
+    assert prefs.header_bar.get_show_start_title_buttons()
+    assert prefs.header_bar.get_show_end_title_buttons()
+
+    # Force the macOS-like start-side close regardless of the host platform.
+    for hb in (prefs.sidebar_header_bar, prefs.header_bar):
+        hb.set_decoration_layout('close:')
+    gui.pump(200)
+
+    def _visible_window_controls(header):
+        found = []
+
+        def walk(widget):
+            if type(widget).__name__ == 'WindowControls' and widget.get_visible():
+                found.append(widget)
+            child = widget.get_first_child()
+            while child is not None:
+                walk(child)
+                child = child.get_next_sibling()
+
+        walk(header)
+        return found
+
+    sidebar_controls = _visible_window_controls(prefs.sidebar_header_bar)
+    content_controls = _visible_window_controls(prefs.header_bar)
+    assert sidebar_controls, (
+        'start-side close has nowhere to appear with the sidebar expanded'
+    )
+    assert not content_controls, (
+        'start-side close should not also appear on the content edge'
+    )
+
+
 def test_collapsed_sidebar_can_be_reopened(gui):
     """The narrow layout must not be a dead end.
 

@@ -35,9 +35,14 @@ template $SshPilotPreferencesWindow: Adw.Dialog {
   child: Adw.OverlaySplitView overlay_split_view {
     sidebar: Adw.ToolbarView {
       [top]
+      // Title buttons on both sides of both headers: OverlaySplitView keeps
+      // only the edge buttons. That matters for macOS, where close lives on
+      // the start side — disabling the sidebar header (as the Adw.Dialog
+      // conversion briefly did) hides the only place that button can appear
+      // while the split is expanded. See #1085.
       Adw.HeaderBar sidebar_header_bar {
-        show-start-title-buttons: false;
-        show-end-title-buttons: false;
+        show-start-title-buttons: true;
+        show-end-title-buttons: true;
 
         styles [
           "flat",
