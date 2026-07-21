@@ -154,11 +154,33 @@ ssh: connect to host 188.121.117.208 port 22: Connection timed out"""
     ("pilot@127.0.0.1's password: ", 'pending'),
     ('Password: ', 'pending'),
     ("Enter passphrase for key '/home/mahdi/.ssh/id_ed25519': ", 'pending'),
+    # ssh-add's wording, without the "key" the client's own prompt has.
+    ('Enter passphrase for /home/mahdi/.ssh/id_rsa: ', 'pending'),
     ('(pilot@127.0.0.1) Verification code: ', 'pending'),
+    ('OTP: ', 'pending'),
+    ('2FA code: ', 'pending'),
+    ('Enter authentication code: ', 'pending'),
+    ('Enter PIN for authenticator: ', 'pending'),
+    # FIDO touch: no typed secret, but still nobody logged in.
+    ('Confirm user presence for key ED25519-SK SHA256:abc', 'pending'),
+    ('Touch your security key to continue', 'pending'),
     ("Warning: Permanently added '[127.0.0.1]:2203' (ED25519) to the list of "
      "known hosts.\npilot@127.0.0.1's password: ", 'pending'),
+    # Whole host-key banner: its first line reads like remote output on its own,
+    # so the trailing question has to gate the promotion.
+    ("The authenticity of host '[127.0.0.1]:2201' can't be established.\n"
+     'ED25519 key fingerprint is SHA256:abc.\n'
+     'Are you sure you want to continue connecting (yes/no/[fingerprint])? ',
+     'pending'),
+    # ...and that first line alone, in the moment before the question is drawn.
+    ("The authenticity of host '[127.0.0.1]:2201' can't be established.",
+     'pending'),
+    # A prompt that is no longer the trailing line is still not evidence.
+    ("pilot@127.0.0.1's password: \ndebug1: pledge: filesystem", 'pending'),
     # ...but the prompt must not mask real evidence that arrives after it.
     ("pilot@127.0.0.1's password: \npilot@rig:~$ ", 'connected'),
+    # Remote output that merely mentions an auth word is still remote output.
+    ('This host uses an authenticator app for sudo.', 'connected'),
 ])
 def test_scan_connect_evidence(text, expected):
     try:
