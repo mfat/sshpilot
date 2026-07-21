@@ -72,15 +72,40 @@ jobs:
           set -eu
           VERSION='${{ inputs.version }}'
           VERSION=${VERSION#v}
-          # Same semver + must-increase rules the interactive helper applies.
-          CURRENT=$(scripts/bump-version.sh --check "$VERSION")
           if git rev-parse "v$VERSION" >/dev/null 2>&1; then
             echo "::error::Tag v$VERSION already exists."
             exit 1
           fi
+          # Read the version currently on the release branch. An interrupted
+          # previous run may have already pushed the bump (and nothing else),
+          # in which case we skip re-bumping and resume at merge/tag.
+          CURRENT=$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("src/sshpilot/__init__.py").read_text(encoding="utf-8")
+          match = re.search(r"""__version__\s*=\s*['"]([^'"]+)['"]""", text)
+          print(match.group(1) if match else "0.0.0")
+          PY
+          )
+          if [ "$VERSION" = "$CURRENT" ]; then
+            ALREADY_BUMPED=true
+            # Changelog derivation still wants the prior release tag.
+            PREVIOUS=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+            PREVIOUS=${PREVIOUS#v}
+            if [ -z "$PREVIOUS" ]; then
+              echo "::error::Could not determine the previous release tag."
+              exit 1
+            fi
+            echo "Version already bumped to $VERSION; resuming merge/tag."
+          else
+            ALREADY_BUMPED=false
+            # Same semver + must-increase rules the interactive helper applies.
+            PREVIOUS=$(scripts/bump-version.sh --check "$VERSION")
+            echo "Releasing $PREVIOUS -> $VERSION"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "previous=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "Releasing $CURRENT -> $VERSION"
+          echo "previous=$PREVIOUS" >> "$GITHUB_OUTPUT"
+          echo "already_bumped=$ALREADY_BUMPED" >> "$GITHUB_OUTPUT"
 
       - name: Assemble the changelog
         id: changelog
@@ -106,9 +131,11 @@ jobs:
           cat "$RUNNER_TEMP/changelog.txt"
 
       - name: Bump the version
+        if: steps.check.outputs.already_bumped != 'true'
         run: scripts/bump-version.sh '${{ steps.check.outputs.version }}' < ${RUNNER_TEMP}/changelog.txt
 
       - name: Push the bump to ${{ inputs.dev_branch }}
+        if: steps.check.outputs.already_bumped != 'true'
         run: |
           set -eu
           git commit -am "Bump version to ${{ steps.check.outputs.version }}"
@@ -124,7 +151,11 @@ jobs:
           # conflict, so fail rather than guess which side is right.
           git merge --no-ff '${{ inputs.dev_branch }}' \
             -m "Merge ${{ inputs.dev_branch }} into ${{ inputs.main_branch }} for v$VERSION"
-          git tag -a "v$VERSION" -m "SSH Pilot v$VERSION" -F ${RUNNER_TEMP}/changelog.txt
+          # Match scripts/release.sh: two -m paragraphs (title + body).
+          # Git rejects combining -m with -F.
+          git tag -a "v$VERSION" \
+            -m "SSH Pilot v$VERSION" \
+            -m "$(cat "${RUNNER_TEMP}/changelog.txt")"
           git push origin '${{ inputs.main_branch }}'
           git push origin "v$VERSION"
 
