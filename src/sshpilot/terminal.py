@@ -100,6 +100,17 @@ _SSH_NOISE_PREFIXES = (
     'the authenticity of',
 )
 
+# The rest of ssh's host-key banner, which is drawn line by line while the user
+# has not answered anything yet. Matched anywhere in the line, not as a prefix:
+# the fingerprint line starts with the key type ("ED25519 key fingerprint is").
+_SSH_HOSTKEY_BANNER_MARKERS = (
+    'key fingerprint is',
+    'key is not known by any other names',
+    'known by the following other names',
+    # ...and the "<known_hosts file>:<line>: <name>" entries that banner lists.
+    'known_hosts:',
+)
+
 
 class TerminalWidget(Gtk.Box):
     """A terminal widget that uses VTE for display and system SSH client for connections"""
@@ -1323,6 +1334,12 @@ class TerminalWidget(Gtk.Box):
             if not stripped:
                 continue
             if stripped.startswith(_SSH_NOISE_PREFIXES):
+                continue
+            if any(marker in stripped for marker in _SSH_HOSTKEY_BANNER_MARKERS):
+                continue
+            # The user's own echoed answer to the host-key question, when the
+            # terminal puts it on its own line.
+            if stripped in ('yes', 'no'):
                 continue
             if classify_prompt(stripped) is not None:
                 continue

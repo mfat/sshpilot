@@ -172,9 +172,30 @@ ssh: connect to host 188.121.117.208 port 22: Connection timed out"""
      'ED25519 key fingerprint is SHA256:abc.\n'
      'Are you sure you want to continue connecting (yes/no/[fingerprint])? ',
      'pending'),
-    # ...and that first line alone, in the moment before the question is drawn.
+    # ...and every partial state the poller can scrape while the banner is
+    # still being drawn, before the question exists to gate on.
     ("The authenticity of host '[127.0.0.1]:2201' can't be established.",
      'pending'),
+    ("The authenticity of host '[127.0.0.1]:2201' can't be established.\n"
+     'ED25519 key fingerprint is SHA256:abc.', 'pending'),
+    ("The authenticity of host '[127.0.0.1]:2201' can't be established.\n"
+     'ED25519 key fingerprint is SHA256:abc.\n'
+     'This key is not known by any other names.', 'pending'),
+    ("The authenticity of host '[127.0.0.1]:2202' can't be established.\n"
+     'ED25519 key fingerprint is SHA256:abc.\n'
+     'This host key is known by the following other names/addresses:\n'
+     '    ~/.ssh/known_hosts:3: [127.0.0.1]:2201', 'pending'),
+    # The echoed answer, when the terminal puts it on its own line.
+    ("The authenticity of host '[127.0.0.1]:2201' can't be established.\n"
+     'Are you sure you want to continue connecting (yes/no/[fingerprint])? \n'
+     'yes', 'pending'),
+    # Once the session is really up, the banner in the scrollback must not
+    # keep it pending forever.
+    ("The authenticity of host '[127.0.0.1]:2201' can't be established.\n"
+     'ED25519 key fingerprint is SHA256:abc.\n'
+     'Are you sure you want to continue connecting (yes/no/[fingerprint])? yes\n'
+     "Warning: Permanently added '[127.0.0.1]:2201' (ED25519) to the list of "
+     'known hosts.\npilot@rig:~$ ', 'connected'),
     # A prompt that is no longer the trailing line is still not evidence.
     ("pilot@127.0.0.1's password: \ndebug1: pledge: filesystem", 'pending'),
     # ...but the prompt must not mask real evidence that arrives after it.
