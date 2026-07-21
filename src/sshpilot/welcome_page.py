@@ -37,7 +37,9 @@ class WelcomePage(Gtk.Overlay):
         self.set_can_focus(False)
 
         self._pinned_box = None
+        self._recent_box = None
 
+        self.connection_manager.connect_after('connection-added', self._on_connection_added)
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
 
         current_shortcuts = self._get_safe_current_shortcuts()
@@ -124,8 +126,6 @@ class WelcomePage(Gtk.Overlay):
         scrolled.set_hexpand(True)
         scrolled.set_can_focus(False)
 
-        connections = list(getattr(self.connection_manager, 'connections', []) or [])
-
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         inner.set_halign(Gtk.Align.FILL)
         inner.set_hexpand(True)
@@ -145,7 +145,7 @@ class WelcomePage(Gtk.Overlay):
 
         lists = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         lists.set_hexpand(True)
-        lists.append(self._build_min_connection_list(connections))
+        lists.append(self._build_min_connection_list())
         self._pinned_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._pinned_box.set_hexpand(True)
         lists.append(self._pinned_box)
@@ -260,20 +260,24 @@ class WelcomePage(Gtk.Overlay):
         user = getattr(conn, 'username', '')
         return f"{user}@{host}" if user and host else host
 
-    def _build_min_connection_list(self, connections):
-        if not connections:
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-            box.set_hexpand(True)
-            heading = Gtk.Label(label=_('Recent'), xalign=0)
-            heading.set_hexpand(True)
-            heading.add_css_class('startpage-recent-head')
-            heading.set_margin_bottom(4)
-            box.append(heading)
-            empty = Gtk.Label(label=_('No connections yet'), xalign=0)
-            empty.add_css_class('dim-label')
-            empty.set_margin_top(8)
-            box.append(empty)
-            return box
+    def _build_min_connection_list(self):
+        self._recent_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._recent_box.set_hexpand(True)
+        self._populate_recent_box()
+        return self._recent_box
+
+    def _populate_recent_box(self):
+        """Fill Recent rows, or a subtle empty-state hint when there are none."""
+        box = getattr(self, '_recent_box', None)
+        if box is None:
+            return
+        child = box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
+
+        connections = list(getattr(self.connection_manager, 'connections', []) or [])
 
         def _last_used(conn):
             try:
@@ -281,14 +285,39 @@ class WelcomePage(Gtk.Overlay):
             except Exception:
                 return 0
 
-        recent = sorted(connections, key=_last_used, reverse=True)[:4]
+        # Only hosts that have been connected to belong under Recent.
+        recent = [
+            c for c in sorted(connections, key=_last_used, reverse=True)
+            if _last_used(c) > 0
+        ][:4]
+
+        if not recent:
+            empty = Gtk.Label(label=self._empty_recent_message(bool(connections)))
+            empty.add_css_class('dim-label')
+            empty.set_wrap(True)
+            empty.set_justify(Gtk.Justification.CENTER)
+            empty.set_halign(Gtk.Align.CENTER)
+            empty.set_hexpand(True)
+            empty.set_margin_top(8)
+            box.append(empty)
+            return
+
         rows = [
             self._min_row(
                 getattr(conn, 'nickname', ''), self._conn_target(conn),
                 lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
             for conn in recent
         ]
-        return self._min_section(_('Recent'), rows)
+        box.append(self._min_section(_('Recent'), rows))
+
+    @staticmethod
+    def _empty_recent_message(has_connection_rows: bool) -> str:
+        """Subtle hint when Recent is empty; copy depends on sidebar hosts."""
+        if has_connection_rows:
+            return _(
+                'Double click a host to connect or press + to create a new connection'
+            )
+        return _('Press + to create a new connection')
 
     def _populate_pinned_box(self):
         """Fill the Pinned section (rows, styled like Recent) below the list."""
@@ -458,6 +487,14 @@ class WelcomePage(Gtk.Overlay):
         """Rebuild the pinned section after a pin/unpin action."""
         self._populate_pinned_box()
 
+    def refresh_recent(self):
+        """Rebuild the Recent section after connections or last-used change."""
+        self._populate_recent_box()
+
+    def _on_connection_added(self, _manager, _connection):
+        """Refresh empty-state / Recent when a host is added to the inventory."""
+        self.refresh_recent()
+
     def _on_connection_removed(self, _manager, connection):
         """Auto-unpin a connection when it is deleted from the inventory."""
         try:
@@ -467,6 +504,7 @@ class WelcomePage(Gtk.Overlay):
                 self.refresh_pinned()
         except Exception:
             pass
+        self.refresh_recent()
 
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
