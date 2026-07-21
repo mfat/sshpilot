@@ -552,6 +552,82 @@ def _get_stored_passphrase(
     return None
 
 
+# App-preference keys → OpenSSH ``-o`` option names for positive integers.
+_APP_POSITIVE_INT_OPTIONS = (
+    ('connection_timeout', 'ConnectTimeout'),
+    ('connection_attempts', 'ConnectionAttempts'),
+    ('keepalive_interval', 'ServerAliveInterval'),
+    ('keepalive_count_max', 'ServerAliveCountMax'),
+)
+
+
+def _append_positive_int_option(cmd: List[str], raw_value, option_name: str) -> None:
+    """Append ``-o Option=N`` when *raw_value* coerces to a positive int."""
+    if not raw_value:
+        return
+    try:
+        value = int(raw_value)
+    except (ValueError, TypeError):
+        return
+    if value > 0:
+        cmd.extend(['-o', f'{option_name}={value}'])
+
+
+def _append_app_ssh_overrides(cmd: List[str], app_ssh_config: dict, *, is_copy_id: bool) -> None:
+    """Apply app-level SSH prefs (verbosity, compression, timeouts, host keys)."""
+    verbosity = int(app_ssh_config.get('verbosity', 0) or 0)
+    if verbosity > 0 and not is_copy_id:
+        cmd.extend(['-v'] * min(verbosity, 3))
+
+    if bool(app_ssh_config.get('compression', False)) and not is_copy_id:
+        cmd.append('-C')
+
+    if bool(app_ssh_config.get('batch_mode', False)) and not is_copy_id:
+        cmd.extend(['-o', 'BatchMode=yes'])
+
+    for cfg_key, option_name in _APP_POSITIVE_INT_OPTIONS:
+        _append_positive_int_option(cmd, app_ssh_config.get(cfg_key), option_name)
+
+    strict_host = str(app_ssh_config.get('strict_host_key_checking', '') or '').strip()
+    auto_add = bool(app_ssh_config.get('auto_add_host_keys', True))
+    if strict_host:
+        cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+    elif auto_add:
+        cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+
+
+def _append_identity_and_proxy(
+    cmd: List[str],
+    config: Dict[str, Union[str, List[str]]],
+    *,
+    is_copy_id: bool,
+) -> None:
+    """Append IdentityFile / CertificateFile / Proxy* from resolved SSH config."""
+    # Never for ssh-copy-id: there -i selects the key to install, and the
+    # operation must authenticate with the key being copied.
+    if not is_copy_id:
+        identity_files = _get_ssh_config_list(config, 'identityfile')
+        for identity_file in identity_files:
+            if identity_file and os.path.isfile(os.path.expanduser(identity_file)):
+                cmd.extend(['-i', os.path.expanduser(identity_file)])
+                # If IdentitiesOnly is set, only use this key
+                if _get_ssh_config_value(config, 'identitiesonly', '').lower() in ('yes', 'true', '1'):
+                    cmd.extend(['-o', 'IdentitiesOnly=yes'])
+                    break  # Only first key when IdentitiesOnly is set
+
+    cert_file = _get_ssh_config_value(config, 'certificatefile')
+    if cert_file and cert_file.strip() and os.path.isfile(os.path.expanduser(cert_file)):
+        cmd.extend(['-o', f'CertificateFile={cert_file}'])
+
+    proxy_command = _get_ssh_config_value(config, 'proxycommand')
+    if proxy_command and proxy_command.strip():
+        cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
+
+    proxy_jump = [j for j in _get_ssh_config_list(config, 'proxyjump') if j and j.strip()]
+    if proxy_jump:
+        cmd.extend(['-o', f'ProxyJump={",".join(proxy_jump)}'])
+
+
 def _build_base_ssh_command(
     connection: any,
     config: Dict[str, Union[str, List[str]]],
@@ -562,7 +638,6 @@ def _build_base_ssh_command(
     Build base SSH command from SSH config and connection settings.
     This matches default SSH behavior as closely as possible.
     """
-    # Determine the SSH binary
     if command_type == 'scp':
         cmd = ['scp']
     elif command_type == 'sftp':
@@ -578,7 +653,6 @@ def _build_base_ssh_command(
     # would defeat its interactive purpose (first login usually needs a prompt).
     is_copy_id = (command_type == 'ssh-copy-id')
 
-    # Get app-level SSH settings
     app_ssh_config = {}
     if app_config:
         try:
@@ -586,108 +660,17 @@ def _build_base_ssh_command(
         except Exception:
             pass
 
-    # Apply app-level overrides (verbosity, compression, etc.)
-    verbosity = int(app_ssh_config.get('verbosity', 0) or 0)
-    if verbosity > 0 and not is_copy_id:
-        for _ in range(min(verbosity, 3)):
-            cmd.append('-v')
+    _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
 
-    compression = bool(app_ssh_config.get('compression', False))
-    if compression and not is_copy_id:
-        cmd.append('-C')
-
-    if bool(app_ssh_config.get('batch_mode', False)) and not is_copy_id:
-        cmd.extend(['-o', 'BatchMode=yes'])
-
-    # Apply connection timeout if specified
-    connect_timeout = app_ssh_config.get('connection_timeout')
-    if connect_timeout:
-        try:
-            timeout = int(connect_timeout)
-            if timeout > 0:
-                cmd.extend(['-o', f'ConnectTimeout={timeout}'])
-        except (ValueError, TypeError):
-            pass
-    
-    # Apply connection attempts if specified
-    connection_attempts = app_ssh_config.get('connection_attempts')
-    if connection_attempts:
-        try:
-            attempts = int(connection_attempts)
-            if attempts > 0:
-                cmd.extend(['-o', f'ConnectionAttempts={attempts}'])
-        except (ValueError, TypeError):
-            pass
-
-    # Apply keepalive settings if specified
-    keepalive_interval = app_ssh_config.get('keepalive_interval')
-    if keepalive_interval:
-        try:
-            interval = int(keepalive_interval)
-            if interval > 0:
-                cmd.extend(['-o', f'ServerAliveInterval={interval}'])
-        except (ValueError, TypeError):
-            pass
-    
-    keepalive_count = app_ssh_config.get('keepalive_count_max')
-    if keepalive_count:
-        try:
-            count = int(keepalive_count)
-            if count > 0:
-                cmd.extend(['-o', f'ServerAliveCountMax={count}'])
-        except (ValueError, TypeError):
-            pass
-    
-    # Apply strict host key checking
-    strict_host = str(app_ssh_config.get('strict_host_key_checking', '') or '').strip()
-    auto_add = bool(app_ssh_config.get('auto_add_host_keys', True))
-    
-    if strict_host:
-        cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-    elif auto_add:
-        cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-    
     # Apply port if specified and not default
     port = getattr(connection, 'port', None)
     if port and port != 22:
-        if command_type == 'scp':
-            cmd.extend(['-P', str(port)])
-        else:
-            cmd.extend(['-p', str(port)])
-    
-    # Apply IdentityFile from SSH config (SSH config is primary source).
-    # Never for ssh-copy-id: there -i selects the key to install, and the
-    # operation must authenticate with the key being copied.
-    if not is_copy_id:
-        identity_files = _get_ssh_config_list(config, 'identityfile')
-        for identity_file in identity_files:
-            if identity_file and os.path.isfile(os.path.expanduser(identity_file)):
-                cmd.extend(['-i', os.path.expanduser(identity_file)])
-                # If IdentitiesOnly is set, only use this key
-                if _get_ssh_config_value(config, 'identitiesonly', '').lower() in ('yes', 'true', '1'):
-                    cmd.extend(['-o', 'IdentitiesOnly=yes'])
-                    break  # Only first key when IdentitiesOnly is set
-    
-    # Apply CertificateFile if specified
-    cert_file = _get_ssh_config_value(config, 'certificatefile')
-    if cert_file and cert_file.strip() and os.path.isfile(os.path.expanduser(cert_file)):
-        cmd.extend(['-o', f'CertificateFile={cert_file}'])
-    
-    # Apply ProxyCommand/ProxyJump if specified
-    proxy_command = _get_ssh_config_value(config, 'proxycommand')
-    if proxy_command and proxy_command.strip():
-        cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
-    
-    proxy_jump = _get_ssh_config_list(config, 'proxyjump')
-    if proxy_jump:
-        # Filter out empty values
-        proxy_jump_filtered = [j for j in proxy_jump if j and j.strip()]
-        if proxy_jump_filtered:
-            cmd.extend(['-o', f'ProxyJump={",".join(proxy_jump_filtered)}'])
-    
-    # Apply X11 forwarding if enabled. Only for ssh: scp -X selects the
-    # transfer protocol and sftp -X sets an sftp option, so a bare -X there
-    # would swallow the next argument.
+        cmd.extend(['-P' if command_type == 'scp' else '-p', str(port)])
+
+    _append_identity_and_proxy(cmd, config, is_copy_id=is_copy_id)
+
+    # X11 forwarding only for ssh: scp -X selects transfer protocol and sftp -X
+    # sets an sftp option, so a bare -X there would swallow the next argument.
     forward_x11 = _get_ssh_config_value(config, 'forwardx11', '').lower()
     if forward_x11 in ('yes', 'true', '1') and command_type == 'ssh':
         cmd.append('-X')
