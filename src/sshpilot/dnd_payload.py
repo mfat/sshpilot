@@ -14,6 +14,9 @@ command-block drags must do the same.
 Encode every in-app drag as a JSON string under ``format`` =
 ``sshpilot_internal_drag``, and receive it with ``Gtk.DropTarget`` typed as
 ``GObject.TYPE_STRING``.
+
+On macOS, AppKit previews that string beside the cursor unless a custom
+drag icon is attached via :func:`set_internal_drag_icon`.
 """
 
 from __future__ import annotations
@@ -41,6 +44,39 @@ def encode_dnd_payload(payload: dict) -> str:
 def content_provider_for_payload(payload: dict) -> Gdk.ContentProvider:
     """Return a ``TYPE_STRING`` content provider for *payload*."""
     return Gdk.ContentProvider.new_for_value(encode_dnd_payload(payload))
+
+
+def set_internal_drag_icon(
+    source: Gtk.DragSource,
+    widget: Gtk.Widget,
+    *,
+    drag: Optional[Gdk.Drag] = None,
+    icon_name: Optional[str] = None,
+) -> None:
+    """Attach a drag preview that does not expose the JSON payload string.
+
+    Internal drags advertise a pasteboard-safe JSON string. On macOS, AppKit
+    previews string content as that text beside the cursor unless a custom
+    icon is set. Prefer ``DragSource.set_icon`` over ``Gtk.DragIcon`` on
+    macOS — ``DragIcon`` has tripped AppKit during
+    ``beginDraggingSessionWithItems``.
+
+    On other platforms, keep the existing ``DragIcon`` + symbolic-icon look
+    when *drag* and *icon_name* are provided; otherwise fall back to a
+    widget paintable.
+    """
+    from .platform_utils import is_macos
+
+    try:
+        if is_macos() or drag is None or not icon_name:
+            source.set_icon(Gtk.WidgetPaintable.new(widget), 0, 0)
+            return
+        icon = Gtk.DragIcon.get_for_drag(drag)
+        image = Gtk.Image.new_from_icon_name(icon_name)
+        image.set_icon_size(Gtk.IconSize.LARGE)
+        icon.set_child(image)
+    except Exception as exc:
+        logger.debug("Could not set drag icon: %s", exc)
 
 
 def new_internal_drop_target(

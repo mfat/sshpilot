@@ -130,7 +130,7 @@ def test_dialog_presented_on_the_window_while_in_settings(gui):
     """A dialog parented to MainWindow still works while Settings mode is open."""
     from gi.repository import Adw
 
-    prefs = _open_preferences(gui)
+    _open_preferences(gui)
     assert gui.window.is_preferences_visible()
 
     alert = Adw.AlertDialog(heading='Unlock', body='parented to the window')
