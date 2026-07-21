@@ -187,9 +187,25 @@ class WindowFileManagerMixin:
             logger.error("Failed to persist file manager first-run choice: %s", exc)
 
     # --- Operation mode first-run dialog ---
+    # Fresh installs start in default mode with no chooser and no automatic
+    # SSH config backup. Keep the dialog helpers below so the flow can be
+    # re-enabled by flipping this flag.
+    _OPERATION_MODE_FIRST_RUN_PROMPT_ENABLED = False
 
     def _should_prompt_operation_mode(self) -> bool:
         """Return True if the operation mode dialog should be shown."""
+        if not self._OPERATION_MODE_FIRST_RUN_PROMPT_ENABLED:
+            # Mark as shown so a later re-enable does not surprise installs
+            # that never saw the dialog (they already run in default mode).
+            try:
+                if not bool(
+                    self.config.get_setting('ssh.operation_mode_prompt_shown', False)
+                ):
+                    self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+            except Exception:
+                pass
+            return False
+
         try:
             already_shown = bool(
                 self.config.get_setting('ssh.operation_mode_prompt_shown', False)
