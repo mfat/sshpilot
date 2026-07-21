@@ -99,6 +99,27 @@ def test_every_page_widget_resolves_a_window_root(gui):
         assert page._transient_parent is None or isinstance(page._transient_parent, Gtk.Window)
 
 
+def test_show_content_false_when_split_not_collapsed(gui):
+    """Wide layout: Back must pop Settings on the first press (issue #1091)."""
+    prefs = _open_preferences(gui)
+    split = prefs.split_view
+
+    split.set_collapsed(False)
+    gui.pump(200)
+    assert not split.get_show_content(), (
+        'show_content must stay false side-by-side so Back reaches the outer NavigationView'
+    )
+
+
+def test_show_content_true_when_split_collapsed(gui):
+    prefs = _open_preferences(gui)
+    split = prefs.split_view
+
+    split.set_collapsed(True)
+    gui.pump(200)
+    assert split.get_show_content(), 'collapsed Settings should show the selected page'
+
+
 def test_collapsed_split_shows_content_on_page_change(gui):
     """Narrow layout: picking a category must show the detail page."""
     prefs = _open_preferences(gui)
