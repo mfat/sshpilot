@@ -65,3 +65,30 @@ def test_ensure_secrets_page_probes_runs_once(monkeypatch):
 
     assert availability == [1]
     assert visibility == [('auto', {'defer_status_probe': False})]
+
+
+def test_build_security_page_sets_secrets_page_id(monkeypatch):
+    """Security page build must register _secrets_page_id for deferred probes."""
+    prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)
+    prefs._secrets_page_id = None
+
+    page = mock.Mock()
+    monkeypatch.setattr(preferences.Adw, 'PreferencesPage', lambda: page)
+    monkeypatch.setattr(
+        preferences.PreferencesWindow,
+        '_add_security_secrets_group',
+        lambda self, p: None,
+    )
+    monkeypatch.setattr(
+        preferences.PreferencesWindow,
+        '_add_security_identity_group',
+        lambda self, p: None,
+    )
+
+    result = preferences.PreferencesWindow._build_security_preferences_page(prefs)
+
+    assert result is page
+    assert prefs._secrets_page_id == preferences.PreferencesWindow._page_id(
+        "Security & Credentials"
+    )
+    assert prefs._secrets_page_id == "security-&-credentials"

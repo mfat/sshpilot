@@ -1468,6 +1468,12 @@ class FileManagerWindow(Adw.Window):
             self._op_upload(pane, payload, user_data)
         elif action == "download" and isinstance(payload, dict):
             self._op_download(pane, payload, user_data)
+        else:
+            logger.debug(
+                "unknown file-manager action %r (payload_type=%s)",
+                action,
+                type(payload).__name__,
+            )
 
     def _op_copy_cut(self, pane, action, payload) -> None:
         entries = list(payload.get("entries") or [])
