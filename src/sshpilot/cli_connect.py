@@ -95,10 +95,9 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
     """Parse sshPilot flags; leave the rest as ssh-like tokens.
 
     Uses ``parse_known_args`` so OpenSSH options (``-p``, ``-i``, ``-J``,
-    ``-v``, …) pass through. sshPilot's own verbose flag is the long
-    ``--verbose`` only (no ``-v`` short form) so it never shadows ssh's ``-v``.
-    ``-q`` is still claimed wherever it appears; pass ssh's own ``-q`` after a
-    ``--`` separator: ``sshpilot -- ssh -q host``.
+    ``-v``, ``-q``, …) pass through. sshPilot's own verbose/quiet flags are the
+    long ``--verbose`` / ``--quiet`` only (no ``-v`` / ``-q`` short forms) so
+    they never shadow ssh's ``-v`` / ``-q``.
     """
     import argparse
 
@@ -134,7 +133,7 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
         help='Verbose debug logging (overrides config)',
     )
     verbosity.add_argument(
-        '--quiet', '-q', action='store_true',
+        '--quiet', action='store_true',
         help='Only show warnings and errors (overrides config)',
     )
     parser.add_argument(

@@ -27,11 +27,15 @@ def test_parse_verbose_and_destination():
     assert opts.ssh_tokens == ['myhost']
 
 
-def test_short_v_passes_through_to_ssh():
-    # sshPilot has no -v short form; OpenSSH's own -v must pass through.
+def test_short_v_and_q_pass_through_to_ssh():
+    # sshPilot has no -v/-q short forms; OpenSSH's own must pass through.
     opts = parse_sshpilot_cli(['-v', 'myhost'])
     assert opts.verbose is False
     assert opts.ssh_tokens == ['-v', 'myhost']
+
+    opts = parse_sshpilot_cli(['-q', 'myhost'])
+    assert opts.quiet is False
+    assert opts.ssh_tokens == ['-q', 'myhost']
 
 
 def test_resolve_existing_alias():
