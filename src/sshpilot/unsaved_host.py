@@ -83,7 +83,12 @@ def resolve_connection_host_user(
             eff_user = _as_scalar(effective.get('user'))
             if eff_host:
                 hostname = eff_host
-            if eff_user:
+            # ssh -G always emits a `user` line, defaulting to the local login
+            # when the matched config has no User. That default must NOT clobber
+            # an explicit username (e.g. `root` from `root@host` on the CLI):
+            # `ssh -G <ip>` can't match a `Host <alias>` block, so it would
+            # resolve the wrong user and make the host look unsaved.
+            if eff_user and not username:
                 username = eff_user
 
     if not hostname:

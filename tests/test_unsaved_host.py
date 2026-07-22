@@ -86,6 +86,24 @@ def test_unsaved_when_hostname_missing_from_config(monkeypatch):
     assert is_unsaved_host(target, _Mgr([saved])) is True
 
 
+def test_cli_user_at_ip_matches_saved_alias(monkeypatch):
+    # `sshpilot root@192.168.8.1` must NOT prompt to save when a saved alias
+    # (Host GoogleRouter / HostName 192.168.8.1 / User root) already covers it.
+    # `ssh -G 192.168.8.1` can't match the alias block, so it returns the local
+    # default user — which must not clobber the explicit `root`.
+    def fake_g(host, config_file=None):
+        if host == 'GoogleRouter':
+            return {'hostname': '192.168.8.1', 'user': 'root'}
+        return {'hostname': '192.168.8.1', 'user': 'localdefault'}  # ssh -G <ip>
+
+    monkeypatch.setattr('sshpilot.unsaved_host.get_effective_ssh_config', fake_g)
+    saved = _conn(hostname='192.168.8.1', host='GoogleRouter',
+                  nickname='GoogleRouter', username='root')
+    target = _conn(hostname='192.168.8.1', host='192.168.8.1', username='root')
+    assert resolve_connection_host_user(target)[1] == 'root'  # explicit user kept
+    assert is_unsaved_host(target, _Mgr([saved])) is False
+
+
 def test_dismissals_are_session_scoped(monkeypatch):
     monkeypatch.setattr(
         'sshpilot.unsaved_host.get_effective_ssh_config',
