@@ -1,61 +1,80 @@
 """Detachable floating sidebar popup — used for search, reusable for more.
 
-``SearchPopup`` hosts the *live* connection sidebar (``window._sidebar_box`` —
-header actions, search, connection list, toolbar) in an overlay panel that
-floats above the work area. On show it reparents ``sidebar_box`` out of the
-split view's ``Adw.ToolbarView`` into the panel; on hide it puts it back.
+``SearchPopup`` hosts a widget (the live connection sidebar, ``sidebar_box``) in
+an overlay panel that floats above the work area. On show it reparents that
+widget out of its home container into the panel; on hide it puts it back.
 
-Because it is the *same* widget tree, the popup is pixel-identical to the
-expanded sidebar and every behaviour (selection, drag-and-drop, context menus,
-search, tags) works with zero duplication. The split view's sidebar column is
-left in place while detached (its ToolbarView just loses its content), so the
-terminal never resizes — the whole reason this exists instead of collapsing the
-split view to an overlay, which unavoidably reflows the content by the sidebar
-width.
+Because it moves the *live* widget tree rather than copying it, the popup is
+pixel-identical to the docked sidebar and every behaviour (selection,
+drag-and-drop, context menus, search, tags) works with zero duplication — there
+is nothing to keep in sync. The home container is left in place while detached,
+so the surrounding content (the terminal) never resizes.
+
+Decoupling
+----------
+The popup knows nothing about *why* it is shown or what the content is. It only
+touches structural pieces passed in, and delegates all behaviour to callbacks:
+
+    SearchPopup(
+        overlay,          # Gtk.Overlay to host the scrim + panel
+        home,             # the container the content lives in; must support
+                          #   set_content(widget|None) and get_content()
+        content,          # the widget to reparent (e.g. the sidebar box)
+        width_func,       # () -> int, the panel width
+        on_shown=None,    # () -> None, after reparenting into the panel
+        on_hidden=None,   # () -> None, after reparenting back home
+        on_dismiss=None,  # () -> None on Esc/click-outside (default: hide())
+    )
+
+Callbacks are intentionally *not* wrapped in try/except: if the owner's contract
+drifts, the failure should surface loudly rather than leave the popup half-set.
 
 Public API
 ----------
-    popup = SearchPopup(window)     # builds hidden scrim + panel on the overlay
-    popup.show()                    # detach sidebar_box into the panel
-    popup.hide()                    # re-attach it to the split view
-    popup.visible                   # -> bool
-    popup.set_transparent(enabled)  # subtle background transparency (code-only)
-    popup.dismiss()                 # Esc / click-outside routing
-
-Dismissal is automatic on Esc and on a click outside the panel (a transparent
-scrim captures those); ``dismiss()`` routes through the window's search teardown
-when search is active so the filter/entry are cleaned up too.
+    popup.show() / popup.hide() / popup.visible / popup.set_transparent(bool)
+    popup.dismiss()
 
 Extending with modes
 --------------------
-Presentation is deliberately localised: ``_target_width()`` decides the panel
-width and ``_build()`` owns the panel/scrim widgets and their alignment. Add a
-``mode`` attribute and branch in those two places (plus new CSS classes on the
-panel) to introduce e.g. right-docked, wide, or full-height variants without
-touching the window.
+Presentation is localised: ``width_func`` decides the width and ``_build`` owns
+the panel/scrim widgets and their alignment. Add a ``mode`` attribute and branch
+in those two places (plus new CSS classes on the panel) for right-docked, wide,
+or full-height variants — without touching the owner.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Callable, Optional
 
 import gi
 gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, Adw
+from gi.repository import Gtk, Gdk
 
 logger = logging.getLogger(__name__)
 
-_HAS_OVERLAY_SPLIT = hasattr(Adw, "OverlaySplitView")
-_DEFAULT_MAX_SIDEBAR_WIDTH = 400
-
 
 class SearchPopup:
-    """A floating panel that detaches the sidebar over the work area."""
+    """A floating panel that detaches ``content`` over the work area."""
 
-    def __init__(self, window):
-        self._window = window
-        self._overlay = getattr(window, "_content_overlay", None)
+    def __init__(
+        self,
+        overlay: Gtk.Overlay,
+        home,
+        content: Gtk.Widget,
+        width_func: Callable[[], int],
+        *,
+        on_shown: Optional[Callable[[], None]] = None,
+        on_hidden: Optional[Callable[[], None]] = None,
+        on_dismiss: Optional[Callable[[], None]] = None,
+    ):
+        self._overlay = overlay
+        self._home = home
+        self._content = content
+        self._width_func = width_func
+        self._on_shown = on_shown or (lambda: None)
+        self._on_hidden = on_hidden or (lambda: None)
+        self._on_dismiss = on_dismiss
         self._visible = False
         self._transparent = False
         self._scrim = None
@@ -70,7 +89,7 @@ class SearchPopup:
             return
 
         # Transparent scrim behind the panel: captures a click *outside* the
-        # panel to dismiss. Transparent so the terminal stays fully visible;
+        # panel to dismiss. Transparent so the content stays fully visible;
         # the panel's own shadow lifts it off the content.
         self._scrim = Gtk.Box()
         self._scrim.set_hexpand(True)
@@ -82,7 +101,7 @@ class SearchPopup:
         self._scrim.add_controller(scrim_click)
         self._overlay.add_overlay(self._scrim)
 
-        # Panel: left-aligned, full height, hosts the reparented sidebar_box.
+        # Panel: left-aligned, full height, hosts the reparented content.
         self._panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._panel.set_halign(Gtk.Align.START)
         self._panel.set_valign(Gtk.Align.FILL)
@@ -97,7 +116,7 @@ class SearchPopup:
 
     @property
     def visible(self) -> bool:
-        """True while the sidebar is detached into the popup."""
+        """True while the content is detached into the popup."""
         return self._visible
 
     def set_transparent(self, enabled: bool) -> None:
@@ -117,80 +136,42 @@ class SearchPopup:
     # -- show / hide ------------------------------------------------------
 
     def show(self) -> None:
-        """Detach the sidebar into the panel (full content, floating).
-
-        No-op if already shown or the required widgets aren't available.
-        """
-        if self._visible:
+        """Detach ``content`` into the panel (floating). No-op if already shown
+        or the popup wasn't built."""
+        if self._visible or self._panel is None:
             return
-        win = self._window
-        box = getattr(win, "_sidebar_box", None)
-        tv = getattr(win, "_sidebar_toolbar_view", None)
-        if box is None or tv is None or self._panel is None:
-            return
+        self._panel.set_size_request(self._width_func(), -1)
 
-        self._panel.set_size_request(self._target_width(), -1)
-
-        # Reparent sidebar_box: split view ToolbarView -> popup panel.
-        try:
-            tv.set_content(None)
-        except Exception:
-            pass
-        self._panel.append(box)
-
-        # The popup always shows the full sidebar, even when the strip is minimal.
-        try:
-            win._set_sidebar_clipping(False)
-            win._apply_sidebar_minimal_chrome(False)
-            win._apply_sidebar_minimal_rows(False)
-        except Exception:
-            logger.debug("search popup content restore failed", exc_info=True)
+        # Reparent content: home -> panel.
+        self._home.set_content(None)
+        self._panel.append(self._content)
+        self._on_shown()
 
         self._scrim.set_visible(True)
         self._panel.set_visible(True)
         self._visible = True
 
     def hide(self) -> None:
-        """Re-attach the sidebar to the split view, hiding the panel.
-
-        No-op if not shown. Re-collapses the strip if minimal mode is active.
-        """
+        """Re-attach ``content`` to its home, hiding the panel. No-op if not
+        shown."""
         if not self._visible:
             return
-        win = self._window
-        box = getattr(win, "_sidebar_box", None)
-        tv = getattr(win, "_sidebar_toolbar_view", None)
+        self._panel.set_visible(False)
+        self._scrim.set_visible(False)
 
-        if self._panel is not None:
-            self._panel.set_visible(False)
-        if self._scrim is not None:
-            self._scrim.set_visible(False)
-
-        # Reparent sidebar_box back: popup panel -> split view ToolbarView.
-        if box is not None and self._panel is not None and box.get_parent() is self._panel:
-            self._panel.remove(box)
-        if box is not None and tv is not None:
-            try:
-                tv.set_content(box)
-            except Exception:
-                pass
-
-        # Restore the strip if the resting sidebar is minimal.
-        if getattr(win, "_sidebar_minimal", False):
-            try:
-                win._apply_sidebar_minimal_chrome(True)
-                win._apply_sidebar_minimal_rows(True)
-            except Exception:
-                logger.debug("search popup re-collapse failed", exc_info=True)
+        # Reparent content: panel -> home.
+        if self._content.get_parent() is self._panel:
+            self._panel.remove(self._content)
+        self._home.set_content(self._content)
+        self._on_hidden()
 
         self._visible = False
 
     def dismiss(self) -> None:
-        """Dismiss (Esc / click-outside). Routes through the window's search
-        teardown when search is active so the filter/entry are cleaned too."""
-        win = self._window
-        if getattr(win, "search_container", None) and win.search_container.get_visible():
-            win._close_search_if_open()
+        """Dismiss (Esc / click-outside): the owner's ``on_dismiss`` if given
+        (e.g. to also tear down search state), otherwise a plain hide."""
+        if self._on_dismiss is not None:
+            self._on_dismiss()
         else:
             self.hide()
 
@@ -201,29 +182,3 @@ class SearchPopup:
             self.dismiss()
             return True
         return False
-
-    def _target_width(self) -> int:
-        """The panel width: the *actual* expanded-sidebar width (fraction-based,
-        clamped to [base_min, max]), not the raw max — otherwise the panel is
-        wider than the sidebar ever is side-by-side."""
-        saved_max = self._effective_max_width()
-        try:
-            sv = getattr(self._window, "split_view", None)
-            if sv is not None and hasattr(sv, "get_sidebar_width_fraction"):
-                base_min = 180 if _HAS_OVERLAY_SPLIT else 200
-                win_w = sv.get_width() or 0
-                if win_w > 0:
-                    frac = sv.get_sidebar_width_fraction()
-                    return max(base_min, min(saved_max, int(frac * win_w)))
-        except Exception:
-            pass
-        return saved_max
-
-    def _effective_max_width(self) -> int:
-        value = self._window.config.get_setting("ui.max-sidebar-width", None)
-        if value is None:
-            return _DEFAULT_MAX_SIDEBAR_WIDTH
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return _DEFAULT_MAX_SIDEBAR_WIDTH

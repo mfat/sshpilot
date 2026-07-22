@@ -102,9 +102,25 @@ rows stay readable. It is **intentionally not exposed in Preferences** — it is
 code-level toggle only. Default is off (opaque); the setting persists across
 show/hide.
 
+### Decoupling & drift
+
+`SearchPopup` knows nothing about the sidebar or minimal mode. It is constructed
+with structural pieces (the overlay, the `home` container, the `content` widget,
+a `width_func`) and delegates all behaviour to callbacks the window supplies:
+`on_shown` / `on_hidden` (`_on_search_popup_shown/hidden` — expand or re-collapse
+the rows) and `on_dismiss` (`_dismiss_search_popup` — route through search
+teardown). The callbacks are deliberately **not** wrapped in try/except so a
+drifted contract fails loudly.
+
+Because the popup moves the *live* `sidebar_box` (never a copy), the sidebar and
+its search cannot drift out of sync — there is only one of each. The one place
+drift could bite is the owner→popup contract; `tests/test_sidebar_popup_gui.py`
+guards it by exercising `show()`/`hide()` on a real window (the mocked unit tests
+in `tests/test_sidebar_popup.py` can't, since they mock the callbacks).
+
 ### Reuse
 
-`popup.show()` / `popup.hide()` are generic — search is just the
-first caller. Any trigger can detach the sidebar into the floating panel; the
-auto-dismiss on Esc / click-outside applies regardless, and the search-specific
-teardown only runs when search happens to be open.
+`popup.show()` / `popup.hide()` are generic — search is just the first caller.
+Any trigger can detach the content into the floating panel; the auto-dismiss on
+Esc / click-outside applies regardless, and the search-specific teardown only
+runs when search happens to be open.

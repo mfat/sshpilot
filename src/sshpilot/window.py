@@ -1354,7 +1354,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self.split_view)
         from .search_popup import SearchPopup
-        self._search_popup = SearchPopup(self)
+        self._search_popup = SearchPopup(
+            self._content_overlay,
+            self._sidebar_toolbar_view,
+            self._sidebar_box,
+            self._popup_target_width,
+            on_shown=self._on_search_popup_shown,
+            on_hidden=self._on_search_popup_hidden,
+            on_dismiss=self._dismiss_search_popup,
+        )
 
         # Outer NavigationView: work UI is the root page; Settings is pushed on
         # top (Telegram-style mode). Back / Esc pops Settings and restores work.
@@ -3933,6 +3941,44 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 sv.set_collapsed(overlay)
             except Exception:
                 logger.debug("set_sidebar_overlay failed", exc_info=True)
+
+    # --- Search popup owner callbacks (see search_popup.SearchPopup) ---------
+    def _popup_target_width(self) -> int:
+        """Panel width for the search popup: the *actual* expanded-sidebar width
+        (fraction-based, clamped to [base_min, max]), not the raw max."""
+        saved_max = _effective_max_sidebar_width(
+            self.config.get_setting('ui.max-sidebar-width', None))
+        try:
+            sv = getattr(self, 'split_view', None)
+            if sv is not None and hasattr(sv, 'get_sidebar_width_fraction'):
+                base_min = 180 if HAS_OVERLAY_SPLIT else 200
+                win_w = sv.get_width() or 0
+                if win_w > 0:
+                    frac = sv.get_sidebar_width_fraction()
+                    return max(base_min, min(saved_max, int(frac * win_w)))
+        except Exception:
+            pass
+        return saved_max
+
+    def _on_search_popup_shown(self) -> None:
+        """Detached: show the full sidebar even when the strip is minimal."""
+        self._set_sidebar_clipping(False)
+        self._apply_sidebar_minimal_chrome(False)
+        self._apply_sidebar_minimal_rows(False)
+
+    def _on_search_popup_hidden(self) -> None:
+        """Re-attached: re-collapse the strip if the resting sidebar is minimal."""
+        if getattr(self, '_sidebar_minimal', False):
+            self._apply_sidebar_minimal_chrome(True)
+            self._apply_sidebar_minimal_rows(True)
+
+    def _dismiss_search_popup(self) -> None:
+        """Esc / click-outside: route through search teardown when search is
+        active (cleans the filter/entry) so the popup also closes."""
+        if getattr(self, 'search_container', None) and self.search_container.get_visible():
+            self._close_search_if_open()
+        else:
+            self._search_popup.hide()
 
     def _sidebar_mode_is_minimal(self) -> bool:
         """True when the icon strip is the user's configured resting mode."""
