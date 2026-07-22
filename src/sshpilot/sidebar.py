@@ -3891,6 +3891,20 @@ def _build_sidebar_header(window, sidebar_box):
     _expand_toolbar_button(preferences_button)
     header.append(preferences_button)
 
+    # Minimize-to-strip toggle: the full-mode counterpart of the expand button
+    # shown in the minimal strip. Left arrow collapses the sidebar to icons.
+    minimize_button = icon_utils.new_button_from_icon_name('go-previous-symbolic')
+    minimize_button.add_css_class('flat')
+    _expand_toolbar_button(minimize_button)
+    minimize_button.set_tooltip_text(_('Minimize sidebar to icons'))
+    minimize_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(True))
+    try:
+        minimize_button.set_can_focus(False)
+    except Exception:
+        pass
+    window._sidebar_minimize_button = minimize_button
+    header.append(minimize_button)
+
     # Menu button (packed on content header bar in setup_content_area)
     window.menu_button = Gtk.MenuButton()
     window.menu_button.add_css_class('flat')
