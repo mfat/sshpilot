@@ -3929,7 +3929,7 @@ def _build_sidebar_header(window, sidebar_box):
     expand_button = Gtk.Button()
     icon_utils.set_button_icon(expand_button, 'pan-end-symbolic')
     expand_button.set_tooltip_text(_('Expand sidebar'))
-    expand_button.add_css_class('circular')
+    expand_button.add_css_class('flat')
     expand_button.set_halign(Gtk.Align.CENTER)
     expand_button.set_margin_top(12)
     expand_button.set_margin_bottom(6)
