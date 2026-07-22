@@ -388,13 +388,12 @@ class TerminalWidget(Gtk.Box):
         self.save_connection_banner.set_valign(Gtk.Align.END)
         self.save_connection_banner.set_hexpand(True)
         self.save_connection_banner.set_vexpand(False)
-        self.save_connection_banner.set_margin_start(8)
-        self.save_connection_banner.set_margin_end(8)
-        self.save_connection_banner.set_margin_top(6)
-        self.save_connection_banner.set_margin_bottom(6)
+        self.save_connection_banner.set_margin_start(0)
+        self.save_connection_banner.set_margin_end(0)
+        self.save_connection_banner.set_margin_top(0)
+        self.save_connection_banner.set_margin_bottom(0)
         try:
             self.save_connection_banner.add_css_class('toolbar')
-            self.save_connection_banner.add_css_class('osd')
         except Exception:
             pass
 

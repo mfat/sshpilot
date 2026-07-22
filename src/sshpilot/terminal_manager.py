@@ -962,8 +962,16 @@ class TerminalManager:
                     logger.debug('Failed to record save-prompt dismissal', exc_info=True)
 
             if hasattr(terminal, 'show_save_connection_prompt'):
-                terminal.show_save_connection_prompt(
-                    on_save=_on_save, on_dismiss=_on_dismiss)
+                # Delay the reveal so the revealer is mapped by the time it
+                # fires; otherwise GTK skips the slide-up animation.
+                from gi.repository import GLib
+
+                def _reveal():
+                    terminal.show_save_connection_prompt(
+                        on_save=_on_save, on_dismiss=_on_dismiss)
+                    return False
+
+                GLib.timeout_add(600, _reveal)
         except Exception:
             logger.debug('Save-connection offer skipped', exc_info=True)
 
