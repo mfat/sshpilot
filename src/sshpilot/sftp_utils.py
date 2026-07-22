@@ -109,14 +109,58 @@ def _show_password_dialog_for_mount(
 class PasswordMountOperation(Gio.MountOperation):
     """Custom MountOperation that automatically provides passwords from keyring"""
     
-    def __init__(self, password: Optional[str] = None, username: Optional[str] = None):
+    def __init__(self, password: Optional[str] = None, username: Optional[str] = None,
+                 parent_window=None):
         super().__init__()
         self._password = password
         self._username = username
         self._password_provided = False
-        
+        self._parent_window = parent_window
+
         # Always connect to ask-password signal to handle password requests
         self.connect("ask-password", self._on_ask_password)
+        # GVFS emits ask-question for host-key confirmation (unknown/changed
+        # host). Without a handler the operation stalls and the desktop's own
+        # mount agent pops a dialog behind our progress window — closing that
+        # window then cancels the mount ("Login dialog cancelled"). Handle it.
+        self.connect("ask-question", self._on_ask_question)
+
+    def _on_ask_question(self, op, message: str, choices):
+        """Confirm GVFS questions (host-key acceptance) with our own dialog.
+
+        Replies asynchronously: present the choices, then set_choice()/reply()
+        from the dialog response (same contract as GtkMountOperation).
+        """
+        choices = list(choices or [])
+        logger.info("PasswordMountOperation: GVFS question: %s (choices=%s)",
+                    (message or "").splitlines()[-1:] or message, choices)
+        if not choices:
+            op.reply(Gio.MountOperationResult.UNHANDLED)
+            return True
+        try:
+            dialog = Adw.AlertDialog()
+            dialog.set_heading(_("Confirm"))
+            dialog.set_body((message or "").strip() or _("Continue connecting?"))
+            for i, choice in enumerate(choices):
+                dialog.add_response(str(i), choice)
+            # GVFS lists the affirmative choice first, cancel/deny last.
+            dialog.set_default_response("0")
+            dialog.set_close_response(str(len(choices) - 1))
+
+            def _on_resp(_d, response_id):
+                try:
+                    idx = int(response_id)
+                except (TypeError, ValueError):
+                    idx = len(choices) - 1
+                op.set_choice(idx)
+                op.reply(Gio.MountOperationResult.HANDLED)
+
+            dialog.connect("response", _on_resp)
+            dialog.present(self._parent_window)
+        except Exception:
+            logger.exception("PasswordMountOperation: ask-question dialog failed")
+            op.reply(Gio.MountOperationResult.UNHANDLED)
+        return True
     
     def _on_ask_password(self, op, message: str, default_user: str, default_domain: str, flags: Gio.AskPasswordFlags):
         """Handle password requests from GVFS via signal"""
@@ -472,10 +516,10 @@ def _mount_and_open_sftp(
         
         if password:
             logger.debug("External file manager: Creating PasswordMountOperation with password for %s@%s", lookup_user, host)
-            op = PasswordMountOperation(password, lookup_user)
+            op = PasswordMountOperation(password, lookup_user, parent_window=progress_dialog)
         else:
             logger.warning("External file manager: No password available for mount operation - this may cause terminal prompts")
-            op = Gio.MountOperation()
+            op = PasswordMountOperation(None, lookup_user, parent_window=progress_dialog)
 
         def on_mounted(source, res, data=None):
             try:
@@ -1293,6 +1337,10 @@ class MountProgressDialog(Adw.Window):
     def _update_progress_simulation(self):
         """Simulate mounting progress"""
         if self.is_cancelled:
+            # The source removes itself by returning False; drop our stale id so
+            # a later close()/cancel doesn't source_remove it again (which logs
+            # "Source ID … was not found").
+            self.progress_timer = None
             return False
 
         self.progress_value += 0.02
