@@ -106,33 +106,105 @@ def _show_password_dialog_for_mount(
     )
 
 
-class PasswordMountOperation(Gio.MountOperation):
-    """Custom MountOperation that automatically provides passwords from keyring"""
-    
-    def __init__(self, password: Optional[str] = None, username: Optional[str] = None):
+class PasswordMountOperation(Gtk.MountOperation):
+    """Mount operation that auto-fills the stored password.
+
+    Subclasses ``Gtk.MountOperation`` so every prompt we don't handle — most
+    importantly the host-key confirmation (``ask-question``) — uses GTK's own
+    native dialog, exactly like Nautilus. We only intercept ``ask-password`` to
+    supply the stored secret (stopping GTK's password dialog); when no stored
+    password is available we let emission fall through to GTK's dialog so the
+    user can type one. GVFS's ``ask-question`` is void/async and GTK replies to
+    it on the main loop, which a custom handler replying synchronously breaks.
+    """
+
+    def __init__(self, password: Optional[str] = None, username: Optional[str] = None,
+                 parent_window=None):
         super().__init__()
         self._password = password
         self._username = username
         self._password_provided = False
-        
-        # Always connect to ask-password signal to handle password requests
+        if parent_window is not None:
+            try:
+                self.set_property("parent", parent_window)
+            except Exception:
+                logger.debug("PasswordMountOperation: could not set parent window", exc_info=True)
+
+        # Intercept only the password prompt; leave ask-question to GTK's dialog.
         self.connect("ask-password", self._on_ask_password)
-    
+
     def _on_ask_password(self, op, message: str, default_user: str, default_domain: str, flags: Gio.AskPasswordFlags):
-        """Handle password requests from GVFS via signal"""
+        """Auto-fill the stored password; otherwise defer to GTK's own dialog."""
         if self._password and not self._password_provided:
             logger.debug("PasswordMountOperation: Providing saved password for user %s", default_user)
             self.set_password(self._password)
-            # Use provided username if available, otherwise use default_user from mount operation
             username_to_use = self._username if self._username else default_user
             self.set_username(username_to_use)
             self.reply(Gio.MountOperationResult.HANDLED)
             self._password_provided = True
+            # Stop emission so GTK's default password dialog does not also pop.
+            self.stop_emission_by_name("ask-password")
         else:
-            # No password available - this shouldn't happen if we showed dialog before mounting
-            # But if it does, reply UNHANDLED so gvfs can show its own prompt
-            logger.warning("PasswordMountOperation: No password available when gvfs requested it")
-            self.reply(Gio.MountOperationResult.UNHANDLED)
+            # No stored password (or a retry after a wrong one): let emission
+            # continue to GTK's built-in password dialog.
+            logger.debug("PasswordMountOperation: no stored password; deferring to GTK dialog")
+
+
+class _MountToast:
+    """Non-masking stand-in for MountProgressDialog.
+
+    The mount progress *window* covered the GVFS auth prompts (password and
+    host-key "Log In Anyway"), so closing it cancelled the mount. This shows an
+    Adw.Toast on the parent window's overlay instead — same method surface the
+    mount code already calls, but nothing to mask the prompts. ``parent_window``
+    stays available for dialogs that still need a real window parent.
+    """
+
+    def __init__(self, user: str, host: str, parent_window=None):
+        self.user = user
+        self.host = host
+        self.parent_window = parent_window
+        self.is_cancelled = False
+        self.progress_timer = None
+        self._overlay = getattr(parent_window, "toast_overlay", None)
+        self._toast = None
+
+    def _show(self, text: str, timeout: int = 4):
+        if self._overlay is None:
+            return
+        try:
+            if self._toast is not None:
+                self._toast.dismiss()
+        except Exception:
+            pass
+        try:
+            self._toast = Adw.Toast.new(text)
+            self._toast.set_timeout(timeout)
+            self._overlay.add_toast(self._toast)
+        except Exception:
+            self._toast = None
+
+    def present(self):
+        self._show(_("Connecting to {user}@{host}…").format(user=self.user, host=self.host))
+
+    def start_progress_updates(self):
+        pass
+
+    def update_progress(self, fraction: float, text: str):
+        # Cosmetic; the connecting toast and the file manager opening are the
+        # only feedback worth surfacing.
+        pass
+
+    def show_error(self, error_text: str):
+        self._show(error_text, timeout=6)
+
+    def close(self, *_args):
+        try:
+            if self._toast is not None:
+                self._toast.dismiss()
+        except Exception:
+            pass
+        self._toast = None
 
 
 def open_remote_in_file_manager(
@@ -188,8 +260,8 @@ def open_remote_in_file_manager(
             return False, str(exc)
         return True, None
 
-    # Create progress dialog and start verification asynchronously
-    progress_dialog = MountProgressDialog(user, host, parent_window)
+    # Non-masking progress feedback (toast) so the GVFS auth prompts stay usable.
+    progress_dialog = _MountToast(user, host, parent_window)
     progress_dialog.present()
     progress_dialog.start_progress_updates()
 
@@ -243,7 +315,7 @@ def open_remote_in_file_manager(
         if _is_password_auth_enabled(connection):
             logger.debug("External file manager: No password found, password auth enabled, showing password dialog before verification")
             dialog_password = _show_password_dialog_for_mount(
-                user, host, connection, progress_dialog, connection_manager
+                user, host, connection, parent_window, connection_manager
             )
             if dialog_password:
                 logger.debug("External file manager: Password provided via dialog")
@@ -273,7 +345,7 @@ def open_remote_in_file_manager(
                 uri, user, host, port, error_callback, progress_dialog
             )
         else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password)
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password, parent_window=parent_window)
         return True, None
 
     progress_dialog.update_progress(0.05, "Verifying SSH connection...")
@@ -298,7 +370,7 @@ def open_remote_in_file_manager(
                 uri, user, host, port, error_callback, progress_dialog
             )
         else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password)
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password, parent_window=parent_window)
 
     _verify_ssh_connection_async(user, host, port, _on_verify_complete)
 
@@ -363,14 +435,20 @@ def _mount_and_open_sftp(
     connection: Any = None,
     connection_manager: Any = None,
     provided_password: Optional[str] = None,
+    parent_window=None,
 ):
     """Mount SFTP location and open in file manager"""
     try:
         logger.info(f"Mounting SFTP location: {uri}")
 
-        # Create progress dialog if not provided
+        # Fall back to the parent stored on the toast shim when not passed
+        # explicitly (auth dialogs need a real window, not the toast).
+        if parent_window is None:
+            parent_window = getattr(progress_dialog, "parent_window", None)
+
+        # Non-masking progress feedback if none was provided.
         if progress_dialog is None:
-            progress_dialog = _create_mount_progress_dialog(user, host)
+            progress_dialog = _MountToast(user, host, parent_window)
             progress_dialog.present()
 
         # Try to retrieve password using the same logic as built-in file manager
@@ -452,7 +530,7 @@ def _mount_and_open_sftp(
             if _is_password_auth_enabled(connection):
                 logger.debug("External file manager: No password found, password auth enabled, showing password dialog")
                 password = _show_password_dialog_for_mount(
-                    user, host, connection, progress_dialog, connection_manager
+                    user, host, connection, parent_window, connection_manager
                 )
                 if not password:
                     # User cancelled password dialog
@@ -472,10 +550,10 @@ def _mount_and_open_sftp(
         
         if password:
             logger.debug("External file manager: Creating PasswordMountOperation with password for %s@%s", lookup_user, host)
-            op = PasswordMountOperation(password, lookup_user)
+            op = PasswordMountOperation(password, lookup_user, parent_window=parent_window)
         else:
             logger.warning("External file manager: No password available for mount operation - this may cause terminal prompts")
-            op = Gio.MountOperation()
+            op = PasswordMountOperation(None, lookup_user, parent_window=parent_window)
 
         def on_mounted(source, res, data=None):
             try:
@@ -640,9 +718,9 @@ def _open_sftp_flatpak_compatible(
 ) -> Tuple[bool, Optional[str]]:
     """Open SFTP using Flatpak-compatible methods with proper portal usage"""
 
-    # Reuse existing progress dialog if provided
+    # Reuse existing progress feedback if provided
     if progress_dialog is None:
-        progress_dialog = MountProgressDialog(user, host, parent_window)
+        progress_dialog = _MountToast(user, host, parent_window)
         progress_dialog.present()
     if not getattr(progress_dialog, "progress_timer", None):
         progress_dialog.start_progress_updates()
@@ -1293,6 +1371,10 @@ class MountProgressDialog(Adw.Window):
     def _update_progress_simulation(self):
         """Simulate mounting progress"""
         if self.is_cancelled:
+            # The source removes itself by returning False; drop our stale id so
+            # a later close()/cancel doesn't source_remove it again (which logs
+            # "Source ID … was not found").
+            self.progress_timer = None
             return False
 
         self.progress_value += 0.02

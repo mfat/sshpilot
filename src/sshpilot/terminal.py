@@ -376,6 +376,66 @@ class TerminalWidget(Gtk.Box):
         self.disconnected_revealer.set_child(self.disconnected_banner)
         self.terminal_stack.append(self.disconnected_revealer)
 
+        # Optional "Save as new connection" prompt (CLI / ad-hoc). Same layout
+        # pattern as the disconnected banner: sibling BELOW the VTE in the
+        # vertical stack so revealing it pushes the terminal up instead of
+        # masking the bottom rows of output.
+        self._save_connection_prompt_on_save = None
+        self._save_connection_prompt_on_dismiss = None
+        self.save_connection_banner = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.save_connection_banner.set_halign(Gtk.Align.FILL)
+        self.save_connection_banner.set_valign(Gtk.Align.END)
+        self.save_connection_banner.set_hexpand(True)
+        self.save_connection_banner.set_vexpand(False)
+        self.save_connection_banner.set_margin_start(0)
+        self.save_connection_banner.set_margin_end(0)
+        self.save_connection_banner.set_margin_top(0)
+        self.save_connection_banner.set_margin_bottom(0)
+        try:
+            self.save_connection_banner.add_css_class('toolbar')
+        except Exception:
+            pass
+
+        save_icon = Gtk.Image.new_from_icon_name('document-save-symbolic')
+        self.save_connection_banner.append(save_icon)
+        self.save_connection_banner_label = Gtk.Label(
+            label=_('Save this connection for next time?'))
+        self.save_connection_banner_label.set_halign(Gtk.Align.START)
+        self.save_connection_banner_label.set_hexpand(True)
+        self.save_connection_banner_label.set_wrap(True)
+        self.save_connection_banner.append(self.save_connection_banner_label)
+
+        self.save_connection_button = Gtk.Button.new_with_label(
+            _('Save as new connection'))
+        try:
+            self.save_connection_button.add_css_class('suggested-action')
+        except Exception:
+            pass
+        self.save_connection_button.connect(
+            'clicked', self._on_save_connection_prompt_save)
+        self.save_connection_banner.append(self.save_connection_button)
+
+        self.save_connection_dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
+        try:
+            self.save_connection_dismiss_button.add_css_class('flat')
+        except Exception:
+            pass
+        self.save_connection_dismiss_button.connect(
+            'clicked', self._on_save_connection_prompt_dismiss)
+        self.save_connection_banner.append(self.save_connection_dismiss_button)
+
+        self.save_connection_revealer = Gtk.Revealer()
+        self.save_connection_revealer.set_transition_type(
+            Gtk.RevealerTransitionType.SLIDE_UP)
+        self.save_connection_revealer.set_transition_duration(200)
+        self.save_connection_revealer.set_halign(Gtk.Align.FILL)
+        self.save_connection_revealer.set_hexpand(True)
+        self.save_connection_revealer.set_vexpand(False)
+        self.save_connection_revealer.set_reveal_child(False)
+        self.save_connection_revealer.set_child(self.save_connection_banner)
+        self.terminal_stack.append(self.save_connection_revealer)
+
         # Container for terminal stack only
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.container_box.set_hexpand(True)
@@ -607,6 +667,44 @@ class TerminalWidget(Gtk.Box):
                 self.disconnected_banner.set_visible(visible)
         except Exception:
             pass
+
+    def show_save_connection_prompt(self, *, on_save=None, on_dismiss=None):
+        """Reveal the in-terminal save-connection bar (layout-flow, not overlay)."""
+        self._save_connection_prompt_on_save = on_save
+        self._save_connection_prompt_on_dismiss = on_dismiss
+        try:
+            if getattr(self, 'save_connection_revealer', None) is not None:
+                self.save_connection_revealer.set_reveal_child(True)
+        except Exception:
+            logger.debug('Failed to show save-connection prompt', exc_info=True)
+
+    def hide_save_connection_prompt(self):
+        """Hide the save-connection prompt without invoking callbacks."""
+        try:
+            if getattr(self, 'save_connection_revealer', None) is not None:
+                self.save_connection_revealer.set_reveal_child(False)
+        except Exception:
+            pass
+        self._save_connection_prompt_on_save = None
+        self._save_connection_prompt_on_dismiss = None
+
+    def _on_save_connection_prompt_save(self, *_args):
+        callback = self._save_connection_prompt_on_save
+        self.hide_save_connection_prompt()
+        if callable(callback):
+            try:
+                callback(self)
+            except Exception:
+                logger.debug('Save-connection prompt save callback failed', exc_info=True)
+
+    def _on_save_connection_prompt_dismiss(self, *_args):
+        callback = self._save_connection_prompt_on_dismiss
+        self.hide_save_connection_prompt()
+        if callable(callback):
+            try:
+                callback(self)
+            except Exception:
+                logger.debug('Save-connection prompt dismiss callback failed', exc_info=True)
 
     # --- Error detail (banner Details dialog) -------------------------------
     _ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')

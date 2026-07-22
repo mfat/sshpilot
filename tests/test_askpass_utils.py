@@ -268,6 +268,43 @@ def test_lookup_via_main_app_no_socket(monkeypatch):
     assert askpass_utils._lookup_via_main_app("/k", lambda *_a: None) is None
 
 
+def test_hostkey_prompt_classifies_as_hostkey():
+    from sshpilot.askpass_utils import classify_prompt
+
+    prompt = (
+        "The authenticity of host '192.168.8.1 (192.168.8.1)' can't be established.\n"
+        "ED25519 key fingerprint is SHA256:abc.\n"
+        "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
+    )
+    assert classify_prompt(prompt) == 'hostkey'
+    # OTP/verification-code prompts stay 'interactive' (typed secret).
+    assert classify_prompt('Enter verification code:') == 'interactive'
+
+
+def test_hostkey_prompt_routes_to_yes_no_confirm(monkeypatch):
+    # A host-key confirmation must use the yes/no confirm dialog, not the
+    # obscured verification-code challenge dialog.
+    from sshpilot import askpass_utils
+
+    monkeypatch.delenv("SSH_ASKPASS_PROMPT", raising=False)
+    monkeypatch.delenv("SSHPILOT_ASKPASS_AUTOFILL_ONLY", raising=False)
+    calls = []
+
+    def _confirm(prompt, log):
+        calls.append(prompt)
+        return "yes"
+
+    monkeypatch.setattr(askpass_utils, "_handle_confirm_prompt", _confirm)
+    monkeypatch.setattr(
+        askpass_utils, "_handle_challenge_prompt",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("host-key must not reach the challenge dialog")))
+
+    prompt = "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
+    assert askpass_utils.handle_askpass_cli(prompt) == "yes"
+    assert calls == [prompt]
+
+
 def test_handle_askpass_cli_resolves_via_backend_first(monkeypatch):
     # The askpass subprocess resolves via the selected backend first (Bitwarden -> a
     # targeted `bw` lookup, libsecret/keyring -> in-process). The main-app IPC is only a

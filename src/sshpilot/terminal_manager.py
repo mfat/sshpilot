@@ -918,6 +918,63 @@ class TerminalManager:
         except Exception:
             logger.exception("Plugin session_opened dispatch failed")
 
+        self._maybe_offer_save_connection(terminal)
+
+    def _maybe_offer_save_connection(self, terminal):
+        """After a successful CLI/ad-hoc connect, offer to save if the host is unsaved."""
+        try:
+            connection = getattr(terminal, 'connection', None)
+            if connection is None:
+                return
+            data = getattr(connection, 'data', None) or {}
+            from .cli_connect import CLI_CONNECT_FLAG
+            if not data.get(CLI_CONNECT_FLAG):
+                return
+
+            from .unsaved_host import SavePromptDismissals, is_unsaved_host
+
+            window = self.window
+            app = window.get_application() if hasattr(window, 'get_application') else None
+            dismissals = getattr(app, 'save_prompt_dismissals', None) if app else None
+            if dismissals is None:
+                dismissals = SavePromptDismissals()
+                if app is not None:
+                    app.save_prompt_dismissals = dismissals
+
+            mgr = getattr(window, 'connection_manager', None)
+            cfg_path = getattr(mgr, 'ssh_config_path', None) if mgr else None
+            if dismissals.is_connection_dismissed(connection, config_file=cfg_path):
+                return
+            if not is_unsaved_host(connection, mgr, config_file=cfg_path):
+                return
+
+            def _on_save(term):
+                try:
+                    window.show_connection_dialog(term.connection, as_new=True)
+                except Exception:
+                    logger.debug('Failed to open save connection dialog', exc_info=True)
+
+            def _on_dismiss(term):
+                try:
+                    dismissals.dismiss_connection(
+                        term.connection, config_file=cfg_path)
+                except Exception:
+                    logger.debug('Failed to record save-prompt dismissal', exc_info=True)
+
+            if hasattr(terminal, 'show_save_connection_prompt'):
+                # Delay the reveal so the revealer is mapped by the time it
+                # fires; otherwise GTK skips the slide-up animation.
+                from gi.repository import GLib
+
+                def _reveal():
+                    terminal.show_save_connection_prompt(
+                        on_save=_on_save, on_dismiss=_on_dismiss)
+                    return False
+
+                GLib.timeout_add(600, _reveal)
+        except Exception:
+            logger.debug('Save-connection offer skipped', exc_info=True)
+
     def on_terminal_disconnected(self, terminal):
         # The just-disconnected terminal has already flipped its own
         # is_connected flag; recompute the connection's aggregate state so a

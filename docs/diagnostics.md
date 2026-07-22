@@ -48,5 +48,5 @@ prefix with `flatpak run io.github.mfat.sshpilot`.
   focused repro session.
 - `--diagnostics` is the recommended one-stop flag when reporting a bug.
 
-`--verbose` / `-v` and `--quiet` / `-q` override the configured log level. Run
+`--verbose` and `--quiet` override the configured log level. Run
 `sshpilot --help` for the full list.

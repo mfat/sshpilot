@@ -1407,13 +1407,15 @@ class ConnectionDialog(
     cancel_button = Gtk.Template.Child()
     save_button = Gtk.Template.Child()
     
-    def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None):
+    def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None, as_new=False):
         super().__init__()
         
         self.parent_window = parent
         self.connection = connection
         self.connection_manager = connection_manager
-        self.is_editing = connection is not None
+        # as_new: pre-fill from *connection* but save as a brand-new entry
+        # (CLI "Save as new connection" after an ad-hoc session).
+        self.is_editing = connection is not None and not as_new
 
         self.force_split_from_group = bool(force_split_from_group)
         self.split_group_source = split_group_source or (getattr(connection, 'source', None) if connection else None)
@@ -2112,7 +2114,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def load_connection_data(self):
         """Load connection data into the dialog fields"""
-        if not self.is_editing or not self.connection:
+        # Load whenever we have a connection object — including as_new prefills
+        # from CLI/ad-hoc connect (is_editing is False in that case).
+        if not self.connection:
             return
 
         required_attrs = [

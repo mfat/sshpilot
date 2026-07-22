@@ -136,8 +136,9 @@ def classify_prompt(text: str) -> "str | None":
     """Classify the trailing prompt in *text*.
 
     Returns ``'password'``, ``'passphrase'``, ``'presence'`` (FIDO touch —
-    no typed secret), ``'interactive'`` (OTP/PIN/host-key — typed or yes/no),
-    or ``None`` when the text does not look like a prompt.
+    no typed secret), ``'hostkey'`` (yes/no host-key confirmation),
+    ``'interactive'`` (OTP/PIN — a typed secret), or ``None`` when the text
+    does not look like a prompt.
     """
     lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
     if not lines:
@@ -146,7 +147,7 @@ def classify_prompt(text: str) -> "str | None":
     if any(marker in last for marker in _PRESENCE_MARKERS):
         return 'presence'
     if any(marker in last for marker in _HOSTKEY_MARKERS):
-        return 'interactive'
+        return 'hostkey'
     # PIN / OTP may omit a trailing colon ("Enter PIN for authenticator").
     if _TYPED_INTERACTIVE_RE.search(last) and (
             last.endswith(':') or last.startswith('enter ') or ' for ' in last):
@@ -1210,6 +1211,14 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     if kind == 'presence':
         _log("ASKPASS: presence prompt (classifier); reminder UI")
         return _handle_presence_prompt(prompt, _log)
+
+    if kind == 'hostkey':
+        # Host-key confirmation ("Are you sure you want to continue
+        # connecting…") is a yes/no answer, not a typed secret — show the
+        # yes/no confirm dialog (returns "yes"), never the obscured
+        # verification-code field.
+        _log("ASKPASS: host-key confirmation prompt; yes/no dialog")
+        return _handle_confirm_prompt(prompt, _log)
 
     if kind == 'interactive':
         # OpenSSH with SSH_ASKPASS_REQUIRE=prefer does NOT fall back to the
