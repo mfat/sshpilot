@@ -1364,13 +1364,12 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('ui.sidebar_mode', mode)
             win = self.parent_window
             if win is not None and hasattr(win, 'set_sidebar_minimal'):
-                # An explicit mode change wins over a pending "re-attach after
-                # search" restore, which would otherwise fire on close. Dismiss
-                # any open search popup and clear the flag first.
+                # Fully tear down any active search first (clears the filter,
+                # rebuilds, closes the popup) so the new mode can't inherit an
+                # invisible filter; then clear the restore flag and apply.
+                if hasattr(win, '_close_search_if_open'):
+                    win._close_search_if_open()
                 win._search_expanded_sidebar = False
-                popup = getattr(win, '_search_popup', None)
-                if popup is not None:
-                    popup.hide()
                 win.set_sidebar_minimal(mode == 'minimal')
         except Exception:
             logger.debug("sidebar mode change failed", exc_info=True)

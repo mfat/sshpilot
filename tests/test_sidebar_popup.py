@@ -30,6 +30,7 @@ def _popup():
     p._height = None
     p._backdrop = 'none'
     p._search_only = False
+    p._show_groups = True
     return p
 
 
@@ -116,11 +117,19 @@ def test_apply_preset_center():
     p._scrim.add_css_class.assert_any_call('sidebar-popup-scrim-dim')
 
 
-def test_apply_preset_spotlight_is_search_only():
+def test_apply_preset_spotlight_is_search_only_and_flat():
     p = _popup()
     p.apply_preset('spotlight')
     assert p.mode == 'spotlight'
     assert p.search_only is True
+    assert p.show_groups is False
+
+
+def test_set_show_groups():
+    p = _popup()
+    assert p.show_groups is True
+    p.set_show_groups(False)
+    assert p.show_groups is False
 
 
 def test_apply_preset_sidebar_clears_backdrop():

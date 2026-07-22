@@ -78,11 +78,11 @@ _ALIGN = {
 # name -> presentation config. width/height None means "derive".
 _PRESETS = {
     "sidebar": dict(position=Position.LEFT, width=None, height=None,
-                    backdrop=Backdrop.NONE, search_only=False),
+                    backdrop=Backdrop.NONE, search_only=False, show_groups=True),
     "center": dict(position=Position.CENTER, width=520, height=560,
-                   backdrop=Backdrop.DIM, search_only=False),
+                   backdrop=Backdrop.DIM, search_only=False, show_groups=True),
     "spotlight": dict(position=Position.TOP, width=560, height=None,
-                      backdrop=Backdrop.DIM, search_only=True),
+                      backdrop=Backdrop.DIM, search_only=True, show_groups=False),
 }
 
 
@@ -122,6 +122,7 @@ class SearchPopup:
         self._height = None
         self._backdrop = Backdrop.NONE
         self._search_only = False
+        self._show_groups = True
 
         self._build()
 
@@ -165,6 +166,17 @@ class SearchPopup:
         """True when the active mode wants the list hidden (search box only)."""
         return self._search_only
 
+    @property
+    def show_groups(self) -> bool:
+        """Whether group headers appear in the list/results while detached.
+
+        Owner-honoured: when False the results are a flat connection list.
+        """
+        return self._show_groups
+
+    def set_show_groups(self, enabled: bool) -> None:
+        self._show_groups = bool(enabled)
+
     def set_position(self, position: str) -> None:
         self._position = position
         self._apply_layout()
@@ -190,6 +202,7 @@ class SearchPopup:
         self._height = cfg["height"]
         self._backdrop = cfg["backdrop"]
         self._search_only = cfg["search_only"]
+        self._show_groups = cfg["show_groups"]
         self._apply_layout()
         self._apply_backdrop()
 

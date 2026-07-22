@@ -2628,6 +2628,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             search_text = self.search_entry.get_text().strip().lower()
 
         tag_filter = getattr(self, '_tag_filter', None)
+
+        # When the search popup asks for a flat list (no group headers), show a
+        # plain connection list honouring the active search/tag filters.
+        popup = getattr(self, '_search_popup', None)
+        if popup is not None and popup.visible and not popup.show_groups:
+            matches = [
+                c for c in connections
+                if (not tag_filter or tag_filter in {str(t).casefold()
+                    for t in (getattr(c, 'tags', None) or [])})
+                and (not search_text or connection_matches(c, search_text))
+            ]
+            for conn in sorted(matches, key=lambda c: c.nickname.lower()):
+                self.add_connection_row(conn)
+            self._finish_rebuild(scroll_position)
+            return
+
         if tag_filter:
             matches = [
                 c for c in connections

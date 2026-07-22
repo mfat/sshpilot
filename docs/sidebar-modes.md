@@ -64,22 +64,25 @@ popup.set_position(Position.LEFT | RIGHT | CENTER | TOP)
 popup.set_size(width=None, height=None)   # None -> derive (width_func / fill)
 popup.set_backdrop(Backdrop.NONE | DIM)   # scrim behind the panel
 popup.set_transparent(enabled)            # subtle panel transparency (code-only)
+popup.set_show_groups(enabled)            # group headers vs flat results
 popup.apply_preset('sidebar' | 'center' | 'spotlight')
 popup.mode          # active preset name
 popup.search_only   # bool: the mode wants the list hidden (spotlight)
+popup.show_groups   # bool: group headers in the list/results
 ```
 
 Presets bundle placement:
 
-| preset | position | size | backdrop | search-only |
-|--------|----------|------|----------|-------------|
-| `sidebar` (default) | left, full height | width = sidebar width | none | no |
-| `center` | centered | 520×560 | dim | no |
-| `spotlight` | top-centered | 560×auto | dim | yes (list hidden) |
+| preset | position | size | backdrop | search-only | groups |
+|--------|----------|------|----------|-------------|--------|
+| `sidebar` (default) | left, full height | width = sidebar width | none | no | yes |
+| `center` | centered | 520×560 | dim | no | yes |
+| `spotlight` | top-centered | 560×auto | dim | yes (list hidden) | no (flat) |
 
 The owner honours `search_only` in `_on_search_popup_shown` (hides
-`connection_scrolled`) and supplies a `focus_func` so the search entry is focused
-on show. **Real backdrop blur is intentionally omitted** — GTK4 has no
+`connection_scrolled`), `show_groups` in `rebuild_connection_list` (a flat
+connection list when off), and supplies a `focus_func` so the search entry is
+focused on show. **Real backdrop blur is intentionally omitted** — GTK4 has no
 `backdrop-filter`; `DIM` is the practical stand-in.
 
 ### How it works
