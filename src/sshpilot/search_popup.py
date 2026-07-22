@@ -1,45 +1,46 @@
-"""Detachable floating sidebar popup — used for search, reusable for more.
+"""Detachable floating popup — used for search, reusable for more.
 
 ``SearchPopup`` hosts a widget (the live connection sidebar, ``sidebar_box``) in
 an overlay panel that floats above the work area. On show it reparents that
 widget out of its home container into the panel; on hide it puts it back.
 
 Because it moves the *live* widget tree rather than copying it, the popup is
-pixel-identical to the docked sidebar and every behaviour (selection,
-drag-and-drop, context menus, search, tags) works with zero duplication — there
-is nothing to keep in sync. The home container is left in place while detached,
-so the surrounding content (the terminal) never resizes.
+pixel-identical to the docked sidebar and every behaviour works with zero
+duplication. The home container is left in place while detached, so the
+surrounding content (the terminal) never resizes.
+
+Presentation API
+----------------
+The panel's *placement* is configurable and composable; *content* stays the
+owner's job (the ``on_shown`` callback can read ``popup.search_only`` to hide the
+list for a spotlight look).
+
+    popup.set_position(Position.LEFT | RIGHT | CENTER | TOP)
+    popup.set_size(width=None, height=None)     # None -> derive (width_func / fill)
+    popup.set_backdrop(Backdrop.NONE | DIM)     # scrim behind the panel
+    popup.set_transparent(bool)                 # subtle panel transparency
+    popup.apply_preset('sidebar' | 'center' | 'spotlight')
+    popup.mode          # active preset name
+    popup.search_only   # bool: this mode wants the list hidden
+
+Lifecycle
+---------
+    popup.show() / popup.hide() / popup.visible / popup.dismiss()
 
 Decoupling
 ----------
-The popup knows nothing about *why* it is shown or what the content is. It only
-touches structural pieces passed in, and delegates all behaviour to callbacks:
+The popup knows nothing about *why* it's shown or what the content is. It only
+touches structural pieces passed in, and delegates behaviour to callbacks:
+``on_shown`` / ``on_hidden`` (content) and ``on_dismiss`` (Esc/click-outside).
+``focus_func`` (optional) returns the widget to focus once shown. Callbacks are
+deliberately *not* wrapped in try/except so a drifted contract fails loudly.
 
-    SearchPopup(
-        overlay,          # Gtk.Overlay to host the scrim + panel
-        home,             # the container the content lives in; must support
-                          #   set_content(widget|None) and get_content()
-        content,          # the widget to reparent (e.g. the sidebar box)
-        width_func,       # () -> int, the panel width
-        on_shown=None,    # () -> None, after reparenting into the panel
-        on_hidden=None,   # () -> None, after reparenting back home
-        on_dismiss=None,  # () -> None on Esc/click-outside (default: hide())
-    )
-
-Callbacks are intentionally *not* wrapped in try/except: if the owner's contract
-drifts, the failure should surface loudly rather than leave the popup half-set.
-
-Public API
-----------
-    popup.show() / popup.hide() / popup.visible / popup.set_transparent(bool)
-    popup.dismiss()
-
-Extending with modes
---------------------
-Presentation is localised: ``width_func`` decides the width and ``_build`` owns
-the panel/scrim widgets and their alignment. Add a ``mode`` attribute and branch
-in those two places (plus new CSS classes on the panel) for right-docked, wide,
-or full-height variants — without touching the owner.
+Extending
+---------
+Add a preset to ``_PRESETS`` and, if it needs a new placement, a ``Position`` or
+``Backdrop`` value. Real backdrop blur is intentionally omitted — GTK4 has no
+``backdrop-filter`` and a true blur needs per-frame custom snapshot rendering;
+``DIM`` is the practical stand-in.
 """
 
 from __future__ import annotations
@@ -49,9 +50,40 @@ from typing import Callable, Optional
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, GLib
 
 logger = logging.getLogger(__name__)
+
+
+class Position:
+    LEFT = "left"
+    RIGHT = "right"
+    CENTER = "center"
+    TOP = "top"
+
+
+class Backdrop:
+    NONE = "none"
+    DIM = "dim"
+
+
+# position -> (halign, valign, top-margin)
+_ALIGN = {
+    Position.LEFT: (Gtk.Align.START, Gtk.Align.FILL, 0),
+    Position.RIGHT: (Gtk.Align.END, Gtk.Align.FILL, 0),
+    Position.CENTER: (Gtk.Align.CENTER, Gtk.Align.CENTER, 0),
+    Position.TOP: (Gtk.Align.CENTER, Gtk.Align.START, 48),
+}
+
+# name -> presentation config. width/height None means "derive".
+_PRESETS = {
+    "sidebar": dict(position=Position.LEFT, width=None, height=None,
+                    backdrop=Backdrop.NONE, search_only=False),
+    "center": dict(position=Position.CENTER, width=520, height=560,
+                   backdrop=Backdrop.DIM, search_only=False),
+    "spotlight": dict(position=Position.TOP, width=560, height=None,
+                      backdrop=Backdrop.DIM, search_only=True),
+}
 
 
 class SearchPopup:
@@ -67,6 +99,7 @@ class SearchPopup:
         on_shown: Optional[Callable[[], None]] = None,
         on_hidden: Optional[Callable[[], None]] = None,
         on_dismiss: Optional[Callable[[], None]] = None,
+        focus_func: Optional[Callable[[], Optional[Gtk.Widget]]] = None,
     ):
         self._overlay = overlay
         self._home = home
@@ -75,10 +108,21 @@ class SearchPopup:
         self._on_shown = on_shown or (lambda: None)
         self._on_hidden = on_hidden or (lambda: None)
         self._on_dismiss = on_dismiss
+        self._focus_func = focus_func
+
         self._visible = False
         self._transparent = False
         self._scrim = None
         self._panel = None
+
+        # Presentation state (defaults to the 'sidebar' preset — today's look).
+        self._mode = "sidebar"
+        self._position = Position.LEFT
+        self._width = None
+        self._height = None
+        self._backdrop = Backdrop.NONE
+        self._search_only = False
+
         self._build()
 
     # -- construction -----------------------------------------------------
@@ -88,9 +132,6 @@ class SearchPopup:
         if self._overlay is None:
             return
 
-        # Transparent scrim behind the panel: captures a click *outside* the
-        # panel to dismiss. Transparent so the content stays fully visible;
-        # the panel's own shadow lifts it off the content.
         self._scrim = Gtk.Box()
         self._scrim.set_hexpand(True)
         self._scrim.set_vexpand(True)
@@ -101,10 +142,7 @@ class SearchPopup:
         self._scrim.add_controller(scrim_click)
         self._overlay.add_overlay(self._scrim)
 
-        # Panel: left-aligned, full height, hosts the reparented content.
         self._panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self._panel.set_halign(Gtk.Align.START)
-        self._panel.set_valign(Gtk.Align.FILL)
         self._panel.add_css_class("sidebar-popup")
         self._panel.set_visible(False)
         key = Gtk.EventControllerKey()
@@ -112,19 +150,51 @@ class SearchPopup:
         self._panel.add_controller(key)
         self._overlay.add_overlay(self._panel)
 
-    # -- state ------------------------------------------------------------
+        self._apply_layout()
+        self._apply_backdrop()
+
+    # -- presentation -----------------------------------------------------
 
     @property
-    def visible(self) -> bool:
-        """True while the content is detached into the popup."""
-        return self._visible
+    def mode(self) -> str:
+        """Active preset name."""
+        return self._mode
+
+    @property
+    def search_only(self) -> bool:
+        """True when the active mode wants the list hidden (search box only)."""
+        return self._search_only
+
+    def set_position(self, position: str) -> None:
+        self._position = position
+        self._apply_layout()
+
+    def set_size(self, width: Optional[int] = None, height: Optional[int] = None) -> None:
+        """Panel size. ``None`` derives: width from ``width_func``, height fills."""
+        self._width = width
+        self._height = height
+        self._apply_layout()
+
+    def set_backdrop(self, backdrop: str) -> None:
+        self._backdrop = backdrop
+        self._apply_backdrop()
+
+    def apply_preset(self, name: str) -> None:
+        """Apply a named placement preset (see ``_PRESETS``)."""
+        cfg = _PRESETS.get(name)
+        if cfg is None:
+            return
+        self._mode = name
+        self._position = cfg["position"]
+        self._width = cfg["width"]
+        self._height = cfg["height"]
+        self._backdrop = cfg["backdrop"]
+        self._search_only = cfg["search_only"]
+        self._apply_layout()
+        self._apply_backdrop()
 
     def set_transparent(self, enabled: bool) -> None:
-        """Toggle a subtle background transparency on the panel.
-
-        Programmatic only — intentionally not exposed in Preferences. Persists
-        across show/hide (the class stays on the persistent panel widget).
-        """
+        """Toggle a subtle background transparency on the panel (code-only)."""
         self._transparent = bool(enabled)
         if self._panel is None:
             return
@@ -133,14 +203,39 @@ class SearchPopup:
         else:
             self._panel.remove_css_class("sidebar-popup-transparent")
 
-    # -- show / hide ------------------------------------------------------
+    def _apply_layout(self):
+        if self._panel is None:
+            return
+        halign, valign, top_margin = _ALIGN.get(
+            self._position, (Gtk.Align.START, Gtk.Align.FILL, 0))
+        self._panel.set_halign(halign)
+        self._panel.set_valign(valign)
+        self._panel.set_margin_top(top_margin)
+        width = self._width if self._width is not None else self._width_func()
+        height = self._height if self._height is not None else -1
+        self._panel.set_size_request(width, height)
+
+    def _apply_backdrop(self):
+        if self._scrim is None:
+            return
+        if self._backdrop == Backdrop.DIM:
+            self._scrim.add_css_class("sidebar-popup-scrim-dim")
+        else:
+            self._scrim.remove_css_class("sidebar-popup-scrim-dim")
+
+    # -- lifecycle --------------------------------------------------------
+
+    @property
+    def visible(self) -> bool:
+        """True while the content is detached into the popup."""
+        return self._visible
 
     def show(self) -> None:
         """Detach ``content`` into the panel (floating). No-op if already shown
         or the popup wasn't built."""
         if self._visible or self._panel is None:
             return
-        self._panel.set_size_request(self._width_func(), -1)
+        self._apply_layout()
 
         # Reparent content: home -> panel.
         self._home.set_content(None)
@@ -150,6 +245,11 @@ class SearchPopup:
         self._scrim.set_visible(True)
         self._panel.set_visible(True)
         self._visible = True
+
+        if self._focus_func is not None:
+            widget = self._focus_func()
+            if widget is not None:
+                GLib.idle_add(widget.grab_focus)
 
     def hide(self) -> None:
         """Re-attach ``content`` to its home, hiding the panel. No-op if not

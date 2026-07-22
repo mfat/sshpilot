@@ -340,6 +340,12 @@ def install_sidebar_css():
           background-color: transparent;
         }
 
+        /* Dim backdrop for the centered/spotlight popup modes (see
+           SearchPopup.set_backdrop) — pushes the work area back. */
+        .sidebar-popup-scrim.sidebar-popup-scrim-dim {
+          background-color: rgba(0, 0, 0, 0.35);
+        }
+
         """
         provider.load_from_data(css.encode('utf-8'))
         Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)

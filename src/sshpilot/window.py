@@ -1362,6 +1362,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             on_shown=self._on_search_popup_shown,
             on_hidden=self._on_search_popup_hidden,
             on_dismiss=self._dismiss_search_popup,
+            focus_func=lambda: getattr(self, 'search_entry', None),
         )
 
         # Outer NavigationView: work UI is the root page; Settings is pushed on
@@ -3961,13 +3962,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return saved_max
 
     def _on_search_popup_shown(self) -> None:
-        """Detached: show the full sidebar even when the strip is minimal."""
+        """Detached: show the full sidebar even when the strip is minimal, and
+        hide the connection list for search-only modes (spotlight)."""
         self._set_sidebar_clipping(False)
         self._apply_sidebar_minimal_chrome(False)
         self._apply_sidebar_minimal_rows(False)
+        if getattr(self, 'connection_scrolled', None):
+            self.connection_scrolled.set_visible(not self._search_popup.search_only)
 
     def _on_search_popup_hidden(self) -> None:
-        """Re-attached: re-collapse the strip if the resting sidebar is minimal."""
+        """Re-attached: restore the list and re-collapse the strip if minimal."""
+        if getattr(self, 'connection_scrolled', None):
+            self.connection_scrolled.set_visible(True)
         if getattr(self, '_sidebar_minimal', False):
             self._apply_sidebar_minimal_chrome(True)
             self._apply_sidebar_minimal_rows(True)

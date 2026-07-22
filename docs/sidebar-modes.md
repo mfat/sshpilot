@@ -46,14 +46,41 @@ layout — so the terminal never resizes. The window owns one instance,
 
 ### API
 
+Lifecycle:
+
 ```python
 popup = window._search_popup     # a search_popup.SearchPopup
 popup.show()                     # detach sidebar_box into the floating panel
 popup.hide()                     # re-attach it to the split view
 popup.visible                    # -> bool (property)
-popup.set_transparent(enabled)   # subtle background transparency (code-only)
 popup.dismiss()                  # Esc / click-outside routing
 ```
+
+Presentation (composable; placement only — content stays the owner's job):
+
+```python
+from sshpilot.search_popup import Position, Backdrop
+popup.set_position(Position.LEFT | RIGHT | CENTER | TOP)
+popup.set_size(width=None, height=None)   # None -> derive (width_func / fill)
+popup.set_backdrop(Backdrop.NONE | DIM)   # scrim behind the panel
+popup.set_transparent(enabled)            # subtle panel transparency (code-only)
+popup.apply_preset('sidebar' | 'center' | 'spotlight')
+popup.mode          # active preset name
+popup.search_only   # bool: the mode wants the list hidden (spotlight)
+```
+
+Presets bundle placement:
+
+| preset | position | size | backdrop | search-only |
+|--------|----------|------|----------|-------------|
+| `sidebar` (default) | left, full height | width = sidebar width | none | no |
+| `center` | centered | 520×560 | dim | no |
+| `spotlight` | top-centered | 560×auto | dim | yes (list hidden) |
+
+The owner honours `search_only` in `_on_search_popup_shown` (hides
+`connection_scrolled`) and supplies a `focus_func` so the search entry is focused
+on show. **Real backdrop blur is intentionally omitted** — GTK4 has no
+`backdrop-filter`; `DIM` is the practical stand-in.
 
 ### How it works
 

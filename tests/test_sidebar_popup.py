@@ -22,6 +22,14 @@ def _popup():
     p._on_shown = MagicMock()
     p._on_hidden = MagicMock()
     p._on_dismiss = None
+    p._focus_func = None
+    # Presentation state (as set by __init__).
+    p._mode = 'sidebar'
+    p._position = 'left'
+    p._width = None
+    p._height = None
+    p._backdrop = 'none'
+    p._search_only = False
     return p
 
 
@@ -92,3 +100,53 @@ def test_dismiss_falls_back_to_hide():
     p.dismiss()
 
     assert p.visible is False  # hide() ran
+
+
+def test_apply_preset_center():
+    from sshpilot.search_popup import Position, Backdrop
+    p = _popup()
+    p.apply_preset('center')
+
+    assert p.mode == 'center'
+    assert p.search_only is False
+    assert p._position == Position.CENTER
+    assert p._backdrop == Backdrop.DIM
+    assert (p._width, p._height) == (520, 560)
+    # Dim backdrop applied to the scrim.
+    p._scrim.add_css_class.assert_any_call('sidebar-popup-scrim-dim')
+
+
+def test_apply_preset_spotlight_is_search_only():
+    p = _popup()
+    p.apply_preset('spotlight')
+    assert p.mode == 'spotlight'
+    assert p.search_only is True
+
+
+def test_apply_preset_sidebar_clears_backdrop():
+    p = _popup()
+    p.apply_preset('sidebar')
+    assert p.mode == 'sidebar'
+    assert p.search_only is False
+    p._scrim.remove_css_class.assert_any_call('sidebar-popup-scrim-dim')
+
+
+def test_unknown_preset_is_ignored():
+    p = _popup()
+    p.apply_preset('nope')
+    assert p.mode == 'sidebar'
+
+
+def test_set_size_derives_when_none():
+    p = _popup()
+    p.set_size(width=None, height=None)
+    # _apply_layout derives width from width_func, height fills (-1).
+    p._panel.set_size_request.assert_called_with(280, -1)
+
+
+def test_set_backdrop_dim_then_none():
+    p = _popup()
+    p.set_backdrop('dim')
+    p._scrim.add_css_class.assert_any_call('sidebar-popup-scrim-dim')
+    p.set_backdrop('none')
+    p._scrim.remove_css_class.assert_any_call('sidebar-popup-scrim-dim')
