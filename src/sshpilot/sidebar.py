@@ -4532,7 +4532,7 @@ def _build_sidebar_toolbar(window, sidebar_box):
     # In minimal mode the toolbar is hidden; an expand button takes its slot
     # (same bottom row, margins and height) to restore the full sidebar.
     expand_button = Gtk.Button()
-    expand_button.set_icon_name('go-next-symbolic')
+    icon_utils.set_button_icon(expand_button, 'pan-end-symbolic')
     expand_button.set_tooltip_text(_('Expand sidebar'))
     expand_button.add_css_class('flat')
     expand_button.set_hexpand(True)
