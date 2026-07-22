@@ -2799,6 +2799,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Hide the search container
         if hasattr(self, 'search_container') and self.search_container:
             self.search_container.set_visible(False)
+        self._restore_sidebar_after_search()
         # Return focus to connection list
         if hasattr(self, 'connection_list') and self.connection_list:
             self.connection_list.grab_focus()
@@ -2993,6 +2994,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         self.search_entry.set_text('')
                     self.rebuild_connection_list()
                     self.search_container.set_visible(False)
+                    self._restore_sidebar_after_search()
 
                 # Ensure a row is selected before focusing
                 try:
@@ -3030,6 +3032,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Error focusing connection list: {e}")
 
+    def _expand_sidebar_for_search(self):
+        """Temporarily leave the icon strip so search has room; remembered so it
+        re-collapses when search closes."""
+        self._search_expanded_sidebar = getattr(self, '_sidebar_minimal', False)
+        if self._search_expanded_sidebar:
+            self.set_sidebar_minimal(False)
+
+    def _restore_sidebar_after_search(self):
+        """Re-collapse the strip if opening search is what expanded it."""
+        if getattr(self, '_search_expanded_sidebar', False):
+            self._search_expanded_sidebar = False
+            self.set_sidebar_minimal(True)
+
     def activate_search_entry(self):
         """Show (if hidden) and focus the connection search entry.
 
@@ -3050,6 +3065,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(self, 'search_container') and self.search_container:
                 was_visible = self.search_container.get_visible()
                 if not was_visible:
+                    self._expand_sidebar_for_search()
                     self.search_container.set_visible(True)
 
             # Always focus and select any existing text so typing replaces it
@@ -3081,8 +3097,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
                     is_visible = self.search_container.get_visible()
+                    if not is_visible:
+                        self._expand_sidebar_for_search()
                     self.search_container.set_visible(not is_visible)
-                    
+
                     if not is_visible:
                         # Search was hidden, now showing it
                         # Focus the search entry
@@ -3105,7 +3123,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         # Clear search text
                         self.search_entry.set_text('')
                         self.rebuild_connection_list()
-                        
+                        self._restore_sidebar_after_search()
+
                         # Return focus to connection list
                         if hasattr(self, 'connection_list') and self.connection_list:
                             self.connection_list.grab_focus()
