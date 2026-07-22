@@ -3618,6 +3618,27 @@ def _expand_toolbar_button(button: Gtk.Widget) -> Gtk.Widget:
     return button
 
 
+def _horizontal_clip(child: Gtk.Widget) -> Gtk.ScrolledWindow:
+    """Wrap ``child`` so it can be allocated narrower than its content width.
+
+    The header/toolbar strips are fixed-height rows of buttons whose min width
+    would otherwise force the sidebar wide, defeating the collapse-to-strip
+    animation. A ScrolledWindow with EXTERNAL horizontal policy and
+    ``min_content_width == 0`` requests no minimum width and clips its child
+    (no scrollbar), while NEVER vertical policy keeps the row's natural height.
+    """
+    clip = Gtk.ScrolledWindow()
+    # NEVER at rest so the strip fills the sidebar width (homogeneous buttons
+    # spread). The window flips this to EXTERNAL during the expand animation
+    # (see _set_sidebar_clipping) so the buttons clip instead of forcing width.
+    clip.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+    clip.set_min_content_width(0)
+    clip.set_propagate_natural_height(True)
+    clip.set_hexpand(True)
+    clip.set_child(child)
+    return clip
+
+
 def _build_sidebar_header(window, sidebar_box):
     """Build the sidebar action header (add/search/filter/sort/menu)."""
     # Sidebar header
@@ -3785,7 +3806,9 @@ def _build_sidebar_header(window, sidebar_box):
     header_handle.set_hexpand(True)
     header_handle.set_child(header)
     window._sidebar_header_handle = header_handle
-    sidebar_box.append(header_handle)
+    # Clip so the button row can't force the sidebar wider than the strip.
+    window._sidebar_header_clip = _horizontal_clip(header_handle)
+    sidebar_box.append(window._sidebar_header_clip)
 
 def _build_sidebar_search(window, sidebar_box):
     """Build the collapsible connection search entry."""
@@ -3825,7 +3848,12 @@ def _create_sidebar_connection_list(window, sidebar_box):
     """Create the connection ListBox and wire selection/DnD."""
     # Connection list
     window.connection_scrolled = Gtk.ScrolledWindow()
+    # NEVER horizontally at rest so rows fit and ellipsize to the sidebar width.
+    # During the expand animation the window flips this to EXTERNAL (see
+    # _set_sidebar_clipping) so full-width rows can be clipped instead of
+    # forcing the sidebar wide; it flips back when the animation finishes.
     window.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    window.connection_scrolled.set_min_content_width(0)
     window.connection_scrolled.set_vexpand(True)
     window.connection_scrolled.set_hexpand(True)
     
@@ -4306,7 +4334,7 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     window.connection_toolbar.set_hexpand(True)
     window.connection_toolbar.set_homogeneous(True)
-    
+
     # Edit button
     window.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
     window.edit_button.add_css_class('flat')
@@ -4374,7 +4402,7 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
     window.group_toolbar.set_hexpand(True)
     window.group_toolbar.set_homogeneous(True)
-    
+
     # Rename group button
     window.rename_group_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
     window.rename_group_button.add_css_class('flat')
@@ -4398,7 +4426,9 @@ def _build_sidebar_toolbar(window, sidebar_box):
     toolbar.append(window.group_toolbar)
 
     window._sidebar_toolbar_box = toolbar
-    sidebar_box.append(toolbar)
+    # Clip so the toolbar's button row can't force the sidebar wider than the strip.
+    window._sidebar_toolbar_clip = _horizontal_clip(toolbar)
+    sidebar_box.append(window._sidebar_toolbar_clip)
 
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""

@@ -1550,16 +1550,53 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to update max-sidebar-width: {e}")
 
     # --- Minimal (icon-only) sidebar strip -----------------------------------
-    def _apply_sidebar_width(self, width: int) -> None:
-        """Clamp the split view sidebar to ``width`` px (one animation tick)."""
+    def _apply_sidebar_width(self, width: int, grow: bool = True) -> None:
+        """Pin the split view sidebar to exactly ``width`` px (one animation tick).
+
+        Both min and max are driven to ``width``. They must be set in the order
+        that never leaves the pair transiently ``min > max`` — OverlaySplitView
+        mishandles that and the sidebar fails to follow, which is the jump seen
+        on expand (growing) but not on collapse (shrinking). When growing, raise
+        the max ceiling first; when shrinking, lower the min floor first.
+        """
         sv = getattr(self, 'split_view', None)
         if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
             return
         try:
-            sv.set_min_sidebar_width(min(180, width))
-            sv.set_max_sidebar_width(width)
+            if grow:
+                sv.set_max_sidebar_width(width)
+                sv.set_min_sidebar_width(width)
+            else:
+                sv.set_min_sidebar_width(width)
+                sv.set_max_sidebar_width(width)
         except Exception:
             pass
+
+    def _set_sidebar_clipping(self, enabled: bool, chrome: bool = True) -> None:
+        """Flip the sidebar's scrollers between clip (EXTERNAL) and fit (NEVER).
+
+        Clipping is only wanted *during* the expand animation, so full-width
+        rows/chrome can be revealed by the widening instead of forcing the
+        sidebar to their minimum width. At rest the fit behaviour must return so
+        rows ellipsize to the sidebar width and toolbar buttons spread.
+
+        ``chrome=False`` toggles only the connection list, leaving the
+        header/toolbar clipped.
+        """
+        hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
+        targets = [('connection_scrolled', Gtk.PolicyType.AUTOMATIC)]
+        if chrome:
+            targets += [
+                ('_sidebar_header_clip', Gtk.PolicyType.NEVER),
+                ('_sidebar_toolbar_clip', Gtk.PolicyType.NEVER),
+            ]
+        for attr, vpol in targets:
+            sw = getattr(self, attr, None)
+            if sw is not None:
+                try:
+                    sw.set_policy(hpol, vpol)
+                except Exception:
+                    pass
 
     def _apply_sidebar_minimal_chrome(self, minimal: bool) -> None:
         """Hide the header/search/toolbar chrome that can't fit the strip."""
@@ -1605,6 +1642,25 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.debug("row set_compact failed", exc_info=True)
             row = row.get_next_sibling()
 
+    def _measure_sidebar_content_min(self) -> int:
+        """Largest minimum width among the sidebar's full-content strips.
+
+        The header/toolbar button rows and the connection rows each request a
+        minimum width; the widest is the floor the sidebar rests at once fit
+        (unclipped), which can exceed the user's max-width setting.
+        """
+        widest = 0
+        for attr in ('_sidebar_header_handle', '_sidebar_toolbar_box', 'connection_list'):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            try:
+                minimum, _nat, _a, _b = widget.measure(Gtk.Orientation.HORIZONTAL, -1)
+                widest = max(widest, int(minimum))
+            except Exception:
+                pass
+        return widest
+
     def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
         """Collapse the sidebar to an icon-only strip, or restore its full width.
 
@@ -1625,13 +1681,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 logger.debug("show-for-minimal failed", exc_info=True)
 
-        self._apply_sidebar_minimal_chrome(minimal)
-        self._apply_sidebar_minimal_rows(minimal)
-
         saved_max = _effective_max_sidebar_width(
             self.config.get_setting('ui.max-sidebar-width', None))
-        base_min = 180 if HAS_OVERLAY_SPLIT else 200
-        target = _MINIMAL_STRIP_WIDTH if minimal else saved_max
+        # A user-chosen max width can be below the nominal minimum; the resting
+        # min must never exceed the max (OverlaySplitView breaks on min > max,
+        # bringing the jump back at small max widths).
+        base_min = min(180 if HAS_OVERLAY_SPLIT else 200, saved_max)
 
         anim = getattr(self, '_sidebar_width_animation', None)
         if anim is not None:
@@ -1643,7 +1698,48 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         sv = getattr(self, 'split_view', None)
         if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+            # No width lever — just swap the content to the target state.
+            self._apply_sidebar_minimal_chrome(minimal)
+            self._apply_sidebar_minimal_rows(minimal)
             return
+
+        def _fraction_width():
+            try:
+                frac = sv.get_sidebar_width_fraction()
+                win_w = sv.get_width() or 0
+                if win_w > 0:
+                    return max(base_min, min(saved_max, int(frac * win_w)))
+            except Exception:
+                pass
+            return saved_max
+
+        # Decide the full (expanded) width and prepare the content. The chrome's
+        # min width can push the resting width *above* saved_max, so the full
+        # endpoint must reflect that or the end of the animation snaps to it.
+        if minimal:
+            # Collapsing: lock the current (full) width before compacting so
+            # releasing the chrome's min width doesn't drop the sidebar first.
+            full_width = 0
+            box = getattr(self, '_sidebar_box', None)
+            if box is not None:
+                try:
+                    full_width = int(box.get_width())
+                except Exception:
+                    full_width = 0
+            if full_width <= _MINIMAL_STRIP_WIDTH:
+                full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+            self._apply_sidebar_width(full_width, grow=True)
+            self._apply_sidebar_minimal_chrome(True)
+            self._apply_sidebar_minimal_rows(True)
+        else:
+            # Expanding: clip first so restoring full content can't force the
+            # width, then restore and measure the width it will rest at.
+            self._set_sidebar_clipping(True)
+            self._apply_sidebar_minimal_chrome(False)
+            self._apply_sidebar_minimal_rows(False)
+            full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+
+        full_width = max(int(full_width), _MINIMAL_STRIP_WIDTH)
 
         def _pin_endpoints():
             try:
@@ -1657,17 +1753,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 pass
 
         if not animate or not HAS_TIMED_ANIMATION:
+            self._set_sidebar_clipping(False)
             _pin_endpoints()
             return
 
-        try:
-            start = float(sv.get_max_sidebar_width())
-        except Exception:
-            start = float(saved_max)
+        if minimal:
+            start, target = float(full_width), float(_MINIMAL_STRIP_WIDTH)
+        else:
+            start, target = float(_MINIMAL_STRIP_WIDTH), float(full_width)
 
-        target_cb = Adw.CallbackAnimationTarget.new(
-            lambda value, *_: self._apply_sidebar_width(int(value))
-        )
+        def _tick(value, *_):
+            self._apply_sidebar_width(int(value), grow=not minimal)
+
+        target_cb = Adw.CallbackAnimationTarget.new(_tick)
         animation = Adw.TimedAnimation.new(sv, start, float(target), 200, target_cb)
         try:
             animation.set_easing(Adw.Easing.EASE_OUT_CUBIC)
@@ -1675,6 +1773,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pass
 
         def _on_done(*_a):
+            self._set_sidebar_clipping(False)
             _pin_endpoints()
             self._sidebar_width_animation = None
 
