@@ -321,6 +321,18 @@ def install_sidebar_css():
           box-shadow: 0 0 0 2px @success_color;
         }
 
+        /* Detachable sidebar popup: an opaque panel floating over the work area
+           (see MainWindow.show_sidebar_popup). The shadow lifts it off the
+           content; the scrim is transparent and only captures click-outside. */
+        .sidebar-popup {
+          background-color: @window_bg_color;
+          box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
+        }
+
+        .sidebar-popup-scrim {
+          background-color: transparent;
+        }
+
         """
         provider.load_from_data(css.encode('utf-8'))
         Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -4538,6 +4550,9 @@ def _assemble_sidebar_shell(window, sidebar_box):
     sidebar_toolbar_view.add_css_class('sidebar')
     sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)
     sidebar_toolbar_view.set_content(sidebar_box)
+    # Kept so the detachable sidebar popup can reparent sidebar_box out of here
+    # and back (see MainWindow.show_sidebar_popup / hide_sidebar_popup).
+    window._sidebar_toolbar_view = sidebar_toolbar_view
 
     window._set_sidebar_widget(sidebar_toolbar_view)
     logger.debug("Set sidebar widget")
