@@ -278,8 +278,22 @@ def install_sidebar_css():
           }
         }
 
-        /* Minimal (icon-only) sidebar: ring around a connected connection's
-           avatar. box-shadow follows the avatar's circle so it reads as a ring. */
+        /* Minimal (icon-only) sidebar: keep initials avatars neutral.
+           Adw.Avatar normally assigns deterministic accent colors from the
+           label text; in the minimized sidebar those colored circles can be
+           mistaken for configured group colors. */
+        avatar.sidebar-avatar {
+          background-color: alpha(@window_fg_color, 0.12);
+          color: @window_fg_color;
+        }
+
+        image.sidebar-avatar-icon {
+          color: @window_fg_color;
+        }
+
+        /* Ring around a connected connection's avatar. box-shadow follows the
+           avatar's circle so it reads as a status ring without changing the
+           neutral avatar fill. */
         avatar.sidebar-avatar-online {
           box-shadow: 0 0 0 2px @success_color;
         }
@@ -723,6 +737,9 @@ class GroupRow(Gtk.ListBoxRow):
         self._color_badge_provider = None
         self._member_rows = []
         self._child_group_rows = []
+        self._compact_avatar = None
+        self._compact_avatar_icon = None
+        self._compact_avatar_overlay = None
 
         # Main container with drop indicators
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -748,7 +765,8 @@ class GroupRow(Gtk.ListBoxRow):
         self.color_dot = _create_color_dot("big-dot-symbolic")
         content.append(self.color_dot)
 
-        icon = icon_utils.new_image_from_icon_name("folder-symbolic")
+        self._group_icon_name = "folder-symbolic"
+        icon = icon_utils.new_image_from_icon_name(self._group_icon_name)
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         config = getattr(self.group_manager, 'config', None)
@@ -1162,11 +1180,13 @@ class GroupRow(Gtk.ListBoxRow):
         _apply_sidebar_row_style(self, config, flat=flat)
 
     def set_compact(self, compact: bool) -> None:
-        """Collapse the group header to just its folder icon, or restore it."""
+        """Collapse the group header to a folder avatar, or restore it."""
         compact = bool(compact)
         self._compact = compact
         content = self._content
         if compact:
+            from sshpilot import icon_utils
+
             content.set_halign(Gtk.Align.CENTER)
             content.set_margin_start(0)
             self.set_margin_start(0)  # flatten nested-group indentation in the strip
@@ -1176,10 +1196,27 @@ class GroupRow(Gtk.ListBoxRow):
             self.split_view_button.set_visible(False)
             self.edit_button.set_visible(False)
             self.expand_button.set_visible(False)
-            self.icon.set_visible(True)
+            self.icon.set_visible(False)
+
+            if self._compact_avatar_overlay is None:
+                self._compact_avatar = Adw.Avatar(size=28, show_initials=False)
+                self._compact_avatar.add_css_class('sidebar-avatar')
+                self._compact_avatar_icon = icon_utils.new_image_from_icon_name(
+                    getattr(self, '_group_icon_name', 'folder-symbolic')
+                )
+                self._compact_avatar_icon.set_icon_size(Gtk.IconSize.NORMAL)
+                self._compact_avatar_icon.add_css_class('sidebar-avatar-icon')
+                self._compact_avatar_overlay = Gtk.Overlay()
+                self._compact_avatar_overlay.set_child(self._compact_avatar)
+                self._compact_avatar_overlay.add_overlay(self._compact_avatar_icon)
+                content.prepend(self._compact_avatar_overlay)
+
+            self._compact_avatar_overlay.set_visible(True)
             self.set_tooltip_text(str(self.group_info.get('name', '')))
         else:
             content.set_halign(Gtk.Align.FILL)
+            if self._compact_avatar_overlay is not None:
+                self._compact_avatar_overlay.set_visible(False)
             self._info_box.set_visible(True)
             self.split_view_button.set_visible(True)
             self.edit_button.set_visible(True)
@@ -1208,7 +1245,8 @@ class TagGroupRow(GroupRow):
         self.remove_css_class("card")
         self.remove_css_class("navigation-sidebar")
         self.add_css_class("osd")
-        self.icon.set_from_icon_name("tag-symbolic")
+        self._group_icon_name = "tag-symbolic"
+        self.icon.set_from_icon_name(self._group_icon_name)
         # The edit button renames the tag (across all tagged connections);
         # the split-view button works as inherited — the action only reads
         # group_info['connections'] / ['name'], so a synthetic group is fine.
