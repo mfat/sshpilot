@@ -4544,9 +4544,9 @@ def _assemble_sidebar_shell(window, sidebar_box):
     window._sidebar_title_label = sidebar_title_label
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
-    # Double-click the sidebar header toggles between full and minimal modes.
-    # Capture phase + claim on the second press so it runs before (and instead
-    # of) the titlebar's default double-click-to-maximize.
+    # Double-click the sidebar header temporarily flips full<->minimal (a peek
+    # that reverts after a timeout). Capture phase + claim on the second press so
+    # it runs before (and instead of) the titlebar's default double-click-to-maximize.
     header_toggle = Gtk.GestureClick()
     header_toggle.set_button(Gdk.BUTTON_PRIMARY)
     header_toggle.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -4554,7 +4554,7 @@ def _assemble_sidebar_shell(window, sidebar_box):
     def _on_header_double(gesture, n_press, x, y):
         if n_press == 2:
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-            window.set_sidebar_minimal(not getattr(window, '_sidebar_minimal', False))
+            window._toggle_sidebar_minimal_peek()
 
     header_toggle.connect('pressed', _on_header_double)
     window.sidebar_header_bar.add_controller(header_toggle)
