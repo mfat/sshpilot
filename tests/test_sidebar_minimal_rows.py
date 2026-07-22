@@ -37,6 +37,7 @@ def _make(style='initials'):
     row.update_status = MagicMock()
     row.set_margin_start = MagicMock()
     row._apply_group_display_mode = MagicMock()
+    row._resolve_group_color = MagicMock(return_value=None)
     return row, mod
 
 
@@ -122,6 +123,20 @@ def test_compact_initials_style_creates_named_avatar(monkeypatch):
     row._content_box.prepend.assert_called_with(fake_avatar)
     fake_avatar.set_visible.assert_called_with(True)
     row.connection_icon.set_visible.assert_called_with(False)
+
+
+def test_compact_avatar_filled_with_group_color(monkeypatch):
+    row, mod = _make('initials')
+    monkeypatch.setattr(mod, '_make_avatar', MagicMock(return_value=MagicMock()))
+    rgba = object()
+    row._resolve_group_color = MagicMock(return_value=rgba)
+    set_avatar_color = MagicMock()
+    monkeypatch.setattr(mod, '_set_avatar_color', set_avatar_color)
+
+    row.set_compact(True)
+
+    # The group color fills the avatar regardless of the color display mode.
+    set_avatar_color.assert_called_once_with(row._avatar, rgba)
 
 
 def test_avatar_initials():

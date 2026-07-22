@@ -1172,11 +1172,19 @@ class GroupRow(Gtk.ListBoxRow):
         return False
 
     def _apply_group_color_style(self):
-        config = getattr(self.group_manager, 'config', None)
-        mode = _get_color_display_mode(config) if config else 'fill'
         # Keep our own colour when set; otherwise inherit the nearest coloured
         # ancestor so nested groups read as part of their parent.
         rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
+        # In the minimal strip the colour is strictly a fill on the avatar,
+        # never a row treatment — expand/collapse re-runs this via
+        # _update_display, which would otherwise bring the accent bar back.
+        if getattr(self, '_compact', False):
+            _apply_row_color(self, 'fill', None)
+            if self._avatar is not None:
+                _set_avatar_color(self._avatar, rgba)
+            return
+        config = getattr(self.group_manager, 'config', None)
+        mode = _get_color_display_mode(config) if config else 'fill'
         _apply_row_color(self, mode, rgba)
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
@@ -2150,6 +2158,9 @@ class ConnectionRow(Gtk.ListBoxRow):
                 content.prepend(self._avatar)
             self._avatar.set_visible(True)
             self.connection_icon.set_visible(False)
+            # The strip always shows the group color as a fill on the avatar,
+            # regardless of the group color display mode (bar/badge/dot/fill).
+            _set_avatar_color(self._avatar, self._resolve_group_color())
         else:  # icon
             if self._avatar is not None:
                 self._avatar.set_visible(False)
