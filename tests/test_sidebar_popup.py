@@ -16,8 +16,6 @@ def _popup():
     p._transparent = False
     p._scrim = MagicMock()
     p._panel = MagicMock()
-    p._revealer = MagicMock()
-    p._hiding = False
     p._home = MagicMock()
     p._content = MagicMock()
     p._width_func = MagicMock(return_value=280)
@@ -45,7 +43,7 @@ def test_show_reparents_into_panel():
     p._panel.append.assert_called_once_with(p._content)
     p._on_shown.assert_called_once()
     p._panel.set_size_request.assert_called_once_with(280, -1)
-    p._revealer.set_reveal_child.assert_called_with(True)
+    p._panel.set_visible.assert_called_with(True)
     p._scrim.set_visible.assert_called_with(True)
 
 
@@ -56,17 +54,11 @@ def test_hide_reattaches_home():
 
     p.hide()
 
-    assert p.visible is True
-    assert p._hiding is True
-    p._revealer.set_reveal_child.assert_called_once_with(False)
-
-    p._revealer.get_child_revealed.return_value = False
-    p._on_reveal_complete(p._revealer, None)
-
     assert p.visible is False
     p._panel.remove.assert_called_once_with(p._content)
     p._home.set_content.assert_called_once_with(p._content)
     p._on_hidden.assert_called_once()
+    p._panel.set_visible.assert_called_with(False)
 
 
 def test_show_is_idempotent():
@@ -108,7 +100,7 @@ def test_dismiss_falls_back_to_hide():
 
     p.dismiss()
 
-    assert p._hiding is True  # hide() started the closing transition
+    assert p.visible is False  # hide() ran
 
 
 def test_apply_preset_center():
