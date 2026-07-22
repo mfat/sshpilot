@@ -1,3 +1,12 @@
+sshpilot (5.6.6-1) unstable; urgency=medium
+
+  * Release v5.6.6.
+  * Enhanced CLI interface - start sshpilot from commandline like
+    "sshpilot user@host", use --sftp to open the file manager
+  * Bug fixes and UI improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Wed, 22 Jul 2026 05:06:29 +0000
+
 sshpilot (5.6.5-1) unstable; urgency=medium
 
   * Release v5.6.5.

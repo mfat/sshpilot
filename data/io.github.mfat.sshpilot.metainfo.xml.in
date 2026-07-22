@@ -61,6 +61,12 @@
 
 
 
+    <release version="5.6.6" date="2026-07-22">
+      <description>
+        <p>Enhanced CLI interface - start sshpilot from commandline like &quot;sshpilot user@host&quot;, use --sftp to open the file manager</p>
+        <p>Bug fixes and UI improvements</p>
+      </description>
+    </release>
     <release version="5.6.5" date="2026-07-21">
       <description>
         <p>Bug fixes and UI improvements</p>
