@@ -106,7 +106,13 @@ def _show_password_dialog_for_mount(
     )
 
 
-class PasswordMountOperation(Gtk.MountOperation):
+# Real GTK ships Gtk.MountOperation (native host-key/question dialogs). The
+# no-GTK CI stub doesn't, so fall back to Gio.MountOperation there — import must
+# never hard-fail at class-definition time (mounting never runs under the stub).
+_MountOperationBase = getattr(Gtk, "MountOperation", None) or Gio.MountOperation
+
+
+class PasswordMountOperation(_MountOperationBase):
     """Mount operation that auto-fills the stored password.
 
     Subclasses ``Gtk.MountOperation`` so every prompt we don't handle — most

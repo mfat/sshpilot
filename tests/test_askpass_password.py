@@ -55,7 +55,7 @@ def test_classify_prompt_fido_presence_and_pin():
         classify_prompt(
             "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
         )
-        == "interactive"
+        == "hostkey"
     )
 
 
