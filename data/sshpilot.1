@@ -68,7 +68,18 @@ a bug report.
 .SH SSH DESTINATION
 After sshPilot options, remaining arguments are treated like an
 .B ssh
-command line. Examples:
+command line. A leading
+.B ssh
+is optional and prepended when absent, so
+.B "sshpilot \-J bastion user@host"
+and
+.B "sshpilot ssh \-J bastion user@host"
+are equivalent. Other remote tools
+.RB ( scp ,
+.BR sftp ,
+.BR rsync ,
+.BR ssh\-copy\-id )
+are not wrapped and are rejected. Examples:
 .PP
 .nf
 .RS
