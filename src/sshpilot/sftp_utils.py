@@ -106,77 +106,48 @@ def _show_password_dialog_for_mount(
     )
 
 
-class PasswordMountOperation(Gio.MountOperation):
-    """Custom MountOperation that automatically provides passwords from keyring"""
-    
+class PasswordMountOperation(Gtk.MountOperation):
+    """Mount operation that auto-fills the stored password.
+
+    Subclasses ``Gtk.MountOperation`` so every prompt we don't handle — most
+    importantly the host-key confirmation (``ask-question``) — uses GTK's own
+    native dialog, exactly like Nautilus. We only intercept ``ask-password`` to
+    supply the stored secret (stopping GTK's password dialog); when no stored
+    password is available we let emission fall through to GTK's dialog so the
+    user can type one. GVFS's ``ask-question`` is void/async and GTK replies to
+    it on the main loop, which a custom handler replying synchronously breaks.
+    """
+
     def __init__(self, password: Optional[str] = None, username: Optional[str] = None,
                  parent_window=None):
         super().__init__()
         self._password = password
         self._username = username
         self._password_provided = False
-        self._parent_window = parent_window
+        if parent_window is not None:
+            try:
+                self.set_property("parent", parent_window)
+            except Exception:
+                logger.debug("PasswordMountOperation: could not set parent window", exc_info=True)
 
-        # Always connect to ask-password signal to handle password requests
+        # Intercept only the password prompt; leave ask-question to GTK's dialog.
         self.connect("ask-password", self._on_ask_password)
-        # GVFS emits ask-question for host-key confirmation (unknown/changed
-        # host). Without a handler the operation stalls and the desktop's own
-        # mount agent pops a dialog behind our progress window — closing that
-        # window then cancels the mount ("Login dialog cancelled"). Handle it.
-        self.connect("ask-question", self._on_ask_question)
 
-    def _on_ask_question(self, op, message: str, choices):
-        """Confirm GVFS questions (host-key acceptance) with our own dialog.
-
-        Replies asynchronously: present the choices, then set_choice()/reply()
-        from the dialog response (same contract as GtkMountOperation).
-        """
-        choices = list(choices or [])
-        logger.info("PasswordMountOperation: GVFS question: %s (choices=%s)",
-                    (message or "").splitlines()[-1:] or message, choices)
-        if not choices:
-            op.reply(Gio.MountOperationResult.UNHANDLED)
-            return True
-        try:
-            dialog = Adw.AlertDialog()
-            dialog.set_heading(_("Confirm"))
-            dialog.set_body((message or "").strip() or _("Continue connecting?"))
-            for i, choice in enumerate(choices):
-                dialog.add_response(str(i), choice)
-            # GVFS lists the affirmative choice first, cancel/deny last.
-            dialog.set_default_response("0")
-            dialog.set_close_response(str(len(choices) - 1))
-
-            def _on_resp(_d, response_id):
-                try:
-                    idx = int(response_id)
-                except (TypeError, ValueError):
-                    idx = len(choices) - 1
-                op.set_choice(idx)
-                op.reply(Gio.MountOperationResult.HANDLED)
-
-            dialog.connect("response", _on_resp)
-            dialog.present(self._parent_window)
-        except Exception:
-            logger.exception("PasswordMountOperation: ask-question dialog failed")
-            op.reply(Gio.MountOperationResult.UNHANDLED)
-        return True
-    
     def _on_ask_password(self, op, message: str, default_user: str, default_domain: str, flags: Gio.AskPasswordFlags):
-        """Handle password requests from GVFS via signal"""
+        """Auto-fill the stored password; otherwise defer to GTK's own dialog."""
         if self._password and not self._password_provided:
             logger.debug("PasswordMountOperation: Providing saved password for user %s", default_user)
             self.set_password(self._password)
-            # Use provided username if available, otherwise use default_user from mount operation
             username_to_use = self._username if self._username else default_user
             self.set_username(username_to_use)
             self.reply(Gio.MountOperationResult.HANDLED)
             self._password_provided = True
+            # Stop emission so GTK's default password dialog does not also pop.
+            self.stop_emission_by_name("ask-password")
         else:
-            # No password available - this shouldn't happen if we showed dialog before mounting
-            # But if it does, reply UNHANDLED so gvfs can show its own prompt
-            logger.warning("PasswordMountOperation: No password available when gvfs requested it")
-            self.reply(Gio.MountOperationResult.UNHANDLED)
+            # No stored password (or a retry after a wrong one): let emission
+            # continue to GTK's built-in password dialog.
+            logger.debug("PasswordMountOperation: no stored password; deferring to GTK dialog")
 
 
 class _MountToast:
