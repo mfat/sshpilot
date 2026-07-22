@@ -1452,6 +1452,9 @@ class WindowTabsMixin:
         Otherwise open a new tab for the server.
         """
         self._return_to_tab_view_if_welcome()
+        # Executing a result dismisses search (and restores the icon strip if
+        # search expanded it). No-op when not searching.
+        self._close_search_if_open()
         try:
             # Collect current pages in visual/tab order
             terms_for_conn = []

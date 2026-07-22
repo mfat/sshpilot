@@ -3045,6 +3045,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._search_expanded_sidebar = False
             self.set_sidebar_minimal(True)
 
+    def _close_search_if_open(self):
+        """Dismiss the search bar (clear filter, rebuild, restore the sidebar).
+
+        A no-op when search isn't showing, so it can be called from every
+        connection-open path to make executing a result stop the search.
+        """
+        if not (getattr(self, 'search_container', None) and self.search_container.get_visible()):
+            return
+        if getattr(self, 'search_entry', None):
+            self.search_entry.set_text('')
+        self.rebuild_connection_list()
+        self.search_container.set_visible(False)
+        self._restore_sidebar_after_search()
+
     def activate_search_entry(self):
         """Show (if hidden) and focus the connection search entry.
 
