@@ -30,14 +30,12 @@ If the resolved hostname/IP (or username for that host) is not already present
 in the SSH config, a successful connect offers to save a new connection.
 .SH OPTIONS
 .TP
-.BR \-\-verbose ", " \-v
-Verbose debug logging (overrides config). This flag is claimed by sshPilot
-wherever it appears; to pass OpenSSH's own
+.B \-\-verbose
+Verbose debug logging (overrides config). There is no
 .B \-v
-use a
-.B \-\-
-separator:
-.BR "sshpilot \-\- ssh \-v host" .
+short form, so OpenSSH's own
+.B \-v
+passes straight through to the connection.
 .TP
 .BR \-\-quiet ", " \-q
 Only show warnings and errors (overrides config).

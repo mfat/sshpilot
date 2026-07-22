@@ -22,9 +22,16 @@ def test_parse_leaves_ssh_options_in_remainder():
 
 
 def test_parse_verbose_and_destination():
-    opts = parse_sshpilot_cli(['-v', 'myhost'])
+    opts = parse_sshpilot_cli(['--verbose', 'myhost'])
     assert opts.verbose is True
     assert opts.ssh_tokens == ['myhost']
+
+
+def test_short_v_passes_through_to_ssh():
+    # sshPilot has no -v short form; OpenSSH's own -v must pass through.
+    opts = parse_sshpilot_cli(['-v', 'myhost'])
+    assert opts.verbose is False
+    assert opts.ssh_tokens == ['-v', 'myhost']
 
 
 def test_resolve_existing_alias():
