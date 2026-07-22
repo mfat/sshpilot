@@ -4524,6 +4524,9 @@ def _build_sidebar_toolbar(window, sidebar_box):
     # mode only; the whole toolbar is hidden in the strip). Collapses to icons.
     minimize_button = icon_utils.new_button_from_icon_name('go-previous-symbolic')
     minimize_button.add_css_class('flat')
+    # Natural (unstretched) height so it matches the lone expand chevron rather
+    # than growing to the taller action-button row height.
+    minimize_button.set_valign(Gtk.Align.CENTER)
     minimize_button.set_tooltip_text(_('Minimize sidebar to icons'))
     minimize_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(True))
     try:
@@ -4546,16 +4549,19 @@ def _build_sidebar_toolbar(window, sidebar_box):
     # the sidebar (the vexpanding list above pushes it down). Only shown while
     # minimal; visibility is toggled in _apply_sidebar_minimal_chrome.
     expand_button = Gtk.Button()
-    icon_utils.set_button_icon(expand_button, 'pan-end-symbolic')
+    # go-next (not pan-end): matches the collapse chevron's go-previous arrow
+    # weight; pan-* icons are smaller glyphs and look undersized beside it.
+    icon_utils.set_button_icon(expand_button, 'go-next-symbolic')
     expand_button.set_tooltip_text(_('Expand sidebar'))
     expand_button.add_css_class('flat')
-    expand_button.set_halign(Gtk.Align.CENTER)
     expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
     # Wrap in a .toolbar bar so the button gets the same compact Adwaita metrics
     # as the collapse chevron (which lives in the bottom .toolbar box); a bare
-    # flat button uses larger default padding and looks a different size.
+    # flat button uses larger default padding and looks a different size. Centre
+    # the bar so the natural-width chevron sits mid-strip, not left-aligned.
     expand_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
     expand_bar.add_css_class('toolbar')
+    expand_bar.set_halign(Gtk.Align.CENTER)
     expand_bar.set_margin_top(6)
     expand_bar.set_margin_bottom(6)
     expand_bar.append(expand_button)
