@@ -1376,6 +1376,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.nav_view = Adw.NavigationView()
             self.nav_view.set_hexpand(True)
             self.nav_view.set_vexpand(True)
+            # Work UI <-> Settings is a mode switch, not a deeper page: swap
+            # instantly instead of the forward slide push() would animate.
+            try:
+                self.nav_view.set_animate_transitions(False)
+            except Exception:
+                logger.debug('NavigationView animate-transitions unavailable', exc_info=True)
             self._work_page = Adw.NavigationPage.new(self._content_overlay, _('SSH Pilot'))
             try:
                 self._work_page.set_tag('work')
