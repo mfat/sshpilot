@@ -305,8 +305,26 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
 
+        # Explicit "Done" action in place of the window-close (X) button, which
+        # would quit the app rather than Settings. Hide the X / window controls
+        # and the Back arrow so Done is the sole, unambiguous way to leave.
+        self.header_bar.set_show_end_title_buttons(False)
+        self.header_bar.set_show_back_button(False)
+        done_button = Gtk.Button(label=_("Done"))
+        done_button.add_css_class('suggested-action')
+        done_button.set_tooltip_text(_("Close Settings"))
+        done_button.connect('clicked', self._on_done_clicked)
+        self.header_bar.pack_end(done_button)
+
         self.pages = {}
         self._update_header_title()
+
+    def _on_done_clicked(self, _button):
+        """Leave Settings mode (pop back to the work UI)."""
+        try:
+            self.parent_window.leave_preferences()
+        except Exception:
+            logger.debug('Failed to leave preferences from Done button', exc_info=True)
 
     def _sync_split_show_content(self, *_args):
         """Keep show_content aligned with layout so Back pops Settings on first press.
