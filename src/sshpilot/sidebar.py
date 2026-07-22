@@ -3891,20 +3891,6 @@ def _build_sidebar_header(window, sidebar_box):
     _expand_toolbar_button(preferences_button)
     header.append(preferences_button)
 
-    # Minimize-to-strip toggle: the full-mode counterpart of the expand button
-    # shown in the minimal strip. Left arrow collapses the sidebar to icons.
-    minimize_button = icon_utils.new_button_from_icon_name('go-previous-symbolic')
-    minimize_button.add_css_class('flat')
-    _expand_toolbar_button(minimize_button)
-    minimize_button.set_tooltip_text(_('Minimize sidebar to icons'))
-    minimize_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(True))
-    try:
-        minimize_button.set_can_focus(False)
-    except Exception:
-        pass
-    window._sidebar_minimize_button = minimize_button
-    header.append(minimize_button)
-
     # Menu button (packed on content header bar in setup_content_area)
     window.menu_button = Gtk.MenuButton()
     window.menu_button.add_css_class('flat')
@@ -3922,21 +3908,6 @@ def _build_sidebar_header(window, sidebar_box):
     # Clip so the button row can't force the sidebar wider than the strip.
     window._sidebar_header_clip = _horizontal_clip(header_handle)
     sidebar_box.append(window._sidebar_header_clip)
-
-    # In minimal mode the header toolbar is hidden; an expand button takes its
-    # top slot (a circular control, matching the avatar strip) to restore the
-    # full sidebar. Visibility is toggled in _apply_sidebar_minimal_chrome.
-    expand_button = Gtk.Button()
-    icon_utils.set_button_icon(expand_button, 'pan-end-symbolic')
-    expand_button.set_tooltip_text(_('Expand sidebar'))
-    expand_button.add_css_class('flat')
-    expand_button.set_halign(Gtk.Align.CENTER)
-    expand_button.set_margin_top(12)
-    expand_button.set_margin_bottom(6)
-    expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
-    expand_button.set_visible(False)
-    window._sidebar_expand_button = expand_button
-    sidebar_box.append(expand_button)
 
 def _build_sidebar_search(window, sidebar_box):
     """Build the collapsible connection search entry."""
@@ -4549,7 +4520,20 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.delete_group_button.connect('clicked', window.on_delete_group_clicked)
     window.group_toolbar.append(window.delete_group_button)
     
+    # Minimize-to-strip chevron: lives at the start of the bottom toolbar (full
+    # mode only; the whole toolbar is hidden in the strip). Collapses to icons.
+    minimize_button = icon_utils.new_button_from_icon_name('go-previous-symbolic')
+    minimize_button.add_css_class('flat')
+    minimize_button.set_tooltip_text(_('Minimize sidebar to icons'))
+    minimize_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(True))
+    try:
+        minimize_button.set_can_focus(False)
+    except Exception:
+        pass
+    window._sidebar_minimize_button = minimize_button
+
     # Add both toolbars to main toolbar
+    toolbar.append(minimize_button)
     toolbar.append(window.connection_toolbar)
     toolbar.append(window.group_toolbar)
 
@@ -4557,6 +4541,21 @@ def _build_sidebar_toolbar(window, sidebar_box):
     # Clip so the toolbar's button row can't force the sidebar wider than the strip.
     window._sidebar_toolbar_clip = _horizontal_clip(toolbar)
     sidebar_box.append(window._sidebar_toolbar_clip)
+
+    # Expand chevron: the strip-mode counterpart, pinned to the very bottom of
+    # the sidebar (the vexpanding list above pushes it down). Only shown while
+    # minimal; visibility is toggled in _apply_sidebar_minimal_chrome.
+    expand_button = Gtk.Button()
+    icon_utils.set_button_icon(expand_button, 'pan-end-symbolic')
+    expand_button.set_tooltip_text(_('Expand sidebar'))
+    expand_button.add_css_class('flat')
+    expand_button.set_halign(Gtk.Align.CENTER)
+    expand_button.set_margin_top(6)
+    expand_button.set_margin_bottom(6)
+    expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
+    expand_button.set_visible(False)
+    window._sidebar_expand_button = expand_button
+    sidebar_box.append(expand_button)
 
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
