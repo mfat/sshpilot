@@ -1548,8 +1548,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             row = row.get_next_sibling()
 
         # These per-preference updates re-show widgets that minimized mode hides;
-        # re-collapse so the icon strip isn't broken by a preference change.
-        if getattr(self, '_sidebar_minimal', False):
+        # re-collapse so the icon strip isn't broken by a preference change (but
+        # not while detached into the popup, which shows full rows).
+        if getattr(self, '_sidebar_minimal', False) and not self.sidebar_popup_visible():
             self._apply_sidebar_minimal_rows(True)
 
     def update_sidebar_max_width(self, max_width: int):
@@ -2574,9 +2575,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         Freshly-built rows always start expanded; re-collapse them when the
         sidebar is the icon strip (the filtered search/tag paths return early and
         would otherwise show full rows inside the strip), then restore scroll.
+        While the sidebar is detached into the popup it shows full rows, so skip
+        the re-collapse then.
         """
         self._ungrouped_area_row = None
-        if getattr(self, '_sidebar_minimal', False):
+        if getattr(self, '_sidebar_minimal', False) and not self.sidebar_popup_visible():
             self._apply_sidebar_minimal_rows(True)
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
