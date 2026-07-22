@@ -4550,12 +4550,19 @@ def _build_sidebar_toolbar(window, sidebar_box):
     expand_button.set_tooltip_text(_('Expand sidebar'))
     expand_button.add_css_class('flat')
     expand_button.set_halign(Gtk.Align.CENTER)
-    expand_button.set_margin_top(6)
-    expand_button.set_margin_bottom(6)
     expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
-    expand_button.set_visible(False)
-    window._sidebar_expand_button = expand_button
-    sidebar_box.append(expand_button)
+    # Wrap in a .toolbar bar so the button gets the same compact Adwaita metrics
+    # as the collapse chevron (which lives in the bottom .toolbar box); a bare
+    # flat button uses larger default padding and looks a different size.
+    expand_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    expand_bar.add_css_class('toolbar')
+    expand_bar.set_margin_top(6)
+    expand_bar.set_margin_bottom(6)
+    expand_bar.append(expand_button)
+    expand_bar.set_visible(False)
+    # Toggled by _apply_sidebar_minimal_chrome; the click lives on the inner button.
+    window._sidebar_expand_button = expand_bar
+    sidebar_box.append(expand_bar)
 
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
