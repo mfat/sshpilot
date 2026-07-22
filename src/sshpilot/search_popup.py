@@ -54,6 +54,8 @@ from gi.repository import Gtk, Gdk, GLib
 
 logger = logging.getLogger(__name__)
 
+_TRANSITION_DURATION_MS = 280
+
 
 class Position:
     LEFT = "left"
@@ -114,6 +116,8 @@ class SearchPopup:
         self._transparent = False
         self._scrim = None
         self._panel = None
+        self._revealer = None
+        self._hiding = False
 
         # Presentation state (defaults to the 'sidebar' preset — today's look).
         self._mode = "sidebar"
@@ -145,11 +149,16 @@ class SearchPopup:
 
         self._panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._panel.add_css_class("sidebar-popup")
-        self._panel.set_visible(False)
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
         self._panel.add_controller(key)
-        self._overlay.add_overlay(self._panel)
+
+        self._revealer = Gtk.Revealer()
+        self._revealer.set_transition_duration(_TRANSITION_DURATION_MS)
+        self._revealer.set_reveal_child(False)
+        self._revealer.set_child(self._panel)
+        self._revealer.connect("notify::child-revealed", self._on_reveal_complete)
+        self._overlay.add_overlay(self._revealer)
 
         self._apply_layout()
         self._apply_backdrop()
@@ -221,9 +230,19 @@ class SearchPopup:
             return
         halign, valign, top_margin = _ALIGN.get(
             self._position, (Gtk.Align.START, Gtk.Align.FILL, 0))
-        self._panel.set_halign(halign)
-        self._panel.set_valign(valign)
-        self._panel.set_margin_top(top_margin)
+        target = self._revealer if self._revealer is not None else self._panel
+        target.set_halign(halign)
+        target.set_valign(valign)
+        target.set_margin_top(top_margin)
+        if self._revealer is not None:
+            transitions = {
+                Position.LEFT: Gtk.RevealerTransitionType.SLIDE_RIGHT,
+                Position.RIGHT: Gtk.RevealerTransitionType.SLIDE_LEFT,
+                Position.TOP: Gtk.RevealerTransitionType.SLIDE_DOWN,
+                Position.CENTER: Gtk.RevealerTransitionType.CROSSFADE,
+            }
+            self._revealer.set_transition_type(
+                transitions.get(self._position, Gtk.RevealerTransitionType.CROSSFADE))
         width = self._width if self._width is not None else self._width_func()
         height = self._height if self._height is not None else -1
         self._panel.set_size_request(width, height)
@@ -249,6 +268,7 @@ class SearchPopup:
         if self._visible or self._panel is None:
             return
         self._apply_layout()
+        self._hiding = False
 
         # Reparent content: home -> panel.
         self._home.set_content(None)
@@ -256,7 +276,10 @@ class SearchPopup:
         self._on_shown()
 
         self._scrim.set_visible(True)
-        self._panel.set_visible(True)
+        if self._revealer is not None:
+            self._revealer.set_reveal_child(True)
+        else:
+            self._panel.set_visible(True)
         self._visible = True
 
         if self._focus_func is not None:
@@ -269,8 +292,21 @@ class SearchPopup:
         shown."""
         if not self._visible:
             return
-        self._panel.set_visible(False)
         self._scrim.set_visible(False)
+
+        if self._revealer is not None:
+            self._hiding = True
+            self._revealer.set_reveal_child(False)
+            return
+
+        self._finish_hide()
+
+    def _finish_hide(self) -> None:
+        """Reattach content after the closing transition has finished."""
+        if not self._visible:
+            return
+        if self._revealer is None:
+            self._panel.set_visible(False)
 
         # Reparent content: panel -> home.
         if self._content.get_parent() is self._panel:
@@ -279,6 +315,12 @@ class SearchPopup:
         self._on_hidden()
 
         self._visible = False
+        self._hiding = False
+
+    def _on_reveal_complete(self, revealer, _param) -> None:
+        if not self._hiding or revealer.get_child_revealed():
+            return
+        self._finish_hide()
 
     def dismiss(self) -> None:
         """Dismiss (Esc / click-outside): the owner's ``on_dismiss`` if given
