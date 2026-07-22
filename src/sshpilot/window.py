@@ -1348,13 +1348,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.setup_content_area()
 
         # Wrap the work UI in an overlay so the detachable sidebar popup can
-        # float over the content without affecting layout (see the
-        # show_sidebar_popup / hide_sidebar_popup docs).
+        # float over the content without affecting layout (see search_popup.py).
         self._content_overlay = Gtk.Overlay()
         self._content_overlay.set_hexpand(True)
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self.split_view)
-        self._build_sidebar_popup()
+        from .search_popup import SearchPopup
+        self._search_popup = SearchPopup(self)
 
         # Outer NavigationView: work UI is the root page; Settings is pushed on
         # top (Telegram-style mode). Back / Esc pops Settings and restores work.
@@ -1550,7 +1550,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # These per-preference updates re-show widgets that minimized mode hides;
         # re-collapse so the icon strip isn't broken by a preference change (but
         # not while detached into the popup, which shows full rows).
-        if getattr(self, '_sidebar_minimal', False) and not self.sidebar_popup_visible():
+        if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
 
     def update_sidebar_max_width(self, max_width: int):
@@ -2579,7 +2579,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         the re-collapse then.
         """
         self._ungrouped_area_row = None
-        if getattr(self, '_sidebar_minimal', False) and not self.sidebar_popup_visible():
+        if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
@@ -3054,13 +3054,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self._search_expanded_sidebar = getattr(self, '_sidebar_minimal', False)
         if self._search_expanded_sidebar:
-            self.show_sidebar_popup()
+            self._search_popup.show()
 
     def _restore_sidebar_after_search(self):
         """Re-attach the strip if opening search is what detached it."""
         if getattr(self, '_search_expanded_sidebar', False):
             self._search_expanded_sidebar = False
-            self.hide_sidebar_popup()
+            self._search_popup.hide()
 
     def _close_search_if_open(self):
         """Dismiss the search bar (clear filter, rebuild, restore the sidebar).
@@ -3933,178 +3933,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 sv.set_collapsed(overlay)
             except Exception:
                 logger.debug("set_sidebar_overlay failed", exc_info=True)
-
-    # --- Detachable sidebar popup --------------------------------------------
-    #
-    # A reusable floating panel that hosts the *live* connection sidebar (the
-    # header actions, search, connection list and toolbar — the whole
-    # ``sidebar_box``). On show it reparents ``sidebar_box`` out of the split
-    # view's ToolbarView into an overlay panel that floats above the work area;
-    # on hide it puts it back. Because it is the same widget tree, the popup is
-    # pixel-identical to the expanded sidebar and every behaviour (selection,
-    # DnD, context menus, search, tags) works with zero duplication.
-    #
-    # The split view's sidebar column is left in place while detached (its
-    # ToolbarView just loses its content), so the terminal never resizes — the
-    # whole reason this exists instead of collapsing the split view to an
-    # overlay, which unavoidably reflows the content by the sidebar width.
-    #
-    # Reuse it from anywhere: ``show_sidebar_popup()`` / ``hide_sidebar_popup()``
-    # / ``sidebar_popup_visible()``. It auto-dismisses on Esc, on a click
-    # outside the panel (a transparent scrim captures those), and — for the
-    # search flow — when search is stopped or a result is opened.
-
-    def _build_sidebar_popup(self):
-        """Create the hidden scrim + panel overlay layers for the sidebar popup."""
-        self._sidebar_popup_visible = False
-        self._sidebar_popup_transparent = False
-
-        overlay = getattr(self, '_content_overlay', None)
-        if overlay is None:
-            return
-
-        # Transparent scrim: fills the work area behind the panel and captures a
-        # click outside the panel to dismiss. Kept transparent so the terminal
-        # stays fully visible; the panel's own shadow lifts it off the content.
-        self._sidebar_popup_scrim = Gtk.Box()
-        self._sidebar_popup_scrim.set_hexpand(True)
-        self._sidebar_popup_scrim.set_vexpand(True)
-        self._sidebar_popup_scrim.add_css_class('sidebar-popup-scrim')
-        self._sidebar_popup_scrim.set_visible(False)
-        scrim_click = Gtk.GestureClick()
-        scrim_click.connect('pressed', lambda *_a: self._dismiss_sidebar_popup())
-        self._sidebar_popup_scrim.add_controller(scrim_click)
-        overlay.add_overlay(self._sidebar_popup_scrim)
-
-        # Panel: left-aligned, full height, hosts the reparented sidebar_box.
-        self._sidebar_popup = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self._sidebar_popup.set_halign(Gtk.Align.START)
-        self._sidebar_popup.set_valign(Gtk.Align.FILL)
-        self._sidebar_popup.add_css_class('sidebar-popup')
-        self._sidebar_popup.set_visible(False)
-        key = Gtk.EventControllerKey()
-        key.connect('key-pressed', self._on_sidebar_popup_key)
-        self._sidebar_popup.add_controller(key)
-        overlay.add_overlay(self._sidebar_popup)
-
-    def sidebar_popup_visible(self) -> bool:
-        """True while the sidebar is detached into the floating popup."""
-        return bool(getattr(self, '_sidebar_popup_visible', False))
-
-    def set_sidebar_popup_transparent(self, enabled: bool) -> None:
-        """Toggle a subtle background transparency on the sidebar popup panel.
-
-        Programmatic only — intentionally not exposed in Preferences. Persists
-        across show/hide (the class stays on the persistent panel widget).
-        """
-        self._sidebar_popup_transparent = bool(enabled)
-        panel = getattr(self, '_sidebar_popup', None)
-        if panel is None:
-            return
-        if self._sidebar_popup_transparent:
-            panel.add_css_class('sidebar-popup-transparent')
-        else:
-            panel.remove_css_class('sidebar-popup-transparent')
-
-    def show_sidebar_popup(self):
-        """Detach the sidebar into the floating popup panel (reusable).
-
-        Reparents the live ``sidebar_box`` into an overlay panel sized to the
-        configured sidebar width, floating over the work area with full content
-        (rows expanded, chrome shown) so it looks exactly like the expanded
-        sidebar. No-op if already shown or the overlay isn't available.
-        """
-        if self.sidebar_popup_visible():
-            return
-        box = getattr(self, '_sidebar_box', None)
-        tv = getattr(self, '_sidebar_toolbar_view', None)
-        panel = getattr(self, '_sidebar_popup', None)
-        if box is None or tv is None or panel is None:
-            return
-
-        # Match the *actual* expanded-sidebar width (the fraction-based width
-        # clamped to [base_min, max]), not the raw max — otherwise the panel is
-        # wider than the sidebar ever is side-by-side.
-        saved_max = _effective_max_sidebar_width(
-            self.config.get_setting('ui.max-sidebar-width', None))
-        width = saved_max
-        try:
-            sv = getattr(self, 'split_view', None)
-            if sv is not None and hasattr(sv, 'get_sidebar_width_fraction'):
-                base_min = 180 if HAS_OVERLAY_SPLIT else 200
-                win_w = sv.get_width() or 0
-                if win_w > 0:
-                    frac = sv.get_sidebar_width_fraction()
-                    width = max(base_min, min(saved_max, int(frac * win_w)))
-        except Exception:
-            pass
-        panel.set_size_request(width, -1)
-
-        # Reparent sidebar_box: split view ToolbarView -> popup panel.
-        try:
-            tv.set_content(None)
-        except Exception:
-            pass
-        panel.append(box)
-
-        # The popup always shows the full sidebar, even when the strip is minimal.
-        try:
-            self._set_sidebar_clipping(False)
-            self._apply_sidebar_minimal_chrome(False)
-            self._apply_sidebar_minimal_rows(False)
-        except Exception:
-            logger.debug("sidebar popup content restore failed", exc_info=True)
-
-        self._sidebar_popup_scrim.set_visible(True)
-        panel.set_visible(True)
-        self._sidebar_popup_visible = True
-
-    def hide_sidebar_popup(self):
-        """Reattach the sidebar to the split view, hiding the popup. No-op if
-        not shown. Re-collapses the strip if minimal mode is active."""
-        if not self.sidebar_popup_visible():
-            return
-        box = getattr(self, '_sidebar_box', None)
-        tv = getattr(self, '_sidebar_toolbar_view', None)
-        panel = getattr(self, '_sidebar_popup', None)
-
-        if panel is not None:
-            panel.set_visible(False)
-        if getattr(self, '_sidebar_popup_scrim', None) is not None:
-            self._sidebar_popup_scrim.set_visible(False)
-
-        # Reparent sidebar_box back: popup panel -> split view ToolbarView.
-        if box is not None and panel is not None and box.get_parent() is panel:
-            panel.remove(box)
-        if box is not None and tv is not None:
-            try:
-                tv.set_content(box)
-            except Exception:
-                pass
-
-        # Restore the strip if the resting sidebar is minimal.
-        if getattr(self, '_sidebar_minimal', False):
-            try:
-                self._apply_sidebar_minimal_chrome(True)
-                self._apply_sidebar_minimal_rows(True)
-            except Exception:
-                logger.debug("sidebar popup re-collapse failed", exc_info=True)
-
-        self._sidebar_popup_visible = False
-
-    def _dismiss_sidebar_popup(self):
-        """Dismiss the popup (Esc / click-outside). Routes through the search
-        teardown when search is active so the filter/entry are cleaned too."""
-        if getattr(self, 'search_container', None) and self.search_container.get_visible():
-            self._close_search_if_open()
-        else:
-            self.hide_sidebar_popup()
-
-    def _on_sidebar_popup_key(self, _controller, keyval, _keycode, _state):
-        if keyval == Gdk.KEY_Escape:
-            self._dismiss_sidebar_popup()
-            return True
-        return False
 
     def _sidebar_mode_is_minimal(self) -> bool:
         """True when the icon strip is the user's configured resting mode."""

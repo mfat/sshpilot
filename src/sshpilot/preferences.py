@@ -1368,8 +1368,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 # search" restore, which would otherwise fire on close. Dismiss
                 # any open search popup and clear the flag first.
                 win._search_expanded_sidebar = False
-                if hasattr(win, 'hide_sidebar_popup'):
-                    win.hide_sidebar_popup()
+                popup = getattr(win, '_search_popup', None)
+                if popup is not None:
+                    popup.hide()
                 win.set_sidebar_minimal(mode == 'minimal')
         except Exception:
             logger.debug("sidebar mode change failed", exc_info=True)

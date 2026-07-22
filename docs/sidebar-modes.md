@@ -39,21 +39,26 @@ popup below is used instead.
 
 ## 3. Detachable sidebar popup (search, and reusable)
 
-A floating panel that hosts the **live** sidebar (`sidebar_box`) over the work
-area without affecting layout — so the terminal never resizes.
+`src/sshpilot/search_popup.py` — the `SearchPopup` class. A floating panel that
+hosts the **live** sidebar (`sidebar_box`) over the work area without affecting
+layout — so the terminal never resizes. The window owns one instance,
+`window._search_popup`, built in `setup_ui`.
 
 ### API
 
 ```python
-window.show_sidebar_popup()      # detach sidebar_box into the floating panel
-window.hide_sidebar_popup()      # re-attach it to the split view
-window.sidebar_popup_visible()   # -> bool
+popup = window._search_popup     # a search_popup.SearchPopup
+popup.show()                     # detach sidebar_box into the floating panel
+popup.hide()                     # re-attach it to the split view
+popup.visible                    # -> bool (property)
+popup.set_transparent(enabled)   # subtle background transparency (code-only)
+popup.dismiss()                  # Esc / click-outside routing
 ```
 
 ### How it works
 
-- On show, `sidebar_box` is **reparented** out of `_sidebar_toolbar_view` into an
-  overlay panel (`_sidebar_popup`) sized to the configured sidebar width,
+- On show, `sidebar_box` is **reparented** out of `_sidebar_toolbar_view` into the
+  overlay panel (`SearchPopup._panel`) sized to the effective sidebar width,
   left-aligned and full height. Because it is the *same* widget tree, the popup
   is pixel-identical to the expanded sidebar and every behaviour (selection,
   drag-and-drop, context menus, search, tags) works with zero duplication.
@@ -61,25 +66,26 @@ window.sidebar_popup_visible()   # -> bool
   its content) — the terminal is never resized. This is the whole reason the
   popup exists instead of collapsing the split view to an overlay.
 - The panel always shows the full sidebar, even when the resting state is the
-  minimal strip; `hide_sidebar_popup()` re-collapses the strip if minimal mode
+  minimal strip; `popup.hide()` re-collapses the strip if minimal mode
   is active.
 
-### Layers (`_build_sidebar_popup`)
+### Layers (`SearchPopup._build`)
 
 The work UI is wrapped in a `Gtk.Overlay` (`_content_overlay`) with two hidden
 overlay children:
 
-- `_sidebar_popup_scrim` — a transparent, full-area box that captures a click
+- `SearchPopup._scrim` — a transparent, full-area box that captures a click
   *outside* the panel to dismiss (a `Gtk.GestureClick`). Transparent so the
   terminal stays fully visible.
-- `_sidebar_popup` — the panel itself, styled by the `.sidebar-popup` CSS class
-  (opaque background + right-edge shadow). An `Esc` key controller dismisses it.
+- `SearchPopup._panel` — the panel itself, styled by the `.sidebar-popup` CSS
+  class (opaque background + right-edge shadow). An `Esc` key controller
+  dismisses it.
 
 ### Dismissal
 
-`hide_sidebar_popup()` is called on:
+`popup.hide()` is called on:
 
-- **Esc** and **click outside** the panel — via `_dismiss_sidebar_popup()`,
+- **Esc** and **click outside** the panel — via `popup.dismiss()`,
   which routes through the search teardown (`_close_search_if_open()`) when
   search is active so the filter and entry are cleaned up too.
 - **Search stopped** (Esc in the entry / the toolbar search toggle).
@@ -89,7 +95,7 @@ overlay children:
 
 ### Subtle transparency (programmatic only)
 
-`set_sidebar_popup_transparent(enabled: bool)` toggles a subtle background
+`popup.set_transparent(enabled)` toggles a subtle background
 transparency on the panel (the `.sidebar-popup-transparent` CSS class →
 `alpha(@window_bg_color, 0.86)`), so the terminal shows faintly through while the
 rows stay readable. It is **intentionally not exposed in Preferences** — it is a
@@ -98,7 +104,7 @@ show/hide.
 
 ### Reuse
 
-`show_sidebar_popup()` / `hide_sidebar_popup()` are generic — search is just the
+`popup.show()` / `popup.hide()` are generic — search is just the
 first caller. Any trigger can detach the sidebar into the floating panel; the
 auto-dismiss on Esc / click-outside applies regardless, and the search-specific
 teardown only runs when search happens to be open.

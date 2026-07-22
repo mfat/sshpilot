@@ -322,7 +322,7 @@ def install_sidebar_css():
         }
 
         /* Detachable sidebar popup: an opaque panel floating over the work area
-           (see MainWindow.show_sidebar_popup). The shadow lifts it off the
+           (see search_popup.SearchPopup). The shadow lifts it off the
            content; the scrim is transparent and only captures click-outside. */
         .sidebar-popup {
           background-color: @window_bg_color;
@@ -330,7 +330,7 @@ def install_sidebar_css():
         }
 
         /* Programmatic-only subtle transparency (see
-           MainWindow.set_sidebar_popup_transparent) — the terminal shows faintly
+           SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
         .sidebar-popup.sidebar-popup-transparent {
           background-color: alpha(@window_bg_color, 0.86);
@@ -4558,7 +4558,7 @@ def _assemble_sidebar_shell(window, sidebar_box):
     sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)
     sidebar_toolbar_view.set_content(sidebar_box)
     # Kept so the detachable sidebar popup can reparent sidebar_box out of here
-    # and back (see MainWindow.show_sidebar_popup / hide_sidebar_popup).
+    # and back (see search_popup.SearchPopup).
     window._sidebar_toolbar_view = sidebar_toolbar_view
 
     window._set_sidebar_widget(sidebar_toolbar_view)
