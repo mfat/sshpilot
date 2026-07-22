@@ -4350,17 +4350,20 @@ def _assemble_sidebar_shell(window, sidebar_box):
     window._sidebar_title_label = sidebar_title_label
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
-    # Expand button — only shown while the sidebar is the minimal icon strip.
-    # Right-pointing sibling of the preferences back button.
-    from sshpilot import icon_utils
-    window._sidebar_expand_button = icon_utils.new_button_from_icon_name('go-next-symbolic')
-    window._sidebar_expand_button.add_css_class('flat')
-    window._sidebar_expand_button.set_tooltip_text(_('Expand Sidebar'))
-    window._sidebar_expand_button.set_can_focus(False)
-    window._sidebar_expand_button.set_visible(False)
-    window._sidebar_expand_button.connect(
-        'clicked', lambda *_: window.set_sidebar_minimal(False))
-    window.sidebar_header_bar.pack_start(window._sidebar_expand_button)
+    # Double-click the sidebar header toggles between full and minimal modes.
+    # Capture phase + claim on the second press so it runs before (and instead
+    # of) the titlebar's default double-click-to-maximize.
+    header_toggle = Gtk.GestureClick()
+    header_toggle.set_button(Gdk.BUTTON_PRIMARY)
+    header_toggle.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def _on_header_double(gesture, n_press, x, y):
+        if n_press == 2:
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            window.set_sidebar_minimal(not getattr(window, '_sidebar_minimal', False))
+
+    header_toggle.connect('pressed', _on_header_double)
+    window.sidebar_header_bar.add_controller(header_toggle)
 
     sidebar_toolbar_view = Adw.ToolbarView()
     sidebar_toolbar_view.add_css_class('sidebar')
