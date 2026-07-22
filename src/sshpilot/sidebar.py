@@ -4529,6 +4529,22 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window._sidebar_toolbar_clip = _horizontal_clip(toolbar)
     sidebar_box.append(window._sidebar_toolbar_clip)
 
+    # In minimal mode the toolbar is hidden; an expand button takes its slot
+    # (same bottom row, margins and height) to restore the full sidebar.
+    expand_button = Gtk.Button()
+    expand_button.set_icon_name('go-next-symbolic')
+    expand_button.set_tooltip_text(_('Expand sidebar'))
+    expand_button.add_css_class('flat')
+    expand_button.set_hexpand(True)
+    expand_button.set_margin_start(6)
+    expand_button.set_margin_end(6)
+    expand_button.set_margin_top(6)
+    expand_button.set_margin_bottom(6)
+    expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
+    expand_button.set_visible(False)
+    window._sidebar_expand_button = expand_button
+    sidebar_box.append(expand_button)
+
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
     # Sidebar header: title + window controls (GNOME split-view pattern)
@@ -4543,22 +4559,6 @@ def _assemble_sidebar_shell(window, sidebar_box):
     sidebar_title_label.set_xalign(0.0)
     window._sidebar_title_label = sidebar_title_label
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
-
-    # Double-click the sidebar header peeks the full sidebar from the minimal
-    # strip (reverts after a timeout); a no-op in full mode. Capture phase + claim
-    # on the second press so it runs before (and instead of) the titlebar's default
-    # double-click-to-maximize.
-    header_toggle = Gtk.GestureClick()
-    header_toggle.set_button(Gdk.BUTTON_PRIMARY)
-    header_toggle.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-
-    def _on_header_double(gesture, n_press, x, y):
-        if n_press == 2:
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-            window._toggle_sidebar_minimal_peek()
-
-    header_toggle.connect('pressed', _on_header_double)
-    window.sidebar_header_bar.add_controller(header_toggle)
 
     sidebar_toolbar_view = Adw.ToolbarView()
     sidebar_toolbar_view.add_css_class('sidebar')

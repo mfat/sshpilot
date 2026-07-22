@@ -157,9 +157,6 @@ _format_connection_host_display = format_connection_host_display
 
 # Width of the minimal (icon-only) sidebar strip.
 _MINIMAL_STRIP_WIDTH = 64
-# A header double-click flips the mode only temporarily (a peek); it reverts
-# after this idle window unless another double-click cancels/re-arms it.
-_SIDEBAR_PEEK_TIMEOUT_MS = 4000
 
 
 def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
@@ -1657,6 +1654,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 widget.set_visible(show)
             except Exception:
                 pass
+        # The expand button takes the (hidden) toolbar's slot in minimal mode.
+        btn = getattr(self, '_sidebar_expand_button', None)
+        if btn is not None:
+            try:
+                btn.set_visible(minimal)
+            except Exception:
+                pass
         box = getattr(self, '_sidebar_box', None)
         if box is not None:
             try:
@@ -1713,36 +1717,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 pass
         return widest
 
-    def _toggle_sidebar_minimal_peek(self) -> None:
-        """Temporarily peek the full sidebar from the minimal strip (header
-        double-click), reverting to minimal after ``_SIDEBAR_PEEK_TIMEOUT_MS``.
-        Only active in minimal mode — full mode already shows everything."""
-        if not getattr(self, '_sidebar_minimal', False):
-            return
-        self._cancel_sidebar_peek()
-        self._applying_sidebar_peek = True
-        try:
-            self.set_sidebar_minimal(False)
-        finally:
-            self._applying_sidebar_peek = False
-        self._sidebar_peek_source = GLib.timeout_add(
-            _SIDEBAR_PEEK_TIMEOUT_MS, self._on_sidebar_peek_timeout)
-
-    def _on_sidebar_peek_timeout(self) -> bool:
-        self._sidebar_peek_source = None
-        self._applying_sidebar_peek = True
-        try:
-            self.set_sidebar_minimal(True)
-        finally:
-            self._applying_sidebar_peek = False
-        return False
-
-    def _cancel_sidebar_peek(self) -> None:
-        src = getattr(self, '_sidebar_peek_source', None)
-        if src is not None:
-            GLib.source_remove(src)
-            self._sidebar_peek_source = None
-
     def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
         """Collapse the sidebar to an icon-only strip, or restore its full width.
 
@@ -1753,10 +1727,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if minimal == getattr(self, '_sidebar_minimal', False):
             return
         self._sidebar_minimal = minimal
-        # A mode change from anywhere but the peek machinery cancels a pending
-        # temporary-peek revert so it can't later clobber the new mode.
-        if not getattr(self, '_applying_sidebar_peek', False):
-            self._cancel_sidebar_peek()
 
         if minimal:
             # A strip implies the sidebar is on screen.
