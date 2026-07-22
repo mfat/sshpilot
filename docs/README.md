@@ -13,7 +13,7 @@ platform documentation that versions with the code:
 | [diagnostics.md](diagnostics.md) | Where the logs live, the crash report, the `--diagnostics` flags and the bug-report bundle. |
 | [agent-architecture.md](agent-architecture.md) | The Ptyxis-style agent that provides host shells with job control under Flatpak. |
 | [SSH-config-parsing.md](SSH-config-parsing.md) | Design rationale for host discovery: display-only parsing, `ssh -G` as the source of truth. |
-| [command-converter.md](command-converter.md) | The `ssh ...` command-line → connection-data parser (not yet wired to UI). |
+| [command-converter.md](command-converter.md) | The `ssh ...` command-line → connection-data parser (used by CLI connect and available for paste/import). |
 | [PLUGIN_SDK.md](PLUGIN_SDK.md) | The plugin API reference: context objects, protocol backends, UI pages, credential dialogs. |
 | [IDENTITY_PROVIDERS.md](IDENTITY_PROVIDERS.md) | The identity-provider contract (which key authenticates a connection, and who supplies it). |
 | [CREDENTIAL_MANAGER.md](CREDENTIAL_MANAGER.md) | The credential export/backup layer and its secret backends. |

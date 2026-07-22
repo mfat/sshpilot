@@ -387,8 +387,16 @@ over adding command-line flags.
 
 ## Debugging
 
-CLI flags (`src/sshpilot/main.py::main`):
+CLI flags (`src/sshpilot/main.py` / `sshpilot.cli_connect`):
+- Destination forms after sshPilot options are treated like OpenSSH
+  (`sshpilot Host`, `sshpilot user@host`, `sshpilot -p 2222 -i key user@host`).
+  Invalid destinations print to the invoking stderr, exit 255, and do **not**
+  start a connection. See `data/sshpilot.1` and `docs/command-converter.md`.
+- `--sftp` — open the resolved destination in the file manager (SFTP) instead
+  of a terminal tab (`MainWindow.open_cli_connect_resolved` → `_open_manage_files_for_connection`).
 - `--verbose` / `-v` — detailed (debug) logging; `--quiet` / `-q` — warnings & errors only.
+  (`-v`/`-q` are claimed by sshPilot when parsed as known options; use
+  `sshpilot ssh -v host` for OpenSSH's own verbose flag.)
 - GTK/GLib/Gdk/Pango/VTE **warnings & criticals are captured into the log files by
   default** via `_install_gtk_log_capture()` (logged under the `gtk` logger; also echoed
   to stderr). It installs **both** interception points because GTK/GLib use two logging

@@ -4,22 +4,47 @@ sshpilot \- SSH connection manager with integrated terminal
 .SH SYNOPSIS
 .B sshpilot
 .RI [ OPTIONS ]
+.RI [ SSH_DESTINATION... ]
 .SH DESCRIPTION
 .B sshPilot
 is a GTK4/libadwaita SSH connection manager with an integrated VTE terminal,
 port forwarding and tunnelling, and an SFTP file manager. It stores connection
 profiles, integrates with the system keyring for credentials, and drives the
 native OpenSSH client for every connection.
+.PP
+When a destination is given on the command line, sshPilot opens it in a
+terminal tab using the same forms as OpenSSH (Host alias,
+.IR user@host ,
+and
+.B ssh
+options such as
+.BR \-p ,
+.BR \-i ,
+.BR \-J ).
+If the destination cannot be parsed, sshPilot prints an error to standard
+error, exits with status 255, and does
+.B not
+start a connection or open a tab (like
+.BR ssh (1)).
+If the resolved hostname/IP (or username for that host) is not already present
+in the SSH config, a successful connect offers to save a new connection.
 .SH OPTIONS
 .TP
 .BR \-\-verbose ", " \-v
-Verbose debug logging (overrides config).
+Verbose debug logging (overrides config). When a destination is present,
+prefer
+.B sshpilot ssh \-v host
+if you need OpenSSH's own
+.BR \-v .
 .TP
 .BR \-\-quiet ", " \-q
 Only show warnings and errors (overrides config).
 .TP
 .B \-\-isolated
 Use an isolated SSH configuration.
+.TP
+.B \-\-sftp
+Open the destination in the file manager (SFTP) instead of a terminal tab.
 .TP
 .B \-\-log\-gtk\-warnings
 Also capture lower-severity GTK/GLib info and debug messages.
@@ -31,6 +56,30 @@ crash.log.
 .B \-\-diagnostics
 Shorthand for \fB\-\-verbose \-\-log\-gtk\-warnings\fR. Recommended when filing
 a bug report.
+.SH SSH DESTINATION
+After sshPilot options, remaining arguments are treated like an
+.B ssh
+command line. Examples:
+.PP
+.nf
+.RS
+sshpilot web
+sshpilot root@example.com
+sshpilot \-p 2222 user@host
+sshpilot \-i ~/.ssh/id_ed25519 user@host
+sshpilot \-p 2222 \-i ~/.ssh/id_ed25519 \-J bastion user@host
+sshpilot ssh \-J bastion user@host
+sshpilot \-\-sftp user@host
+.RE
+.fi
+.PP
+A bare Host alias that already exists in
+.I ~/.ssh/config
+opens that saved connection. Otherwise the argv is parsed into connection
+fields (via the command converter) and run with OpenSSH in a new tab.
+Invalid destinations (for example
+.BR scp
+arguments) fail on the command line without opening the app session.
 .SH FILES
 .TP
 .I ~/.ssh/config
