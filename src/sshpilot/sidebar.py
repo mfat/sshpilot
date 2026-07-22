@@ -2205,6 +2205,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._apply_host_label_text(include_port=True)
         self._update_forwarding_indicators()
         self.update_status()
+        # The above repopulate labels/indicators that the strip hides; re-apply
+        # the compact layout so an edit doesn't leave the row half-expanded.
+        if getattr(self, "_compact", False):
+            self.set_compact(True)
 
 
 # ---------------------------------------------------------------------------
