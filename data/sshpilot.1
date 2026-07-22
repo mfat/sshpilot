@@ -31,11 +31,13 @@ in the SSH config, a successful connect offers to save a new connection.
 .SH OPTIONS
 .TP
 .BR \-\-verbose ", " \-v
-Verbose debug logging (overrides config). When a destination is present,
-prefer
-.B sshpilot ssh \-v host
-if you need OpenSSH's own
-.BR \-v .
+Verbose debug logging (overrides config). This flag is claimed by sshPilot
+wherever it appears; to pass OpenSSH's own
+.B \-v
+use a
+.B \-\-
+separator:
+.BR "sshpilot \-\- ssh \-v host" .
 .TP
 .BR \-\-quiet ", " \-q
 Only show warnings and errors (overrides config).

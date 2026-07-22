@@ -95,9 +95,9 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
     """Parse sshPilot flags; leave the rest as ssh-like tokens.
 
     Uses ``parse_known_args`` so OpenSSH options (``-p``, ``-i``, ``-J``, …)
-    pass through. ``-v`` / ``-q`` are claimed by sshPilot when they appear as
-    known options (typically before the destination); place ssh's own ``-v``
-    after the destination or use ``sshpilot ssh -v host``.
+    pass through. ``-v`` / ``-q`` are claimed by sshPilot wherever they appear
+    (argparse scans the whole argv), so to pass OpenSSH's own ``-v`` use a
+    ``--`` separator: ``sshpilot -- ssh -v host``.
     """
     import argparse
 
