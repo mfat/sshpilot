@@ -1534,8 +1534,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 row.count_label.set_visible(show_group_count)
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
-            
+
             row = row.get_next_sibling()
+
+        # These per-preference updates re-show widgets that minimized mode hides;
+        # re-collapse so the icon strip isn't broken by a preference change.
+        if getattr(self, '_sidebar_minimal', False):
+            self._apply_sidebar_minimal_rows(True)
 
     def update_sidebar_max_width(self, max_width: int):
         """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
@@ -2553,6 +2558,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
     
+    def _finish_rebuild(self, scroll_position) -> None:
+        """Common tail for every rebuild_connection_list() exit path.
+
+        Freshly-built rows always start expanded; re-collapse them when the
+        sidebar is the icon strip (the filtered search/tag paths return early and
+        would otherwise show full rows inside the strip), then restore scroll.
+        """
+        self._ungrouped_area_row = None
+        if getattr(self, '_sidebar_minimal', False):
+            self._apply_sidebar_minimal_rows(True)
+        if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                GLib.idle_add(lambda: vadj.set_value(scroll_position))
+
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
         reset_connection_list_drag_session(self)
@@ -2594,12 +2614,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-            self._ungrouped_area_row = None
-            # Restore scroll position
-            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
-                vadj = self.connection_scrolled.get_vadjustment()
-                if vadj:
-                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            self._finish_rebuild(scroll_position)
             return
 
         if search_text:
@@ -2642,12 +2657,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
                 displayed_connections.add(conn.nickname)
-            self._ungrouped_area_row = None
-            # Restore scroll position
-            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
-                vadj = self.connection_scrolled.get_vadjustment()
-                if vadj:
-                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            self._finish_rebuild(scroll_position)
             return
 
 
@@ -2689,19 +2699,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.add_connection_row(conn)
 
 
-        # Store reference to ungrouped area (hidden by default)
-        self._ungrouped_area_row = None
-
-        # Freshly-built rows start expanded; re-collapse them if the sidebar is
-        # currently showing the icon strip.
-        if getattr(self, '_sidebar_minimal', False):
-            self._apply_sidebar_minimal_rows(True)
-
-        # Restore scroll position
-        if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
-            vadj = self.connection_scrolled.get_vadjustment()
-            if vadj:
-                GLib.idle_add(lambda: vadj.set_value(scroll_position))
+        self._finish_rebuild(scroll_position)
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list.
 
@@ -3861,12 +3859,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to toggle sidebar: {e}")
 
     # --- Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior) ------------
+    def _sidebar_mode_is_minimal(self) -> bool:
+        """True when the icon strip is the user's configured resting mode."""
+        try:
+            return str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal'
+        except Exception:
+            return False
+
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
         sync (used by the behavior hooks)."""
-        # A full show/hide always leaves the minimal strip behind, restoring the
-        # normal rows/chrome so the next reveal is the full sidebar.
-        if getattr(self, '_sidebar_minimal', False):
+        # Leave a *transient* minimal strip (minimize-on-connect) so the next
+        # reveal is the full sidebar; keep it when minimal is the configured
+        # resting mode so it survives show/hide.
+        if getattr(self, '_sidebar_minimal', False) and not self._sidebar_mode_is_minimal():
             self.set_sidebar_minimal(False, animate=False)
         try:
             self._toggle_sidebar_visibility(visible)

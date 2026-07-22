@@ -1553,13 +1553,15 @@ class WindowTabsMixin:
             if self._is_start_tab_page(page):
                 GLib.idle_add(self._focus_connection_list_first_row)
                 try:
-                    # Back at the welcome screen with no sessions: the icon strip
-                    # has nothing to minimize for, so restore the full sidebar.
-                    if getattr(self, '_sidebar_minimal', False) and not self.has_user_tabs():
-                        self.set_sidebar_minimal(False)
-                    elif (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
-                            and not self.has_user_tabs()):
-                        self._apply_sidebar_visible(True)
+                    if not self.has_user_tabs():
+                        # Back at the welcome screen with no sessions: undo a
+                        # transient minimize-on-connect, but keep the strip when
+                        # minimal is the configured resting mode.
+                        if (getattr(self, '_sidebar_minimal', False)
+                                and not self._sidebar_mode_is_minimal()):
+                            self.set_sidebar_minimal(False)
+                        if self.config.get_setting('ui.sidebar_show_when_no_tabs', False):
+                            self._apply_sidebar_visible(True)
                 except Exception:
                     pass
                 return

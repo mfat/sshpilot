@@ -2119,6 +2119,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.connection_icon.remove_css_class('conn-status-up')
         if online:
             self.connection_icon.add_css_class('conn-status-up')
+        # update_status() re-shows the status icon and colour widgets; keep them
+        # hidden in the strip (this runs at the end of update_status when compact).
+        self.status_icon.set_visible(False)
         self.color_dot.set_visible(False)
         self.color_badge.set_visible(False)
 
