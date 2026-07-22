@@ -580,6 +580,41 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     row.color_dot.set_visible(True)
 
 
+def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
+    """Paint a sidebar avatar's circle with ``rgba`` (or clear the override).
+
+    AdwAvatar's per-name hashed color lives in libadwaita's base stylesheet;
+    a provider on the widget's own style context at USER priority overrides it.
+    ``background-image: none`` clears the built-in gradient.
+    """
+    old = getattr(avatar, '_color_provider', None)
+    if old is not None:
+        try:
+            avatar.get_style_context().remove_provider(old)
+        except Exception:
+            pass
+        avatar._color_provider = None  # type: ignore[attr-defined]
+    if rgba is None:
+        return
+    try:
+        color = rgba.to_string()
+    except Exception:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(
+        (
+            "avatar.sidebar-avatar {"
+            "  background-image: none;"
+            f"  background-color: {color};"
+            "}"
+        ).encode("utf-8")
+    )
+    avatar._color_provider = provider  # type: ignore[attr-defined]
+    avatar.get_style_context().add_provider(
+        provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+    )
+
+
 def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
@@ -721,6 +756,8 @@ class GroupRow(Gtk.ListBoxRow):
         self._color_badge_provider = None
         self._tint_provider = None
         self._color_badge_provider = None
+        self._avatar = None
+        self._compact = False
         self._member_rows = []
         self._child_group_rows = []
 
@@ -1162,13 +1199,16 @@ class GroupRow(Gtk.ListBoxRow):
         _apply_sidebar_row_style(self, config, flat=flat)
 
     def set_compact(self, compact: bool) -> None:
-        """Collapse the group header to just its folder icon, or restore it."""
+        """Collapse the group header to a folder-icon avatar, or restore it."""
         compact = bool(compact)
         self._compact = compact
         content = self._content
         if compact:
             content.set_halign(Gtk.Align.CENTER)
+            # Zero both side margins so the avatar centers like connection rows
+            # (an asymmetric margin shifts it off-center to the left).
             content.set_margin_start(0)
+            content.set_margin_end(0)
             self.set_margin_start(0)  # flatten nested-group indentation in the strip
             self._info_box.set_visible(False)
             self.color_dot.set_visible(False)
@@ -1176,10 +1216,35 @@ class GroupRow(Gtk.ListBoxRow):
             self.split_view_button.set_visible(False)
             self.edit_button.set_visible(False)
             self.expand_button.set_visible(False)
-            self.icon.set_visible(True)
+            self.icon.set_visible(False)
+            # Round folder-icon avatar, matching the connection avatars but with
+            # an icon instead of initials (AdwAvatar shows icon-name when
+            # show-initials is False).
+            if self._avatar is None:
+                icon_name = 'folder-symbolic'
+                try:
+                    if isinstance(self.group_info.get('icon'), str) and self.group_info['icon']:
+                        icon_name = self.group_info['icon']
+                except Exception:
+                    pass
+                self._avatar = Adw.Avatar(size=28, show_initials=False)
+                self._avatar.set_icon_name(icon_name)
+                self._avatar.set_valign(Gtk.Align.CENTER)
+                self._avatar.add_css_class('sidebar-avatar')
+                content.prepend(self._avatar)
+            self._avatar.set_visible(True)
             self.set_tooltip_text(str(self.group_info.get('name', '')))
+            # The group's color goes on the avatar circle, not the row: clear
+            # every row-level treatment (bar/tint/badge/dot — the bar in
+            # particular reads as a full-width row) and paint the avatar.
+            rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
+            _apply_row_color(self, 'fill', None)
+            _set_avatar_color(self._avatar, rgba)
         else:
             content.set_halign(Gtk.Align.FILL)
+            content.set_margin_end(12)  # restore the base margin zeroed in compact
+            if self._avatar is not None:
+                self._avatar.set_visible(False)
             self._info_box.set_visible(True)
             self.split_view_button.set_visible(True)
             self.edit_button.set_visible(True)

@@ -40,6 +40,52 @@ def _make(style='initials'):
     return row, mod
 
 
+def _make_group():
+    mod = importlib.import_module('sshpilot.sidebar')
+    row = mod.GroupRow.__new__(mod.GroupRow)
+    row.group_info = {'id': 'g1', 'name': 'Servers'}
+    row.group_id = 'g1'
+    row.group_manager = MagicMock()
+    row.group_manager.config = _Cfg()
+    row._compact = False
+    row._avatar = None
+    for name in ('_content', '_info_box', 'color_dot', 'color_badge',
+                 'split_view_button', 'edit_button', 'expand_button', 'icon'):
+        setattr(row, name, MagicMock())
+    row.set_tooltip_text = MagicMock()
+    row.set_margin_start = MagicMock()
+    row._apply_group_display_mode = MagicMock()
+    row._update_display = MagicMock()
+    return row, mod
+
+
+def test_group_compact_creates_folder_icon_avatar(monkeypatch):
+    row, mod = _make_group()
+    fake_avatar = MagicMock()
+    monkeypatch.setattr(mod.Adw, 'Avatar', lambda **kw: fake_avatar)
+    # Color styling touches real GTK CSS on the widget; stub it out.
+    sentinel_rgba = object()
+    monkeypatch.setattr(mod, '_resolve_group_color_by_id', lambda *a: sentinel_rgba)
+    apply_color = MagicMock()
+    set_avatar_color = MagicMock()
+    monkeypatch.setattr(mod, '_apply_row_color', apply_color)
+    monkeypatch.setattr(mod, '_set_avatar_color', set_avatar_color)
+
+    row.set_compact(True)
+
+    assert row._avatar is fake_avatar
+    fake_avatar.set_icon_name.assert_called_with('folder-symbolic')
+    # Groups use an icon, never initials.
+    fake_avatar.set_text.assert_not_called()
+    row._content.prepend.assert_called_with(fake_avatar)
+    row.icon.set_visible.assert_called_with(False)
+    row.set_tooltip_text.assert_called_with('Servers')
+    # The row keeps no color treatment; the group color goes on the avatar.
+    apply_color.assert_called_once()
+    assert apply_color.call_args.args[1:] == ('fill', None)
+    set_avatar_color.assert_called_once_with(fake_avatar, sentinel_rgba)
+
+
 def test_compact_icon_style_hides_labels_shows_icon():
     row, _ = _make('icon')
     row.set_compact(True)
