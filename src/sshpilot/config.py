@@ -206,6 +206,7 @@ class Config(GObject.Object):
                 'sidebar_on_terminal_open': 'none',
                 'sidebar_minimal_row_style': 'initials',  # 'initials' | 'icon'
                 # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
+                'headerbar_show_sidebar_toggle': False,
                 'headerbar_show_split_view': False,
                 'headerbar_show_commands': True,
                 'headerbar_show_theme_toggle': True,
