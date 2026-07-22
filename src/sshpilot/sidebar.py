@@ -4350,6 +4350,18 @@ def _assemble_sidebar_shell(window, sidebar_box):
     window._sidebar_title_label = sidebar_title_label
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
+    # Expand button — only shown while the sidebar is the minimal icon strip.
+    # Right-pointing sibling of the preferences back button.
+    from sshpilot import icon_utils
+    window._sidebar_expand_button = icon_utils.new_button_from_icon_name('go-next-symbolic')
+    window._sidebar_expand_button.add_css_class('flat')
+    window._sidebar_expand_button.set_tooltip_text(_('Expand Sidebar'))
+    window._sidebar_expand_button.set_can_focus(False)
+    window._sidebar_expand_button.set_visible(False)
+    window._sidebar_expand_button.connect(
+        'clicked', lambda *_: window.set_sidebar_minimal(False))
+    window.sidebar_header_bar.pack_start(window._sidebar_expand_button)
+
     sidebar_toolbar_view = Adw.ToolbarView()
     sidebar_toolbar_view.add_css_class('sidebar')
     sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)

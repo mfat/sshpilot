@@ -1572,6 +1572,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 title.set_visible(show)
             except Exception:
                 pass
+        # The expand button only appears while collapsed to the strip.
+        expand_btn = getattr(self, '_sidebar_expand_button', None)
+        if expand_btn is not None:
+            try:
+                expand_btn.set_visible(minimal)
+            except Exception:
+                pass
         for attr in ('_sidebar_header_handle', 'search_container', '_sidebar_toolbar_box'):
             widget = getattr(self, attr, None)
             if widget is None:
