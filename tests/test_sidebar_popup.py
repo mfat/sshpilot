@@ -78,3 +78,14 @@ def test_hide_is_noop_when_not_shown():
     w = _win()
     MainWindow.hide_sidebar_popup(w)
     w._sidebar_toolbar_view.set_content.assert_not_called()
+
+
+def test_transparency_toggle_adds_and_removes_class():
+    w = _win()
+    MainWindow.set_sidebar_popup_transparent(w, True)
+    assert w._sidebar_popup_transparent is True
+    w._sidebar_popup.add_css_class.assert_called_once_with('sidebar-popup-transparent')
+
+    MainWindow.set_sidebar_popup_transparent(w, False)
+    assert w._sidebar_popup_transparent is False
+    w._sidebar_popup.remove_css_class.assert_called_once_with('sidebar-popup-transparent')

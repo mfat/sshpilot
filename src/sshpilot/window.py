@@ -3957,6 +3957,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _build_sidebar_popup(self):
         """Create the hidden scrim + panel overlay layers for the sidebar popup."""
         self._sidebar_popup_visible = False
+        self._sidebar_popup_transparent = False
 
         overlay = getattr(self, '_content_overlay', None)
         if overlay is None:
@@ -3989,6 +3990,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def sidebar_popup_visible(self) -> bool:
         """True while the sidebar is detached into the floating popup."""
         return bool(getattr(self, '_sidebar_popup_visible', False))
+
+    def set_sidebar_popup_transparent(self, enabled: bool) -> None:
+        """Toggle a subtle background transparency on the sidebar popup panel.
+
+        Programmatic only — intentionally not exposed in Preferences. Persists
+        across show/hide (the class stays on the persistent panel widget).
+        """
+        self._sidebar_popup_transparent = bool(enabled)
+        panel = getattr(self, '_sidebar_popup', None)
+        if panel is None:
+            return
+        if self._sidebar_popup_transparent:
+            panel.add_css_class('sidebar-popup-transparent')
+        else:
+            panel.remove_css_class('sidebar-popup-transparent')
 
     def show_sidebar_popup(self):
         """Detach the sidebar into the floating popup panel (reusable).

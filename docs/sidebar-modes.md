@@ -87,6 +87,15 @@ overlay children:
   connection-open path (`_cycle_connection_tabs_or_open` /
   `_focus_most_recent_tab_or_open_new`).
 
+### Subtle transparency (programmatic only)
+
+`set_sidebar_popup_transparent(enabled: bool)` toggles a subtle background
+transparency on the panel (the `.sidebar-popup-transparent` CSS class →
+`alpha(@window_bg_color, 0.86)`), so the terminal shows faintly through while the
+rows stay readable. It is **intentionally not exposed in Preferences** — it is a
+code-level toggle only. Default is off (opaque); the setting persists across
+show/hide.
+
 ### Reuse
 
 `show_sidebar_popup()` / `hide_sidebar_popup()` are generic — search is just the

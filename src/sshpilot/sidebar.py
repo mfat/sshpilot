@@ -329,6 +329,13 @@ def install_sidebar_css():
           box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
         }
 
+        /* Programmatic-only subtle transparency (see
+           MainWindow.set_sidebar_popup_transparent) — the terminal shows faintly
+           through the panel while the rows stay readable. */
+        .sidebar-popup.sidebar-popup-transparent {
+          background-color: alpha(@window_bg_color, 0.86);
+        }
+
         .sidebar-popup-scrim {
           background-color: transparent;
         }
