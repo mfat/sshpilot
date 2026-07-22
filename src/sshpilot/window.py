@@ -1550,20 +1550,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to update max-sidebar-width: {e}")
 
     # --- Minimal (icon-only) sidebar strip -----------------------------------
-    def _apply_sidebar_width(self, width: int, grow: bool = True) -> None:
+    def _apply_sidebar_width(self, width: int) -> None:
         """Pin the split view sidebar to exactly ``width`` px (one animation tick).
 
         Both min and max are driven to ``width``. They must be set in the order
         that never leaves the pair transiently ``min > max`` — OverlaySplitView
-        mishandles that and the sidebar fails to follow, which is the jump seen
-        on expand (growing) but not on collapse (shrinking). When growing, raise
-        the max ceiling first; when shrinking, lower the min floor first.
+        mishandles that and the sidebar fails to follow (the width jump). The
+        safe order depends on the *current* constraints, not the logical
+        animation direction: if the target is at/above the current max, raise the
+        max ceiling first; otherwise lower the min floor first. (Deriving it from
+        direction breaks the collapse "lock" step in narrow windows, where the
+        current allocation can already be below the resting min.)
         """
         sv = getattr(self, 'split_view', None)
         if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
             return
         try:
-            if grow:
+            current_max = int(sv.get_max_sidebar_width())
+        except Exception:
+            current_max = width
+        try:
+            if width >= current_max:
                 sv.set_max_sidebar_width(width)
                 sv.set_min_sidebar_width(width)
             else:
@@ -1728,7 +1735,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     full_width = 0
             if full_width <= _MINIMAL_STRIP_WIDTH:
                 full_width = max(_fraction_width(), self._measure_sidebar_content_min())
-            self._apply_sidebar_width(full_width, grow=True)
+            self._apply_sidebar_width(full_width)
             self._apply_sidebar_minimal_chrome(True)
             self._apply_sidebar_minimal_rows(True)
         else:
@@ -1763,7 +1770,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             start, target = float(_MINIMAL_STRIP_WIDTH), float(full_width)
 
         def _tick(value, *_):
-            self._apply_sidebar_width(int(value), grow=not minimal)
+            self._apply_sidebar_width(int(value))
 
         target_cb = Adw.CallbackAnimationTarget.new(_tick)
         animation = Adw.TimedAnimation.new(sv, start, float(target), 200, target_cb)
