@@ -3730,16 +3730,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click"""
         try:
-            # From the icon strip, the toggle expands back to the full sidebar
-            # rather than hiding it (per the minimal-mode UX).
-            if getattr(self, '_sidebar_minimal', False):
-                self.set_sidebar_minimal(False)
-                self._cancel_pending_sidebar_hide()
-                try:
-                    button.set_active(False)
-                except Exception:
-                    pass
-                return
             # Button active state now represents the action to perform
             # True = hide sidebar, False = show sidebar
             should_hide = button.get_active()
