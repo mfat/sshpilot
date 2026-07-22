@@ -1144,6 +1144,22 @@ class PreferencesWindow(Adw.NavigationPage):
         # Sidebar group (at bottom of Interface page)
         sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
 
+        # Sidebar mode (full width vs. minimal icon strip)
+        self._sidebar_mode_values = ['full', 'minimal']
+        sidebar_mode_row = Adw.ComboRow()
+        sidebar_mode_row.set_title(_("Sidebar Mode"))
+        sidebar_mode_row.set_subtitle(_("Show the full sidebar or a minimal strip of icons"))
+        mode_options = Gtk.StringList()
+        mode_options.append(_("Full"))
+        mode_options.append(_("Minimal"))
+        sidebar_mode_row.set_model(mode_options)
+        current_mode = str(self.config.get_setting('ui.sidebar_mode', 'full')).lower()
+        if current_mode not in self._sidebar_mode_values:
+            current_mode = 'full'
+        sidebar_mode_row.set_selected(self._sidebar_mode_values.index(current_mode))
+        sidebar_mode_row.connect('notify::selected', self.on_sidebar_mode_changed)
+        sidebar_group.add(sidebar_mode_row)
+
         # Maximum width slider
         max_width_row = Adw.ActionRow()
         max_width_row.set_title(_("Maximum Width"))
@@ -1327,6 +1343,19 @@ class PreferencesWindow(Adw.NavigationPage):
         sidebar_behavior_group.add(minimal_row_style_row)
 
         interface_page.add(sidebar_behavior_group)
+
+    def on_sidebar_mode_changed(self, combo_row, _param):
+        """Persist the sidebar mode and apply it to the live window."""
+        try:
+            idx = combo_row.get_selected()
+            values = getattr(self, '_sidebar_mode_values', ['full', 'minimal'])
+            mode = values[idx] if 0 <= idx < len(values) else 'full'
+            self.config.set_setting('ui.sidebar_mode', mode)
+            win = self.parent_window
+            if win is not None and hasattr(win, 'set_sidebar_minimal'):
+                win.set_sidebar_minimal(mode == 'minimal')
+        except Exception:
+            logger.debug("sidebar mode change failed", exc_info=True)
 
     def on_sidebar_minimal_row_style_changed(self, combo_row, _param):
         """Persist the minimized row style and refresh a live icon strip."""

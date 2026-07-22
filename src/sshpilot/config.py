@@ -200,6 +200,7 @@ class Config(GObject.Object):
                 'sidebar_hide_on_startup': False,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
                 'sidebar_show_when_no_tabs': False,
+                'sidebar_mode': 'full',  # 'full' | 'minimal' (icon strip)
                 'sidebar_minimize_on_connect': False,  # collapse to icon strip
                 'sidebar_minimal_row_style': 'initials',  # 'initials' | 'icon'
                 # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)

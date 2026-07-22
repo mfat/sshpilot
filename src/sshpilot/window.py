@@ -302,6 +302,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.setup_connections()
         self.setup_signals()
 
+        # Apply the persisted sidebar mode (full / minimal icon strip).
+        try:
+            if str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal':
+                self.set_sidebar_minimal(True, animate=False)
+        except Exception:
+            logger.debug("apply startup sidebar mode failed", exc_info=True)
+
         # Terminal manager handles terminal-related operations (import deferred so
         # terminal.py stays off the window module import path until __init__).
         from .terminal_manager import TerminalManager
