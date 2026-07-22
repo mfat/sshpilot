@@ -198,10 +198,12 @@ class Config(GObject.Object):
                 'sidebar_flat_rows': True,
                 # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
                 'sidebar_hide_on_startup': False,
-                'sidebar_hide_on_terminal_open': False,  # incl. local terminals
+                'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open
                 'sidebar_show_when_no_tabs': False,
                 'sidebar_mode': 'full',  # 'full' | 'minimal' (icon strip)
-                'sidebar_minimize_on_connect': False,  # collapse to icon strip
+                # What happens to the sidebar when a session opens:
+                # 'none' | 'minimize' (icon strip) | 'hide'.
+                'sidebar_on_terminal_open': 'none',
                 'sidebar_minimal_row_style': 'initials',  # 'initials' | 'icon'
                 # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
                 'headerbar_show_split_view': False,

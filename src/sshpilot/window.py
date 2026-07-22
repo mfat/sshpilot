@@ -3793,6 +3793,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug("hide_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
 
+    def _sidebar_on_terminal_open(self) -> str:
+        """What to do to the sidebar when a session opens: 'none'|'minimize'|'hide'.
+
+        Falls back to the legacy boolean settings for configs saved before the
+        options were merged into one selector.
+        """
+        try:
+            value = self.config.get_setting('ui.sidebar_on_terminal_open', None)
+        except Exception:
+            value = None
+        if value in ('none', 'minimize', 'hide'):
+            return value
+        # Legacy fallback.
+        try:
+            if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
+                return 'hide'
+            if self.config.get_setting('ui.sidebar_minimize_on_connect', False):
+                return 'minimize'
+        except Exception:
+            pass
+        return 'none'
+
     def _minimize_sidebar_after_terminal(self) -> bool:
         """Deferred collapse to the icon strip once a session settles."""
         self._sidebar_hide_timer_id = None

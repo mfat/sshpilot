@@ -1286,17 +1286,28 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(hide_on_startup_switch)
 
-        hide_on_terminal_switch = Adw.SwitchRow()
-        hide_on_terminal_switch.set_title(_("Hide When a Terminal Opens"))
-        hide_on_terminal_switch.set_subtitle(_("Collapse the sidebar when any session opens, including local terminals"))
-        hide_on_terminal_switch.set_active(
-            bool(self.config.get_setting('ui.sidebar_hide_on_terminal_open', False))
-        )
-        hide_on_terminal_switch.connect(
-            'notify::active',
-            lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_terminal_open', bool(r.get_active())),
-        )
-        sidebar_behavior_group.add(hide_on_terminal_switch)
+        # When a terminal opens: do nothing / minimize to icons / hide.
+        self._on_terminal_open_values = ['none', 'minimize', 'hide']
+        on_terminal_open_row = Adw.ComboRow()
+        on_terminal_open_row.set_title(_("When a Terminal Opens"))
+        on_terminal_open_row.set_subtitle(
+            _("What happens to the sidebar when any session opens, including local terminals"))
+        on_terminal_options = Gtk.StringList()
+        on_terminal_options.append(_("Do Nothing"))
+        on_terminal_options.append(_("Minimize to Icons"))
+        on_terminal_options.append(_("Hide Sidebar"))
+        on_terminal_open_row.set_model(on_terminal_options)
+        current_on_open = 'none'
+        win = self.parent_window
+        if win is not None and hasattr(win, '_sidebar_on_terminal_open'):
+            current_on_open = win._sidebar_on_terminal_open()
+        if current_on_open not in self._on_terminal_open_values:
+            current_on_open = 'none'
+        on_terminal_open_row.set_selected(
+            self._on_terminal_open_values.index(current_on_open))
+        on_terminal_open_row.connect(
+            'notify::selected', self.on_sidebar_on_terminal_open_changed)
+        sidebar_behavior_group.add(on_terminal_open_row)
 
         show_when_no_tabs_switch = Adw.SwitchRow()
         show_when_no_tabs_switch.set_title(_("Show When No Tab Is Open"))
@@ -1309,19 +1320,6 @@ class PreferencesWindow(Adw.NavigationPage):
             lambda r, _p: self.config.set_setting('ui.sidebar_show_when_no_tabs', bool(r.get_active())),
         )
         sidebar_behavior_group.add(show_when_no_tabs_switch)
-
-        minimize_on_connect_switch = Adw.SwitchRow()
-        minimize_on_connect_switch.set_title(_("Minimize to Icons When a Connection Opens"))
-        minimize_on_connect_switch.set_subtitle(
-            _("Collapse the sidebar to a strip of icons instead of hiding it"))
-        minimize_on_connect_switch.set_active(
-            bool(self.config.get_setting('ui.sidebar_minimize_on_connect', False))
-        )
-        minimize_on_connect_switch.connect(
-            'notify::active',
-            lambda r, _p: self.config.set_setting('ui.sidebar_minimize_on_connect', bool(r.get_active())),
-        )
-        sidebar_behavior_group.add(minimize_on_connect_switch)
 
         # Minimized row style (initials circle vs. plain icon)
         self._minimal_row_style_values = ['initials', 'icon']
@@ -1343,6 +1341,19 @@ class PreferencesWindow(Adw.NavigationPage):
         sidebar_behavior_group.add(minimal_row_style_row)
 
         interface_page.add(sidebar_behavior_group)
+
+    def on_sidebar_on_terminal_open_changed(self, combo_row, _param):
+        """Persist the merged 'when a terminal opens' behavior."""
+        try:
+            idx = combo_row.get_selected()
+            values = getattr(self, '_on_terminal_open_values', ['none', 'minimize', 'hide'])
+            action = values[idx] if 0 <= idx < len(values) else 'none'
+            self.config.set_setting('ui.sidebar_on_terminal_open', action)
+            # Keep the legacy booleans consistent for any older readers.
+            self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')
+            self.config.set_setting('ui.sidebar_minimize_on_connect', action == 'minimize')
+        except Exception:
+            logger.debug("sidebar on-terminal-open change failed", exc_info=True)
 
     def on_sidebar_mode_changed(self, combo_row, _param):
         """Persist the sidebar mode and apply it to the live window."""

@@ -966,20 +966,19 @@ class WindowTabsMixin:
         except Exception:
             is_start = self._is_start_tab_page(page)
         try:
-            if is_start:
-                pass
-            elif self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
+            action = self._sidebar_on_terminal_open() if not is_start else 'none'
+            if action == 'hide':
                 self._cancel_pending_sidebar_hide()
                 self._sidebar_hide_timer_id = GLib.timeout_add(
                     350, self._hide_sidebar_after_terminal
                 )
-            elif self.config.get_setting('ui.sidebar_minimize_on_connect', False):
+            elif action == 'minimize':
                 self._cancel_pending_sidebar_hide()
                 self._sidebar_hide_timer_id = GLib.timeout_add(
                     350, self._minimize_sidebar_after_terminal
                 )
         except Exception:
-            logger.debug("sidebar hide-on-terminal-open failed", exc_info=True)
+            logger.debug("sidebar-on-terminal-open failed", exc_info=True)
 
     def _register_convert_to_split_drop(self, terminal, page) -> None:
         """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
