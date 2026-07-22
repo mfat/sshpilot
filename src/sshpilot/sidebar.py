@@ -233,6 +233,31 @@ def install_sidebar_css():
           background-color: alpha(@window_fg_color, 0.16);
         }
 
+        /* Minimal strip only (.sidebar-minimal is set on the sidebar box while
+           collapsed): selection uses the plain libadwaita-style neutral shade
+           for every row — no accent fill, no forced fg text — regardless of the
+           group colour mode. Higher specificity than the accent/color-bar rules
+           above so it wins; the full sidebar is untouched. */
+        .sidebar-minimal .navigation-sidebar row:selected,
+        .sidebar-minimal .navigation-sidebar row.tinted:selected,
+        .sidebar-minimal .navigation-sidebar row.color-bar:selected {
+          background-color: alpha(currentColor, 0.10);
+          color: inherit;
+          box-shadow: none;
+        }
+
+        .sidebar-minimal .navigation-sidebar row:selected:hover,
+        .sidebar-minimal .navigation-sidebar row.tinted:selected:hover,
+        .sidebar-minimal .navigation-sidebar row.color-bar:selected:hover {
+          background-color: alpha(currentColor, 0.13);
+        }
+
+        .sidebar-minimal .navigation-sidebar row:selected:active,
+        .sidebar-minimal .navigation-sidebar row.tinted:selected:active,
+        .sidebar-minimal .navigation-sidebar row.color-bar:selected:active {
+          background-color: alpha(currentColor, 0.16);
+        }
+
         /* Reorder placeholder: a slim transparent gap row whose child
            DragIndicator draws the accent bar; the list parts around it. */
         .drop-placeholder-row {
