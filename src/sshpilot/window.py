@@ -155,6 +155,9 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
+# Width of the minimal (icon-only) sidebar strip.
+_MINIMAL_STRIP_WIDTH = 64
+
 
 def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
     """Resolve the startup max sidebar width from a saved setting value.
@@ -270,6 +273,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
+        self._sidebar_minimal = False   # icon-only strip state
+        self._sidebar_width_animation = None
         self._context_menu_row = None
         self._context_menu_popover = None
         # Hide hosts toggle state
@@ -1537,8 +1542,139 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to update max-sidebar-width: {e}")
 
+    # --- Minimal (icon-only) sidebar strip -----------------------------------
+    def _apply_sidebar_width(self, width: int) -> None:
+        """Clamp the split view sidebar to ``width`` px (one animation tick)."""
+        sv = getattr(self, 'split_view', None)
+        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+            return
+        try:
+            sv.set_min_sidebar_width(min(180, width))
+            sv.set_max_sidebar_width(width)
+        except Exception:
+            pass
 
-    
+    def _apply_sidebar_minimal_chrome(self, minimal: bool) -> None:
+        """Hide the header/search/toolbar chrome that can't fit the strip."""
+        show = not minimal
+        # The "SSH Pilot" title label has a natural min width that floors how
+        # narrow the sidebar can get; hide it so the strip can shrink fully.
+        title = getattr(self, '_sidebar_title_label', None)
+        if title is not None:
+            try:
+                title.set_visible(show)
+            except Exception:
+                pass
+        for attr in ('_sidebar_header_handle', 'search_container', '_sidebar_toolbar_box'):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            # The search container manages its own visibility (search mode); only
+            # force it hidden in minimal, never force it visible on restore.
+            if attr == 'search_container' and show:
+                continue
+            try:
+                widget.set_visible(show)
+            except Exception:
+                pass
+        box = getattr(self, '_sidebar_box', None)
+        if box is not None:
+            try:
+                (box.add_css_class if minimal else box.remove_css_class)('sidebar-minimal')
+            except Exception:
+                pass
+
+    def _apply_sidebar_minimal_rows(self, minimal: bool) -> None:
+        """Toggle compact rendering on every connection/group row."""
+        lb = getattr(self, 'connection_list', None)
+        if lb is None:
+            return
+        row = lb.get_first_child()
+        while row is not None:
+            if hasattr(row, 'set_compact'):
+                try:
+                    row.set_compact(minimal)
+                except Exception:
+                    logger.debug("row set_compact failed", exc_info=True)
+            row = row.get_next_sibling()
+
+    def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
+        """Collapse the sidebar to an icon-only strip, or restore its full width.
+
+        The split view's min/max sidebar width is the single width lever; the
+        transition is animated with ``Adw.TimedAnimation`` when available.
+        """
+        minimal = bool(minimal)
+        if minimal == getattr(self, '_sidebar_minimal', False):
+            return
+        self._sidebar_minimal = minimal
+
+        if minimal:
+            # A strip implies the sidebar is on screen.
+            try:
+                self._toggle_sidebar_visibility(True)
+                if hasattr(self, 'sidebar_toggle_button'):
+                    self.sidebar_toggle_button.set_active(False)
+            except Exception:
+                logger.debug("show-for-minimal failed", exc_info=True)
+
+        self._apply_sidebar_minimal_chrome(minimal)
+        self._apply_sidebar_minimal_rows(minimal)
+
+        saved_max = _effective_max_sidebar_width(
+            self.config.get_setting('ui.max-sidebar-width', None))
+        base_min = 180 if HAS_OVERLAY_SPLIT else 200
+        target = _MINIMAL_STRIP_WIDTH if minimal else saved_max
+
+        anim = getattr(self, '_sidebar_width_animation', None)
+        if anim is not None:
+            try:
+                anim.pause()
+            except Exception:
+                pass
+            self._sidebar_width_animation = None
+
+        sv = getattr(self, 'split_view', None)
+        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+            return
+
+        def _pin_endpoints():
+            try:
+                if minimal:
+                    sv.set_min_sidebar_width(_MINIMAL_STRIP_WIDTH)
+                    sv.set_max_sidebar_width(_MINIMAL_STRIP_WIDTH)
+                else:
+                    sv.set_min_sidebar_width(base_min)
+                    sv.set_max_sidebar_width(saved_max)
+            except Exception:
+                pass
+
+        if not animate or not HAS_TIMED_ANIMATION:
+            _pin_endpoints()
+            return
+
+        try:
+            start = float(sv.get_max_sidebar_width())
+        except Exception:
+            start = float(saved_max)
+
+        target_cb = Adw.CallbackAnimationTarget.new(
+            lambda value, *_: self._apply_sidebar_width(int(value))
+        )
+        animation = Adw.TimedAnimation.new(sv, start, float(target), 200, target_cb)
+        try:
+            animation.set_easing(Adw.Easing.EASE_OUT_CUBIC)
+        except Exception:
+            pass
+
+        def _on_done(*_a):
+            _pin_endpoints()
+            self._sidebar_width_animation = None
+
+        animation.connect('done', _on_done)
+        self._sidebar_width_animation = animation
+        animation.play()
+
     def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
         """Display an error dialog when duplication fails."""
         try:
@@ -2446,7 +2582,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
-        
+
+        # Freshly-built rows start expanded; re-collapse them if the sidebar is
+        # currently showing the icon strip.
+        if getattr(self, '_sidebar_minimal', False):
+            self._apply_sidebar_minimal_rows(True)
+
         # Restore scroll position
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
@@ -3582,6 +3723,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click"""
         try:
+            # From the icon strip, the toggle expands back to the full sidebar
+            # rather than hiding it (per the minimal-mode UX).
+            if getattr(self, '_sidebar_minimal', False):
+                self.set_sidebar_minimal(False)
+                self._cancel_pending_sidebar_hide()
+                try:
+                    button.set_active(False)
+                except Exception:
+                    pass
+                return
             # Button active state now represents the action to perform
             # True = hide sidebar, False = show sidebar
             should_hide = button.get_active()
@@ -3614,6 +3765,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
         sync (used by the behavior hooks)."""
+        # A full show/hide always leaves the minimal strip behind, restoring the
+        # normal rows/chrome so the next reveal is the full sidebar.
+        if getattr(self, '_sidebar_minimal', False):
+            self.set_sidebar_minimal(False, animate=False)
         try:
             self._toggle_sidebar_visibility(visible)
             if hasattr(self, 'sidebar_toggle_button'):
@@ -3639,6 +3794,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._apply_sidebar_visible(False)
         except Exception:
             logger.debug("hide_sidebar_after_terminal failed", exc_info=True)
+        return GLib.SOURCE_REMOVE
+
+    def _minimize_sidebar_after_terminal(self) -> bool:
+        """Deferred collapse to the icon strip once a session settles."""
+        self._sidebar_hide_timer_id = None
+        try:
+            self.set_sidebar_minimal(True)
+        except Exception:
+            logger.debug("minimize_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
 
     def _toggle_sidebar_visibility(self, is_visible):

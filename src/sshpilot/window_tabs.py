@@ -960,6 +960,11 @@ class WindowTabsMixin:
                 self._sidebar_hide_timer_id = GLib.timeout_add(
                     350, self._hide_sidebar_after_terminal
                 )
+            elif self.config.get_setting('ui.sidebar_minimize_on_connect', False):
+                self._cancel_pending_sidebar_hide()
+                self._sidebar_hide_timer_id = GLib.timeout_add(
+                    350, self._minimize_sidebar_after_terminal
+                )
         except Exception:
             logger.debug("sidebar hide-on-terminal-open failed", exc_info=True)
 
@@ -1536,7 +1541,11 @@ class WindowTabsMixin:
             if self._is_start_tab_page(page):
                 GLib.idle_add(self._focus_connection_list_first_row)
                 try:
-                    if (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
+                    # Back at the welcome screen with no sessions: the icon strip
+                    # has nothing to minimize for, so restore the full sidebar.
+                    if getattr(self, '_sidebar_minimal', False) and not self.has_user_tabs():
+                        self.set_sidebar_minimal(False)
+                    elif (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
                             and not self.has_user_tabs()):
                         self._apply_sidebar_visible(True)
                 except Exception:

@@ -278,6 +278,12 @@ def install_sidebar_css():
           }
         }
 
+        /* Minimal (icon-only) sidebar: ring around a connected connection's
+           avatar. box-shadow follows the avatar's circle so it reads as a ring. */
+        avatar.sidebar-avatar-online {
+          box-shadow: 0 0 0 2px @success_color;
+        }
+
         """
         provider.load_from_data(css.encode('utf-8'))
         Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -754,6 +760,7 @@ class GroupRow(Gtk.ListBoxRow):
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
         info_box.set_valign(Gtk.Align.CENTER)  # Center vertically relative to icon
+        self._info_box = info_box
 
         self.name_label = Gtk.Label()
         self.name_label.set_halign(Gtk.Align.START)
@@ -1154,6 +1161,36 @@ class GroupRow(Gtk.ListBoxRow):
         config = getattr(self.group_manager, 'config', None)
         _apply_sidebar_row_style(self, config, flat=flat)
 
+    def set_compact(self, compact: bool) -> None:
+        """Collapse the group header to just its folder icon, or restore it."""
+        compact = bool(compact)
+        self._compact = compact
+        content = self._content
+        if compact:
+            content.set_halign(Gtk.Align.CENTER)
+            content.set_margin_start(0)
+            self.set_margin_start(0)  # flatten nested-group indentation in the strip
+            self._info_box.set_visible(False)
+            self.color_dot.set_visible(False)
+            self.color_badge.set_visible(False)
+            self.split_view_button.set_visible(False)
+            self.edit_button.set_visible(False)
+            self.expand_button.set_visible(False)
+            self.icon.set_visible(True)
+            self.set_tooltip_text(str(self.group_info.get('name', '')))
+        else:
+            content.set_halign(Gtk.Align.FILL)
+            self._info_box.set_visible(True)
+            self.split_view_button.set_visible(True)
+            self.edit_button.set_visible(True)
+            self.expand_button.set_visible(True)
+            self.set_tooltip_text(None)
+            config = getattr(self.group_manager, 'config', None)
+            show_icon = config.get_setting('ui.sidebar_show_group_icon', True) if config else True
+            self.icon.set_visible(show_icon)
+            self._apply_group_display_mode()  # restore nested indentation
+            self._update_display()  # restores count label visibility + colors
+
 
 class TagGroupRow(GroupRow):
     """Virtual, read-only group row derived from connection tags.
@@ -1256,6 +1293,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._tint_provider = None
         self._color_badge_provider = None
         self._color_dot_provider = None
+        self._avatar = None
+        self._compact = False
         self._indent_level = 0
         self._group_display_mode = None
         self._row_margin_base = None
@@ -1291,6 +1330,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
         info_box.set_valign(Gtk.Align.CENTER)  # Center vertically relative to icon
+        self._info_box = info_box
 
         self.nickname_label = Gtk.Label()
         self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
@@ -1926,6 +1966,100 @@ class ConnectionRow(Gtk.ListBoxRow):
             )
 
         self._apply_group_color_style()
+        if getattr(self, '_compact', False):
+            self._refresh_compact_status()
+
+    def _is_online(self) -> bool:
+        from .connection_manager import ConnectionState
+        try:
+            return self.connection.get_status() == ConnectionState.CONNECTED
+        except Exception:
+            return bool(getattr(self.connection, 'is_connected', False))
+
+    def _refresh_compact_status(self) -> None:
+        """Restyle the compact avatar/icon for the current connection state and
+        keep the group-color widgets suppressed (they don't fit the strip)."""
+        online = self._is_online()
+        if self._avatar is not None:
+            if online:
+                self._avatar.add_css_class('sidebar-avatar-online')
+            else:
+                self._avatar.remove_css_class('sidebar-avatar-online')
+        self.connection_icon.remove_css_class('conn-status-up')
+        if online:
+            self.connection_icon.add_css_class('conn-status-up')
+        self.color_dot.set_visible(False)
+        self.color_badge.set_visible(False)
+
+    def set_compact(self, compact: bool) -> None:
+        """Collapse the row to a single avatar/icon (minimal sidebar) or restore.
+
+        Idempotent for restore; when already compact, re-runs so a changed
+        ``ui.sidebar_minimal_row_style`` takes effect immediately.
+        """
+        compact = bool(compact)
+        if not compact and not getattr(self, '_compact', False):
+            return
+        self._compact = compact
+        content = self._content_box
+
+        if not compact:
+            content.set_halign(Gtk.Align.FILL)
+            content.set_margin_start(12)
+            content.set_margin_end(12)
+            if self._avatar is not None:
+                self._avatar.set_visible(False)
+            self._info_box.set_visible(True)
+            self.indicator_box.set_visible(True)
+            self.file_manager_button.set_visible(True)
+            self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
+            self.connection_icon.remove_css_class('conn-status-up')
+            try:
+                self.connection_icon.set_visible(
+                    bool(self.config.get_setting('ui.sidebar_show_connection_icon', True)))
+            except Exception:
+                self.connection_icon.set_visible(True)
+            self.set_tooltip_text(None)
+            self._apply_group_display_mode()  # restore nested indentation
+            self.update_status()  # restores status_icon + group-color widgets
+            return
+
+        style = 'initials'
+        try:
+            style = str(self.config.get_setting('ui.sidebar_minimal_row_style', 'initials')).lower()
+        except Exception:
+            pass
+        if style not in ('initials', 'icon'):
+            style = 'initials'
+
+        content.set_halign(Gtk.Align.CENTER)
+        content.set_margin_start(0)
+        content.set_margin_end(0)
+        self.set_margin_start(0)  # flatten nested-group indentation in the strip
+        self._info_box.set_visible(False)
+        self.indicator_box.set_visible(False)
+        self.color_badge.set_visible(False)
+        self.color_dot.set_visible(False)
+        self.file_manager_button.set_visible(False)
+        self.status_icon.set_visible(False)
+        self.set_tooltip_text(self.connection.nickname)
+
+        if style == 'initials':
+            if self._avatar is None:
+                self._avatar = Adw.Avatar(size=28, show_initials=True)
+                self._avatar.set_text(self.connection.nickname or '?')
+                self._avatar.set_valign(Gtk.Align.CENTER)
+                self._avatar.add_css_class('sidebar-avatar')
+                content.prepend(self._avatar)
+            self._avatar.set_visible(True)
+            self.connection_icon.set_visible(False)
+        else:  # icon
+            if self._avatar is not None:
+                self._avatar.set_visible(False)
+            self.connection_icon.set_icon_size(Gtk.IconSize.LARGE)
+            self.connection_icon.set_visible(True)
+
+        self._refresh_compact_status()
 
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
@@ -3585,6 +3719,7 @@ def _build_sidebar_header(window, sidebar_box):
     header_handle = Gtk.WindowHandle()
     header_handle.set_hexpand(True)
     header_handle.set_child(header)
+    window._sidebar_header_handle = header_handle
     sidebar_box.append(header_handle)
 
 def _build_sidebar_search(window, sidebar_box):
@@ -4196,7 +4331,8 @@ def _build_sidebar_toolbar(window, sidebar_box):
     # Add both toolbars to main toolbar
     toolbar.append(window.connection_toolbar)
     toolbar.append(window.group_toolbar)
-    
+
+    window._sidebar_toolbar_box = toolbar
     sidebar_box.append(toolbar)
 
 def _assemble_sidebar_shell(window, sidebar_box):
@@ -4211,6 +4347,7 @@ def _assemble_sidebar_shell(window, sidebar_box):
     sidebar_title_label = Gtk.Label(label='SSH Pilot')
     sidebar_title_label.add_css_class('title')
     sidebar_title_label.set_xalign(0.0)
+    window._sidebar_title_label = sidebar_title_label
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
     sidebar_toolbar_view = Adw.ToolbarView()
@@ -4227,6 +4364,7 @@ def build_sidebar(window):
     # Ensure sidebar box expands to use full allocated width from NavigationSplitView
     sidebar_box.set_hexpand(True)
     sidebar_box.set_vexpand(True)
+    window._sidebar_box = sidebar_box
 
     _build_sidebar_header(window, sidebar_box)
     _build_sidebar_search(window, sidebar_box)

@@ -57,6 +57,14 @@ class WindowActions:
     def on_toggle_sidebar_action(self, action, param):
         """Handle sidebar toggle action (for keyboard shortcuts)"""
         try:
+            # From the icon strip, F9 expands back to the full sidebar.
+            if getattr(self, '_sidebar_minimal', False) and hasattr(self, 'set_sidebar_minimal'):
+                self.set_sidebar_minimal(False)
+                if hasattr(self, '_cancel_pending_sidebar_hide'):
+                    self._cancel_pending_sidebar_hide()
+                if hasattr(self, 'sidebar_toggle_button'):
+                    self.sidebar_toggle_button.set_active(False)
+                return
             # Get current sidebar visibility
             if hasattr(self, 'split_view') and hasattr(self, '_toggle_sidebar_visibility'):
                 split_variant = getattr(self, '_split_variant', '')
