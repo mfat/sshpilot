@@ -1288,8 +1288,7 @@ class GroupRow(Gtk.ListBoxRow):
             self.expand_button.set_visible(False)
             self.icon.set_visible(False)
             # Round folder-icon avatar, matching the connection avatars but with
-            # an icon instead of initials (AdwAvatar shows icon-name when
-            # show-initials is False).
+            # an icon instead of initials.
             if self._avatar is None:
                 icon_name = 'folder-symbolic'
                 try:

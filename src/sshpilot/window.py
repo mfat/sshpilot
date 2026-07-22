@@ -1579,24 +1579,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
 
-    def _set_sidebar_clipping(self, enabled: bool, chrome: bool = True) -> None:
+    def _set_sidebar_clipping(self, enabled: bool) -> None:
         """Flip the sidebar's scrollers between clip (EXTERNAL) and fit (NEVER).
 
         Clipping is only wanted *during* the expand animation, so full-width
         rows/chrome can be revealed by the widening instead of forcing the
         sidebar to their minimum width. At rest the fit behaviour must return so
         rows ellipsize to the sidebar width and toolbar buttons spread.
-
-        ``chrome=False`` toggles only the connection list, leaving the
-        header/toolbar clipped.
         """
         hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
-        targets = [('connection_scrolled', Gtk.PolicyType.AUTOMATIC)]
-        if chrome:
-            targets += [
-                ('_sidebar_header_clip', Gtk.PolicyType.NEVER),
-                ('_sidebar_toolbar_clip', Gtk.PolicyType.NEVER),
-            ]
+        targets = (
+            ('connection_scrolled', Gtk.PolicyType.AUTOMATIC),
+            ('_sidebar_header_clip', Gtk.PolicyType.NEVER),
+            ('_sidebar_toolbar_clip', Gtk.PolicyType.NEVER),
+        )
         for attr, vpol in targets:
             sw = getattr(self, attr, None)
             if sw is not None:
