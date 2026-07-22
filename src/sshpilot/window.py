@@ -2953,8 +2953,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return False
         return self.open_cli_connect_resolved(resolved)
 
-    def open_cli_connect_resolved(self, resolved):
-        """Start a connection tab for an already-resolved CLI target."""
+    def open_cli_connect_resolved(self, resolved, sftp=False):
+        """Open an already-resolved CLI target: file manager if *sftp*, else a tab."""
+        if sftp:
+            self._open_manage_files_for_connection(resolved.connection)
+            return True
         self.terminal_manager.connect_to_host(
             resolved.connection, force_new=True)
         return True

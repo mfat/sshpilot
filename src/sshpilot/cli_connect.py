@@ -35,6 +35,7 @@ class CliConnectOptions:
     verbose: bool = False
     quiet: bool = False
     isolated: bool = False
+    sftp: bool = False
     log_gtk_warnings: bool = False
     fatal_warnings: bool = False
     diagnostics: bool = False
@@ -110,6 +111,7 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
             "  sshpilot user@hostname\n"
             "  sshpilot -p 2222 user@hostname\n"
             "  sshpilot ssh -J bastion user@hostname\n"
+            "  sshpilot --sftp user@hostname   (open in the file manager)\n"
             "\n"
             "On successful connect to a host/user not already in ssh config,\n"
             "sshPilot offers to save a new connection.\n"
@@ -138,6 +140,10 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
         '--isolated', action='store_true',
         help='Use isolated SSH configuration',
     )
+    parser.add_argument(
+        '--sftp', action='store_true',
+        help='Open the destination in the file manager instead of a terminal',
+    )
     diagnostics = parser.add_argument_group(
         'diagnostics', 'Capture extra logs to help diagnose bugs')
     diagnostics.add_argument(
@@ -161,6 +167,7 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
         verbose=bool(args.verbose),
         quiet=bool(args.quiet),
         isolated=bool(args.isolated),
+        sftp=bool(args.sftp),
         log_gtk_warnings=bool(args.log_gtk_warnings),
         fatal_warnings=bool(args.fatal_warnings),
         diagnostics=bool(args.diagnostics),

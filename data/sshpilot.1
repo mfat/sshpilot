@@ -43,6 +43,9 @@ Only show warnings and errors (overrides config).
 .B \-\-isolated
 Use an isolated SSH configuration.
 .TP
+.B \-\-sftp
+Open the destination in the file manager (SFTP) instead of a terminal tab.
+.TP
 .B \-\-log\-gtk\-warnings
 Also capture lower-severity GTK/GLib info and debug messages.
 .TP
@@ -66,6 +69,7 @@ sshpilot \-p 2222 user@host
 sshpilot \-i ~/.ssh/id_ed25519 user@host
 sshpilot \-p 2222 \-i ~/.ssh/id_ed25519 \-J bastion user@host
 sshpilot ssh \-J bastion user@host
+sshpilot \-\-sftp user@host
 .RE
 .fi
 .PP

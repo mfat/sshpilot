@@ -542,7 +542,7 @@ class SshPilotApplication(Adw.Application):
 
         # Only now start a connection / open a tab.
         try:
-            window.open_cli_connect_resolved(resolved)
+            window.open_cli_connect_resolved(resolved, sftp=opts.sftp)
         except Exception as exc:
             logger.exception('CLI connect open failed')
             return _cli_fail(str(exc) or 'failed to open connection')
