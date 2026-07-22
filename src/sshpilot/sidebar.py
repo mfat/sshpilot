@@ -278,9 +278,21 @@ def install_sidebar_css():
           }
         }
 
-        /* Minimal (icon-only) sidebar: ring around a connected connection's
-           avatar. box-shadow follows the avatar's circle so it reads as a ring. */
-        avatar.sidebar-avatar-online {
+        /* Minimal (icon-only) sidebar avatars: a plain circle we colour
+           ourselves (AdwAvatar's per-name hashed colour can't be overridden and
+           clashes with group colours). Neutral fill by default; group rows get
+           their colour via a per-widget provider (see _set_avatar_color). */
+        .sidebar-avatar {
+          min-width: 28px;
+          min-height: 28px;
+          border-radius: 9999px;
+          background-color: alpha(@window_fg_color, 0.15);
+          color: @window_fg_color;
+          font-weight: bold;
+        }
+
+        /* Ring around a connected connection's avatar. */
+        .sidebar-avatar.sidebar-avatar-online {
           box-shadow: 0 0 0 2px @success_color;
         }
 
@@ -580,12 +592,37 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     row.color_dot.set_visible(True)
 
 
-def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
-    """Paint a sidebar avatar's circle with ``rgba`` (or clear the override).
+def _avatar_initials(name: Optional[str]) -> str:
+    """One or two uppercase initials from a nickname (e.g. 'Prod Web' -> 'PW')."""
+    text = (name or '').strip()
+    if not text:
+        return '?'
+    parts = text.split()
+    if len(parts) >= 2:
+        return (parts[0][:1] + parts[1][:1]).upper()
+    return parts[0][:1].upper()
 
-    AdwAvatar's per-name hashed color lives in libadwaita's base stylesheet;
-    a provider on the widget's own style context at USER priority overrides it.
-    ``background-image: none`` clears the built-in gradient.
+
+def _make_avatar(*, initials: Optional[str] = None, icon_name: Optional[str] = None) -> Gtk.Widget:
+    """A round avatar we style ourselves: a Label of initials or a folder icon."""
+    if icon_name is not None:
+        from sshpilot import icon_utils
+        widget = icon_utils.new_image_from_icon_name(icon_name)
+        widget.set_pixel_size(16)
+    else:
+        widget = Gtk.Label(label=initials or '?')
+    widget.add_css_class('sidebar-avatar')
+    widget.set_halign(Gtk.Align.CENTER)
+    widget.set_valign(Gtk.Align.CENTER)
+    return widget
+
+
+def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
+    """Paint a group avatar's circle with ``rgba`` (or clear back to neutral).
+
+    A provider on the widget's own style context at USER priority overrides the
+    default ``.sidebar-avatar`` fill; white foreground keeps the folder icon
+    legible on the coloured circle.
     """
     old = getattr(avatar, '_color_provider', None)
     if old is not None:
@@ -603,9 +640,9 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     provider = Gtk.CssProvider()
     provider.load_from_data(
         (
-            "avatar.sidebar-avatar {"
-            "  background-image: none;"
+            ".sidebar-avatar {"
             f"  background-color: {color};"
+            "  color: #ffffff;"
             "}"
         ).encode("utf-8")
     )
@@ -1227,10 +1264,7 @@ class GroupRow(Gtk.ListBoxRow):
                         icon_name = self.group_info['icon']
                 except Exception:
                     pass
-                self._avatar = Adw.Avatar(size=28, show_initials=False)
-                self._avatar.set_icon_name(icon_name)
-                self._avatar.set_valign(Gtk.Align.CENTER)
-                self._avatar.add_css_class('sidebar-avatar')
+                self._avatar = _make_avatar(icon_name=icon_name)
                 content.prepend(self._avatar)
             self._avatar.set_visible(True)
             self.set_tooltip_text(str(self.group_info.get('name', '')))
@@ -2111,10 +2145,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         if style == 'initials':
             if self._avatar is None:
-                self._avatar = Adw.Avatar(size=28, show_initials=True)
-                self._avatar.set_text(self.connection.nickname or '?')
-                self._avatar.set_valign(Gtk.Align.CENTER)
-                self._avatar.add_css_class('sidebar-avatar')
+                self._avatar = _make_avatar(
+                    initials=_avatar_initials(self.connection.nickname))
                 content.prepend(self._avatar)
             self._avatar.set_visible(True)
             self.connection_icon.set_visible(False)

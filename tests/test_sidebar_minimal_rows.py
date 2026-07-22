@@ -62,7 +62,8 @@ def _make_group():
 def test_group_compact_creates_folder_icon_avatar(monkeypatch):
     row, mod = _make_group()
     fake_avatar = MagicMock()
-    monkeypatch.setattr(mod.Adw, 'Avatar', lambda **kw: fake_avatar)
+    make_avatar = MagicMock(return_value=fake_avatar)
+    monkeypatch.setattr(mod, '_make_avatar', make_avatar)
     # Color styling touches real GTK CSS on the widget; stub it out.
     sentinel_rgba = object()
     monkeypatch.setattr(mod, '_resolve_group_color_by_id', lambda *a: sentinel_rgba)
@@ -74,9 +75,8 @@ def test_group_compact_creates_folder_icon_avatar(monkeypatch):
     row.set_compact(True)
 
     assert row._avatar is fake_avatar
-    fake_avatar.set_icon_name.assert_called_with('folder-symbolic')
-    # Groups use an icon, never initials.
-    fake_avatar.set_text.assert_not_called()
+    # Groups use a folder icon, never initials.
+    assert make_avatar.call_args.kwargs == {'icon_name': 'folder-symbolic'}
     row._content.prepend.assert_called_with(fake_avatar)
     row.icon.set_visible.assert_called_with(False)
     row.set_tooltip_text.assert_called_with('Servers')
@@ -111,15 +111,25 @@ def test_restore_reapplies_nested_indentation():
 def test_compact_initials_style_creates_named_avatar(monkeypatch):
     row, mod = _make('initials')
     fake_avatar = MagicMock()
-    monkeypatch.setattr(mod.Adw, 'Avatar', lambda **kw: fake_avatar)
+    make_avatar = MagicMock(return_value=fake_avatar)
+    monkeypatch.setattr(mod, '_make_avatar', make_avatar)
 
     row.set_compact(True)
 
     assert row._avatar is fake_avatar
-    fake_avatar.set_text.assert_called_with('Prod Web')
+    # Initials derived from the nickname, not a hashed AdwAvatar.
+    assert make_avatar.call_args.kwargs == {'initials': 'PW'}
     row._content_box.prepend.assert_called_with(fake_avatar)
     fake_avatar.set_visible.assert_called_with(True)
     row.connection_icon.set_visible.assert_called_with(False)
+
+
+def test_avatar_initials():
+    mod = importlib.import_module('sshpilot.sidebar')
+    assert mod._avatar_initials('Prod Web') == 'PW'
+    assert mod._avatar_initials('sdf') == 'S'
+    assert mod._avatar_initials('  ') == '?'
+    assert mod._avatar_initials('alpha beta gamma') == 'AB'
 
 
 def test_restore_shows_labels_and_refreshes_status():
