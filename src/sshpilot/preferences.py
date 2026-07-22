@@ -1364,6 +1364,9 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('ui.sidebar_mode', mode)
             win = self.parent_window
             if win is not None and hasattr(win, 'set_sidebar_minimal'):
+                # An explicit mode change wins over a pending "re-collapse after
+                # search" restore, which would otherwise override this choice.
+                win._search_expanded_sidebar = False
                 win.set_sidebar_minimal(mode == 'minimal')
         except Exception:
             logger.debug("sidebar mode change failed", exc_info=True)
