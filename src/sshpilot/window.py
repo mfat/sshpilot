@@ -1221,7 +1221,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.header_bar.set_show_start_title_buttons(True)
         self.header_bar.set_show_end_title_buttons(True)
         # Empty title so Adw doesn't repeat the window title beside tab actions.
-        self.header_bar.set_title_widget(Gtk.Box())
+        # In minimal-strip mode the "SSH Pilot" title moves here (the sidebar
+        # header is too narrow) — see _apply_sidebar_minimal_chrome.
+        self._content_empty_title = Gtk.Box()
+        self.header_bar.set_title_widget(self._content_empty_title)
 
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
@@ -1630,13 +1633,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Hide the header/search/toolbar chrome that can't fit the strip."""
         show = not minimal
         # The "SSH Pilot" title label has a natural min width that floors how
-        # narrow the sidebar can get; hide it so the strip can shrink fully.
+        # narrow the sidebar can get; hide it so the strip can shrink fully, and
+        # move the title to the content header bar instead.
         title = getattr(self, '_sidebar_title_label', None)
         if title is not None:
             try:
                 title.set_visible(show)
             except Exception:
                 pass
+        self._move_title_to_content_header(minimal)
         for attr in ('_sidebar_header_handle', 'search_container', '_sidebar_toolbar_box'):
             widget = getattr(self, attr, None)
             if widget is None:
@@ -1655,6 +1660,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 (box.add_css_class if minimal else box.remove_css_class)('sidebar-minimal')
             except Exception:
                 pass
+
+    def _move_title_to_content_header(self, minimal: bool) -> None:
+        """Put the "SSH Pilot" title in the content header while the sidebar is a
+        strip (its own header is too narrow), and clear it again when full."""
+        hb = getattr(self, 'header_bar', None)
+        if hb is None:
+            return
+        if minimal and not hasattr(self, '_content_title_label'):
+            self._content_title_label = Gtk.Label(label='SSH Pilot')
+            self._content_title_label.add_css_class('title')
+        title = getattr(self, '_content_title_label', None)
+        empty = getattr(self, '_content_empty_title', None)
+        try:
+            hb.set_title_widget(title if minimal else empty)
+        except Exception:
+            pass
 
     def _apply_sidebar_minimal_rows(self, minimal: bool) -> None:
         """Toggle compact rendering on every connection/group row."""
