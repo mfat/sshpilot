@@ -274,6 +274,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
         self._sidebar_minimal = False   # icon-only strip state
+        self._sidebar_overlay = False   # overlay (covers content) vs side-by-side
         self._sidebar_width_animation = None
         self._context_menu_row = None
         self._context_menu_popover = None
@@ -3892,6 +3893,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to toggle sidebar: {e}")
 
     # --- Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior) ------------
+    def set_sidebar_overlay(self, overlay: bool) -> None:
+        """Switch the sidebar between its two reusable presentation modes.
+
+        - ``False`` (default): side-by-side — the sidebar takes its own column
+          and the content is laid out beside it.
+        - ``True`` (overlay): the sidebar is drawn as an overlay *above* the
+          content (covering it) with a dimming scrim; the content keeps the full
+          width underneath.
+
+        This is a pure presentation switch — sidebar visibility is untouched, so
+        it composes with show/hide and with minimal mode. Only the
+        ``AdwOverlaySplitView`` backend supports a true overlay; other split
+        variants stay side-by-side.
+        """
+        overlay = bool(overlay)
+        self._sidebar_overlay = overlay
+        sv = getattr(self, 'split_view', None)
+        if sv is None:
+            return
+        if getattr(self, '_split_variant', '') == 'overlay' and hasattr(sv, 'set_collapsed'):
+            try:
+                sv.set_collapsed(overlay)
+            except Exception:
+                logger.debug("set_sidebar_overlay failed", exc_info=True)
+
     def _sidebar_mode_is_minimal(self) -> bool:
         """True when the icon strip is the user's configured resting mode."""
         try:
