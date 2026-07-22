@@ -4534,10 +4534,10 @@ def _build_sidebar_toolbar(window, sidebar_box):
     expand_button = Gtk.Button()
     icon_utils.set_button_icon(expand_button, 'pan-end-symbolic')
     expand_button.set_tooltip_text(_('Expand sidebar'))
-    expand_button.add_css_class('flat')
-    expand_button.set_hexpand(True)
-    expand_button.set_margin_start(6)
-    expand_button.set_margin_end(6)
+    # A circular button reads as an obvious control (matching the avatar strip),
+    # not a faint chevron; centered in the strip's bottom toolbar slot.
+    expand_button.add_css_class('circular')
+    expand_button.set_halign(Gtk.Align.CENTER)
     expand_button.set_margin_top(6)
     expand_button.set_margin_bottom(6)
     expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
