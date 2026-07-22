@@ -643,14 +643,14 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
 
 
 def _avatar_initials(name: Optional[str]) -> str:
-    """One or two uppercase initials from a nickname (e.g. 'Prod Web' -> 'PW')."""
+    """Two uppercase initials from a nickname ('Prod Web' -> 'PW', 'prod' -> 'PR')."""
     text = (name or '').strip()
     if not text:
         return '?'
     parts = text.split()
     if len(parts) >= 2:
         return (parts[0][:1] + parts[1][:1]).upper()
-    return parts[0][:1].upper()
+    return parts[0][:2].upper()
 
 
 def _make_avatar(*, initials: Optional[str] = None, icon_name: Optional[str] = None) -> Gtk.Widget:

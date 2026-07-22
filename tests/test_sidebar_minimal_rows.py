@@ -142,7 +142,8 @@ def test_compact_avatar_filled_with_group_color(monkeypatch):
 def test_avatar_initials():
     mod = importlib.import_module('sshpilot.sidebar')
     assert mod._avatar_initials('Prod Web') == 'PW'
-    assert mod._avatar_initials('sdf') == 'S'
+    assert mod._avatar_initials('sdf') == 'SD'
+    assert mod._avatar_initials('x') == 'X'
     assert mod._avatar_initials('  ') == '?'
     assert mod._avatar_initials('alpha beta gamma') == 'AB'
 
