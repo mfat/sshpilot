@@ -1714,20 +1714,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return widest
 
     def _toggle_sidebar_minimal_peek(self) -> None:
-        """Temporarily flip full<->minimal (header double-click). Reverts after
-        ``_SIDEBAR_PEEK_TIMEOUT_MS``; a second double-click re-arms or, if it
-        lands back on the original mode, cancels the revert."""
-        if getattr(self, '_sidebar_peek_source', None) is None:
-            # First flip of a peek — remember where to return to.
-            self._sidebar_peek_revert_to = getattr(self, '_sidebar_minimal', False)
+        """Temporarily peek the full sidebar from the minimal strip (header
+        double-click), reverting to minimal after ``_SIDEBAR_PEEK_TIMEOUT_MS``.
+        Only active in minimal mode — full mode already shows everything."""
+        if not getattr(self, '_sidebar_minimal', False):
+            return
         self._cancel_sidebar_peek()
         self._applying_sidebar_peek = True
         try:
-            self.set_sidebar_minimal(not getattr(self, '_sidebar_minimal', False))
+            self.set_sidebar_minimal(False)
         finally:
             self._applying_sidebar_peek = False
-        if getattr(self, '_sidebar_minimal', False) == self._sidebar_peek_revert_to:
-            return  # flipped back to the original mode; nothing to revert
         self._sidebar_peek_source = GLib.timeout_add(
             _SIDEBAR_PEEK_TIMEOUT_MS, self._on_sidebar_peek_timeout)
 
@@ -1735,7 +1732,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._sidebar_peek_source = None
         self._applying_sidebar_peek = True
         try:
-            self.set_sidebar_minimal(getattr(self, '_sidebar_peek_revert_to', False))
+            self.set_sidebar_minimal(True)
         finally:
             self._applying_sidebar_peek = False
         return False

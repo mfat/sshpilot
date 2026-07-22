@@ -4544,9 +4544,10 @@ def _assemble_sidebar_shell(window, sidebar_box):
     window._sidebar_title_label = sidebar_title_label
     window.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
-    # Double-click the sidebar header temporarily flips full<->minimal (a peek
-    # that reverts after a timeout). Capture phase + claim on the second press so
-    # it runs before (and instead of) the titlebar's default double-click-to-maximize.
+    # Double-click the sidebar header peeks the full sidebar from the minimal
+    # strip (reverts after a timeout); a no-op in full mode. Capture phase + claim
+    # on the second press so it runs before (and instead of) the titlebar's default
+    # double-click-to-maximize.
     header_toggle = Gtk.GestureClick()
     header_toggle.set_button(Gdk.BUTTON_PRIMARY)
     header_toggle.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)

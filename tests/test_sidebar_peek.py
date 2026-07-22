@@ -41,28 +41,29 @@ def _fake_window(monkeypatch):
     return w, timers
 
 
-def test_peek_flips_then_reverts(monkeypatch):
+def test_peek_from_minimal_then_reverts(monkeypatch):
     w, timers = _fake_window(monkeypatch)
+    w._sidebar_minimal = True                   # start on the minimal strip
     w._toggle_sidebar_minimal_peek()
-    assert w._sidebar_minimal is True          # flipped to minimal
+    assert w._sidebar_minimal is False          # peeked to full
     assert w._sidebar_peek_source in timers["live"]
 
     timers["live"][w._sidebar_peek_source]()   # fire the timeout
-    assert w._sidebar_minimal is False          # reverted to full
+    assert w._sidebar_minimal is True           # reverted to minimal
     assert w._sidebar_peek_source is None
 
 
-def test_second_click_back_to_original_cancels(monkeypatch):
-    w, _ = _fake_window(monkeypatch)
-    w._toggle_sidebar_minimal_peek()            # full -> minimal (armed)
-    w._toggle_sidebar_minimal_peek()            # minimal -> full (original)
-    assert w._sidebar_minimal is False
-    assert w._sidebar_peek_source is None        # no revert pending
+def test_no_peek_when_full(monkeypatch):
+    w, _ = _fake_window(monkeypatch)             # starts full
+    w._toggle_sidebar_minimal_peek()
+    assert w._sidebar_minimal is False           # unchanged
+    assert getattr(w, '_sidebar_peek_source', None) is None
 
 
 def test_external_mode_change_cancels_pending_revert(monkeypatch):
     w, _ = _fake_window(monkeypatch)
-    w._toggle_sidebar_minimal_peek()            # full -> minimal, revert armed
+    w._sidebar_minimal = True
+    w._toggle_sidebar_minimal_peek()            # minimal -> full, revert armed
     assert w._sidebar_peek_source is not None
-    w.set_sidebar_minimal(False)                # user picks full elsewhere
-    assert w._sidebar_peek_source is None        # revert-to-full can't clobber
+    w.set_sidebar_minimal(True)                 # user picks minimal elsewhere
+    assert w._sidebar_peek_source is None        # revert-to-minimal can't clobber
