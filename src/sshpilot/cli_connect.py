@@ -101,9 +101,11 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
     """
     import argparse
 
+    from . import __version__
+
     parser = argparse.ArgumentParser(
         prog='sshpilot',
-        description='sshPilot — SSH connection manager',
+        description='SSH Pilot — SSH connection manager',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Connection targets use the same forms as OpenSSH:\n"
@@ -126,6 +128,9 @@ def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:
             "  --fatal-warnings     abort at the first GTK/GLib warning\n"
         ),
         allow_abbrev=False,
+    )
+    parser.add_argument(
+        '--version', action='version', version=f'SSH Pilot {__version__}',
     )
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
