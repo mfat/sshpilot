@@ -51,6 +51,16 @@ try:
 except Exception:
     _SUPPORTS_STANDALONE_OKLAB = False
 
+
+def _standalone_glyph_color(color: str) -> str:
+    """A group colour adjusted for legible foreground contrast, using Adwaita's
+    theme-aware standalone-color derivation where the stack supports it (see
+    ``_SUPPORTS_STANDALONE_OKLAB``); otherwise the plain colour. ``color`` is any
+    CSS colour string (hex, rgb(), ...)."""
+    if _SUPPORTS_STANDALONE_OKLAB:
+        return f"oklab(from {color} var(--standalone-color-oklab))"
+    return color
+
 logger = logging.getLogger(__name__)
 
 
@@ -699,18 +709,12 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     except Exception:
         return
     provider = Gtk.CssProvider()
-    # Adwaita's own standalone-color derivation: clamp the group colour's Oklab
-    # lightness (theme-aware) so the glyph stays legible on the neutral circle in
-    # both light and dark, keeping its hue. Older GTK/libadwaita lack this, so
-    # fall back to the plain group colour there (see _SUPPORTS_STANDALONE_OKLAB).
-    if _SUPPORTS_STANDALONE_OKLAB:
-        glyph_color = f"oklab(from {color} var(--standalone-color-oklab))"
-    else:
-        glyph_color = color
+    # Standalone-color derivation keeps the glyph legible on the neutral circle
+    # in both themes (falls back to the plain colour on older stacks).
     provider.load_from_data(
         (
             ".sidebar-avatar {"
-            f"  color: {glyph_color};"
+            f"  color: {_standalone_glyph_color(color)};"
             "}"
         ).encode("utf-8")
     )
@@ -1267,7 +1271,7 @@ class GroupRow(Gtk.ListBoxRow):
 
         css_data = f"""
         image.sidebar-color-badge {{
-          color: {color_hex};
+          color: {_standalone_glyph_color(color_hex)};
         }}
         """
 
@@ -1810,7 +1814,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         css_data = f"""
         image.sidebar-color-badge {{
-          color: {color_hex};
+          color: {_standalone_glyph_color(color_hex)};
         }}
         """
 
