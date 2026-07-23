@@ -117,6 +117,20 @@ class WindowFileManagerMixin:
 
             controller._host_picked_callback = _on_host_picked
 
+    def _open_builtin_file_manager(self, connection=None):
+        """Open the embedded SFTP manager, bypassing the external preference."""
+        if connection is None:
+            if not self.connection_manager.get_connections():
+                self.get_application().activate_action('new-connection')
+                return
+            self._open_file_manager_with_picker()
+            return
+        if Capability.FILE_TRANSFER not in capabilities_for(connection):
+            logger.debug("Built-in files unavailable for protocol %r",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
+        self._open_manage_files_now_for_connection(connection, force_builtin=True)
+
     def _open_manage_files_for_connection(self, connection):
         """Open files for the supplied connection.
 
@@ -608,7 +622,7 @@ class WindowFileManagerMixin:
         else:
             dialog.present()
 
-    def _open_manage_files_now_for_connection(self, connection):
+    def _open_manage_files_now_for_connection(self, connection, force_builtin=False):
         """Actually open the file manager (no prompts, no gating)."""
 
         nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
@@ -640,7 +654,9 @@ class WindowFileManagerMixin:
             force_internal = False
 
         use_internal = False
-        if not open_externally:
+        if force_builtin:
+            use_internal = True
+        elif not open_externally:
             use_internal = force_internal or should_use_in_app_file_manager()
 
         placeholder_info = None

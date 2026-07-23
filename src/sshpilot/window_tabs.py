@@ -1507,7 +1507,13 @@ class WindowTabsMixin:
         if terminal is None:
             return
 
+        def _omni_is_visible() -> bool:
+            omni = getattr(self, '_omni_search', None)
+            return bool(omni is not None and omni.popup.visible)
+
         def _focus_attempt(_source=None) -> bool:
+            if _omni_is_visible():
+                return GLib.SOURCE_REMOVE
             try:
                 # Use backend's grab_focus method if available (works for both VTE and PyXterm.js)
                 if hasattr(terminal, 'backend') and terminal.backend:
@@ -1523,6 +1529,8 @@ class WindowTabsMixin:
 
         # Try immediate focus
         try:
+            if _omni_is_visible():
+                return
             if hasattr(terminal, 'backend') and terminal.backend:
                 terminal.backend.grab_focus()
             elif hasattr(terminal, 'vte') and terminal.vte:

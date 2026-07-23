@@ -38,6 +38,9 @@ class WelcomePage(Gtk.Overlay):
 
         self._pinned_box = None
         self._recent_box = None
+        self.omni_home = Adw.Bin()
+        self.omni_home.set_hexpand(True)
+        self.omni_home.set_size_request(-1, 48)
 
         self.connection_manager.connect_after('connection-added', self._on_connection_added)
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
@@ -133,15 +136,15 @@ class WelcomePage(Gtk.Overlay):
         inner.set_margin_top(24)
         inner.set_margin_bottom(24)
 
-        hero_btn = Gtk.Button()
-        hero_btn.set_child(icon_utils.new_image_from_icon_name('utilities-terminal-symbolic', 28))
-        hero_btn.add_css_class('flat')
-        hero_btn.set_halign(Gtk.Align.CENTER)
-        hero_btn.set_margin_bottom(28)
-        hero_btn.set_can_focus(False)
-        hero_btn.set_tooltip_text(self._tooltip(_('Open Local Terminal'), 'local-terminal'))
-        hero_btn.connect('clicked', lambda *_a: self.window.terminal_manager.show_local_terminal())
-        inner.append(hero_btn)
+        search_clamp = Adw.Clamp()
+        search_clamp.set_maximum_size(600)
+        search_clamp.set_tightening_threshold(420)
+        search_clamp.set_hexpand(True)
+        search_clamp.set_margin_start(24)
+        search_clamp.set_margin_end(24)
+        search_clamp.set_margin_bottom(28)
+        search_clamp.set_child(self.omni_home)
+        inner.append(search_clamp)
 
         lists = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         lists.set_hexpand(True)

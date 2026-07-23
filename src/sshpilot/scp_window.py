@@ -132,11 +132,14 @@ class ScpWindowController:
 
     def on_scp_button_clicked(self, button):
         """Prompt the user to choose between uploading or downloading with scp."""
+        selected_row = self.window.connection_list.get_selected_row()
+        connection = getattr(selected_row, 'connection', None) if selected_row else None
+        if connection is not None:
+            self.open_for_connection(connection)
+
+    def open_for_connection(self, connection):
+        """Open the SCP transfer chooser for an explicit connection."""
         try:
-            selected_row = self.window.connection_list.get_selected_row()
-            if not selected_row:
-                return
-            connection = getattr(selected_row, 'connection', None)
             if not connection:
                 return
 

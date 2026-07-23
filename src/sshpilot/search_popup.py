@@ -60,6 +60,7 @@ class Position:
     RIGHT = "right"
     CENTER = "center"
     TOP = "top"
+    ANCHORED = "anchored"
 
 
 class Backdrop:
@@ -83,6 +84,10 @@ _PRESETS = {
                    backdrop=Backdrop.DIM, search_only=False, show_groups=True),
     "spotlight": dict(position=Position.TOP, width=560, height=None,
                       backdrop=Backdrop.DIM, search_only=True, show_groups=False),
+    "omni": dict(position=Position.CENTER, width=None, height=520,
+                 backdrop=Backdrop.DIM, search_only=False, show_groups=False),
+    "anchored": dict(position=Position.ANCHORED, width=None, height=None,
+                     backdrop=Backdrop.NONE, search_only=False, show_groups=False),
 }
 
 
@@ -123,6 +128,7 @@ class SearchPopup:
         self._backdrop = Backdrop.NONE
         self._search_only = False
         self._show_groups = True
+        self._anchor = None
 
         self._build()
 
@@ -177,6 +183,11 @@ class SearchPopup:
     def set_show_groups(self, enabled: bool) -> None:
         self._show_groups = bool(enabled)
 
+    def set_anchor(self, widget: Optional[Gtk.Widget]) -> None:
+        """Set the widget whose bounds define ``anchored`` placement."""
+        self._anchor = widget
+        self._apply_layout()
+
     def set_position(self, position: str) -> None:
         self._position = position
         self._apply_layout()
@@ -219,6 +230,30 @@ class SearchPopup:
     def _apply_layout(self):
         if self._panel is None:
             return
+        self._panel.set_margin_start(0)
+        self._panel.set_margin_end(0)
+        self._panel.set_margin_top(0)
+        self._panel.set_margin_bottom(0)
+        anchor = getattr(self, "_anchor", None)
+        if self._position == Position.ANCHORED and anchor is not None:
+            try:
+                translated = anchor.translate_coordinates(self._overlay, 0, 0)
+                if len(translated) == 2:
+                    x, y = translated
+                    ok = True
+                else:
+                    ok, x, y = translated
+            except (AttributeError, TypeError, ValueError):
+                ok, x, y = False, 0, 0
+            if ok:
+                self._panel.set_halign(Gtk.Align.START)
+                self._panel.set_valign(Gtk.Align.START)
+                self._panel.set_margin_start(max(0, int(x)))
+                self._panel.set_margin_top(max(0, int(y)))
+                width = max(1, anchor.get_width())
+                height = self._height if self._height is not None else -1
+                self._panel.set_size_request(width, height)
+                return
         halign, valign, top_margin = _ALIGN.get(
             self._position, (Gtk.Align.START, Gtk.Align.FILL, 0))
         self._panel.set_halign(halign)
@@ -238,6 +273,14 @@ class SearchPopup:
 
     # -- lifecycle --------------------------------------------------------
 
+    def _set_home_content(self, content) -> None:
+        """Support both ToolbarView-style and single-child home containers."""
+        setter = getattr(self._home, "set_content", None)
+        if callable(setter):
+            setter(content)
+            return
+        self._home.set_child(content)
+
     @property
     def visible(self) -> bool:
         """True while the content is detached into the popup."""
@@ -251,7 +294,7 @@ class SearchPopup:
         self._apply_layout()
 
         # Reparent content: home -> panel.
-        self._home.set_content(None)
+        self._set_home_content(None)
         self._panel.append(self._content)
         self._on_shown()
 
@@ -264,6 +307,10 @@ class SearchPopup:
             if widget is not None:
                 GLib.idle_add(lambda: (widget.grab_focus(), GLib.SOURCE_REMOVE)[1])
 
+    def refresh_layout(self) -> None:
+        """Recompute panel geometry after its owner changes presentation."""
+        self._apply_layout()
+
     def hide(self) -> None:
         """Re-attach ``content`` to its home, hiding the panel. No-op if not
         shown."""
@@ -275,7 +322,7 @@ class SearchPopup:
         # Reparent content: panel -> home.
         if self._content.get_parent() is self._panel:
             self._panel.remove(self._content)
-        self._home.set_content(self._content)
+        self._set_home_content(self._content)
         self._on_hidden()
 
         self._visible = False

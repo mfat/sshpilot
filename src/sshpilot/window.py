@@ -1396,9 +1396,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.nav_view.connect('popped', self._on_navigation_popped)
             except Exception:
                 logger.debug('Could not connect NavigationView::popped', exc_info=True)
-            main_box.append(self.nav_view)
+            root_widget = self.nav_view
         else:
-            main_box.append(self._content_overlay)
+            root_widget = self._content_overlay
+
+        # The omni-search must float above both the work page and pages pushed
+        # onto NavigationView (Preferences, editors, plugin pages).
+        self._global_overlay = Gtk.Overlay()
+        self._global_overlay.set_hexpand(True)
+        self._global_overlay.set_vexpand(True)
+        self._global_overlay.set_child(root_widget)
+        main_box.append(self._global_overlay)
+
+        from .omni_search import OmniSearchController
+        self._omni_search = OmniSearchController(
+            self,
+            self._global_overlay,
+            self.welcome_view.omni_home,
+        )
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -3071,6 +3086,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _focus_connection_list_first_row(self):
         """Focus the first row of the connection list so arrow-key navigation works immediately."""
         try:
+            omni = getattr(self, '_omni_search', None)
+            if omni is not None and omni.popup.visible:
+                return False
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
             if not self.connection_list.get_parent():
@@ -3226,6 +3244,49 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.toast_overlay.add_toast(toast)
         except Exception as e:
             logger.error(f"Failed to activate search entry: {e}")
+
+    def activate_omni_search(self):
+        """Show and focus the global omni-search."""
+        omni = getattr(self, '_omni_search', None)
+        if omni is not None:
+            omni.show()
+
+    def open_omni_transfer_intent(self, intent, connection=None):
+        """Route command-like transfer searches to their existing GUI flows."""
+        if intent == 'sftp':
+            self._open_builtin_file_manager(connection)
+            return
+        if intent == 'ssh-copy-id':
+            if connection is None:
+                self.show_connection_selection_for_ssh_copy()
+            else:
+                from .sshcopyid_window import SshCopyIdWindow
+                SshCopyIdWindow(
+                    self, connection, self.key_manager, self.connection_manager,
+                )
+            return
+        if intent != 'scp':
+            return
+        if connection is not None:
+            self.scp_controller.open_for_connection(connection)
+            return
+
+        connections = self.connection_manager.get_connections()
+        if not connections:
+            self.get_application().activate_action('new-connection')
+            return
+        from .host_picker import show_host_picker
+        anchor = (
+            getattr(self, 'menu_button', None)
+            or getattr(self, 'sidebar_toggle_button', None)
+        )
+        if anchor is not None:
+            show_host_picker(
+                self,
+                anchor,
+                self.scp_controller.open_for_connection,
+                connections=connections,
+            )
 
     def focus_search_entry(self):
         """Toggle search on/off and show appropriate toast notification."""

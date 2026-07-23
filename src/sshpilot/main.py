@@ -1090,9 +1090,7 @@ class SshPilotApplication(Adw.Application):
         """Handle search action"""
         logger.debug("Search action triggered")
         if self.props.active_window:
-            # The shortcut only ever turns search on (and focuses it). Hiding
-            # the search bar is done exclusively via the toolbar search button.
-            self.props.active_window.activate_search_entry()
+            self.props.active_window.activate_omni_search()
 
     def on_new_key(self, action, param):
         """Handle new SSH key action"""
