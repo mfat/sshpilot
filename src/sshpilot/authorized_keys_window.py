@@ -18,6 +18,7 @@ from .authorized_keys_parser import (
 )
 from .authorized_keys_service import AuthorizedKeysService, LocalAuthorizedKeysService
 from .sftp_utils import _is_password_auth_enabled
+from .shortcut_utils import install_esc_to_close
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,7 @@ class AuthorizedKeysWindow(Adw.Window):
         )
         controller.add_shortcut(save_shortcut)
         self.add_controller(controller)
+        install_esc_to_close(self)
 
     # ------------------------------------------------------------------
     # Manager signal handlers (kept named so we can disconnect them)

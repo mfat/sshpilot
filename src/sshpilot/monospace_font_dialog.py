@@ -34,6 +34,9 @@ class MonospaceFontDialog(Adw.Window):
         # parent must be the window it lives in.
         from .window_dialogs import parent_window
         self.set_transient_for(parent_window(parent))
+        from .shortcut_utils import install_esc_to_close, install_search_esc
+        install_esc_to_close(self)
+        install_search_esc(self.search_entry, self)
 
         # Store callback
         self.callback = None

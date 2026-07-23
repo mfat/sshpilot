@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from .format_utils import _human_size, _human_time, _mode_to_octal, _mode_to_str
+from ..shortcut_utils import install_esc_to_close
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class PropertiesDialog(Adw.Window):
         self._parent_window = parent
         self._sftp_manager = sftp_manager
         self.set_transient_for(parent)
+        install_esc_to_close(self)
 
         # Positioning is delegated to the window manager via the modal /
         # transient_for properties; GTK4 has no manual window placement.

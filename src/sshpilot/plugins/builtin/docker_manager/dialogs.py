@@ -25,6 +25,7 @@ gi.require_version("Adw", "1")
 from gi.repository import GLib, Gtk, Adw, Gdk  # noqa: E402
 
 from . import widgets as w  # noqa: E402
+from ....shortcut_utils import install_esc_to_close  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -63,6 +64,7 @@ class _DialogBase(Adw.Window):
         self.set_modal(True)
         if parent is not None:
             self.set_transient_for(parent)
+        install_esc_to_close(self)
         self._toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Label(label=title))
