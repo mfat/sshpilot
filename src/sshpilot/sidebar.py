@@ -1592,7 +1592,21 @@ class ConnectionRow(Gtk.ListBoxRow):
         # reveals and styles it once the connection has a real state.
         self.status_icon.set_visible(False)
         content.append(self.status_icon)
-        
+
+        # Warning shown when global SSH config overrides/adds settings for this
+        # host. Populated lazily by the background EffectiveConfigChecker; hidden
+        # until a result arrives, so it adds nothing to row build. Clicking it
+        # opens the effective-config viewer for this connection.
+        self.effective_warning_icon = icon_utils.new_button_from_icon_name("warning-outline-symbolic")
+        self.effective_warning_icon.add_css_class("flat")
+        self.effective_warning_icon.add_css_class("warning")
+        self.effective_warning_icon.set_valign(Gtk.Align.CENTER)
+        self.effective_warning_icon.set_tooltip_text(
+            _("Global SSH config changes this connection's effective settings — click to compare"))
+        self.effective_warning_icon.set_visible(False)
+        self.effective_warning_icon.connect("clicked", self._on_effective_warning_clicked)
+        content.append(self.effective_warning_icon)
+
         # Now add the content to main_box
         main_box.append(content)
         
@@ -2257,6 +2271,25 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.connection_icon.set_visible(True)
 
         self._refresh_compact_status()
+
+    def set_effective_warning(self, differs: bool) -> None:
+        """Show/hide the "global config overrides this host" warning icon."""
+        try:
+            self.effective_warning_icon.set_visible(bool(differs))
+        except Exception:
+            pass
+
+    def _on_effective_warning_clicked(self, _button) -> None:
+        """Open the effective-config viewer for this connection."""
+        try:
+            window = self.get_root()
+            cm = getattr(window, 'connection_manager', None)
+            if cm is None:
+                return
+            from .effective_config_dialog import EffectiveConfigDialog
+            EffectiveConfigDialog.for_connection(window, self.connection, cm)
+        except Exception:
+            logger.debug("Failed to open effective config viewer from row", exc_info=True)
 
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
@@ -4136,6 +4169,7 @@ def _attach_connection_list_context_menu(window):
                         menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: window.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                         menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: window.on_duplicate_connection_action(None, None)),
                         menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()),
+                        menu.add_item('success-small-symbolic', _('Verify Configuration'), lambda: window.on_verify_configuration_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
                     )
 
                 def _has_wol_mac(c):

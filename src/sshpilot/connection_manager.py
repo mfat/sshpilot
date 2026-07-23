@@ -456,33 +456,57 @@ class Connection:
         return ''
 
     def _resolve_config_override_path(self) -> Optional[str]:
-        """Return an absolute path to the SSH config override, if any."""
+        """Return the SSH config file to pass as ``-F`` for this connection.
 
-        config_override: Optional[str] = None
+        This must be the ROOT config — the file ssh reads top-down, from which it
+        follows the whole ``Include`` tree and applies ``Host *`` globals — NOT the
+        host's own ``source`` file, which may be an included fragment. Passing a
+        fragment to ``-F`` makes ssh start below the root and silently drop root
+        globals and sibling includes. ``source`` stays the per-host file used for
+        *editing* (writing a block back to the right file).
+        """
 
-        source_path = str(getattr(self, 'source', '') or '')
-        if source_path:
-            expanded_source = os.path.abspath(
-                os.path.expanduser(os.path.expandvars(source_path))
-            )
-            if os.path.exists(expanded_source):
-                config_override = expanded_source
+        def _abs(path: str) -> str:
+            return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
 
-        if not config_override and getattr(self, 'isolated_mode', False):
-            isolated_candidate = os.path.join(get_config_dir(), 'ssh_config')
-            expanded_isolated = os.path.abspath(
-                os.path.expanduser(os.path.expandvars(isolated_candidate))
-            )
-            if os.path.exists(expanded_isolated):
-                config_override = expanded_isolated
+        def _existing(path: str) -> Optional[str]:
+            if not path:
+                return None
+            expanded = _abs(path)
+            return expanded if os.path.exists(expanded) else None
 
-        if self.isolated_config and self.config_root:
-            config_override = self.config_root
+        # 1. Recorded root config (isolated mode records config_root).
+        root = _existing(str(getattr(self, 'config_root', '') or ''))
+        if root:
+            return root
 
-        if config_override:
-            return os.path.abspath(
-                os.path.expanduser(os.path.expandvars(config_override))
-            )
+        # 2. The owning manager's ssh_config_path — the root this host was loaded
+        #    from, which Include's the host's own fragment. Preferred over source
+        #    so ssh follows the full Include tree and applies Host * globals.
+        manager = getattr(self, '_connection_manager', None)
+        if manager is not None:
+            root = _existing(str(getattr(manager, 'ssh_config_path', '') or ''))
+            if root:
+                return root
+
+        # 3. The connection's own source file — covers standalone connections
+        #    (including a standalone isolated config) that have no manager/root.
+        source = _existing(str(getattr(self, 'source', '') or ''))
+        if source:
+            return source
+
+        # 4. Synthesized isolated-config path for unsourced isolated connections.
+        #    get_config_dir() is guarded so it can never throw past source above.
+        if getattr(self, 'isolated_mode', False):
+            try:
+                candidate = os.path.join(get_config_dir(), 'ssh_config')
+            except Exception:
+                candidate = ''
+            isolated = _existing(candidate)
+            if isolated:
+                return isolated
+
+        # 5. Normal unsourced connection: no override (ssh uses its default).
         return None
 
     def collect_identity_file_candidates(
@@ -2273,6 +2297,50 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.debug(f"Failed to inspect host block for '{host_identifier}': {e}")
         return None
+
+    def collect_host_block_lines(self, host_identifier: str) -> List[str]:
+        """Combined lines of every *concrete* Host stanza matching *host_identifier*.
+
+        OpenSSH merges repeated ``Host US`` blocks across the root config and its
+        includes, so the authored ("own") config for an alias is all of them, in
+        read order — not just the first. Wildcard/pattern blocks (``Host *``,
+        ``Host US*``) are excluded: they are globals and only match via patterns,
+        never as a literal token, so they never appear here.
+        """
+        host_identifier = (host_identifier or '').strip()
+        if not host_identifier:
+            return []
+        try:
+            files = resolve_ssh_config_files(self.ssh_config_path) if self.ssh_config_path else []
+        except Exception:
+            files = [self.ssh_config_path] if self.ssh_config_path else []
+
+        combined: List[str] = []
+        for path in files:
+            try:
+                if not path or not os.path.exists(path):
+                    continue
+                with open(path) as f:
+                    lines = f.readlines()
+            except Exception:
+                continue
+            i = 0
+            while i < len(lines):
+                kw, full_value = _split_keyword(lines[i].lstrip())
+                if kw == 'host':
+                    try:
+                        host_names = shlex.split(full_value)
+                    except ValueError:
+                        host_names = [h for h in full_value.split() if h]
+                    if host_identifier in host_names:
+                        start = i
+                        i += 1
+                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
+                            i += 1
+                        combined.extend(line.rstrip('\n') for line in lines[start:i])
+                        continue
+                i += 1
+        return combined
 
     def _split_host_block(self, original_host: str, new_data: Dict[str, Any], target_path: str) -> bool:
         """Remove *original_host* from its group and append a new block."""

@@ -42,6 +42,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _clear_undo_history(buffer) -> None:
+    """Drop the undo/redo queue after a load/save, across GtkSource versions.
+
+    GtkSource 5 (GTK4) removed ``begin/end_not_undoable_action``; the GTK4
+    ``Gtk.TextBuffer`` replacement is ``begin/end_irreversible_action``, whose
+    ``begin`` also clears any existing undo queue. Fall back to the old API for
+    GtkSource 4, and to toggling ``enable-undo`` as a last resort.
+    """
+    try:
+        if hasattr(buffer, 'begin_irreversible_action'):
+            buffer.begin_irreversible_action()
+            buffer.end_irreversible_action()
+        elif hasattr(buffer, 'begin_not_undoable_action'):
+            buffer.begin_not_undoable_action()
+            buffer.end_not_undoable_action()
+        elif hasattr(buffer, 'set_enable_undo'):
+            buffer.set_enable_undo(False)
+            buffer.set_enable_undo(True)
+    except (AttributeError, TypeError) as e:
+        logger.debug(f"Failed to reset undo stack: {e}")
+
+
 _BUNDLED_LANG_PATH = "resource:///io/github/mfat/sshpilot/language-specs/"
 _lang_manager = None
 
@@ -736,15 +758,9 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_text(text)
             self._buffer.set_modified(False)
             
-            # Reset undo/redo state after loading
-            # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
-            # This ensures file loading doesn't create undo history entries
+            # Reset undo/redo state after loading so it isn't undoable.
             if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-                try:
-                    self._buffer.begin_not_undoable_action()
-                    self._buffer.end_not_undoable_action()
-                except (AttributeError, TypeError) as e:
-                    logger.debug(f"Failed to reset undo stack: {e}")
+                _clear_undo_history(self._buffer)
                 # Update undo/redo button states
                 if hasattr(self, '_undo_button'):
                     self._undo_button.set_sensitive(False)
@@ -970,14 +986,8 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo stack after save
-            # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
-            # This ensures saving doesn't create undo history entries
             if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-                try:
-                    self._buffer.begin_not_undoable_action()
-                    self._buffer.end_not_undoable_action()
-                except (AttributeError, TypeError) as e:
-                    logger.debug(f"Failed to reset undo stack: {e}")
+                _clear_undo_history(self._buffer)
                 # Update undo/redo button states
                 if hasattr(self, '_undo_button'):
                     self._undo_button.set_sensitive(False)
@@ -1041,14 +1051,8 @@ class RemoteFileEditorWindow(Adw.Window):
         self._buffer.set_modified(False)
         
         # Reset undo stack after save
-        # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
-        # This ensures saving doesn't create undo history entries
         if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-            try:
-                self._buffer.begin_not_undoable_action()
-                self._buffer.end_not_undoable_action()
-            except (AttributeError, TypeError) as e:
-                logger.debug(f"Failed to reset undo stack: {e}")
+            _clear_undo_history(self._buffer)
             # Update undo/redo button states
             if hasattr(self, '_undo_button'):
                 self._undo_button.set_sensitive(False)

@@ -230,6 +230,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
 
+        # Lazy, cached, off-main-thread check of each connection against its
+        # effective SSH config (shows a warning icon on mismatched rows).
+        from .effective_config_check import EffectiveConfigChecker
+        self.effective_config_checker = EffectiveConfigChecker(
+            self.connection_manager, on_result=self._on_effective_config_result)
+
         # Menu section that plugin pages append to (built before create_menu
         # runs during setup_ui; the host mutates it on bind).
         self._plugins_menu_section = Gio.Menu()
@@ -938,6 +944,51 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Return connection objects targeted by the current action."""
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
+
+    def _on_effective_config_result(self, nickname: str, differs: bool):
+        """Background checker result (main thread): update matching rows' icons."""
+        try:
+            for conn, rows in list(self.connection_rows.items()):
+                if getattr(conn, 'nickname', None) != nickname:
+                    continue
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, 'set_effective_warning'):
+                        row.set_effective_warning(differs)
+        except Exception:
+            logger.debug("Failed to apply effective-config result", exc_info=True)
+        return False
+
+    def _invalidate_effective_check(self, nickname, connection=None):
+        """Drop a cached effective-config result; optionally recompute now.
+
+        Called when a connection's own block changes. Pass ``connection`` to
+        re-check it immediately (rows updated via the result callback).
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None or not nickname:
+            return
+        try:
+            checker.invalidate(nickname)
+            if connection is not None:
+                checker.schedule(connection)
+        except Exception:
+            logger.debug("effective-config invalidate failed", exc_info=True)
+
+    def _prime_effective_warning(self, row, connection):
+        """Set the row's warning icon from cache and enqueue a background check.
+
+        Both operations are O(1) — no ssh runs on the row-build path.
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None:
+            return
+        try:
+            status = checker.status(getattr(connection, 'nickname', '') or '')
+            if status is not None and hasattr(row, 'set_effective_warning'):
+                row.set_effective_warning(status)
+            checker.schedule(connection)
+        except Exception:
+            logger.debug("Failed to prime effective-config warning", exc_info=True)
 
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
@@ -2917,10 +2968,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_list.append(row)
         # A connection can appear under multiple groups, so keep a list of rows
         self.connection_rows.setdefault(connection, []).append(row)
-        
+
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
+        # Cheap: cache read + background enqueue (no ssh on this path).
+        self._prime_effective_warning(row, connection)
 
         return row
 
@@ -3174,14 +3228,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Error focusing connection list: {e}")
 
-    def _expand_sidebar_for_search(self):
-        """Give search room when the sidebar is the icon strip.
+    def _expand_sidebar_for_search(self, sidebar_hidden: bool = False):
+        """Give search room when the sidebar is unavailable as a full pane.
 
         Detaches the sidebar into the floating popup (looks like the expanded
         sidebar, floats over the content) rather than expanding the split view —
-        so the terminal never resizes. Remembered so it re-attaches on close.
+        so the terminal never resizes. This applies both to minimal mode and a
+        sidebar manually hidden with F9. Remembered so it re-attaches on close.
         """
-        self._search_expanded_sidebar = getattr(self, '_sidebar_minimal', False)
+        self._search_expanded_sidebar = (
+            getattr(self, '_sidebar_minimal', False) or sidebar_hidden
+        )
         if self._search_expanded_sidebar:
             self._search_popup.show()
 
@@ -3216,16 +3273,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not (hasattr(self, 'search_entry') and self.search_entry):
                 return
 
-            # If the sidebar is hidden, reveal it first
-            if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                if self.sidebar_toggle_button.get_active():
-                    self.sidebar_toggle_button.set_active(False)
+            sidebar_hidden = bool(
+                getattr(self, 'sidebar_toggle_button', None)
+                and self.sidebar_toggle_button.get_active()
+            )
 
             was_visible = True
             if hasattr(self, 'search_container') and self.search_container:
                 was_visible = self.search_container.get_visible()
-                if not was_visible:
-                    self._expand_sidebar_for_search()
+                if not was_visible or sidebar_hidden:
+                    self._expand_sidebar_for_search(sidebar_hidden)
                     self.search_container.set_visible(True)
 
             # Always focus and select any existing text so typing replaces it
@@ -3292,16 +3349,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Toggle search on/off and show appropriate toast notification."""
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
-                # If sidebar is hidden, show it first
-                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(False)
+                sidebar_hidden = bool(
+                    getattr(self, 'sidebar_toggle_button', None)
+                    and self.sidebar_toggle_button.get_active()
+                )
                 
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
                     is_visible = self.search_container.get_visible()
                     if not is_visible:
-                        self._expand_sidebar_for_search()
+                        self._expand_sidebar_for_search(sidebar_hidden)
                     self.search_container.set_visible(not is_visible)
 
                     if not is_visible:
@@ -3505,6 +3562,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                     # Reload SSH config (this creates new Connection objects)
                     self.connection_manager.load_ssh_config()
+                    # Globals may have changed: drop all cached checks; the
+                    # list rebuild below re-primes every row.
+                    checker = getattr(self, 'effective_config_checker', None)
+                    if checker is not None:
+                        checker.invalidate()
                     new_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
 
                     # Detect nickname changes by matching connections on hostname/username/port
@@ -5074,6 +5136,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to edit connection: {e}")
 
+    def on_verify_configuration_action(self, action=None, param=None):
+        """Open the effective-config viewer for the context-menu connection."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            from .effective_config_dialog import EffectiveConfigDialog
+            EffectiveConfigDialog.for_connection(self, connection, self.connection_manager)
+        except Exception:
+            logger.debug("Failed to open effective config viewer", exc_info=True)
+
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
@@ -5553,14 +5629,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     old_connection._terminal_instance = terminal
                     self.terminal_manager.prompt_reconnect(old_connection)
                 _complete_save(True)
+                # Its own block changed: drop the stale result and recompute.
+                self._invalidate_effective_check(original_nickname)
+                self._invalidate_effective_check(connection_data.get('nickname'), old_connection)
+                self._warn_if_effective_config_differs(old_connection, connection_data)
 
             else:
                 # Create new connection (connection_manager owns persistence)
                 connection = self.connection_manager.create_connection(connection_data)
                 if connection is not None:
+                    # Fresh nickname isn't cached; rebuild re-primes it.
                     self.rebuild_connection_list()
                     logger.info(f"Created new connection: {connection_data['nickname']}")
                     _complete_save(True)
+                    self._warn_if_effective_config_differs(connection, connection_data)
                 else:
                     logger.error("Failed to save connection to SSH config")
                     _complete_save(False)
@@ -5570,6 +5652,92 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
     
+    def _warn_if_effective_config_differs(self, connection, connection_data):
+        """After a save, warn if global SSH config overrides/adds values for this
+        connection. Informational only — offers a diff view and a shortcut to the
+        SSH config editor. Best-effort: any failure is swallowed silently.
+
+        The two ``ssh -G`` resolutions run on a worker thread (they can block for
+        seconds on slow name resolution / ProxyJump); the dialog is presented
+        back on the GTK main thread via ``GLib.idle_add``.
+        """
+        try:
+            host = (connection_data.get('nickname')
+                    or getattr(connection, 'nickname', '') or '')
+            if not host:
+                return
+            from .effective_config_dialog import saved_connection_block
+            own_block = saved_connection_block(
+                self.connection_manager,
+                connection,
+                host=host,
+                fallback_data=connection_data,
+            )
+            # Resolve against the ROOT config (the file ssh reads top-down and
+            # that pulls in Include'd fragments + Host * globals). `source` may be
+            # an included fragment, which alone misses root/sibling globals.
+            config_file = getattr(connection, 'config_root', '') or None
+            if not config_file:
+                try:
+                    config_file = connection._resolve_config_override_path()
+                except Exception:
+                    config_file = None
+        except Exception:
+            logger.debug("effective-config diff setup failed", exc_info=True)
+            return
+
+        def _work():
+            try:
+                from .ssh_config_utils import diff_effective_config
+                result = diff_effective_config(host, config_file, own_block)
+            except Exception:
+                logger.debug("effective-config diff check failed", exc_info=True)
+                result = None
+            GLib.idle_add(self._present_effective_config_warning, host, result)
+
+        try:
+            threading.Thread(target=_work, name="effcfg-diff", daemon=True).start()
+        except Exception:
+            logger.debug("Could not start effective-config check thread", exc_info=True)
+
+    def _present_effective_config_warning(self, host, result):
+        """Show the global-config warning dialog on the GTK main thread."""
+        try:
+            from gettext import gettext as _
+
+            if not result or not result.get('has_diff'):
+                return False
+
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Global SSH config may change this connection"),
+                body=_(
+                    "Some of the values you set may be overridden or added by "
+                    "your global SSH configuration (for example a 'Host *' "
+                    "block or an included file). SSH will use the effective "
+                    "values, not only what you entered here."
+                ),
+            )
+            dialog.add_response('dismiss', _('Dismiss'))
+            dialog.add_response('view', _('View differences…'))
+            dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('view')
+
+            def _on_response(dlg, response):
+                if response == 'view':
+                    try:
+                        from .effective_config_dialog import EffectiveConfigDialog
+                        EffectiveConfigDialog.for_result(self, host, result)
+                    except Exception:
+                        logger.debug("Failed to open effective-config diff", exc_info=True)
+
+            dialog.connect('response', _on_response)
+            dialog.present()
+        except Exception:
+            logger.debug("Failed to present effective-config warning", exc_info=True)
+        return False
+
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
         try:

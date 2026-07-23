@@ -301,53 +301,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.content_box.append(self.empty_label)
         
         self.append(scrolled)
-        
-        # Config preview section
-        self.setup_config_preview()
-        
-    def setup_config_preview(self):
-        """Setup the SSH config preview section"""
-        self.preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.preview_box.set_margin_top(12)
-        
-        preview_title = Gtk.Label(label=_("Generated SSH Config"))
-        preview_title.set_markup(_("<b>Generated SSH Config</b>"))
-        preview_title.set_halign(Gtk.Align.START)
-        
-        # Text view for config preview
-        self.config_text_view = Gtk.TextView()
-        self.config_text_view.set_editable(False)
-        self.config_text_view.set_monospace(True)
-        self.config_text_view.add_css_class("monospace")
-        self.config_text_view.add_css_class("small-font")
-        
-        # Apply CSS for smaller font
-        css_provider = Gtk.CssProvider()
-        css_provider.load_from_data(b"""
-        .small-font {
-            font-size: 11px;
-        }
-        """)
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            css_provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        
-        preview_scrolled = Gtk.ScrolledWindow()
-        preview_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        preview_scrolled.set_min_content_height(150)
-        preview_scrolled.set_child(self.config_text_view)
-        
-        self.preview_box.append(preview_title)
-        self.preview_box.append(preview_scrolled)
 
-        # Always show preview
-        self.append(self.preview_box)
-        
-        
-
-        
     def create_config_entry_row(self):
         """Create a new config entry row"""
         row_grid = Gtk.Grid()
@@ -462,62 +416,13 @@ class SSHConfigAdvancedTab(Gtk.Box):
             next_row.key_dropdown.grab_focus()
         
     def update_config_preview(self):
-        """Update the SSH config preview"""
-        # Get the complete SSH config from the connection manager
-        if hasattr(self, 'connection_manager') and self.connection_manager:
-            try:
-                # Get current connection data from the parent dialog
-                parent_dialog = self.get_ancestor(Adw.Window)
-                if parent_dialog and hasattr(parent_dialog, 'connection'):
-                    connection = parent_dialog.connection
-                    if connection:
-                        # Generate the complete SSH config
-                        extra_config = self.get_extra_ssh_config()
-                        logger.debug(f"Advanced tab extra_ssh_config: {extra_config}")
-                        
-                        config_data = {
-                            'nickname': getattr(connection, 'nickname', 'your-host-name'),
-                            'hostname': getattr(connection, 'hostname', getattr(connection, 'host', '')),
-                            'username': getattr(connection, 'username', ''),
-                            'port': getattr(connection, 'port', 22),
-                            'auth_method': getattr(connection, 'auth_method', 0),
-                            'key_select_mode': getattr(connection, 'key_select_mode', 0),
-                            'keyfile': getattr(connection, 'keyfile', ''),
-                            'certificate': getattr(connection, 'certificate', ''),
-                            'x11_forwarding': getattr(connection, 'x11_forwarding', False),
-                            'local_command': getattr(connection, 'local_command', ''),
-                            'remote_command': getattr(connection, 'remote_command', ''),
-                            'forwarding_rules': getattr(connection, 'forwarding_rules', []),
-                            'extra_ssh_config': extra_config
-                        }
-                        
-                        logger.debug(f"Config data for preview: {config_data}")
-                        
-                        # Generate the complete SSH config block
-                        config_text = self.connection_manager.format_ssh_config_entry(config_data)
-                        
-                        logger.debug(f"Generated config text: {config_text}")
-                        
-                        buffer = self.config_text_view.get_buffer()
-                        buffer.set_text(config_text)
-                        return
-            except Exception as e:
-                logger.error(f"Error updating SSH config preview: {e}")
-        
-        # Fallback: show only the extra config parameters
-        config_lines = []
-        
-        for row_grid in self.config_entries:
-            key = self._get_dropdown_selected_text(row_grid.key_dropdown)
-            value = row_grid.value_entry.get_text().strip()
-            
-            if key and value and key != "Select SSH option...":
-                config_lines.append(f"    {key} {value}")
-                
-        config_text = "Host your-host-name\n" + "\n".join(config_lines)
-        
-        buffer = self.config_text_view.get_buffer()
-        buffer.set_text(config_text)
+        """No-op retained for existing callers.
+
+        The live "Generated SSH Config" dump was replaced by the on-demand
+        effective-config viewer opened from the dialog's "Verify Configuration"
+        button; nothing needs to be refreshed as fields change.
+        """
+        return
 
     def get_config_entries(self):
         """Get all valid config entries"""
