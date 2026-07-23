@@ -137,9 +137,9 @@ class EffectiveConfigChecker:
         host = getattr(connection, 'nickname', '') or ''
         if not host:
             return None
-        from .effective_config_dialog import connection_config_data
+        from .effective_config_dialog import saved_connection_block
         from .ssh_config_utils import diff_effective_config
-        own_block = self._cm.format_ssh_config_entry(connection_config_data(connection))
+        own_block = saved_connection_block(self._cm, connection)
         try:
             root_config = connection._resolve_config_override_path()
         except Exception:

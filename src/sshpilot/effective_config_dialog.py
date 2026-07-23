@@ -70,6 +70,34 @@ def connection_config_data(connection) -> dict:
     }
 
 
+def saved_connection_block(connection_manager, connection, *,
+                           host: Optional[str] = None,
+                           fallback_data: Optional[dict] = None) -> str:
+    """Return a saved connection's authored Host block.
+
+    Reading the stanza back from its source file makes the saved block the
+    canonical side of the comparison. Reformat from connection data only when
+    the stanza cannot be read (for example while creating a new connection).
+    """
+    nickname = host or getattr(connection, 'nickname', '') or ''
+    source = getattr(connection, 'source', None)
+    try:
+        details = connection_manager.get_host_block_details(nickname, source)
+        lines = (details or {}).get('lines') or []
+        if lines:
+            return '\n'.join(lines)
+    except Exception:
+        logger.debug("Could not read saved Host block for %s", nickname,
+                     exc_info=True)
+
+    data = (
+        fallback_data
+        if fallback_data is not None
+        else connection_config_data(connection)
+    )
+    return connection_manager.format_ssh_config_entry(data)
+
+
 def _compute(host: str, own_block: str, root_config: Optional[str],
              is_new: bool) -> Optional[dict]:
     """Resolve own-block vs. effective config (blocking; run off the main thread).
@@ -140,13 +168,13 @@ class EffectiveConfigDialog(Adw.Window):
         Builds the host's own block from the connection object and resolves the
         root config the real connection uses, then presents the two-pane viewer.
         """
-        config_data = connection_config_data(connection)
-        own_block = connection_manager.format_ssh_config_entry(config_data)
+        host = getattr(connection, 'nickname', '') or getattr(connection, 'host', '')
+        own_block = saved_connection_block(connection_manager, connection)
         try:
             root_config = connection._resolve_config_override_path()
         except Exception:
             root_config = None
-        dialog = cls(parent, host=config_data['nickname'] or '',
+        dialog = cls(parent, host=host,
                      own_block=own_block, root_config=root_config, is_new=False)
         dialog.present()
         return dialog

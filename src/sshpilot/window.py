@@ -5602,7 +5602,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     or getattr(connection, 'nickname', '') or '')
             if not host:
                 return
-            own_block = self.connection_manager.format_ssh_config_entry(connection_data)
+            from .effective_config_dialog import saved_connection_block
+            own_block = saved_connection_block(
+                self.connection_manager,
+                connection,
+                host=host,
+                fallback_data=connection_data,
+            )
             # Resolve against the ROOT config (the file ssh reads top-down and
             # that pulls in Include'd fragments + Host * globals). `source` may be
             # an included fragment, which alone misses root/sibling globals.
