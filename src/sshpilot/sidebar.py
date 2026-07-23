@@ -688,10 +688,14 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     except Exception:
         return
     provider = Gtk.CssProvider()
+    # Adwaita's own standalone-color derivation: clamp the group colour's Oklab
+    # lightness (theme-aware) so the glyph stays legible on the neutral circle
+    # in both light and dark, keeping its hue. Needs GTK >= 4.16 relative colour
+    # syntax + libadwaita's --standalone-color-oklab (both present here).
     provider.load_from_data(
         (
             ".sidebar-avatar {"
-            f"  color: {color};"
+            f"  color: oklab(from {color} var(--standalone-color-oklab));"
             "}"
         ).encode("utf-8")
     )
