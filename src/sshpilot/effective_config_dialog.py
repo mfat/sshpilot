@@ -97,6 +97,42 @@ class EffectiveConfigDialog(Adw.Window):
 
     __gtype_name__ = "SshPilotEffectiveConfigDialog"
 
+    @classmethod
+    def for_connection(cls, parent, connection, connection_manager):
+        """Open the viewer for a saved connection (e.g. from the sidebar menu).
+
+        Builds the host's own block from the connection object and resolves the
+        root config the real connection uses, then presents the two-pane viewer.
+        """
+        config_data = {
+            'nickname': getattr(connection, 'nickname', '') or getattr(connection, 'host', ''),
+            'hostname': getattr(connection, 'hostname', '') or getattr(connection, 'host', ''),
+            'username': getattr(connection, 'username', ''),
+            'port': getattr(connection, 'port', 22),
+            'auth_method': getattr(connection, 'auth_method', 0),
+            'key_select_mode': getattr(connection, 'key_select_mode', 0),
+            'keyfile': getattr(connection, 'keyfile', ''),
+            'identity_files': getattr(connection, 'identity_files', None) or [],
+            'certificate': getattr(connection, 'certificate', ''),
+            'certificate_files': getattr(connection, 'certificate_files', None) or [],
+            'x11_forwarding': getattr(connection, 'x11_forwarding', False),
+            'proxy_jump': getattr(connection, 'proxy_jump', []) or [],
+            'forward_agent': getattr(connection, 'forward_agent', False),
+            'local_command': getattr(connection, 'local_command', ''),
+            'remote_command': getattr(connection, 'remote_command', ''),
+            'forwarding_rules': getattr(connection, 'forwarding_rules', []) or [],
+            'extra_ssh_config': getattr(connection, 'extra_ssh_config', ''),
+        }
+        own_block = connection_manager.format_ssh_config_entry(config_data)
+        try:
+            root_config = connection._resolve_config_override_path()
+        except Exception:
+            root_config = None
+        dialog = cls(parent, host=config_data['nickname'] or '',
+                     own_block=own_block, root_config=root_config, is_new=False)
+        dialog.present()
+        return dialog
+
     def __init__(self, parent, *, host: str, own_block: str,
                  root_config: Optional[str], is_new: bool) -> None:
         super().__init__()

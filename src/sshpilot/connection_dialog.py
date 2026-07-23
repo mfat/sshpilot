@@ -302,83 +302,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         self.append(scrolled)
 
-    def _build_preview_config_data(self, connection):
-        """Assemble the config dict for this host's own block (used by the viewer)."""
-        return {
-            'nickname': getattr(connection, 'nickname', 'your-host-name'),
-            'hostname': getattr(connection, 'hostname', getattr(connection, 'host', '')),
-            'username': getattr(connection, 'username', ''),
-            'port': getattr(connection, 'port', 22),
-            'auth_method': getattr(connection, 'auth_method', 0),
-            'key_select_mode': getattr(connection, 'key_select_mode', 0),
-            'keyfile': getattr(connection, 'keyfile', ''),
-            'identity_files': getattr(connection, 'identity_files', None) or [],
-            'certificate': getattr(connection, 'certificate', ''),
-            'x11_forwarding': getattr(connection, 'x11_forwarding', False),
-            'local_command': getattr(connection, 'local_command', ''),
-            'remote_command': getattr(connection, 'remote_command', ''),
-            'forwarding_rules': getattr(connection, 'forwarding_rules', []),
-            'extra_ssh_config': self.get_extra_ssh_config(),
-        }
-
-    def _preview_data_from_form(self, dialog):
-        """Core resolution-relevant fields read straight from the form.
-
-        Used when there is no saved connection object yet (creating a new one),
-        so the viewer can still show how global rules affect the host in progress.
-        """
-        def _txt(name):
-            row = getattr(dialog, name, None)
-            try:
-                return row.get_text().strip() if row is not None else ''
-            except Exception:
-                return ''
-        port = _txt('port_row')
-        return {
-            'nickname': _txt('nickname_row') or 'new-host',
-            'hostname': _txt('hostname_row'),
-            'username': _txt('username_row'),
-            'port': int(port) if port.isdigit() else 22,
-            'auth_method': 0,
-            'key_select_mode': 0,
-            'forwarding_rules': [],
-            'extra_ssh_config': self.get_extra_ssh_config(),
-        }
-
-    def _on_view_effective_clicked(self, _button):
-        """Open the two-pane effective-config viewer for the current host."""
-        try:
-            parent_dialog = self.get_ancestor(Adw.Window)
-            if not (self.connection_manager and parent_dialog):
-                return
-            connection = getattr(parent_dialog, 'connection', None)
-            if connection is not None:
-                config_data = self._build_preview_config_data(connection)
-                try:
-                    root_config = connection._resolve_config_override_path()
-                except Exception:
-                    root_config = None
-                is_new = not bool(getattr(parent_dialog, 'is_editing', False))
-            else:
-                # Brand-new connection: no object yet — read the form.
-                config_data = self._preview_data_from_form(parent_dialog)
-                root_config = getattr(self.connection_manager, 'ssh_config_path', None) or None
-                is_new = True
-
-            own_block = self.connection_manager.format_ssh_config_entry(config_data)
-            host = config_data.get('nickname') or ''
-
-            from .effective_config_dialog import EffectiveConfigDialog
-            dialog = EffectiveConfigDialog(
-                parent_dialog, host=host, own_block=own_block,
-                root_config=root_config, is_new=is_new)
-            dialog.present()
-        except Exception:
-            logger.debug("Failed to open effective config viewer", exc_info=True)
-
-        
-
-        
     def create_config_entry_row(self):
         """Create a new config entry row"""
         row_grid = Gtk.Grid()
@@ -1439,27 +1362,6 @@ class ConnectionDialog(
         self.cancel_button.connect("clicked", self.on_cancel_clicked)
         self.save_button.connect("clicked", self.on_save_clicked)
         self._save_buttons = [self.save_button]
-
-        # "Verify Configuration" — pinned to the LEFT of the bottom button bar
-        # (Cancel/Save stay right). Opens the effective-config viewer.
-        try:
-            button_box = self.save_button.get_parent()
-            if button_box is not None:
-                button_box.set_halign(Gtk.Align.FILL)
-                verify_button = Gtk.Button(label=_("Verify Configuration"))
-                verify_button.add_css_class("success")
-                verify_button.set_tooltip_text(
-                    _("Check this connection against effective SSH configuration"))
-                verify_button.set_halign(Gtk.Align.START)
-                verify_button.set_hexpand(True)
-                verify_button.connect(
-                    "clicked",
-                    lambda *_a: self.advanced_tab._on_view_effective_clicked(None))
-                button_box.prepend(verify_button)
-                self.verify_button = verify_button
-        except Exception:
-            logger.debug("Could not add Verify Configuration button", exc_info=True)
-
         self.setup_keyboard_shortcuts()
 
         # Install inline validators for key fields

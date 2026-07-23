@@ -4125,6 +4125,7 @@ def _attach_connection_list_context_menu(window):
                     menu.add_section(
                         menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: window.on_open_new_connection_action(None, None)),
                         menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: window.on_edit_connection_action(None, None)),
+                        menu.add_item('emblem-ok-symbolic', _('Verify Configuration'), lambda: window.on_verify_configuration_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_in_split_view_action(None, None)),
                         menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: window.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                         menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: window.on_duplicate_connection_action(None, None)),

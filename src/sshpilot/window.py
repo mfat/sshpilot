@@ -5013,6 +5013,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to edit connection: {e}")
 
+    def on_verify_configuration_action(self, action=None, param=None):
+        """Open the effective-config viewer for the context-menu connection."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            from .effective_config_dialog import EffectiveConfigDialog
+            EffectiveConfigDialog.for_connection(self, connection, self.connection_manager)
+        except Exception:
+            logger.debug("Failed to open effective config viewer", exc_info=True)
+
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
