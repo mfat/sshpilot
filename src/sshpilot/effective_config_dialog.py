@@ -34,6 +34,42 @@ _COLOR_REMOVED = "#c01c28"   # in the host block, dropped/overridden by globals
 _COLOR_ADDED = "#26a269"     # what SSH actually uses (added/overridden by globals)
 
 
+def connection_config_data(connection) -> dict:
+    """Build the format_ssh_config_entry input for a connection's own block.
+
+    Shared by the viewer launcher and the background effective-config checker so
+    both diff the exact same host block.
+    """
+    return {
+        'nickname': getattr(connection, 'nickname', '') or getattr(connection, 'host', ''),
+        'hostname': getattr(connection, 'hostname', '') or getattr(connection, 'host', ''),
+        'username': getattr(connection, 'username', ''),
+        'port': getattr(connection, 'port', 22),
+        'auth_method': getattr(connection, 'auth_method', 0),
+        'key_select_mode': getattr(connection, 'key_select_mode', 0),
+        'keyfile': getattr(connection, 'keyfile', ''),
+        'identity_files': getattr(connection, 'identity_files', None) or [],
+        'certificate': getattr(connection, 'certificate', ''),
+        'certificate_files': getattr(connection, 'certificate_files', None) or [],
+        'x11_forwarding': getattr(connection, 'x11_forwarding', False),
+        'proxy_jump': getattr(connection, 'proxy_jump', []) or [],
+        'forward_agent': getattr(connection, 'forward_agent', False),
+        'local_command': getattr(connection, 'local_command', ''),
+        'remote_command': getattr(connection, 'remote_command', ''),
+        'forwarding_rules': getattr(connection, 'forwarding_rules', []) or [],
+        'extra_ssh_config': getattr(connection, 'extra_ssh_config', ''),
+        # Agent / hardware-key sources and auth flags the writer also emits —
+        # omitting them makes the rebuilt block differ from the real one.
+        'identity_agent': getattr(connection, 'identity_agent', '') or '',
+        'add_keys_to_agent': getattr(connection, 'add_keys_to_agent', '') or '',
+        'pkcs11_provider': getattr(connection, 'pkcs11_provider', '') or '',
+        'security_key_provider': getattr(connection, 'security_key_provider', '') or '',
+        'pubkey_auth_no': getattr(connection, 'pubkey_auth_no', False),
+        'pre_command': getattr(connection, 'pre_command', '') or '',
+        'password': getattr(connection, 'password', '') or '',
+    }
+
+
 def _compute(host: str, own_block: str, root_config: Optional[str],
              is_new: bool) -> Optional[dict]:
     """Resolve own-block vs. effective config (blocking; run off the main thread).
@@ -104,25 +140,7 @@ class EffectiveConfigDialog(Adw.Window):
         Builds the host's own block from the connection object and resolves the
         root config the real connection uses, then presents the two-pane viewer.
         """
-        config_data = {
-            'nickname': getattr(connection, 'nickname', '') or getattr(connection, 'host', ''),
-            'hostname': getattr(connection, 'hostname', '') or getattr(connection, 'host', ''),
-            'username': getattr(connection, 'username', ''),
-            'port': getattr(connection, 'port', 22),
-            'auth_method': getattr(connection, 'auth_method', 0),
-            'key_select_mode': getattr(connection, 'key_select_mode', 0),
-            'keyfile': getattr(connection, 'keyfile', ''),
-            'identity_files': getattr(connection, 'identity_files', None) or [],
-            'certificate': getattr(connection, 'certificate', ''),
-            'certificate_files': getattr(connection, 'certificate_files', None) or [],
-            'x11_forwarding': getattr(connection, 'x11_forwarding', False),
-            'proxy_jump': getattr(connection, 'proxy_jump', []) or [],
-            'forward_agent': getattr(connection, 'forward_agent', False),
-            'local_command': getattr(connection, 'local_command', ''),
-            'remote_command': getattr(connection, 'remote_command', ''),
-            'forwarding_rules': getattr(connection, 'forwarding_rules', []) or [],
-            'extra_ssh_config': getattr(connection, 'extra_ssh_config', ''),
-        }
+        config_data = connection_config_data(connection)
         own_block = connection_manager.format_ssh_config_entry(config_data)
         try:
             root_config = connection._resolve_config_override_path()

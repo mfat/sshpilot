@@ -308,6 +308,24 @@ def diff_effective_config(
     if not own:
         return None
 
+    # Normalise leading ``~`` so a stored-expanded path (identity_files keeps the
+    # absolute form) doesn't read as a difference from a config that wrote ``~``.
+    # ssh -G reports these values verbatim, so the two sides can otherwise differ
+    # only by tilde vs. absolute. expanduser is a no-op on non-``~`` values.
+    def _expand(cfg):
+        out = {}
+        for key, value in cfg.items():
+            if isinstance(value, list):
+                out[key] = [os.path.expanduser(v) if isinstance(v, str) else v for v in value]
+            elif isinstance(value, str):
+                out[key] = os.path.expanduser(value)
+            else:
+                out[key] = value
+        return out
+
+    full = _expand(full)
+    own = _expand(own)
+
     def _as_list(value) -> List[str]:
         if value is None:
             return []

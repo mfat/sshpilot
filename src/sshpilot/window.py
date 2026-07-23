@@ -230,6 +230,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
 
+        # Lazy, cached, off-main-thread check of each connection against its
+        # effective SSH config (shows a warning icon on mismatched rows).
+        from .effective_config_check import EffectiveConfigChecker
+        self.effective_config_checker = EffectiveConfigChecker(
+            self.connection_manager, on_result=self._on_effective_config_result)
+
         # Menu section that plugin pages append to (built before create_menu
         # runs during setup_ui; the host mutates it on bind).
         self._plugins_menu_section = Gio.Menu()
@@ -938,6 +944,51 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Return connection objects targeted by the current action."""
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
+
+    def _on_effective_config_result(self, nickname: str, differs: bool):
+        """Background checker result (main thread): update matching rows' icons."""
+        try:
+            for conn, rows in list(self.connection_rows.items()):
+                if getattr(conn, 'nickname', None) != nickname:
+                    continue
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, 'set_effective_warning'):
+                        row.set_effective_warning(differs)
+        except Exception:
+            logger.debug("Failed to apply effective-config result", exc_info=True)
+        return False
+
+    def _invalidate_effective_check(self, nickname, connection=None):
+        """Drop a cached effective-config result; optionally recompute now.
+
+        Called when a connection's own block changes. Pass ``connection`` to
+        re-check it immediately (rows updated via the result callback).
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None or not nickname:
+            return
+        try:
+            checker.invalidate(nickname)
+            if connection is not None:
+                checker.schedule(connection)
+        except Exception:
+            logger.debug("effective-config invalidate failed", exc_info=True)
+
+    def _prime_effective_warning(self, row, connection):
+        """Set the row's warning icon from cache and enqueue a background check.
+
+        Both operations are O(1) — no ssh runs on the row-build path.
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None:
+            return
+        try:
+            status = checker.status(getattr(connection, 'nickname', '') or '')
+            if status is not None and hasattr(row, 'set_effective_warning'):
+                row.set_effective_warning(status)
+            checker.schedule(connection)
+        except Exception:
+            logger.debug("Failed to prime effective-config warning", exc_info=True)
 
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
@@ -2902,10 +2953,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_list.append(row)
         # A connection can appear under multiple groups, so keep a list of rows
         self.connection_rows.setdefault(connection, []).append(row)
-        
+
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
+        # Cheap: cache read + background enqueue (no ssh on this path).
+        self._prime_effective_warning(row, connection)
 
         return row
 
@@ -3444,6 +3498,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                     # Reload SSH config (this creates new Connection objects)
                     self.connection_manager.load_ssh_config()
+                    # Globals may have changed: drop all cached checks; the
+                    # list rebuild below re-primes every row.
+                    checker = getattr(self, 'effective_config_checker', None)
+                    if checker is not None:
+                        checker.invalidate()
                     new_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
 
                     # Detect nickname changes by matching connections on hostname/username/port
@@ -5506,12 +5565,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     old_connection._terminal_instance = terminal
                     self.terminal_manager.prompt_reconnect(old_connection)
                 _complete_save(True)
+                # Its own block changed: drop the stale result and recompute.
+                self._invalidate_effective_check(original_nickname)
+                self._invalidate_effective_check(connection_data.get('nickname'), old_connection)
                 self._warn_if_effective_config_differs(old_connection, connection_data)
 
             else:
                 # Create new connection (connection_manager owns persistence)
                 connection = self.connection_manager.create_connection(connection_data)
                 if connection is not None:
+                    # Fresh nickname isn't cached; rebuild re-primes it.
                     self.rebuild_connection_list()
                     logger.info(f"Created new connection: {connection_data['nickname']}")
                     _complete_save(True)
