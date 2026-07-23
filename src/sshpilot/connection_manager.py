@@ -469,37 +469,45 @@ class Connection:
         def _abs(path: str) -> str:
             return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
 
-        config_override: Optional[str] = None
+        def _existing(path: str) -> Optional[str]:
+            if not path:
+                return None
+            expanded = _abs(path)
+            return expanded if os.path.exists(expanded) else None
 
-        # Prefer the root config so ssh resolves the full Include tree from the
-        # top. config_root is recorded in isolated mode; otherwise fall back to
-        # the owning manager's ssh_config_path, which is the root this host was
-        # loaded from (and which Include's the host's own fragment).
-        root_path = str(getattr(self, 'config_root', '') or '')
-        if not root_path:
-            manager = getattr(self, '_connection_manager', None)
-            if manager is not None:
-                root_path = str(getattr(manager, 'ssh_config_path', '') or '')
-        if root_path:
-            expanded_root = _abs(root_path)
-            if os.path.exists(expanded_root):
-                config_override = expanded_root
+        # 1. Recorded root config (isolated mode records config_root).
+        root = _existing(str(getattr(self, 'config_root', '') or ''))
+        if root:
+            return root
 
-        # Isolated mode without a recorded root: the app's own ssh_config.
-        if not config_override and getattr(self, 'isolated_mode', False):
-            expanded_isolated = _abs(os.path.join(get_config_dir(), 'ssh_config'))
-            if os.path.exists(expanded_isolated):
-                config_override = expanded_isolated
+        # 2. The owning manager's ssh_config_path — the root this host was loaded
+        #    from, which Include's the host's own fragment. Preferred over source
+        #    so ssh follows the full Include tree and applies Host * globals.
+        manager = getattr(self, '_connection_manager', None)
+        if manager is not None:
+            root = _existing(str(getattr(manager, 'ssh_config_path', '') or ''))
+            if root:
+                return root
 
-        # Last resort: the host's own source file (root unknown/missing).
-        if not config_override:
-            source_path = str(getattr(self, 'source', '') or '')
-            if source_path:
-                expanded_source = _abs(source_path)
-                if os.path.exists(expanded_source):
-                    config_override = expanded_source
+        # 3. The connection's own source file — covers standalone connections
+        #    (including a standalone isolated config) that have no manager/root.
+        source = _existing(str(getattr(self, 'source', '') or ''))
+        if source:
+            return source
 
-        return _abs(config_override) if config_override else None
+        # 4. Synthesized isolated-config path for unsourced isolated connections.
+        #    get_config_dir() is guarded so it can never throw past source above.
+        if getattr(self, 'isolated_mode', False):
+            try:
+                candidate = os.path.join(get_config_dir(), 'ssh_config')
+            except Exception:
+                candidate = ''
+            isolated = _existing(candidate)
+            if isolated:
+                return isolated
+
+        # 5. Normal unsourced connection: no override (ssh uses its default).
+        return None
 
     def collect_identity_file_candidates(
         self,
