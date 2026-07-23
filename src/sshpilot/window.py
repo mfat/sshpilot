@@ -5660,14 +5660,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
             dialog.set_default_response('view')
 
-            changes = list(result.get('changes') or [])
-
             def _on_response(dlg, response):
                 if response == 'view':
                     try:
-                        from .effective_config_diff import EffectiveConfigDiffWindow
-                        win = EffectiveConfigDiffWindow(self, host, changes)
-                        win.present()
+                        from .effective_config_dialog import EffectiveConfigDialog
+                        EffectiveConfigDialog.for_result(self, host, result)
                     except Exception:
                         logger.debug("Failed to open effective-config diff", exc_info=True)
 

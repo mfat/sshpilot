@@ -94,6 +94,30 @@ def test_for_connection_uses_connection_nickname():
     assert dialog.presented is True
 
 
+def test_for_result_reuses_precomputed_diff():
+    result = {
+        "has_diff": True,
+        "changes": [{"key": "identityfile"}],
+        "own": ["identityfile /keys/host"],
+        "full": ["identityfile /keys/global", "identityfile /keys/host"],
+    }
+
+    class _Dialog:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+            self.kwargs = kwargs
+            self.presented = False
+
+        def present(self):
+            self.presented = True
+
+    dialog = EffectiveConfigDialog.for_result.__func__(
+        _Dialog, "parent", "US", result)
+
+    assert dialog.kwargs == {"host": "US", "result": result}
+    assert dialog.presented is True
+
+
 def test_changes_view_keeps_equal_values_of_changed_multi_value_setting():
     own = [
         "hostname 107.175.36.82",

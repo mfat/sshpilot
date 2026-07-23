@@ -1,13 +1,8 @@
-"""Two-pane effective-SSH-config viewer opened from the connection editor.
+"""Unified effective-SSH-config viewer.
 
-Left pane is what the host's own block resolves to; the right pane is what SSH
-actually uses once ``Host *`` globals and ``Include``d files are applied. Rows
-that differ are colour-coded. A toggle switches between "changes only" and the
-full effective config.
-
-Computation reuses :func:`sshpilot.ssh_config_utils.diff_effective_config`; this
-module never modifies the separate post-save diff window
-(:mod:`sshpilot.effective_config_diff`).
+The default summary explains each changed setting in plain language. An optional
+full comparison shows the host block and the effective ``ssh -G`` output side by
+side. Both the post-save warning and connection context menu use this window.
 """
 
 from __future__ import annotations
@@ -18,7 +13,7 @@ import os
 import tempfile
 import threading
 from gettext import gettext as _
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from gi.repository import Gtk, Adw, GLib
 
@@ -32,6 +27,34 @@ logger = logging.getLogger(__name__)
 
 _COLOR_REMOVED = "#c01c28"   # in the host block, dropped/overridden by globals
 _COLOR_ADDED = "#26a269"     # what SSH actually uses (added/overridden by globals)
+_COLOR_YOURS = "#3584e4"
+
+_FRIENDLY_KEYS = {
+    'identityfile': _('SSH key (IdentityFile)'),
+    'certificatefile': _('Certificate (CertificateFile)'),
+    'user': _('Username'),
+    'hostname': _('Host name'),
+    'port': _('Port'),
+    'proxyjump': _('Proxy jump'),
+    'proxycommand': _('Proxy command'),
+    'forwardagent': _('Forward agent'),
+    'identitiesonly': _('Only use the selected key(s)'),
+    'identityagent': _('Identity agent'),
+    'pubkeyauthentication': _('Public-key authentication'),
+    'preferredauthentications': _('Preferred authentications'),
+    'stricthostkeychecking': _('Strict host key checking'),
+    'addkeystoagent': _('Add keys to agent'),
+    'requesttty': _('Request TTY'),
+}
+
+
+def _friendly_key(key: str) -> str:
+    return _FRIENDLY_KEYS.get(key.lower(), key)
+
+
+def _span(values: List[str], color: str) -> str:
+    text = ', '.join(values) if values else _('(none)')
+    return f'<span foreground="{color}">{GLib.markup_escape_text(text)}</span>'
 
 
 def connection_config_data(connection) -> dict:
@@ -172,7 +195,7 @@ def _diff_rows(own: List[str], full: List[str],
 
 
 class EffectiveConfigDialog(Adw.Window):
-    """Side-by-side host-block vs. effective-config diff, with a full-config toggle."""
+    """Summary and full views of host-block vs. effective SSH configuration."""
 
     __gtype_name__ = "SshPilotEffectiveConfigDialog"
 
@@ -194,13 +217,22 @@ class EffectiveConfigDialog(Adw.Window):
         dialog.present()
         return dialog
 
-    def __init__(self, parent, *, host: str, own_block: str,
-                 root_config: Optional[str], is_new: bool) -> None:
+    @classmethod
+    def for_result(cls, parent, host: str, result: dict):
+        """Open the viewer with an already-computed post-save result."""
+        dialog = cls(parent, host=host, result=result)
+        dialog.present()
+        return dialog
+
+    def __init__(self, parent, *, host: str, own_block: str = '',
+                 root_config: Optional[str] = None, is_new: bool = False,
+                 result: Optional[dict] = None) -> None:
         super().__init__()
         self._parent = parent
         self._host = host
         self._own_lines: List[str] = []
         self._full_lines: List[str] = []
+        self._changes: List[Dict[str, object]] = []
         self._computed = False
 
         self.set_transient_for(parent)
@@ -218,9 +250,9 @@ class EffectiveConfigDialog(Adw.Window):
         edit_button.connect("clicked", self._on_edit_clicked)
         header.pack_start(edit_button)
 
-        self._full_toggle = Gtk.ToggleButton(label=_("Show full config"))
+        self._full_toggle = Gtk.ToggleButton(label=_("Show full comparison"))
         self._full_toggle.set_tooltip_text(
-            _("Show every effective setting, not only the ones global rules change"))
+            _("Show the complete host-block and effective SSH configurations"))
         self._full_toggle.connect("toggled", lambda _b: self._render())
         header.pack_end(self._full_toggle)
         toolbar.add_top_bar(header)
@@ -230,13 +262,16 @@ class EffectiveConfigDialog(Adw.Window):
         toolbar.set_content(self._body)
         self.set_content(toolbar)
 
-        self._show_spinner()
         install_esc_to_close(self)
 
-        threading.Thread(
-            target=self._work, args=(host, own_block, root_config, is_new),
-            name="effcfg-dialog", daemon=True,
-        ).start()
+        if result is not None:
+            self._on_computed(result)
+        else:
+            self._show_spinner()
+            threading.Thread(
+                target=self._work, args=(host, own_block, root_config, is_new),
+                name="effcfg-dialog", daemon=True,
+            ).start()
 
     # ---- computation -------------------------------------------------------
 
@@ -249,6 +284,7 @@ class EffectiveConfigDialog(Adw.Window):
         if result:
             self._own_lines = list(result.get('own') or [])
             self._full_lines = list(result.get('full') or [])
+            self._changes = list(result.get('changes') or [])
         self._render()
         return False
 
@@ -295,16 +331,70 @@ class EffectiveConfigDialog(Adw.Window):
             ))
             return
 
-        full_mode = self._full_toggle.get_active()
-        rows = _diff_rows(self._own_lines, self._full_lines, full_mode)
+        if self._full_toggle.get_active():
+            self._render_full_comparison()
+        else:
+            self._render_summary()
 
-        if not rows:
+    def _render_summary(self):
+        if not self._changes:
             self._placeholder(_(
                 "No differences — your global SSH configuration does not change "
-                "this host. Toggle “Show full config” to see every effective setting."
+                "this host. Toggle “Show full comparison” to inspect every setting."
             ))
             return
 
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content.set_margin_top(18)
+        content.set_margin_bottom(18)
+        content.set_margin_start(18)
+        content.set_margin_end(18)
+        content.append(self._label(_(
+            "Your global SSH configuration changes what this connection actually "
+            "uses. SSH applies the effective values shown below."
+        ), "body"))
+        content.append(self._label(
+            _("Settings changed by global config"), "heading"))
+
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        listbox.add_css_class("boxed-list")
+        for change in self._changes:
+            dropped = change.get('kind') in ('overridden', 'removed')
+            yours = _span(
+                list(change.get('own') or []),
+                _COLOR_REMOVED if dropped else _COLOR_YOURS,
+            )
+            effective = _span(
+                list(change.get('effective') or []), _COLOR_ADDED)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            box.set_margin_top(10)
+            box.set_margin_bottom(10)
+            box.set_margin_start(12)
+            box.set_margin_end(12)
+            box.append(self._label(
+                _friendly_key(str(change.get('key') or '')), "title-4"))
+            box.append(self._label(_("You set:"), "body"))
+            box.append(self._value_label(yours))
+            box.append(self._label(_("SSH uses:"), "body"))
+            box.append(self._value_label(effective))
+
+            row = Gtk.ListBoxRow()
+            row.set_activatable(False)
+            row.set_child(box)
+            listbox.append(row)
+        content.append(listbox)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_child(content)
+        self._clear_body()
+        self._body.append(scrolled)
+
+    def _render_full_comparison(self):
+        rows = _diff_rows(self._own_lines, self._full_lines, full_mode=True)
         grid = Gtk.Grid(column_homogeneous=True, column_spacing=18, row_spacing=3)
         grid.set_margin_top(12)
         grid.set_margin_bottom(12)
@@ -325,6 +415,25 @@ class EffectiveConfigDialog(Adw.Window):
         scrolled.set_child(grid)
         self._clear_body()
         self._body.append(scrolled)
+
+    @staticmethod
+    def _label(text: str, *css_classes: str) -> Gtk.Label:
+        label = Gtk.Label(label=text)
+        label.set_xalign(0.0)
+        label.set_wrap(True)
+        for css in css_classes:
+            label.add_css_class(css)
+        return label
+
+    @staticmethod
+    def _value_label(markup: str) -> Gtk.Label:
+        label = Gtk.Label()
+        label.set_markup(markup)
+        label.set_xalign(0.0)
+        label.set_wrap(True)
+        label.set_selectable(True)
+        label.add_css_class("monospace")
+        return label
 
     @staticmethod
     def _heading(text: str) -> Gtk.Label:
