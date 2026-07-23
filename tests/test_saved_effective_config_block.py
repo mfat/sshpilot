@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from sshpilot.effective_config_dialog import (
     EffectiveConfigDialog,
+    _diff_rows,
     saved_connection_block,
 )
 
@@ -77,3 +78,30 @@ def test_for_connection_uses_connection_nickname():
     assert dialog.kwargs["host"] == "US"
     assert dialog.kwargs["own_block"] == "Host US\n    User root"
     assert dialog.presented is True
+
+
+def test_changes_view_keeps_equal_values_of_changed_multi_value_setting():
+    own = [
+        "hostname 107.175.36.82",
+        "identityfile /home/mahdi/.ssh/kwp4",
+        "user root",
+    ]
+    effective = [
+        "hostname 107.175.36.82",
+        "identityfile /home/mahdi/.ssh/id_ed25519",
+        "identityfile /home/mahdi/.ssh/id_rsa",
+        "identityfile /home/mahdi/.ssh/kwp4",
+        "user root",
+    ]
+
+    rows = _diff_rows(own, effective, full_mode=False)
+
+    assert rows == [
+        ("", "identityfile /home/mahdi/.ssh/id_ed25519", "insert"),
+        ("", "identityfile /home/mahdi/.ssh/id_rsa", "insert"),
+        (
+            "identityfile /home/mahdi/.ssh/kwp4",
+            "identityfile /home/mahdi/.ssh/kwp4",
+            "equal",
+        ),
+    ]

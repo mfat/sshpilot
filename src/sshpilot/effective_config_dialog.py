@@ -134,13 +134,28 @@ def _diff_rows(own: List[str], full: List[str],
     """Align own vs. full into (left, right, kind) rows via SequenceMatcher.
 
     kind ∈ {equal, replace, delete, insert}. In changes-only mode equal runs are
-    dropped; in full mode every line is kept so the panes read as complete config.
+    normally dropped, but unchanged values of a changed multi-value directive
+    are retained so the relevant setting remains complete on both sides.
     """
+    opcodes = difflib.SequenceMatcher(None, own, full).get_opcodes()
+
+    def _key(line: str) -> str:
+        return line.split(None, 1)[0] if line else ''
+
+    changed_keys = set()
+    if not full_mode:
+        for tag, i1, i2, j1, j2 in opcodes:
+            if tag == 'equal':
+                continue
+            changed_keys.update(_key(line) for line in own[i1:i2])
+            changed_keys.update(_key(line) for line in full[j1:j2])
+        changed_keys.discard('')
+
     rows: List[Tuple[str, str, str]] = []
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, own, full).get_opcodes():
+    for tag, i1, i2, j1, j2 in opcodes:
         if tag == 'equal':
-            if full_mode:
-                for k in range(i2 - i1):
+            for k in range(i2 - i1):
+                if full_mode or _key(own[i1 + k]) in changed_keys:
                     rows.append((own[i1 + k], full[j1 + k], 'equal'))
         elif tag == 'replace':
             left, right = own[i1:i2], full[j1:j2]
