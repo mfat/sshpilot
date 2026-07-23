@@ -5492,6 +5492,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     old_connection._terminal_instance = terminal
                     self.terminal_manager.prompt_reconnect(old_connection)
                 _complete_save(True)
+                self._warn_if_effective_config_differs(old_connection, connection_data)
 
             else:
                 # Create new connection (connection_manager owns persistence)
@@ -5500,6 +5501,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.rebuild_connection_list()
                     logger.info(f"Created new connection: {connection_data['nickname']}")
                     _complete_save(True)
+                    self._warn_if_effective_config_differs(connection, connection_data)
                 else:
                     logger.error("Failed to save connection to SSH config")
                     _complete_save(False)
@@ -5509,6 +5511,70 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
     
+    def _warn_if_effective_config_differs(self, connection, connection_data):
+        """After a save, warn if global SSH config overrides/adds values for this
+        connection. Informational only — offers a diff view and a shortcut to the
+        SSH config editor. Best-effort: any failure is swallowed silently.
+
+        Deferred to idle so it appears after the connection dialog has closed.
+        """
+        def _check():
+            try:
+                from .ssh_config_utils import diff_effective_config
+                from gettext import gettext as _
+
+                host = (connection_data.get('nickname')
+                        or getattr(connection, 'nickname', '') or '')
+                if not host:
+                    return False
+                own_block = self.connection_manager.format_ssh_config_entry(connection_data)
+                try:
+                    config_file = connection._resolve_config_override_path()
+                except Exception:
+                    config_file = None
+
+                result = diff_effective_config(host, config_file, own_block)
+                if not result or not result.get('has_diff'):
+                    return False
+
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Global SSH config may change this connection"),
+                    body=_(
+                        "Some of the values you set may be overridden or added by "
+                        "your global SSH configuration (for example a 'Host *' "
+                        "block or an included file). SSH will use the effective "
+                        "values, not only what you entered here."
+                    ),
+                )
+                dialog.add_response('dismiss', _('Dismiss'))
+                dialog.add_response('view', _('View differences…'))
+                dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
+                dialog.set_default_response('view')
+
+                changes = list(result.get('changes') or [])
+
+                def _on_response(dlg, response):
+                    if response == 'view':
+                        try:
+                            from .effective_config_diff import EffectiveConfigDiffWindow
+                            win = EffectiveConfigDiffWindow(self, host, changes)
+                            win.present()
+                        except Exception:
+                            logger.debug("Failed to open effective-config diff", exc_info=True)
+
+                dialog.connect('response', _on_response)
+                dialog.present()
+            except Exception:
+                logger.debug("effective-config diff check failed", exc_info=True)
+            return False
+
+        try:
+            GLib.idle_add(_check)
+        except Exception:
+            logger.debug("Could not schedule effective-config check", exc_info=True)
+
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
         try:

@@ -251,3 +251,94 @@ def get_effective_ssh_config(
         else:
             config[key] = value
     return config
+
+
+def _effective_config_lines(cfg: Dict[str, Union[str, List[str]]]) -> List[str]:
+    """Flatten an effective-config dict to sorted ``key value`` lines.
+
+    Multi-value keys (e.g. ``identityfile``) become one line per value, in the
+    order ssh reported them, so accumulation from other blocks is visible.
+    """
+    lines: List[str] = []
+    for key in sorted(cfg):
+        value = cfg[key]
+        if isinstance(value, list):
+            lines.extend(f"{key} {v}" for v in value)
+        else:
+            lines.append(f"{key} {value}")
+    return lines
+
+
+def diff_effective_config(
+    host: str,
+    config_file: Optional[str],
+    own_block_text: str,
+) -> Optional[Dict[str, object]]:
+    """Compare what a host's OWN block resolves to vs. the full effective config.
+
+    Both sides go through ``ssh -G`` so ssh's own defaults and the system-wide
+    ``/etc/ssh/ssh_config`` appear on both sides and cancel out — the remaining
+    delta is exactly what global/wildcard blocks (e.g. ``Host *``) and includes
+    add or override for *host*.
+
+    - *config_file*: the real config ssh will use for this connection (the app's
+      isolated ``ssh_config`` or ``None`` for the default ``~/.ssh/config``).
+    - *own_block_text*: the connection's own generated ``Host`` block.
+
+    Returns ``None`` when the comparison can't run (no ssh / timeout — never
+    block on a best-effort check), otherwise a dict with ``has_diff`` (bool),
+    ``own`` / ``full`` (line lists) and ``diff`` (unified-diff lines).
+    """
+    if not host:
+        return None
+    full = get_effective_ssh_config(host, config_file=config_file)
+    if not full:
+        return None  # couldn't resolve the real effective config — say nothing
+
+    fd, tmp_path = tempfile.mkstemp(prefix='.sshpilot-own-', suffix='.conf')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(own_block_text)
+        own = get_effective_ssh_config(host, config_file=tmp_path)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    if not own:
+        return None
+
+    def _as_list(value) -> List[str]:
+        if value is None:
+            return []
+        return list(value) if isinstance(value, list) else [value]
+
+    changes: List[Dict[str, object]] = []
+    for key in sorted(set(full) | set(own)):
+        own_vals = _as_list(own.get(key))
+        full_vals = _as_list(full.get(key))
+        if own_vals == full_vals:
+            continue
+        added = [v for v in full_vals if v not in own_vals]
+        removed = [v for v in own_vals if v not in full_vals]
+        if removed and added:
+            kind = 'overridden'   # a value was replaced
+        elif added:
+            kind = 'added'        # global adds a new value (or accumulates)
+        else:
+            kind = 'removed'      # global drops a value the block set
+        changes.append({
+            'key': key,
+            'own': own_vals,
+            'effective': full_vals,
+            'added': added,
+            'removed': removed,
+            'kind': kind,
+        })
+
+    return {
+        'has_diff': bool(changes),
+        'changes': changes,
+        'own': _effective_config_lines(own),
+        'full': _effective_config_lines(full),
+    }
