@@ -2658,12 +2658,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         the re-collapse then.
         """
         self._ungrouped_area_row = None
+        self._append_command_matches()
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
+
+    def _append_command_matches(self) -> None:
+        """When the search popup is open with a query, append in-app commands
+        (settings/utilities) below the connection results — see
+        command_palette.py."""
+        popup = getattr(self, '_search_popup', None)
+        if popup is None or not popup.visible:
+            return
+        entry = getattr(self, 'search_entry', None)
+        query = entry.get_text().strip() if entry else ''
+        if not query:
+            return
+        from .command_palette import append_command_rows
+        append_command_rows(self, query)
 
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
@@ -3832,6 +3847,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     # Signal handlers
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
+        if row is not None and hasattr(row, 'command_activate'):
+            row.command_activate()
+            return
         self._return_to_tab_view_if_welcome()
         logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
         if row and hasattr(row, 'connection'):
