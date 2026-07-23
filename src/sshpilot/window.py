@@ -2658,7 +2658,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         the re-collapse then.
         """
         self._ungrouped_area_row = None
-        self._append_command_matches()
+        # Command/settings results in the popup are parked until the welcome-page
+        # omnisearch lands — re-enable by calling self._append_command_matches().
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
