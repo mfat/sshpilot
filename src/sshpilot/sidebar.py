@@ -40,6 +40,17 @@ from .tag_groups import compute_tag_groups
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 
+# oklab(from ... var(--standalone-color-oklab)) needs GTK >= 4.16 relative-colour
+# syntax and libadwaita >= 1.6 (which defines the variable). On older stacks the
+# rule would be dropped, so fall back to the plain group colour there.
+try:
+    _SUPPORTS_STANDALONE_OKLAB = (
+        (Gtk.get_major_version(), Gtk.get_minor_version()) >= (4, 16)
+        and (Adw.MAJOR_VERSION, Adw.MINOR_VERSION) >= (1, 6)
+    )
+except Exception:
+    _SUPPORTS_STANDALONE_OKLAB = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -689,13 +700,17 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
         return
     provider = Gtk.CssProvider()
     # Adwaita's own standalone-color derivation: clamp the group colour's Oklab
-    # lightness (theme-aware) so the glyph stays legible on the neutral circle
-    # in both light and dark, keeping its hue. Needs GTK >= 4.16 relative colour
-    # syntax + libadwaita's --standalone-color-oklab (both present here).
+    # lightness (theme-aware) so the glyph stays legible on the neutral circle in
+    # both light and dark, keeping its hue. Older GTK/libadwaita lack this, so
+    # fall back to the plain group colour there (see _SUPPORTS_STANDALONE_OKLAB).
+    if _SUPPORTS_STANDALONE_OKLAB:
+        glyph_color = f"oklab(from {color} var(--standalone-color-oklab))"
+    else:
+        glyph_color = color
     provider.load_from_data(
         (
             ".sidebar-avatar {"
-            f"  color: oklab(from {color} var(--standalone-color-oklab));"
+            f"  color: {glyph_color};"
             "}"
         ).encode("utf-8")
     )
