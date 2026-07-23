@@ -85,9 +85,11 @@ _PRESETS = {
     "spotlight": dict(position=Position.TOP, width=560, height=None,
                       backdrop=Backdrop.DIM, search_only=True, show_groups=False),
     "omni": dict(position=Position.CENTER, width=None, height=520,
-                 backdrop=Backdrop.DIM, search_only=False, show_groups=False),
+                 backdrop=Backdrop.DIM, search_only=False, show_groups=False,
+                 plain=True),
     "anchored": dict(position=Position.ANCHORED, width=None, height=None,
-                     backdrop=Backdrop.NONE, search_only=False, show_groups=False),
+                     backdrop=Backdrop.DIM, search_only=False, show_groups=False,
+                     plain=True),
 }
 
 
@@ -214,6 +216,11 @@ class SearchPopup:
         self._backdrop = cfg["backdrop"]
         self._search_only = cfg["search_only"]
         self._show_groups = cfg["show_groups"]
+        if self._panel is not None:
+            if cfg.get("plain"):
+                self._panel.add_css_class("sidebar-popup-plain")
+            else:
+                self._panel.remove_css_class("sidebar-popup-plain")
         self._apply_layout()
         self._apply_backdrop()
 

@@ -40,7 +40,7 @@ class WelcomePage(Gtk.Overlay):
         self._recent_box = None
         self.omni_home = Adw.Bin()
         self.omni_home.set_hexpand(True)
-        self.omni_home.set_size_request(-1, 48)
+        self.omni_home.set_size_request(-1, 58)
 
         self.connection_manager.connect_after('connection-added', self._on_connection_added)
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)

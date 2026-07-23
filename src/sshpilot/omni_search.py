@@ -421,6 +421,10 @@ class OmniSearchController:
 
     def _set_results_visible(self, visible: bool) -> None:
         self.results_scroller.set_visible(visible)
+        if visible:
+            self.content.add_css_class("omni-search-open")
+        else:
+            self.content.remove_css_class("omni-search-open")
 
     def _entry_focus_widget(self):
         delegate = self.entry.get_delegate()
