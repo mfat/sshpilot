@@ -29,6 +29,7 @@ from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
 )
+from .shortcut_utils import install_esc_to_close
 from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,7 @@ class SshCopyIdWindow(Adw.Window):
 
         super().__init__()
         self.set_transient_for(parent)
+        install_esc_to_close(self)
 
         self._parent = parent
         self._conn = connection

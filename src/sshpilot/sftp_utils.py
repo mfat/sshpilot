@@ -13,6 +13,7 @@ from typing import Optional, Tuple, Callable, Any
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
 from .platform_utils import is_flatpak, is_macos
+from .shortcut_utils import install_esc_to_close
 
 logger = logging.getLogger(__name__)
 
@@ -1423,6 +1424,7 @@ class SftpConnectionDialog(Adw.Window):
 
     def __init__(self, user: str, host: str, port: Optional[int], uri: str):
         super().__init__()
+        install_esc_to_close(self)
         self.user = user
         self.host = host
         self.port = port

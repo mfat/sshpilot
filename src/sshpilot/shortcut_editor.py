@@ -9,6 +9,8 @@ gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
 from gi.repository import Adw, Gdk, Gtk
 
+from .shortcut_utils import install_esc_to_close
+
 logger = logging.getLogger(__name__)
 
 
@@ -656,6 +658,7 @@ class ShortcutEditorWindow(Adw.Window):
 
     def __init__(self, parent_window):
         super().__init__(transient_for=parent_window)
+        install_esc_to_close(self)
 
         self._parent_window = parent_window
         self._app = parent_window.get_application()

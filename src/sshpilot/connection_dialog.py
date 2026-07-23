@@ -42,6 +42,7 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .platform_utils import is_macos, get_ssh_dir, get_config_dir
+from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
     _fingerprint_for_pub_line,
@@ -735,6 +736,7 @@ class KeyChooserDialog(Adw.Window):
         super().__init__()
         if parent is not None:
             self.set_transient_for(parent)
+        install_esc_to_close(self)
 
         self._on_add = on_add
         self._on_browse = on_browse

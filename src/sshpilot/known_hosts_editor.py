@@ -6,6 +6,7 @@ from gettext import gettext as _
 from gi.repository import Gtk, Adw, GLib
 
 from .platform_utils import get_ssh_dir
+from .shortcut_utils import install_esc_to_close, install_search_esc
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,8 @@ class KnownHostsEditorWindow(Adw.Window):
     def __init__(self, parent, connection_manager, on_saved: Optional[Callable] = None):
         super().__init__()
         self.set_transient_for(parent)
+        install_esc_to_close(self)
+        install_search_esc(self.search_entry, self)
 
         self._cm = connection_manager
         self._on_saved = on_saved
@@ -33,7 +36,9 @@ class KnownHostsEditorWindow(Adw.Window):
         )
         self._all_entries = []  # Store all entries for filtering
 
-        self._load_entries()
+        # Populate after present() so the window appears immediately
+        # (matches AuthorizedKeysWindow's deferred load).
+        GLib.idle_add(self._load_entries)
 
     @Gtk.Template.Callback()
     def _on_cancel_clicked(self, _btn):

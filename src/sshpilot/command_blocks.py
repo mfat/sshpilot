@@ -14,6 +14,7 @@ from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Pango
 
 from .context_menu import IconContextMenu
 from .dnd_payload import content_provider_for_payload, set_internal_drag_icon
+from .shortcut_utils import install_esc_to_close
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -671,6 +672,7 @@ class CommandEditDialog(Adw.Window):
         self._cmd = cmd
         self.set_transient_for(parent)
         self.set_title(_('Edit Command') if cmd else _('New Command'))
+        install_esc_to_close(self)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -805,6 +807,7 @@ class AddFolderDialog(Adw.Window):
     def __init__(self, parent: Gtk.Window) -> None:
         super().__init__()
         self.set_transient_for(parent)
+        install_esc_to_close(self)
         self._build_ui()
 
     def _build_ui(self) -> None:

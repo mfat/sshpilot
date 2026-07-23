@@ -35,6 +35,7 @@ from .scp_utils import (
     insert_legacy_scp_flag,
 )
 from .platform_utils import is_flatpak
+from .shortcut_utils import install_esc_to_close
 from .file_manager.portal_docs import (
     _is_valid_destination,
     _pretty_path_for_display,
@@ -84,6 +85,7 @@ class ScpDownloadWindow(Adw.Window):
     def __init__(self, parent, subtitle=""):
         super().__init__()
         self.set_transient_for(parent)
+        install_esc_to_close(self)
         self.window_title.set_subtitle(subtitle)
 
     @Gtk.Template.Callback()
