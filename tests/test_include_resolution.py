@@ -1,6 +1,14 @@
 import asyncio
 import logging
+import shutil
+import subprocess
+
 from sshpilot.connection_manager import ConnectionManager
+from sshpilot.ssh_connection_builder import (
+    ConnectionContext,
+    build_native_command,
+    build_ssh_connection,
+)
 from sshpilot.ssh_config_utils import resolve_ssh_config_files
 
 # Ensure an event loop for Connection objects
@@ -44,6 +52,70 @@ def test_include_directives_parsed(tmp_path):
     cm.update_ssh_config_file(hosta, new_data)
     assert "Port 2222" in a_cfg.read_text()
     assert "Port 2222" not in main_cfg.read_text()
+
+
+def test_included_host_native_commands_use_root_config(tmp_path):
+    """Native commands must start at the root config, not the host's fragment.
+
+    ``source`` remains the fragment used for editing, while ``-F`` must name the
+    root so OpenSSH follows the complete Include tree and applies Host * globals.
+    """
+    main_cfg = tmp_path / "config"
+    inc_dir = tmp_path / "conf.d"
+    inc_dir.mkdir()
+    host_cfg = inc_dir / "production.conf"
+
+    host_cfg.write_text("\n".join([
+        "Host production",
+        "    HostName 10.0.0.50",
+        "    User deploy",
+        "",
+    ]))
+    main_cfg.write_text("\n".join([
+        "Include conf.d/*.conf",
+        "",
+        "Host *",
+        "    ForwardAgent yes",
+        "",
+    ]))
+
+    cm = ConnectionManager.__new__(ConnectionManager)
+    cm.connections = []
+    cm.ssh_config_path = str(main_cfg)
+    cm.load_ssh_config()
+
+    connection = next(c for c in cm.connections if c.nickname == "production")
+    assert connection.source == str(host_cfg)
+
+    plain_command = build_native_command(connection)
+    prepared_command = build_ssh_connection(
+        ConnectionContext(connection=connection, native_mode=True)
+    ).command
+
+    for command in (plain_command, prepared_command):
+        assert "-F" in command
+        selected_config = command[command.index("-F") + 1]
+        assert selected_config == str(main_cfg), (
+            "Native SSH must evaluate the root config; selecting the included "
+            "fragment drops root Host * directives and sibling includes"
+        )
+
+    if shutil.which("ssh") is not None:
+        command = list(prepared_command)
+        command.insert(command.index("production"), "-G")
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        effective = dict(
+            line.split(None, 1)
+            for line in result.stdout.splitlines()
+            if line.strip() and " " in line
+        )
+        assert effective["forwardagent"] == "yes"
 
 
 def test_nested_include_sources(tmp_path):
