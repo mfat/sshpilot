@@ -1844,6 +1844,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._sidebar_width_animation = animation
         animation.play()
 
+    def begin_sidebar_drag_expand(self) -> None:
+        """Temporarily expand a minimal strip while a drag is in progress so
+        drop targets (groups, ungrouped area) are visible and reachable. Paired
+        with :meth:`end_sidebar_drag_expand` on drag-end."""
+        if getattr(self, '_sidebar_minimal', False):
+            self._sidebar_expanded_for_drag = True
+            self.set_sidebar_minimal(False)
+
+    def end_sidebar_drag_expand(self) -> None:
+        """Collapse the strip back if it was auto-expanded for a drag."""
+        if getattr(self, '_sidebar_expanded_for_drag', False):
+            self._sidebar_expanded_for_drag = False
+            self.set_sidebar_minimal(True)
+
     def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
         """Display an error dialog when duplication fails."""
         try:

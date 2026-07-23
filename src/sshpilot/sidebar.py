@@ -1043,6 +1043,8 @@ class GroupRow(Gtk.ListBoxRow):
                     delattr(window, "_dragged_connections")
                 # Track which group is being dragged
                 window._dragged_group_id = self.group_id
+                if hasattr(window, "begin_sidebar_drag_expand"):
+                    window.begin_sidebar_drag_expand()
         except Exception as e:
             logger.error(f"Error in group drag begin: {e}")
 
@@ -1062,6 +1064,8 @@ class GroupRow(Gtk.ListBoxRow):
                         window.connection_list.set_selection_mode(
                             Gtk.SelectionMode.MULTIPLE
                         )
+                if hasattr(window, "end_sidebar_drag_expand"):
+                    window.end_sidebar_drag_expand()
         except Exception as e:
             logger.error(f"Error in group drag end: {e}")
 
@@ -1922,6 +1926,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                 if not hasattr(window, "_dragged_connections"):
                     window._dragged_connections = [self.connection.nickname]
                 window._drag_in_progress = True
+                if hasattr(window, "begin_sidebar_drag_expand"):
+                    window.begin_sidebar_drag_expand()
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
@@ -1934,6 +1940,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                     delattr(window, "_dragged_connections")
                 window._drag_in_progress = False
                 _hide_ungrouped_area(window)
+                if hasattr(window, "end_sidebar_drag_expand"):
+                    window.end_sidebar_drag_expand()
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
 
@@ -2274,6 +2282,13 @@ def reset_connection_list_drag_session(window) -> None:
             connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         except Exception:
             pass
+
+    # A drop rebuilds the list, destroying the dragged connection row before its
+    # drag-end fires; collapse the drag-expanded strip here so it isn't missed
+    # (no-op unless we auto-expanded). Cancels without a rebuild are handled by
+    # the rows' own drag-end handlers.
+    if hasattr(window, "end_sidebar_drag_expand"):
+        window.end_sidebar_drag_expand()
 
 
 def setup_connection_list_dnd(window):
