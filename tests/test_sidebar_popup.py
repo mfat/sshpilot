@@ -47,6 +47,21 @@ def test_show_reparents_into_panel():
     p._scrim.set_visible.assert_called_with(True)
 
 
+def test_show_focus_idle_is_one_shot(monkeypatch):
+    p = _popup()
+    widget = MagicMock()
+    p._focus_func = MagicMock(return_value=widget)
+    idle_add = MagicMock()
+    monkeypatch.setattr('sshpilot.search_popup.GLib.idle_add', idle_add)
+
+    p.show()
+
+    callback = idle_add.call_args.args[0]
+    from sshpilot.search_popup import GLib
+    assert callback() is GLib.SOURCE_REMOVE
+    widget.grab_focus.assert_called_once()
+
+
 def test_hide_reattaches_home():
     p = _popup()
     p._visible = True

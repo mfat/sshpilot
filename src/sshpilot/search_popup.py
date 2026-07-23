@@ -262,7 +262,7 @@ class SearchPopup:
         if self._focus_func is not None:
             widget = self._focus_func()
             if widget is not None:
-                GLib.idle_add(widget.grab_focus)
+                GLib.idle_add(lambda: (widget.grab_focus(), GLib.SOURCE_REMOVE)[1])
 
     def hide(self) -> None:
         """Re-attach ``content`` to its home, hiding the panel. No-op if not
