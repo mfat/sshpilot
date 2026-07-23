@@ -2298,6 +2298,50 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"Failed to inspect host block for '{host_identifier}': {e}")
         return None
 
+    def collect_host_block_lines(self, host_identifier: str) -> List[str]:
+        """Combined lines of every *concrete* Host stanza matching *host_identifier*.
+
+        OpenSSH merges repeated ``Host US`` blocks across the root config and its
+        includes, so the authored ("own") config for an alias is all of them, in
+        read order — not just the first. Wildcard/pattern blocks (``Host *``,
+        ``Host US*``) are excluded: they are globals and only match via patterns,
+        never as a literal token, so they never appear here.
+        """
+        host_identifier = (host_identifier or '').strip()
+        if not host_identifier:
+            return []
+        try:
+            files = resolve_ssh_config_files(self.ssh_config_path) if self.ssh_config_path else []
+        except Exception:
+            files = [self.ssh_config_path] if self.ssh_config_path else []
+
+        combined: List[str] = []
+        for path in files:
+            try:
+                if not path or not os.path.exists(path):
+                    continue
+                with open(path) as f:
+                    lines = f.readlines()
+            except Exception:
+                continue
+            i = 0
+            while i < len(lines):
+                kw, full_value = _split_keyword(lines[i].lstrip())
+                if kw == 'host':
+                    try:
+                        host_names = shlex.split(full_value)
+                    except ValueError:
+                        host_names = [h for h in full_value.split() if h]
+                    if host_identifier in host_names:
+                        start = i
+                        i += 1
+                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
+                            i += 1
+                        combined.extend(line.rstrip('\n') for line in lines[start:i])
+                        continue
+                i += 1
+        return combined
+
     def _split_host_block(self, original_host: str, new_data: Dict[str, Any], target_path: str) -> bool:
         """Remove *original_host* from its group and append a new block."""
         try:

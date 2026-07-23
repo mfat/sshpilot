@@ -8,14 +8,14 @@ from sshpilot.effective_config_dialog import (
 
 
 class _Manager:
-    def __init__(self, details=None):
-        self.details = details
+    def __init__(self, lines=None):
+        self.lines = lines or []
         self.request = None
         self.formatted = None
 
-    def get_host_block_details(self, host, source):
-        self.request = (host, source)
-        return self.details
+    def collect_host_block_lines(self, host):
+        self.request = host
+        return list(self.lines)
 
     def format_ssh_config_entry(self, data):
         self.formatted = data
@@ -23,13 +23,11 @@ class _Manager:
 
 
 def test_saved_connection_block_reads_authored_stanza():
-    manager = _Manager({
-        "lines": [
-            "Host US",
-            "    HostName 107.175.36.82",
-            "    IdentityFile /home/mahdi/.ssh/kwp4",
-        ],
-    })
+    manager = _Manager([
+        "Host US",
+        "    HostName 107.175.36.82",
+        "    IdentityFile /home/mahdi/.ssh/kwp4",
+    ])
     connection = SimpleNamespace(nickname="US", source="/tmp/hosts.conf")
 
     block = saved_connection_block(manager, connection)
@@ -39,12 +37,28 @@ def test_saved_connection_block_reads_authored_stanza():
         "    HostName 107.175.36.82\n"
         "    IdentityFile /home/mahdi/.ssh/kwp4"
     )
-    assert manager.request == ("US", "/tmp/hosts.conf")
+    assert manager.request == "US"
+    assert manager.formatted is None
+
+
+def test_saved_connection_block_combines_repeated_stanzas():
+    # ssh merges repeated Host blocks; collect_host_block_lines returns them all.
+    manager = _Manager([
+        "Host US",
+        "    IdentityFile a",
+        "Host US",
+        "    IdentityFile b",
+    ])
+    connection = SimpleNamespace(nickname="US", source="/tmp/hosts.conf")
+
+    block = saved_connection_block(manager, connection)
+
+    assert block == "Host US\n    IdentityFile a\nHost US\n    IdentityFile b"
     assert manager.formatted is None
 
 
 def test_saved_connection_block_falls_back_to_submitted_data():
-    manager = _Manager()
+    manager = _Manager()  # no stanza found
     connection = SimpleNamespace(nickname="US", source="/tmp/hosts.conf")
     submitted = {"nickname": "US", "hostname": "107.175.36.82"}
 
@@ -56,7 +70,7 @@ def test_saved_connection_block_falls_back_to_submitted_data():
 
 
 def test_for_connection_uses_connection_nickname():
-    manager = _Manager({"lines": ["Host US", "    User root"]})
+    manager = _Manager(["Host US", "    User root"])
     connection = SimpleNamespace(
         nickname="US",
         source="/tmp/hosts.conf",

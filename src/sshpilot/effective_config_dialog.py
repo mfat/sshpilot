@@ -80,10 +80,10 @@ def saved_connection_block(connection_manager, connection, *,
     the stanza cannot be read (for example while creating a new connection).
     """
     nickname = host or getattr(connection, 'nickname', '') or ''
-    source = getattr(connection, 'source', None)
     try:
-        details = connection_manager.get_host_block_details(nickname, source)
-        lines = (details or {}).get('lines') or []
+        # Every concrete stanza for the alias (ssh merges repeated Host blocks),
+        # not just the first — otherwise later directives read as global additions.
+        lines = connection_manager.collect_host_block_lines(nickname)
         if lines:
             return '\n'.join(lines)
     except Exception:

@@ -9,10 +9,19 @@ import stat
 import shutil
 import tempfile
 import subprocess
+from collections import Counter
 from typing import Dict, List, Optional, Set, Union
 
 
 logger = logging.getLogger(__name__)
+
+# ssh -G keys (lowercased) whose values are filesystem paths and so may carry a
+# leading ``~`` that should be normalised before comparison.
+_PATH_DIRECTIVES = frozenset({
+    'identityfile', 'certificatefile', 'identityagent', 'pkcs11provider',
+    'securitykeyprovider', 'controlpath', 'userknownhostsfile',
+    'globalknownhostsfile', 'xauthlocation', 'revokedhostkeys', 'include',
+})
 
 
 def atomic_write_text(path: str, text: str, *, mode: Optional[int] = None,
@@ -219,7 +228,10 @@ def get_effective_ssh_config(
         if os.path.isfile(expanded):
             cmd.extend(['-F', expanded])
         else:
+            # An explicit override that no longer exists must NOT silently fall
+            # back to ~/.ssh/config — that resolves the wrong configuration.
             logger.warning("Requested SSH config override %s does not exist", expanded)
+            return {}
     cmd.extend(['-G', host])
 
     try:
@@ -308,13 +320,16 @@ def diff_effective_config(
     if not own:
         return None
 
-    # Normalise leading ``~`` so a stored-expanded path (identity_files keeps the
-    # absolute form) doesn't read as a difference from a config that wrote ``~``.
-    # ssh -G reports these values verbatim, so the two sides can otherwise differ
-    # only by tilde vs. absolute. expanduser is a no-op on non-``~`` values.
+    # Normalise leading ``~`` ONLY for path-valued directives, so a stored-expanded
+    # path (identity_files keeps the absolute form) doesn't read as a difference
+    # from a config that wrote ``~``. Expanding every value would wrongly collapse
+    # non-path values such as ``RemoteCommand ~/script``.
     def _expand(cfg):
         out = {}
         for key, value in cfg.items():
+            if key not in _PATH_DIRECTIVES:
+                out[key] = value
+                continue
             if isinstance(value, list):
                 out[key] = [os.path.expanduser(v) if isinstance(v, str) else v for v in value]
             elif isinstance(value, str):
@@ -337,14 +352,21 @@ def diff_effective_config(
         full_vals = _as_list(full.get(key))
         if own_vals == full_vals:
             continue
-        added = [v for v in full_vals if v not in own_vals]
-        removed = [v for v in own_vals if v not in full_vals]
-        if removed and added:
+        # Multiset difference: preserves duplicate counts, and a pure reorder
+        # (same values, different order) yields empty added/removed but is still
+        # a real change, classified as 'overridden'.
+        own_counts = Counter(own_vals)
+        full_counts = Counter(full_vals)
+        added = list((full_counts - own_counts).elements())
+        removed = list((own_counts - full_counts).elements())
+        if added and removed:
             kind = 'overridden'   # a value was replaced
         elif added:
             kind = 'added'        # global adds a new value (or accumulates)
-        else:
+        elif removed:
             kind = 'removed'      # global drops a value the block set
+        else:
+            kind = 'overridden'   # same values, different effective order
         changes.append({
             'key': key,
             'own': own_vals,
