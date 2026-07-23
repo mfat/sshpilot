@@ -301,32 +301,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.content_box.append(self.empty_label)
         
         self.append(scrolled)
-        
-        # Config preview section
-        self.setup_config_preview()
-        
-    def setup_config_preview(self):
-        """Add a button that opens the effective-SSH-config viewer.
-
-        Replaces the old read-only "Generated SSH Config" dump, which only
-        echoed the user's own block. The viewer shows what SSH actually resolves
-        for this host (globals + includes) alongside the host block.
-        """
-        self.preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.preview_box.set_margin_top(12)
-
-        self.effective_config_button = Gtk.Button(
-            label=_("View effective SSH config…"))
-        from sshpilot import icon_utils
-        icon_utils.set_button_icon(self.effective_config_button, "view-reveal-symbolic")
-        self.effective_config_button.set_tooltip_text(_(
-            "Compare this host's block with what SSH actually uses once your "
-            "global config (Host *) and included files are applied"))
-        self.effective_config_button.set_halign(Gtk.Align.START)
-        self.effective_config_button.connect("clicked", self._on_view_effective_clicked)
-
-        self.preview_box.append(self.effective_config_button)
-        self.append(self.preview_box)
 
     def _build_preview_config_data(self, connection):
         """Assemble the config dict for this host's own block (used by the viewer)."""
@@ -522,8 +496,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         """No-op retained for existing callers.
 
         The live "Generated SSH Config" dump was replaced by the on-demand
-        effective-config viewer (see setup_config_preview); nothing needs to be
-        refreshed as fields change.
+        effective-config viewer opened from the dialog's "Verify Configuration"
+        button; nothing needs to be refreshed as fields change.
         """
         return
 
@@ -1465,6 +1439,27 @@ class ConnectionDialog(
         self.cancel_button.connect("clicked", self.on_cancel_clicked)
         self.save_button.connect("clicked", self.on_save_clicked)
         self._save_buttons = [self.save_button]
+
+        # "Verify Configuration" — pinned to the LEFT of the bottom button bar
+        # (Cancel/Save stay right). Opens the effective-config viewer.
+        try:
+            button_box = self.save_button.get_parent()
+            if button_box is not None:
+                button_box.set_halign(Gtk.Align.FILL)
+                verify_button = Gtk.Button(label=_("Verify Configuration"))
+                verify_button.add_css_class("success")
+                verify_button.set_tooltip_text(
+                    _("Check this connection against effective SSH configuration"))
+                verify_button.set_halign(Gtk.Align.START)
+                verify_button.set_hexpand(True)
+                verify_button.connect(
+                    "clicked",
+                    lambda *_a: self.advanced_tab._on_view_effective_clicked(None))
+                button_box.prepend(verify_button)
+                self.verify_button = verify_button
+        except Exception:
+            logger.debug("Could not add Verify Configuration button", exc_info=True)
+
         self.setup_keyboard_shortcuts()
 
         # Install inline validators for key fields
