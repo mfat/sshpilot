@@ -48,6 +48,7 @@ class EffectiveConfigChecker:
         # never overwrite the cache with a stale value.
         self._gen: dict[str, int] = {}
         self._globals_present: Optional[bool] = None  # probed lazily, per config
+        self._globals_gen = 0  # bumped on full invalidate; guards the probe cache
         self._lock = threading.Lock()
         self._queue: "queue.Queue" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
@@ -85,6 +86,7 @@ class EffectiveConfigChecker:
                 self._cache.clear()
                 self._queued.clear()
                 self._globals_present = None  # config changed -> re-probe
+                self._globals_gen += 1        # cancel any in-flight probe
                 for key in self._gen:
                     self._gen[key] += 1
             else:
@@ -146,13 +148,24 @@ class EffectiveConfigChecker:
         return None if result is None else bool(result.get('has_diff'))
 
     def _config_has_globals(self) -> bool:
+        # Wildcard/negated Host blocks (Host *, Host prod-*, Host !x) are tracked
+        # in rules and may match some connection, so force per-host checking —
+        # the sentinel probe alone would miss host-specific patterns it doesn't
+        # happen to match. The probe is only needed for the untracked case:
+        # directives before the first Host block.
+        if getattr(self._cm, 'rules', None):
+            return True
         with self._lock:
             cached = self._globals_present
+            gen = self._globals_gen
         if cached is not None:
             return cached
         present = self._probe_globals()
         with self._lock:
-            if self._globals_present is None:  # a concurrent invalidate may reset
+            # Only cache if no invalidate happened while probing (else the probe
+            # ran against a now-stale config); this call still returns its own
+            # result and the next one re-probes.
+            if gen == self._globals_gen:
                 self._globals_present = present
         return present
 
