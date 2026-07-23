@@ -8,8 +8,10 @@ commands are harvested from the one that already exists: the primary menu
 command, including plugin pages (they fold themselves into that menu's Tools
 section — see ``plugins/host.py``), so new utilities appear here for free.
 
-A match becomes a :class:`CommandRow` appended to the results list; activating it
-dismisses the popup and runs the action via ``Gtk.Widget.activate_action``.
+A match becomes a :class:`CommandRow` appended to the results list; the row
+carries only the action name + target (plain data, never a ``window`` reference),
+so it forms no cycle that would wedge finalization. ``MainWindow`` runs the
+action from ``on_connection_activated`` via ``Gtk.Widget.activate_action``.
 """
 
 from __future__ import annotations
@@ -27,10 +29,13 @@ _ = gettext.gettext
 class CommandRow(Gtk.ListBoxRow):
     """A search result that runs an in-app command instead of a connection."""
 
-    def __init__(self, title: str, subtitle: str, icon_name: str, activate):
+    def __init__(self, title: str, subtitle: str, icon_name: str,
+                 action: str, target):
         super().__init__()
-        # on_connection_activated dispatches on this attribute (window.py).
-        self.command_activate = activate
+        # on_connection_activated dispatches on these. Plain data only — no
+        # window/closure reference, so the row forms no finalization cycle.
+        self.command_action = action
+        self.command_target = target
         self.add_css_class("command-row")
 
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -81,15 +86,6 @@ def _matches(title: str, query: str) -> bool:
     return all(word in title for word in query.lower().split())
 
 
-def _make_activator(window, action: str, target):
-    def run():
-        # Close the popup first (restores the sidebar), then run the command so
-        # the dialog/page it opens isn't fighting the popup for the overlay.
-        window._dismiss_search_popup()
-        Gtk.Widget.activate_action(window, action, target)
-    return run
-
-
 def append_command_rows(window, query: str) -> int:
     """Append CommandRows matching ``query`` to ``window.connection_list``.
 
@@ -118,7 +114,8 @@ def append_command_rows(window, query: str) -> int:
             title,
             _("Command"),
             "application-x-executable-symbolic",
-            _make_activator(window, action, target),
+            action,
+            target,
         )
         window.connection_list.append(row)
         count += 1

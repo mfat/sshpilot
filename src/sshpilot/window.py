@@ -3847,8 +3847,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     # Signal handlers
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
-        if row is not None and hasattr(row, 'command_activate'):
-            row.command_activate()
+        if row is not None and hasattr(row, 'command_action'):
+            # Close the popup first (restores the sidebar), then run the command
+            # so the dialog/page it opens isn't fighting the popup for the overlay.
+            action, target = row.command_action, row.command_target
+            self._dismiss_search_popup()
+            Gtk.Widget.activate_action(self, action, target)
             return
         self._return_to_tab_view_if_welcome()
         logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
