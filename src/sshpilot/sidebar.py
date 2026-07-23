@@ -303,10 +303,10 @@ def install_sidebar_css():
           }
         }
 
-        /* Minimal (icon-only) sidebar avatars: a plain circle we colour
-           ourselves (AdwAvatar's per-name hashed colour can't be overridden and
-           clashes with group colours). Neutral fill by default; group rows get
-           their colour via a per-widget provider (see _set_avatar_color). */
+        /* Minimal (icon-only) sidebar avatars: a plain neutral circle. The
+           circle fill stays neutral for every row; group rows tint only their
+           glyph (folder icon / initials) via a per-widget provider (see
+           _set_avatar_color). */
         .sidebar-avatar {
           min-width: 28px;
           min-height: 28px;
@@ -668,11 +668,11 @@ def _make_avatar(*, initials: Optional[str] = None, icon_name: Optional[str] = N
 
 
 def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
-    """Paint a group avatar's circle with ``rgba`` (or clear back to neutral).
+    """Tint a group avatar's glyph (folder icon / initials) with ``rgba``.
 
     A provider on the widget's own style context at USER priority overrides the
-    default ``.sidebar-avatar`` fill; white foreground keeps the folder icon
-    legible on the coloured circle.
+    default ``.sidebar-avatar`` foreground; the circle keeps its neutral fill so
+    only the glyph carries the group colour.
     """
     old = getattr(avatar, '_color_provider', None)
     if old is not None:
@@ -691,8 +691,7 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     provider.load_from_data(
         (
             ".sidebar-avatar {"
-            f"  background-color: {color};"
-            "  color: #ffffff;"
+            f"  color: {color};"
             "}"
         ).encode("utf-8")
     )
