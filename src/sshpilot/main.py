@@ -667,6 +667,20 @@ class SshPilotApplication(Adw.Application):
         self._update_accelerators_enabled_flag()
         from .terminal import process_manager
         process_manager.cleanup_all()
+
+        # Drain cyclic garbage now, on the main thread while GTK is still alive.
+        # The cyclic collector is disabled during normal run (see __init__) and
+        # driven by a 5s timer so GObject disposal stays on the main thread.
+        # Transient UI — e.g. the search popup once shown, or an editor window
+        # once closed — can leave GTK-widget reference cycles detached in the
+        # tree. Without this final collection they are instead collected during
+        # interpreter finalization, after GTK has torn down, and disposing a
+        # widget into dead GTK hangs the process. Collect them here where it is
+        # safe.
+        try:
+            gc.collect()
+        except Exception:
+            logger.debug("Shutdown gc.collect() failed", exc_info=True)
         logger.info("Cleanup completed")
 
     def setup_logging(self):
