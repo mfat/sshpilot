@@ -36,7 +36,9 @@ class KnownHostsEditorWindow(Adw.Window):
         )
         self._all_entries = []  # Store all entries for filtering
 
-        self._load_entries()
+        # Populate after present() so the window appears immediately
+        # (matches AuthorizedKeysWindow's deferred load).
+        GLib.idle_add(self._load_entries)
 
     @Gtk.Template.Callback()
     def _on_cancel_clicked(self, _btn):
