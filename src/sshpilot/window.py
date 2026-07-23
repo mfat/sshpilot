@@ -1844,19 +1844,40 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._sidebar_width_animation = animation
         animation.play()
 
+    #: Delay before collapsing the drag-expanded strip, so the drop settles first.
+    _DRAG_COLLAPSE_DELAY_MS = 900
+
     def begin_sidebar_drag_expand(self) -> None:
         """Temporarily expand a minimal strip while a drag is in progress so
         drop targets (groups, ungrouped area) are visible and reachable. Paired
         with :meth:`end_sidebar_drag_expand` on drag-end."""
+        self._cancel_pending_drag_collapse()
         if getattr(self, '_sidebar_minimal', False):
             self._sidebar_expanded_for_drag = True
             self.set_sidebar_minimal(False)
 
     def end_sidebar_drag_expand(self) -> None:
-        """Collapse the strip back if it was auto-expanded for a drag."""
+        """Collapse the strip back if it was auto-expanded for a drag, after a
+        short delay so the drop lands before the sidebar snaps closed."""
         if getattr(self, '_sidebar_expanded_for_drag', False):
             self._sidebar_expanded_for_drag = False
-            self.set_sidebar_minimal(True)
+            self._cancel_pending_drag_collapse()
+            self._drag_collapse_timeout_id = GLib.timeout_add(
+                self._DRAG_COLLAPSE_DELAY_MS, self._collapse_after_drag)
+
+    def _collapse_after_drag(self) -> bool:
+        self._drag_collapse_timeout_id = 0
+        self.set_sidebar_minimal(True)
+        return False  # one-shot
+
+    def _cancel_pending_drag_collapse(self) -> None:
+        tid = getattr(self, '_drag_collapse_timeout_id', 0)
+        if tid:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+            self._drag_collapse_timeout_id = 0
 
     def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
         """Display an error dialog when duplication fails."""
