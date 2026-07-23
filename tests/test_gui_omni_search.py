@@ -23,7 +23,7 @@ def test_omni_search_switches_between_welcome_anchor_and_center(gui):
     omni = win._omni_search
 
     assert win.is_start_tab_selected()
-    assert omni.home.get_child() is omni.launcher
+    assert omni.home.get_child() is omni.content
 
     omni.show()
     gui.pump(100)
@@ -35,7 +35,7 @@ def test_omni_search_switches_between_welcome_anchor_and_center(gui):
     omni.dismiss()
     gui.pump(100)
     assert not omni.popup.visible
-    assert omni.home.get_child() is omni.launcher
+    assert omni.home.get_child() is omni.content
 
     win.terminal_manager.show_local_terminal()
     gui.pump(200)
@@ -67,14 +67,14 @@ def test_omni_search_rebuilds_results_on_real_window(gui):
     omni.dismiss()
 
 
-def test_welcome_launcher_opens_omni_and_keeps_keyboard_focus(gui):
+def test_typing_in_docked_entry_opens_omni_and_keeps_keyboard_focus(gui):
     win = gui.window
     win.show_start_tab()
     gui.pump(100)
     omni = win._omni_search
 
-    omni.launcher.emit("clicked")
-    gui.pump(100)
+    omni.entry.set_text("s")
+    gui.pump(400)
 
     assert omni.popup.visible
     assert omni.popup.mode == "anchored"

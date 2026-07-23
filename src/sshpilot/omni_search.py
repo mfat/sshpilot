@@ -13,7 +13,7 @@ import gi
 
 gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
-from gi.repository import Adw, Gdk, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 from .cli_connect import validate_cli_tokens
 
@@ -381,6 +381,10 @@ class OmniSearchController:
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_entry_key)
         self.entry.add_controller(key)
+        click = Gtk.GestureClick()
+        click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        click.connect("pressed", lambda *_args: self._request_show())
+        self.entry.add_controller(click)
         self.content.append(self.entry)
 
         self.results_scroller = Gtk.ScrolledWindow()
@@ -398,31 +402,13 @@ class OmniSearchController:
         self.results_scroller.set_child(self.results)
         self.content.append(self.results_scroller)
 
-        launcher_content = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL, spacing=10,
-        )
-        launcher_content.append(
-            Gtk.Image.new_from_icon_name("system-search-symbolic")
-        )
-        launcher_label = Gtk.Label(
-            label=_("Search connections, tools, or SSH commands"),
-            xalign=0,
-        )
-        launcher_label.add_css_class("dim-label")
-        launcher_label.set_hexpand(True)
-        launcher_content.append(launcher_label)
-        self.launcher = Gtk.Button()
-        self.launcher.set_child(launcher_content)
-        self.launcher.add_css_class("omni-search-launcher")
-        self.launcher.connect("clicked", self._on_entry_clicked)
-        home.set_child(self.launcher)
-
-        self._content_home = Adw.Bin()
-        self._content_home.set_child(self.content)
+        # The real entry lives on the welcome page; showing the popup detaches
+        # the whole content box into the floating panel and hiding re-docks it.
+        home.set_child(self.content)
         from .search_popup import SearchPopup
         self.popup = SearchPopup(
             overlay,
-            self._content_home,
+            home,
             self.content,
             lambda: max(320, min(620, overlay.get_width() - 32)),
             on_shown=self._on_popup_shown,
@@ -482,9 +468,11 @@ class OmniSearchController:
             self.entry.set_text("")
         self.popup.hide()
 
-    def _on_entry_clicked(self, *_args) -> None:
+    def _request_show(self) -> None:
+        # Deferred: showing reparents the entry, which must not happen while
+        # the click/key event that triggered it is still being dispatched.
         if not self.popup.visible:
-            self.show(False)
+            GLib.idle_add(lambda: (self.show(False), GLib.SOURCE_REMOVE)[1])
 
     def _on_popup_shown(self) -> None:
         self._set_results_visible(True)
@@ -493,7 +481,7 @@ class OmniSearchController:
     def _on_popup_hidden(self) -> None:
         self._set_results_visible(False)
         if self._anchored:
-            self.launcher.grab_focus()
+            self._entry_focus_widget().grab_focus()
         elif self._previous_focus is not None:
             try:
                 self._previous_focus.grab_focus()
@@ -562,6 +550,8 @@ class OmniSearchController:
     def _on_search_changed(self, *_args) -> None:
         if self.popup.visible:
             self._rebuild()
+        elif self.entry.get_text():
+            self._request_show()
 
     def _on_entry_key(self, _controller, keyval, _keycode, _state):
         if keyval in (Gdk.KEY_Down, Gdk.KEY_Up):
@@ -586,6 +576,9 @@ class OmniSearchController:
         self.activate_result(getattr(row, "omni_result", None))
 
     def activate_selected(self) -> None:
+        if not self.popup.visible:
+            self._request_show()
+            return
         row = self.results.get_selected_row() or self._first_enabled_row()
         self.activate_result(getattr(row, "omni_result", None) if row else None)
 
