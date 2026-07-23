@@ -5516,64 +5516,83 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         connection. Informational only — offers a diff view and a shortcut to the
         SSH config editor. Best-effort: any failure is swallowed silently.
 
-        Deferred to idle so it appears after the connection dialog has closed.
+        The two ``ssh -G`` resolutions run on a worker thread (they can block for
+        seconds on slow name resolution / ProxyJump); the dialog is presented
+        back on the GTK main thread via ``GLib.idle_add``.
         """
-        def _check():
-            try:
-                from .ssh_config_utils import diff_effective_config
-                from gettext import gettext as _
-
-                host = (connection_data.get('nickname')
-                        or getattr(connection, 'nickname', '') or '')
-                if not host:
-                    return False
-                own_block = self.connection_manager.format_ssh_config_entry(connection_data)
+        try:
+            host = (connection_data.get('nickname')
+                    or getattr(connection, 'nickname', '') or '')
+            if not host:
+                return
+            own_block = self.connection_manager.format_ssh_config_entry(connection_data)
+            # Resolve against the ROOT config (the file ssh reads top-down and
+            # that pulls in Include'd fragments + Host * globals). `source` may be
+            # an included fragment, which alone misses root/sibling globals.
+            config_file = getattr(connection, 'config_root', '') or None
+            if not config_file:
                 try:
                     config_file = connection._resolve_config_override_path()
                 except Exception:
                     config_file = None
+        except Exception:
+            logger.debug("effective-config diff setup failed", exc_info=True)
+            return
 
+        def _work():
+            try:
+                from .ssh_config_utils import diff_effective_config
                 result = diff_effective_config(host, config_file, own_block)
-                if not result or not result.get('has_diff'):
-                    return False
-
-                dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Global SSH config may change this connection"),
-                    body=_(
-                        "Some of the values you set may be overridden or added by "
-                        "your global SSH configuration (for example a 'Host *' "
-                        "block or an included file). SSH will use the effective "
-                        "values, not only what you entered here."
-                    ),
-                )
-                dialog.add_response('dismiss', _('Dismiss'))
-                dialog.add_response('view', _('View differences…'))
-                dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
-                dialog.set_default_response('view')
-
-                changes = list(result.get('changes') or [])
-
-                def _on_response(dlg, response):
-                    if response == 'view':
-                        try:
-                            from .effective_config_diff import EffectiveConfigDiffWindow
-                            win = EffectiveConfigDiffWindow(self, host, changes)
-                            win.present()
-                        except Exception:
-                            logger.debug("Failed to open effective-config diff", exc_info=True)
-
-                dialog.connect('response', _on_response)
-                dialog.present()
             except Exception:
                 logger.debug("effective-config diff check failed", exc_info=True)
-            return False
+                result = None
+            GLib.idle_add(self._present_effective_config_warning, host, result)
 
         try:
-            GLib.idle_add(_check)
+            threading.Thread(target=_work, name="effcfg-diff", daemon=True).start()
         except Exception:
-            logger.debug("Could not schedule effective-config check", exc_info=True)
+            logger.debug("Could not start effective-config check thread", exc_info=True)
+
+    def _present_effective_config_warning(self, host, result):
+        """Show the global-config warning dialog on the GTK main thread."""
+        try:
+            from gettext import gettext as _
+
+            if not result or not result.get('has_diff'):
+                return False
+
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Global SSH config may change this connection"),
+                body=_(
+                    "Some of the values you set may be overridden or added by "
+                    "your global SSH configuration (for example a 'Host *' "
+                    "block or an included file). SSH will use the effective "
+                    "values, not only what you entered here."
+                ),
+            )
+            dialog.add_response('dismiss', _('Dismiss'))
+            dialog.add_response('view', _('View differences…'))
+            dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('view')
+
+            changes = list(result.get('changes') or [])
+
+            def _on_response(dlg, response):
+                if response == 'view':
+                    try:
+                        from .effective_config_diff import EffectiveConfigDiffWindow
+                        win = EffectiveConfigDiffWindow(self, host, changes)
+                        win.present()
+                    except Exception:
+                        logger.debug("Failed to open effective-config diff", exc_info=True)
+
+            dialog.connect('response', _on_response)
+            dialog.present()
+        except Exception:
+            logger.debug("Failed to present effective-config warning", exc_info=True)
+        return False
 
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
