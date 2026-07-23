@@ -479,7 +479,6 @@ class OmniSearchController:
             GLib.idle_add(lambda: (self.show(False), GLib.SOURCE_REMOVE)[1])
 
     def _on_popup_shown(self) -> None:
-        self._set_results_visible(True)
         self._rebuild()
 
     def _on_popup_hidden(self) -> None:
@@ -533,13 +532,15 @@ class OmniSearchController:
         return row
 
     def _rebuild(self) -> None:
-        self._results = search_omni(self.window, self.entry.get_text())
+        query = self.entry.get_text().strip()
+        self._results = search_omni(self.window, query) if query else []
         self._clear_rows()
         for result in self._results:
             self.results.append(self._make_row(result))
         first = self._first_enabled_row()
         if first is not None:
             self.results.select_row(first)
+        self._set_results_visible(self.popup.visible and bool(self._results))
 
     def _first_enabled_row(self):
         index = 0
