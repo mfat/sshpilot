@@ -372,7 +372,7 @@ class OmniSearchController:
         self.entry = Gtk.SearchEntry()
         self.entry.set_can_focus(True)
         self.entry.set_placeholder_text(
-            _("Search connections, tools, or SSH commands")
+            _("Search connections, tools, or type a SSH command")
         )
         self.entry.add_css_class("omni-search-entry")
         self.entry.connect("search-changed", self._on_search_changed)
