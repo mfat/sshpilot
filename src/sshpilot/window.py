@@ -3210,14 +3210,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Error focusing connection list: {e}")
 
-    def _expand_sidebar_for_search(self):
-        """Give search room when the sidebar is the icon strip.
+    def _expand_sidebar_for_search(self, sidebar_hidden: bool = False):
+        """Give search room when the sidebar is unavailable as a full pane.
 
         Detaches the sidebar into the floating popup (looks like the expanded
         sidebar, floats over the content) rather than expanding the split view —
-        so the terminal never resizes. Remembered so it re-attaches on close.
+        so the terminal never resizes. This applies both to minimal mode and a
+        sidebar manually hidden with F9. Remembered so it re-attaches on close.
         """
-        self._search_expanded_sidebar = getattr(self, '_sidebar_minimal', False)
+        self._search_expanded_sidebar = (
+            getattr(self, '_sidebar_minimal', False) or sidebar_hidden
+        )
         if self._search_expanded_sidebar:
             self._search_popup.show()
 
@@ -3252,16 +3255,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not (hasattr(self, 'search_entry') and self.search_entry):
                 return
 
-            # If the sidebar is hidden, reveal it first
-            if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                if self.sidebar_toggle_button.get_active():
-                    self.sidebar_toggle_button.set_active(False)
+            sidebar_hidden = bool(
+                getattr(self, 'sidebar_toggle_button', None)
+                and self.sidebar_toggle_button.get_active()
+            )
 
             was_visible = True
             if hasattr(self, 'search_container') and self.search_container:
                 was_visible = self.search_container.get_visible()
-                if not was_visible:
-                    self._expand_sidebar_for_search()
+                if not was_visible or sidebar_hidden:
+                    self._expand_sidebar_for_search(sidebar_hidden)
                     self.search_container.set_visible(True)
 
             # Always focus and select any existing text so typing replaces it
@@ -3285,16 +3288,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Toggle search on/off and show appropriate toast notification."""
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
-                # If sidebar is hidden, show it first
-                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(False)
+                sidebar_hidden = bool(
+                    getattr(self, 'sidebar_toggle_button', None)
+                    and self.sidebar_toggle_button.get_active()
+                )
                 
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
                     is_visible = self.search_container.get_visible()
                     if not is_visible:
-                        self._expand_sidebar_for_search()
+                        self._expand_sidebar_for_search(sidebar_hidden)
                     self.search_container.set_visible(not is_visible)
 
                     if not is_visible:
