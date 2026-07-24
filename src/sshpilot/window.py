@@ -3508,8 +3508,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                     # Reload SSH config (this creates new Connection objects)
                     self.connection_manager.load_ssh_config()
-                    # Globals may have changed: drop all cached checks; the
-                    # list rebuild below re-primes every row.
+                    # Globals may have changed: drop all cached checks. Hovering
+                    # a rebuilt row schedules a fresh check.
                     checker = getattr(self, 'effective_config_checker', None)
                     if checker is not None:
                         checker.invalidate()
@@ -3544,6 +3544,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.info("SSH config reloaded after file save")
                 except Exception as e:
                     logger.error(f"Failed to refresh connections after SSH config save: {e}")
+
+            def _on_ssh_config_saved():
+                """Synchronously observe saves made by our atomic local editor."""
+                nonlocal file_modified_time
+                try:
+                    file_modified_time = os.path.getmtime(config_path)
+                except OSError:
+                    pass
+                _reload_ssh_config()
 
             # Monitor file for changes
             def _on_file_changed(monitor, file, other_file, event_type):
@@ -3581,6 +3590,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 sftp_manager=None,
                 file_manager_window=None,
                 pre_save_validator=validate_ssh_config_text,
+                on_local_saved=_on_ssh_config_saved,
                 language_id="sshconfig",
                 show_outline=True,
             )
