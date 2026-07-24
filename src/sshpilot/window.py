@@ -974,10 +974,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("effective-config invalidate failed", exc_info=True)
 
-    def _prime_effective_warning(self, row, connection):
-        """Set the row's warning icon from cache and enqueue a background check.
+    def _request_effective_warning(self, row, connection):
+        """Resolve a hovered row from cache or enqueue its background check.
 
-        Both operations are O(1) — no ssh runs on the row-build path.
+        Called only from the row's hover handler, never while building the list.
         """
         checker = getattr(self, 'effective_config_checker', None)
         if checker is None:
@@ -2943,6 +2943,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.group_manager,
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
+            effective_warning_callback=self._request_effective_warning,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
         )
@@ -2957,9 +2958,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
-
-        # Cheap: cache read + background enqueue (no ssh on this path).
-        self._prime_effective_warning(row, connection)
 
         return row
 
