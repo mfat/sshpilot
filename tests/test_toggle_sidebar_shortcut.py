@@ -71,6 +71,18 @@ def test_suspended_accelerators_clear_accels():
     assert app.accel_calls.get('win.toggle_sidebar') == []
 
 
+def test_double_shift_gesture_is_not_registered_as_gtk_accelerator():
+    app = _FakeApp()
+    app.register_window_shortcut('omnisearch', ['<double-shift>'])
+    assert app.accel_calls.get('win.omnisearch') == []
+
+
+def test_omnisearch_override_is_registered_as_normal_accelerator():
+    app = _FakeApp(overrides={'omnisearch': ['<Primary>k']})
+    app.register_window_shortcut('omnisearch', ['<double-shift>'])
+    assert app.accel_calls.get('win.omnisearch') == ['<Primary>k']
+
+
 def test_update_sidebar_accelerators_delegates_to_registry():
     app = _FakeApp(overrides={'toggle_sidebar': ['<Alt>s']})
     app.register_window_shortcut('toggle_sidebar', ['F9'])

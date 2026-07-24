@@ -12,6 +12,7 @@ from gi.repository import Adw, Gio, Gtk
 from gettext import gettext as _
 
 from .platform_utils import is_macos
+from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,7 @@ class WindowHelpMixin:
         # Add general shortcuts with current values
         general_actions = [
             ('toggle_sidebar', _('Toggle Sidebar')),
+            ('omnisearch', _('Omnisearch')),
             ('quit', _('Quit')),
             ('preferences', _('Settings')),
             ('help', _('Documentation')),
@@ -125,7 +127,10 @@ class WindowHelpMixin:
         for action_name, title in general_actions:
             shortcuts = current_shortcuts.get(action_name)
             if shortcuts:
-                accelerator = ' '.join(shortcuts)
+                if shortcuts == [DOUBLE_SHIFT_SHORTCUT]:
+                    accelerator = 'Shift_L Shift_L'
+                else:
+                    accelerator = ' '.join(shortcuts)
                 group_general.add_shortcut(Gtk.ShortcutsShortcut(
                     title=title, accelerator=accelerator))
         
@@ -135,7 +140,7 @@ class WindowHelpMixin:
         group_connections = Gtk.ShortcutsGroup()
         connection_actions = [
             ('new-connection', _('New Connection')),
-            ('search', _('Search Connections')),
+            ('search', _('Search')),
             ('toggle-list', _('Focus Connection List')),
             ('open-new-connection-tab', _('Open New Tab')),
             ('new-key', _('Copy Key to Server')),

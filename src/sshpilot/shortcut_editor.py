@@ -9,7 +9,7 @@ gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
 from gi.repository import Adw, Gdk, Gtk
 
-from .shortcut_utils import install_esc_to_close
+from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT, install_esc_to_close
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,8 @@ ACTION_LABELS: Dict[str, str] = {
     'new-connection': _('New Connection'),
     'open-new-connection-tab': _('Open New Connection Tab'),
     'toggle-list': _('Focus Connection List'),
-    'search': _('Search Connections'),
+    'search': _('Search'),
+    'omnisearch': _('Omnisearch'),
     'terminal-search': _('Search in Terminal'),
     'new-key': _('Copy Key to Server'),
     'manage-files': _('Manage Files'),
@@ -257,7 +258,10 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         split_group.set_description(_('Active whenever a split view tab is open.'))
 
         # Categorize actions
-        general_actions = ['quit', 'preferences', 'help', 'shortcuts', 'toggle_sidebar']
+        general_actions = [
+            'quit', 'preferences', 'help', 'shortcuts', 'toggle_sidebar',
+            'omnisearch',
+        ]
         connection_actions = [
             'new-connection',
             'open-new-connection-tab',
@@ -440,6 +444,9 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
         labels: List[str] = []
         for accel in accelerators:
+            if accel == DOUBLE_SHIFT_SHORTCUT:
+                labels.append(_('Double Shift'))
+                continue
             success, keyval, modifiers = Gtk.accelerator_parse(accel)
             if not success or (keyval == 0 and modifiers == 0):
                 labels.append(accel)

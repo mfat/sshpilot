@@ -89,7 +89,11 @@ from .window_dialogs import (
 )
 from . import shutdown
 from .search_utils import connection_matches
-from .shortcut_utils import get_primary_modifier_label
+from .shortcut_utils import (
+    DOUBLE_SHIFT_SHORTCUT,
+    DoubleShiftDetector,
+    get_primary_modifier_label,
+)
 from .platform_utils import (
     get_config_dir,
     get_default_terminal_command,
@@ -307,6 +311,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Set up window
         self.setup_window()
         self.setup_ui()
+        self._setup_omnisearch_shortcut()
         self.setup_connections()
         self.setup_signals()
         self._setup_ssh_config_monitor()
@@ -3542,6 +3547,59 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         omni = getattr(self, '_omni_search', None)
         if omni is not None:
             omni.show()
+
+    def _setup_omnisearch_shortcut(self) -> None:
+        """Install the window-level double-Shift gesture detector."""
+        self._omnisearch_double_shift = DoubleShiftDetector()
+        controller = Gtk.EventControllerKey()
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        controller.connect('key-pressed', self._on_omnisearch_key_pressed)
+        controller.connect('key-released', self._on_omnisearch_key_released)
+        self.add_controller(controller)
+        self._omnisearch_key_controller = controller
+
+    def _omnisearch_uses_double_shift(self) -> bool:
+        app = self.get_application()
+        if app is None or not getattr(app, 'accelerators_enabled', True):
+            return False
+        try:
+            shortcuts = app.get_effective_shortcuts('omnisearch') or []
+        except Exception:
+            return False
+        return DOUBLE_SHIFT_SHORTCUT in shortcuts
+
+    @staticmethod
+    def _is_shift_key(keyval: int) -> bool:
+        return keyval in (Gdk.KEY_Shift_L, Gdk.KEY_Shift_R)
+
+    @staticmethod
+    def _shortcut_event_time() -> float:
+        return GLib.get_monotonic_time() / 1_000_000
+
+    def _on_omnisearch_key_pressed(
+        self, _controller, keyval, _keycode, _state
+    ) -> bool:
+        detector = self._omnisearch_double_shift
+        if not self._omnisearch_uses_double_shift():
+            detector.reset()
+            return False
+        detector.key_pressed(
+            self._is_shift_key(keyval), self._shortcut_event_time()
+        )
+        # Shift itself must continue to the focused widget, especially VTE.
+        return False
+
+    def _on_omnisearch_key_released(
+        self, _controller, keyval, _keycode, _state
+    ) -> None:
+        detector = self._omnisearch_double_shift
+        if not self._omnisearch_uses_double_shift():
+            detector.reset()
+            return
+        if detector.key_released(
+            self._is_shift_key(keyval), self._shortcut_event_time()
+        ):
+            self.activate_omni_search()
 
     def open_omni_transfer_intent(self, intent, connection=None):
         """Route command-like transfer searches to their existing GUI flows."""
