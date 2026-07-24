@@ -2316,60 +2316,30 @@ class ConnectionManager(GObject.Object):
         target_path = source or self.ssh_config_path
         if not os.path.exists(target_path):
             return False
-        with open(target_path) as f:
-            lines = f.readlines()
+        doc = SSHConfigDocument.parse_file(target_path)
 
-        updated_lines = []
-        i = 0
         modified = False
-
-        while i < len(lines):
-            raw_line = lines[i]
-            lstripped = raw_line.lstrip()
-            # Match the Host header honouring all separators (Host=x, tabs).
-            kw, full_value = _split_keyword(lstripped)
-
-            if kw == 'host':
-                try:
-                    current_names = shlex.split(full_value) if full_value else []
-                except ValueError:
-                    # Fallback to simple split if shlex fails
-                    current_names = [h for h in full_value.split() if h]
-
-                # Check if our target host is in this Host directive
-                if host_nickname in current_names:
-                    modified = True
-                    # Remove the target hostname from the list
-                    remaining_names = [name for name in current_names if name != host_nickname]
-
-                    if remaining_names:
-                        # Update the Host line with remaining names
-                        indent = raw_line[:len(raw_line) - len(lstripped)]
-                        remaining_hosts_str = shlex.join(remaining_names)
-                        updated_line = f"{indent}Host {remaining_hosts_str}\n"
-                        updated_lines.append(updated_line)
-                        logger.info(f"Updated Host line: removed '{host_nickname}', remaining: {remaining_names}")
-
-                        # Keep the rest of the block
-                        i += 1
-                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                            updated_lines.append(lines[i])
-                            i += 1
-                    else:
-                        # No remaining names, delete the entire block
-                        logger.info(f"Deleting entire Host block for '{host_nickname}' (was the only host)")
-                        i += 1
-                        # Skip the entire block
-                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                            i += 1
-                    continue
-
-            # Keep line as-is
-            updated_lines.append(raw_line)
-            i += 1
+        new_nodes: List[Any] = []
+        for node in doc.nodes:
+            if not (isinstance(node, HostBlock) and host_nickname in node.tokens):
+                new_nodes.append(node)
+                continue
+            modified = True
+            remaining = [t for t in node.tokens if t != host_nickname]
+            if remaining:
+                # Drop only the label; keep the block for the other aliases.
+                header = node.lines[0]
+                indent = header[:len(header) - len(header.lstrip())]
+                node.tokens = remaining
+                node.lines[0] = f"{indent}Host {shlex.join(remaining)}\n"
+                new_nodes.append(node)
+                logger.info(f"Updated Host line: removed '{host_nickname}', remaining: {remaining}")
+            else:
+                logger.info(f"Deleting entire Host block for '{host_nickname}' (was the only host)")
 
         if modified:
-            self._safe_write_config(target_path, ''.join(updated_lines))
+            doc.nodes = new_nodes
+            self._safe_write_config(target_path, doc.text())
             logger.info(f"SSH config updated: removed entry for '{host_nickname}'")
         return modified
 
