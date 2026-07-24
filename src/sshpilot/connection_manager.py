@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import asyncio
 import enum
+from dataclasses import dataclass
 import logging
 import getpass
 import shlex
@@ -840,6 +841,33 @@ class Connection:
                 self._status = ConnectionState.DISCONNECTED
 
 
+@dataclass
+class _UpdateFlags:
+    """Operation flags a save payload may carry alongside connection data.
+
+    Produced by the connection dialog (`__`-prefixed keys in the payload):
+    split-from-group editing, and "secrets already persisted asynchronously".
+    Popped here in one place so they never leak into persistence or
+    Connection.data. The dialog↔window signal-envelope keys (``__meta``,
+    ``__save_completion``, ``__previous_secret_identity``) are popped by the
+    window/dialog and never reach the manager; ``__host_tokens`` and
+    ``__pre_command`` are parse artifacts owned by the loader, not flags.
+    """
+    secret_storage_done: bool = False
+    split_from_group: bool = False
+    split_source: Optional[str] = None
+    split_original_nickname: Optional[str] = None
+
+    @classmethod
+    def pop_from(cls, data: Dict[str, Any]) -> '_UpdateFlags':
+        return cls(
+            secret_storage_done=bool(data.pop('__secret_storage_done', False)),
+            split_from_group=bool(data.pop('__split_from_group', False)),
+            split_source=data.pop('__split_source', None),
+            split_original_nickname=data.pop('__split_original_nickname', None),
+        )
+
+
 class ConnectionManager(GObject.Object):
     """Manages SSH connections and configuration"""
 
@@ -957,10 +985,6 @@ class ConnectionManager(GObject.Object):
         the password, JSON store instead of the ssh_config write path."""
         try:
             new_data = dict(new_data)
-            new_data.pop('__split_from_group', None)
-            new_data.pop('__split_source', None)
-            new_data.pop('__split_original_nickname', None)
-
             prev_host = self._non_ssh_password_host(connection)
             prev_user = getattr(connection, 'username', '') or ''
 
@@ -2220,7 +2244,7 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
-            secret_storage_done = bool(new_data.pop('__secret_storage_done', False))
+            flags = _UpdateFlags.pop_from(new_data)
             if isinstance(getattr(connection, 'data', None), dict):
                 connection.data.pop('__secret_storage_done', None)
             protocol = (new_data.get('protocol')
@@ -2229,11 +2253,7 @@ class ConnectionManager(GObject.Object):
                 # Plugin protocols never touch ~/.ssh/config.
                 return self._update_non_ssh_connection(connection, new_data)
 
-            split_from_group = bool(new_data.pop('__split_from_group', False))
-            split_source_override = new_data.pop('__split_source', None)
-            split_original_host = new_data.pop('__split_original_nickname', None)
-
-            target_path = split_source_override or new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
+            target_path = flags.split_source or new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
             logger.info(
                 "Updating connection '%s' → writing to %s (rules=%d)",
                 connection.nickname,
@@ -2251,8 +2271,8 @@ class ConnectionManager(GObject.Object):
             # Persist FIRST (with the original nickname for proper matching);
             # the live object is only mutated after the write succeeds, so a
             # failed write can't leave memory diverged from ~/.ssh/config.
-            if split_from_group:
-                original_token = split_original_host or original_nickname
+            if flags.split_from_group:
+                original_token = flags.split_original_nickname or original_nickname
                 if not self._split_host_block(original_token, new_data, target_path):
                     logger.error("Failed to split host block for %s", original_token)
                     return False
@@ -2284,7 +2304,7 @@ class ConnectionManager(GObject.Object):
                 logger.debug("Failed to refresh host tokens after update", exc_info=True)
 
             # Handle password storage/removal
-            if 'password' in new_data and not secret_storage_done:
+            if 'password' in new_data and not flags.secret_storage_done:
                 pwd = new_data.get('password') or ''
                 curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
                 if pwd:
