@@ -1,10 +1,10 @@
-"""Characterization of a KNOWN inconsistency — see docs/host-hostname-divergence.md.
+"""Regression guard: Connection.host / Connection.hostname are unified.
 
-Connection.host / Connection.hostname get different values for the SAME input
-data depending on whether the object was freshly constructed (Connection())
-or updated in place (update_data()). These tests pin the current divergent
-behavior so it is visible and so a future unification (host = alias, always)
-knows exactly which assertions to flip. They do NOT bless the behavior.
+``host`` is ALWAYS the Host alias (falling back to the nickname);
+``hostname`` is the HostName value or ''. Construction and in-place update
+follow the same rule. These tests used to characterize the opposite — the
+update path overwrote host with hostname and invented a hostname when the
+key was absent; see docs/host-hostname-divergence.md for that history.
 """
 
 import asyncio
@@ -22,8 +22,7 @@ WITH_HOSTNAME = {
     "username": "u",
 }
 
-# `Host jumpbox` with no HostName line; parse emits hostname='' but a raw
-# caller-supplied dict may omit the key entirely — that's the divergent case.
+# `Host jumpbox` with no HostName line and no hostname key at all.
 NO_HOSTNAME_KEY = {
     "nickname": "jumpbox",
     "host": "jumpbox",
@@ -37,31 +36,29 @@ def test_fresh_object_keeps_alias_and_address_separate():
     assert conn.hostname == "203.0.113.7"   # the real address
 
 
-def test_update_path_overwrites_alias_with_hostname():
+def test_update_path_keeps_alias_and_address_separate():
     conn = Connection(dict(WITH_HOSTNAME))
-    conn.update_data(dict(WITH_HOSTNAME))   # same data, applied via update
-    # DIVERGENCE: identical input, but host is now the address, not the alias.
-    assert conn.host == "203.0.113.7"
+    conn.update_data(dict(WITH_HOSTNAME))
+    # Same rule as construction: the alias is never overwritten by the address.
+    assert conn.host == "myserver"
     assert conn.hostname == "203.0.113.7"
 
 
 def test_fresh_object_leaves_hostname_empty_when_key_missing():
     conn = Connection(dict(NO_HOSTNAME_KEY))
     assert conn.host == "jumpbox"
-    assert conn.hostname == ""              # no HostName -> correctly empty
+    assert conn.hostname == ""
 
 
-def test_update_path_mirrors_host_into_missing_hostname():
+def test_update_path_leaves_hostname_empty_when_key_missing():
     conn = Connection(dict(NO_HOSTNAME_KEY))
     conn.update_data(dict(NO_HOSTNAME_KEY))
-    # DIVERGENCE: hostname now claims a value that exists nowhere in the input.
+    # No mirrored/invented hostname: absent stays empty.
     assert conn.host == "jumpbox"
-    assert conn.hostname == "jumpbox"
+    assert conn.hostname == ""
 
 
 def test_safe_accessor_is_stable_across_both_paths():
-    """resolve_host_identifier() reads data['host'] first, so the ssh target
-    stays the alias regardless of which path last touched the object."""
     fresh = Connection(dict(WITH_HOSTNAME))
     updated = Connection(dict(WITH_HOSTNAME))
     updated.update_data(dict(WITH_HOSTNAME))

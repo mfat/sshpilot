@@ -282,22 +282,6 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
-        hostname_value = data.get('hostname')
-        host_value = data.get('host', '')
-
-        nickname_value = data.get('nickname')
-        if nickname_value:
-            self.nickname = nickname_value
-        else:
-            fallback_nickname = hostname_value if hostname_value else host_value
-            self.nickname = fallback_nickname or 'Unknown'
-
-        self.hostname = hostname_value or ''
-        host_alias = data.get('host')
-        if host_alias is None:
-            host_alias = self.nickname
-        self.host = host_alias or ''
-
         self._apply_common_fields(data)
 
         # Cache of identity files resolved for this connection (expanded paths)
@@ -749,6 +733,15 @@ class Connection:
     
     def _update_properties_from_data(self, data: Dict[str, Any]):
         """Update instance properties from data dictionary"""
+        self._apply_common_fields(data)
+
+    def _apply_common_fields(self, data: Dict[str, Any]) -> None:
+        """Hydrate every model field — the single path shared by __init__ and
+        update_data (see docs/host-hostname-divergence.md for the history)."""
+        # Unified resolution: ``host`` is ALWAYS the Host alias (falling back
+        # to the nickname); ``hostname`` is the HostName value or ''. The
+        # in-place update path used to overwrite host with hostname and mirror
+        # hostname from host — never reintroduce that.
         hostname_value = data.get('hostname')
         host_value = data.get('host', '')
 
@@ -759,28 +752,12 @@ class Connection:
             fallback_nickname = hostname_value if hostname_value else host_value
             self.nickname = fallback_nickname or getattr(self, 'nickname', 'Unknown')
 
-        if hostname_value in (None, ''):
-            resolved_host = host_value or getattr(self, 'host', '')
-        else:
-            resolved_host = hostname_value
-        self.host = resolved_host
+        self.hostname = hostname_value or ''
+        host_alias = data.get('host')
+        if host_alias is None:
+            host_alias = self.nickname
+        self.host = host_alias or ''
 
-        if hostname_value is None:
-            self.hostname = resolved_host
-        elif hostname_value == '':
-            self.hostname = ''
-        else:
-            self.hostname = hostname_value
-
-        self._apply_common_fields(data)
-
-    def _apply_common_fields(self, data: Dict[str, Any]) -> None:
-        """Hydrate the field set shared by __init__ and update_data.
-
-        nickname/host/hostname resolution intentionally stays in the callers:
-        construction and in-place update have long-standing different fallback
-        semantics for those three (see _update_properties_from_data).
-        """
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
         self.username = data.get('username', '')
@@ -2659,6 +2636,9 @@ class ConnectionManager(GObject.Object):
                     alias = (getattr(connection, 'nickname', '') or '').strip()
                     if alias:
                         connection.data['host'] = alias
+                        # Keep the attribute in sync: host is the alias, and a
+                        # rename payload carries only the new nickname.
+                        connection.host = alias
                         extra_aliases = [a for a in (getattr(connection, 'aliases', []) or []) if a]
                         connection.data['__host_tokens'] = [alias] + extra_aliases
             except Exception:

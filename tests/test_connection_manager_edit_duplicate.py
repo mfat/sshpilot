@@ -56,7 +56,7 @@ def test_apply_update_syncs_attributes_on_success():
     assert ok is True
     assert old.nickname == "new"
     assert old.hostname == "hh"
-    assert old.host == "hh"            # host mirrors hostname
+    assert old.host == "new"           # host = the alias (nickname), never the address
     assert old.username == "uu"
     assert old.port == 2200
     assert old.ssh_cmd == []           # prepared command invalidated

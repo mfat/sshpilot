@@ -1,11 +1,19 @@
-# Known inconsistency: `Connection.host` / `Connection.hostname` divergence
+# `Connection.host` / `Connection.hostname` divergence
 
-Status: **open, characterized, not yet unified**.
-Proof: `tests/test_host_hostname_divergence.py` (5 passing characterization tests).
-Line numbers below are as of branch `fix/connection-manager-cleanup` (2026-07); if they
-drift, search for the function names — both code blocks are small and distinctive.
+Status: **RESOLVED** on branch `fix/connection-manager-cleanup` (2026-07).
+The unified rule now lives in a single place — `Connection._apply_common_fields`
+(`src/sshpilot/connection_manager.py`, search for "Unified resolution"):
+**`host` is always the Host alias (falling back to the nickname); `hostname` is
+the HostName value or `''`** — identical for construction and in-place update.
+`update_connection`'s host-token refresh also syncs `connection.host` to the new
+alias after a rename (the rename payload carries only the nickname).
+Regression guard: `tests/test_host_hostname_divergence.py` (5 tests).
 
-## The problem in one table
+Everything below documents the divergence that existed before the fix, kept as
+the audit trail for which readers were exposed. Historical line numbers may
+have drifted; search for the function names.
+
+## The problem in one table (historical)
 
 The same input data produces different attribute values depending on which code
 path last touched the object.
@@ -102,21 +110,24 @@ rows (`host_picker.py:83,112`, `welcome_page.py:259`,
 search (`search_utils.py:25-26`), sort (`connection_sort.py:28-29`), clipboard
 copy (`window.py:2223`), various log strings.
 
-## Recommended unification (future task)
+## How it was resolved
 
-Adopt the construction rule everywhere: **`host` = alias, always;
-`hostname` = the HostName value or `""`**. Concretely:
+The construction rule was adopted everywhere:
 
-1. Replace `connection_manager.py:762-773` with the `__init__` logic
-   (`:295-299`), then fold all three fields into `_apply_common_fields`.
-2. Flip the two `DIVERGENCE` tests in `tests/test_host_hostname_divergence.py`
-   and the `host mirrors hostname` assertion in
-   `tests/test_connection_manager_edit_duplicate.py::test_apply_update_syncs_attributes_on_success`.
-3. Audit the high-risk readers above; most become *more* correct
-   (alias-based config matching, stable keyring probes). The one to watch is
-   local-terminal detection, which must keep matching whatever the synthetic
-   local connection sets (`terminal_manager.py:696-697` writes
-   `hostname='localhost'` explicitly, so it is unaffected).
-4. Run the full suite; the round-trip tests
-   (`tests/test_connection_field_roundtrip.py`) already pin `host`/`hostname`
-   for the alias-only and explicit-HostName cases.
+1. The three-field resolution moved into `_apply_common_fields`;
+   `__init__` and `_update_properties_from_data` both delegate to it, so a
+   second rule cannot drift back in.
+2. `update_connection`'s `__host_tokens` refresh sets `connection.host = alias`
+   after a rename, since the dialog payload carries the new nickname but no
+   `host` key.
+3. The characterization tests were flipped into regression guards
+   (`tests/test_host_hostname_divergence.py`), and the
+   `host mirrors hostname` assertion in
+   `tests/test_connection_manager_edit_duplicate.py` now asserts
+   `host == nickname`.
+4. The high-risk readers above became *more* correct (alias-based
+   effective-config matching, stable keyring probe lists, the dialog's
+   HostName field no longer shows a mirrored alias). Local-terminal detection
+   was unaffected: the synthetic local connection writes
+   `hostname='localhost'` explicitly (`terminal_manager.py:696-697`).
+5. Full suite passed unchanged apart from the flipped pins (1871 tests).
