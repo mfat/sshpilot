@@ -276,7 +276,7 @@ class ScpWindowController:
                 return button
 
             cards = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            cards.set_halign(Gtk.Align.CENTER)
+            cards.set_hexpand(True)
             cards.set_homogeneous(True)
             cards.append(
                 _choice_card(
