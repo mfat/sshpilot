@@ -2094,24 +2094,28 @@ class ConnectionManager(GObject.Object):
             lines.append("    PermitLocalCommand yes")
             lines.append(f"    LocalCommand {local_cmd}")
 
+        # Preserve an authored RequestTTY token (yes/no/force/auto have distinct
+        # ssh semantics); legacy bool True from older stored data degrades to yes.
+        tty_token = data.get('request_tty')
+        if isinstance(tty_token, str) and tty_token.strip().lower() in ('yes', 'no', 'force', 'auto'):
+            tty_token = tty_token.strip().lower()
+        elif tty_token:
+            tty_token = 'yes'
+        else:
+            tty_token = ''
+
         # Add RemoteCommand and RequestTTY if specified (ensure shell stays active)
         remote_cmd = (data.get('remote_command') or '').strip()
         if remote_cmd:
             # Ensure we keep an interactive shell after the command
             remote_cmd_aug = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
-            # Write RemoteCommand first, then RequestTTY (order for readability)
+            # Write RemoteCommand first, then RequestTTY (order for readability).
+            # The interactive shell needs a TTY, so default to yes — but an
+            # explicitly authored token still wins.
             lines.append(f"    RemoteCommand {remote_cmd_aug}")
-            lines.append("    RequestTTY yes")
-        elif data.get('request_tty'):
-            # Standalone authored RequestTTY: preserve the token (legacy bool
-            # True from older stored data degrades to yes).
-            tty_val = data['request_tty']
-            if not (isinstance(tty_val, str) and
-                    tty_val.strip().lower() in ('yes', 'no', 'force', 'auto')):
-                tty_val = 'yes'
-            else:
-                tty_val = tty_val.strip().lower()
-            lines.append(f"    RequestTTY {tty_val}")
+            lines.append(f"    RequestTTY {tty_token or 'yes'}")
+        elif tty_token:
+            lines.append(f"    RequestTTY {tty_token}")
 
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):

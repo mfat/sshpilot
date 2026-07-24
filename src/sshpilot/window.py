@@ -5563,15 +5563,39 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to save window state: {e}")
     
-    def _on_plugin_connection_saved(self, dialog, connection_data):
+    def _apply_saved_connection_meta(self, nickname, meta):
+        """Persist the dialog's WoL/tags metadata after a successful save."""
+        if not nickname or not isinstance(meta, dict):
+            return
+        try:
+            if 'tags' in meta:
+                self.config.set_connection_tags(nickname, list(meta.get('tags') or []))
+            wol = {k: meta[k] for k in ('wol_mac', 'wol_broadcast_ip', 'wol_port') if k in meta}
+            if wol:
+                existing = self.config.get_connection_meta(nickname)
+                existing.update(wol)
+                self.config.set_connection_meta(nickname, existing)
+        except Exception:
+            logger.debug("Failed to persist connection meta", exc_info=True)
+
+    def _on_plugin_connection_saved(self, dialog, connection_data, complete=None,
+                                    pending_meta=None):
         """Persist a plugin-protocol connection (JSON store, no ssh_config)."""
+        def _done(ok):
+            if callable(complete):
+                complete(bool(ok))
+
         if dialog.is_editing and dialog.connection is not None:
             old_connection = dialog.connection
             original_nickname = old_connection.nickname
             if not self.connection_manager.update_connection(old_connection, connection_data):
                 logger.error("Failed to update plugin connection")
+                _done(False)
                 return
             new_nickname = connection_data.get('nickname') or original_nickname
+            # Meta goes under the new nickname BEFORE the rename migration so
+            # the dialog's fields win the merge, and before rows re-read tags.
+            self._apply_saved_connection_meta(new_nickname, pending_meta)
             if original_nickname != new_nickname:
                 try:
                     self.group_manager.rename_connection(original_nickname, new_nickname)
@@ -5599,17 +5623,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 self.rebuild_connection_list()
             logger.info(f"Updated plugin connection: {old_connection.nickname}")
+            _done(True)
         else:
             connection = Connection(connection_data)
             if self.connection_manager.update_connection(connection, connection_data):
+                self._apply_saved_connection_meta(
+                    connection_data.get('nickname'), pending_meta)
                 self.rebuild_connection_list()
                 logger.info(f"Created new plugin connection: {connection_data['nickname']}")
+                _done(True)
             else:
                 logger.error("Failed to save plugin connection")
+                _done(False)
 
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
         save_completion = connection_data.pop('__save_completion', None)
+        pending_meta = connection_data.pop('__meta', None)
 
         def _complete_save(ok):
             if callable(save_completion):
@@ -5617,7 +5647,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         try:
             if connection_data.get('protocol', 'ssh') != 'ssh':
-                self._on_plugin_connection_saved(dialog, connection_data)
+                self._on_plugin_connection_saved(
+                    dialog, connection_data, _complete_save, pending_meta)
                 return
             if dialog.is_editing:
                 # Update existing connection
@@ -5641,6 +5672,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.error("Failed to update connection in SSH config")
                     _complete_save(False)
                     return
+
+                # Meta goes under the (possibly new) nickname BEFORE the rename
+                # migration below, so the dialog's fields win the merge — and
+                # before the tags re-read that drives the row refresh.
+                self._apply_saved_connection_meta(
+                    connection_data.get('nickname'), pending_meta)
 
                 # Preserve group assignment if nickname changed
                 new_nickname = connection_data['nickname']
@@ -5703,6 +5740,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Create new connection (connection_manager owns persistence)
                 connection = self.connection_manager.create_connection(connection_data)
                 if connection is not None:
+                    self._apply_saved_connection_meta(
+                        connection_data.get('nickname'), pending_meta)
                     # Fresh nickname isn't cached; rebuild re-primes it.
                     self.rebuild_connection_list()
                     logger.info(f"Created new connection: {connection_data['nickname']}")

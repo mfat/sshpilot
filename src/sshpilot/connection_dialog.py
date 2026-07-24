@@ -3031,47 +3031,47 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.show_error("\n".join(errors))
             return
 
-        self._persist_connection_meta(nickname)
+        # The live object is only mutated by the manager after a successful
+        # persist; metadata rides the payload and the dialog closes only once
+        # the window reports the save outcome.
+        data['__meta'] = self._collect_connection_meta()
+        completion_called = [False]
 
-        if self.is_editing and self.connection:
-            try:
-                self.connection.data.update(data)
-            except Exception:
-                pass
+        def _after_saved(ok):
+            completion_called[0] = True
+            if ok:
+                self.close()
+            else:
+                self.show_error(_("The connection settings could not be saved."))
 
+        data['__save_completion'] = _after_saved
         self.emit('connection-saved', data)
-        self.close()
+        if not completion_called[0]:
+            if '__save_completion' in data:
+                # No consumer popped the marker (standalone dialog, e.g. in
+                # tests): keep the legacy emit-then-close behavior.
+                data.pop('__save_completion', None)
+                self.close()
+            else:
+                _after_saved(False)
 
-    def _persist_connection_meta(self, nickname_for_meta):
-        """Persist Wake-on-LAN and tags metadata (protocol-agnostic app meta)."""
-        if nickname_for_meta and hasattr(self, 'wol_mac_row'):
+    def _collect_connection_meta(self):
+        """Collect Wake-on-LAN and tags metadata (protocol-agnostic app meta)
+        for the save payload; the window persists it only after the config
+        write succeeds."""
+        meta = {}
+        if hasattr(self, 'wol_mac_row'):
+            meta['wol_mac'] = (self.wol_mac_row.get_text() or '').strip()
+            meta['wol_broadcast_ip'] = (self.wol_broadcast_row.get_text() or '').strip()
             try:
-                cfg = getattr(self.parent_window, 'config', None)
-                if cfg:
-                    meta = cfg.get_connection_meta(nickname_for_meta)
-                    wol_mac = (self.wol_mac_row.get_text() or '').strip()
-                    wol_broadcast = (self.wol_broadcast_row.get_text() or '').strip()
-                    try:
-                        wol_port = int((self.wol_port_row.get_text() or '9').strip() or '9')
-                    except ValueError:
-                        wol_port = 9
-                    meta['wol_mac'] = wol_mac
-                    meta['wol_broadcast_ip'] = wol_broadcast
-                    meta['wol_port'] = wol_port
-                    cfg.set_connection_meta(nickname_for_meta, meta)
-            except Exception as e:
-                logger.debug("Save WoL meta: %s", e)
-
+                meta['wol_port'] = int((self.wol_port_row.get_text() or '9').strip() or '9')
+            except ValueError:
+                meta['wol_port'] = 9
         # Tags are keyed by the new nickname, so renames carry them forward.
-        if nickname_for_meta and hasattr(self, 'tags_row'):
-            try:
-                cfg = getattr(self.parent_window, 'config', None)
-                if cfg:
-                    tags_raw = (self.tags_row.get_text() or '').strip()
-                    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
-                    cfg.set_connection_tags(nickname_for_meta, tags)
-            except Exception as e:
-                logger.debug("Save tags meta: %s", e)
+        if hasattr(self, 'tags_row'):
+            tags_raw = (self.tags_row.get_text() or '').strip()
+            meta['tags'] = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+        return meta
 
     def on_save_clicked(self, *_args):
         """Handle save button click or dialog save response"""
@@ -3184,9 +3184,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if getattr(self, 'split_original_nickname', None):
                 connection_data['__split_original_nickname'] = self.split_original_nickname
 
-        # Persist Wake-on-LAN and tags metadata to connections_meta
-        nickname_for_meta = connection_data.get('nickname', '').strip()
-        self._persist_connection_meta(nickname_for_meta)
+        # Wake-on-LAN and tags metadata ride the payload; the window persists
+        # them only after the config write succeeds.
+        connection_data['__meta'] = self._collect_connection_meta()
 
         if self.is_editing and self.connection:
             connection_data['__previous_secret_identity'] = {
@@ -3267,8 +3267,29 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # as pre-handled even when nothing changed so it does not repeat backend I/O.
         connection_data['__secret_storage_done'] = True
         if not operations:
-            self._set_secret_save_busy(False)
-            self._emit_connection_saved(connection_data)
+            # No secret I/O — but the dialog still only closes once the window
+            # reports a successful config write.
+            plain_completion_called = [False]
+
+            def _after_plain_save(ok):
+                plain_completion_called[0] = True
+                self._set_secret_save_busy(False)
+                if ok:
+                    self.close()
+                else:
+                    self.show_error(_("The connection settings could not be saved."))
+
+            connection_data['__save_completion'] = _after_plain_save
+            self.emit('connection-saved', connection_data)
+            if not plain_completion_called[0]:
+                if '__save_completion' in connection_data:
+                    # No consumer popped the marker (standalone dialog, e.g. in
+                    # tests): keep the legacy emit-then-close behavior.
+                    connection_data.pop('__save_completion', None)
+                    self._set_secret_save_busy(False)
+                    self.close()
+                else:
+                    _after_plain_save(False)
             return
         if manager is None:
             self._set_secret_save_busy(False)
@@ -3365,11 +3386,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not connected:
             _after_closed()
         return False
-
-    def _emit_connection_saved(self, connection_data):
-        """Emit the saved signal and close the dialog."""
-        self.emit('connection-saved', connection_data)
-        self.close()
 
     def _needs_secret_unlock_before_save(self, connection_data) -> bool:
         """True when saving would store or delete a secret — a host password or a key
