@@ -3630,26 +3630,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         if intent != 'scp':
             return
-        if connection is not None:
-            self.scp_controller.open_for_connection(connection)
-            return
-
-        connections = self.connection_manager.get_connections()
-        if not connections:
+        if connection is None and not self.connection_manager.get_connections():
             self.get_application().activate_action('new-connection')
             return
-        from .host_picker import show_host_picker
-        anchor = (
-            getattr(self, 'menu_button', None)
-            or getattr(self, 'sidebar_toggle_button', None)
-        )
-        if anchor is not None:
-            show_host_picker(
-                self,
-                anchor,
-                self.scp_controller.open_for_connection,
-                connections=connections,
-            )
+        # The transfer chooser has its own built-in server picker, so it
+        # handles a missing connection itself — no separate host selector.
+        self.scp_controller.open_for_connection(connection)
 
     def focus_search_entry(self):
         """Toggle search on/off and show appropriate toast notification."""
