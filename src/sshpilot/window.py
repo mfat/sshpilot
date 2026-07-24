@@ -5576,7 +5576,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 existing.update(wol)
                 self.config.set_connection_meta(nickname, existing)
         except Exception:
-            logger.debug("Failed to persist connection meta", exc_info=True)
+            # The connection itself saved; only the app-side metadata failed.
+            # Surface it — a silent miss here means WoL/tags quietly vanish.
+            logger.warning("Connection saved, but its WoL/tags metadata could not "
+                           "be persisted for '%s'", nickname, exc_info=True)
+            try:
+                if getattr(self, 'toast_overlay', None):
+                    self.toast_overlay.add_toast(Adw.Toast.new(
+                        _("Saved, but tags/Wake-on-LAN settings could not be stored.")))
+            except Exception:
+                pass
 
     def _on_plugin_connection_saved(self, dialog, connection_data, complete=None,
                                     pending_meta=None):
