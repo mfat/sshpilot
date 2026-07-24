@@ -444,6 +444,12 @@ class TerminalWidget(Gtk.Box):
 
         self.append(self.container_box)
 
+        # Files panel (embedded SFTP file manager shown below the terminal);
+        # see set_file_panel() / clear_file_panel().
+        self._file_panel = None
+        self._file_panel_paned = None
+        self._file_panel_teardown = None
+
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
@@ -472,6 +478,75 @@ class TerminalWidget(Gtk.Box):
         self._fullscreen.setup_shortcut()
         
         logger.debug("Terminal widget initialized")
+
+    # ── files panel (embedded file manager below the terminal) ──────────────
+
+    def has_file_panel(self) -> bool:
+        return self._file_panel is not None
+
+    def set_file_panel(self, panel, teardown=None) -> None:
+        """Show *panel* below the terminal in a vertical Gtk.Paned.
+
+        The page child stays this TerminalWidget (the paned is internal), so
+        all tab bookkeeping keyed on the page child is unaffected. *teardown*
+        is invoked from clear_file_panel() so the caller can dispose the
+        embedded file-manager controller synchronously (outside GC).
+        """
+        if self._file_panel is not None:
+            self.clear_file_panel()
+
+        paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        paned.set_wide_handle(True)
+        paned.set_hexpand(True)
+        paned.set_vexpand(True)
+        paned.set_shrink_start_child(False)
+        paned.set_shrink_end_child(False)
+        self.remove(self.container_box)
+        paned.set_start_child(self.container_box)
+        paned.set_end_child(panel)
+        self.append(paned)
+
+        self._file_panel = panel
+        self._file_panel_paned = paned
+        self._file_panel_teardown = teardown
+
+        def _apply_position() -> bool:
+            if self._file_panel_paned is not paned:
+                return False  # panel was cleared before allocation
+            height = self.get_height()
+            if height <= 0:
+                return True  # not allocated yet — retry on idle
+            paned.set_position(int(height * 0.55))
+            return False
+
+        if _apply_position():
+            GLib.idle_add(_apply_position)
+
+    def clear_file_panel(self) -> None:
+        """Remove the files panel and restore the terminal-only layout."""
+        paned = self._file_panel_paned
+        teardown = self._file_panel_teardown
+        self._file_panel = None
+        self._file_panel_paned = None
+        self._file_panel_teardown = None
+        if paned is None:
+            return
+        # Dispose the controller while the widget tree is still intact, so the
+        # embed's Python 'destroy' handlers never fire during GC (segfault).
+        if teardown is not None:
+            try:
+                teardown()
+            except Exception:
+                logger.debug("Files panel teardown failed", exc_info=True)
+        try:
+            # set_*_child(None) instead of unparent(): unparenting a Paned
+            # child can silently fail in GTK4 (see split_view._release_paned).
+            paned.set_end_child(None)
+            paned.set_start_child(None)
+            self.remove(paned)
+            self.append(self.container_box)
+        except Exception:
+            logger.debug("Files panel layout restore failed", exc_info=True)
 
     def _create_backend(self, preferred: Optional[str] = None) -> BaseTerminalBackend:
         """Create the terminal backend based on configuration."""
