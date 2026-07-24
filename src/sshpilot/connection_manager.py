@@ -282,12 +282,6 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
-        unparsed = data.get('unparsed_args', []) if isinstance(data, dict) else []
-        if isinstance(unparsed, (list, tuple)):
-            self.unparsed_args = list(unparsed)
-        else:
-            self.unparsed_args = []
-
         hostname_value = data.get('hostname')
         host_value = data.get('host', '')
 
@@ -298,81 +292,21 @@ class Connection:
             fallback_nickname = hostname_value if hostname_value else host_value
             self.nickname = fallback_nickname or 'Unknown'
 
-        if 'aliases' in data:
-            self.aliases = data.get('aliases', [])
         self.hostname = hostname_value or ''
         host_alias = data.get('host')
         if host_alias is None:
             host_alias = self.nickname
         self.host = host_alias or ''
 
-
-        self.username = data.get('username', '')
-        self.port = data.get('port', 22)
-        # Protocol backend handling this connection ('ssh' for every existing
-        # saved/ssh_config-derived connection; see sshpilot.plugins).
-        self.protocol = data.get('protocol', 'ssh')
-        # previously: self.keyfile = data.get('keyfile', '')
-        self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
-        # Full list of IdentityFile/CertificateFile entries (ssh_config(5) allows
-        # multiples; ``keyfile``/``certificate`` above are just the primary entry).
-        self.identity_files = list(data.get('identity_files') or ([self.keyfile] if self.keyfile else []))
-        self.identity_file_none = bool(data.get('identity_file_none', False))
-        self.certificate = data.get('certificate') or ''
-        self.certificate_files = list(data.get('certificate_files') or ([self.certificate] if self.certificate else []))
-        # Agent / hardware key sources (verbatim ssh_config values)
-        self.identity_agent = data.get('identity_agent', '') or ''
-        self.add_keys_to_agent = data.get('add_keys_to_agent', '') or ''
-        self.pkcs11_provider = data.get('pkcs11_provider', '') or ''
-        self.security_key_provider = data.get('security_key_provider', '') or ''
-        self.password = data.get('password', '')
-        self.key_passphrase = data.get('key_passphrase', '')
-        # Source file of this configuration block
-        self.source = data.get('source', '')
-        self.config_root = data.get('config_root', '')
-        self.isolated_config = bool(data.get('isolated_mode', False))
+        self._apply_common_fields(data)
 
         # Cache of identity files resolved for this connection (expanded paths)
         self.resolved_identity_files: List[str] = []
 
-        # Provide friendly accessor for UI components that wish to display
-        # the originating config file for this connection.
-        
-        # Proxy settings
-        self.proxy_command = data.get('proxy_command', '')
-        pj = data.get('proxy_jump', [])
-        if isinstance(pj, str):
-            pj = [h.strip() for h in re.split(r'[\s,]+', pj) if h.strip()]
-        self.proxy_jump = pj
-        self.forward_agent = bool(data.get('forward_agent', False))
-        # Commands
-        self.pre_command = data.get('pre_command', '')
-        self.local_command = data.get('local_command', '')
-        self.remote_command = data.get('remote_command', '')
-        # Extra SSH config parameters
-        self.extra_ssh_config = data.get('extra_ssh_config', '')
-        self.pubkey_auth_no = bool(data.get('pubkey_auth_no', False))
-        # Authentication method: 0 = key-based, 1 = password
-        try:
-            self.auth_method = int(data.get('auth_method', 0))
-        except Exception:
-            self.auth_method = 0
-        # X11 forwarding preference
-        self.x11_forwarding = bool(data.get('x11_forwarding', False))
-
         # Track IdentityAgent directives so terminals can adjust askpass behaviour
         self.identity_agent_directive: str = ''
         self.identity_agent_disabled: bool = False
-        
-        # Key selection mode: 0 try all, 1 specific key (IdentitiesOnly), 2 specific key (no IdentitiesOnly)
-        try:
-            self.key_select_mode = int(data.get('key_select_mode', 0) or 0)
-        except Exception:
-            self.key_select_mode = 0
 
-        # Port forwarding rules
-        self.forwarding_rules = data.get('forwarding_rules', [])
-        
         # Asyncio event loop
         self.loop = _ensure_event_loop()
         self._connection_manager = None
@@ -825,9 +759,6 @@ class Connection:
             fallback_nickname = hostname_value if hostname_value else host_value
             self.nickname = fallback_nickname or getattr(self, 'nickname', 'Unknown')
 
-        if 'aliases' in data:
-            self.aliases = data.get('aliases', getattr(self, 'aliases', []))
-
         if hostname_value in (None, ''):
             resolved_host = host_value or getattr(self, 'host', '')
         else:
@@ -841,15 +772,27 @@ class Connection:
         else:
             self.hostname = hostname_value
 
+        self._apply_common_fields(data)
 
+    def _apply_common_fields(self, data: Dict[str, Any]) -> None:
+        """Hydrate the field set shared by __init__ and update_data.
+
+        nickname/host/hostname resolution intentionally stays in the callers:
+        construction and in-place update have long-standing different fallback
+        semantics for those three (see _update_properties_from_data).
+        """
+        if 'aliases' in data:
+            self.aliases = data.get('aliases', getattr(self, 'aliases', []))
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
+        # Protocol backend handling this connection ('ssh' for every existing
+        # saved/ssh_config-derived connection; see sshpilot.plugins).
         self.protocol = data.get('protocol', getattr(self, 'protocol', 'ssh'))
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        # Full list of IdentityFile/CertificateFile entries (ssh_config(5) allows
+        # multiples; ``keyfile``/``certificate`` are just the primary entry).
         self.identity_files = list(data.get('identity_files') or ([self.keyfile] if self.keyfile else []))
         self.identity_file_none = bool(data.get('identity_file_none', False))
-
-
         self.certificate = data.get('certificate') or ''
         self.certificate_files = list(data.get('certificate_files') or ([self.certificate] if self.certificate else []))
         # Agent / hardware key sources (verbatim ssh_config values)
@@ -859,38 +802,43 @@ class Connection:
         self.security_key_provider = data.get('security_key_provider', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        # Source file of this configuration block
         self.source = data.get('source', getattr(self, 'source', ''))
         self.config_root = data.get('config_root', '')
         self.isolated_config = bool(data.get('isolated_mode', False))
-        self.local_command = data.get('local_command', '')
-        self.remote_command = data.get('remote_command', '')
+        # Proxy settings
         self.proxy_command = data.get('proxy_command', '')
         pj = data.get('proxy_jump', [])
         if isinstance(pj, str):
             pj = [h.strip() for h in re.split(r'[\s,]+', pj) if h.strip()]
         self.proxy_jump = pj
         self.forward_agent = bool(data.get('forward_agent', False))
+        # Commands (pre_command is preserved when absent so a partial update
+        # can't leave the attribute stale relative to data)
+        self.pre_command = data.get('pre_command', getattr(self, 'pre_command', ''))
+        self.local_command = data.get('local_command', '')
+        self.remote_command = data.get('remote_command', '')
         # Extra SSH config parameters
         self.extra_ssh_config = data.get('extra_ssh_config', '')
         self.pubkey_auth_no = bool(data.get('pubkey_auth_no', False))
-
-        # Authentication method: 0 = key-based, 1 = password
-        # Preserve existing auth_method if not present in new data
+        unparsed = data.get('unparsed_args', getattr(self, 'unparsed_args', []))
+        self.unparsed_args = list(unparsed) if isinstance(unparsed, (list, tuple)) else []
+        # Authentication method: 0 = key-based, 1 = password. Preserved when
+        # absent from *data* so partial updates don't reset it.
         if 'auth_method' in data:
             try:
                 self.auth_method = int(data.get('auth_method', 0))
             except Exception:
                 self.auth_method = 0
-            
+        elif not hasattr(self, 'auth_method'):
+            self.auth_method = 0
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
-        
-        # Key selection mode: 0 try all, 1 specific key
+        # Key selection mode: 0 try all, 1 specific key (IdentitiesOnly), 2 specific key (no IdentitiesOnly)
         try:
             self.key_select_mode = int(data.get('key_select_mode', 0) or 0)
         except Exception:
             self.key_select_mode = 0
-
         # Port forwarding rules
         self.forwarding_rules = data.get('forwarding_rules', [])
 
@@ -3025,79 +2973,15 @@ class ConnectionManager(GObject.Object):
         except Exception:
             connection_data['auth_method'] = 0
 
+        # update_connection persists first, then syncs the live object's
+        # attributes and backing data dict via Connection.update_data().
         if not self.update_connection(old_connection, connection_data):
             return False
 
-        # Update connection attributes in memory (ensure forwarding rules kept)
-        old_connection.nickname = connection_data['nickname']
-        old_connection.hostname = connection_data['hostname']
-        old_connection.host = old_connection.hostname
-        old_connection.username = connection_data['username']
-        old_connection.port = connection_data['port']
-        old_connection.keyfile = connection_data['keyfile']
-        old_connection.certificate = connection_data.get('certificate', '')
-        old_connection.password = connection_data['password']
-        old_connection.key_passphrase = connection_data.get('key_passphrase', getattr(old_connection, 'key_passphrase', '')) or ''
-        old_connection.auth_method = connection_data['auth_method']
-        # Persist key selection mode in-memory so the dialog reflects it without restart
-        try:
-            old_connection.key_select_mode = int(connection_data.get('key_select_mode', getattr(old_connection, 'key_select_mode', 0)) or 0)
-        except Exception:
-            pass
-        old_connection.x11_forwarding = connection_data['x11_forwarding']
-        old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
-        # Refresh proxy settings in-memory so new connections immediately pick
-        # up the updated directives without a full application restart.
-        try:
-            proxy_jump_value = connection_data.get('proxy_jump', [])
-            if isinstance(proxy_jump_value, str):
-                proxy_jump_value = [
-                    h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()
-                ]
-            else:
-                proxy_jump_value = [
-                    str(h).strip() for h in (proxy_jump_value or []) if str(h).strip()
-                ]
-            old_connection.proxy_jump = proxy_jump_value
-        except Exception:
-            proxy_jump_value = []
-            old_connection.proxy_jump = []
-
-        proxy_command_value = connection_data.get('proxy_command', '') or ''
-        forward_agent_value = bool(connection_data.get('forward_agent', False))
-
-        old_connection.proxy_command = proxy_command_value
-        old_connection.forward_agent = forward_agent_value
-
-        # Keep the backing data dict synchronized so any downstream consumers
-        # that still read from connection.data see the new directives without
-        # waiting for another reload cycle.
-        try:
-            if hasattr(old_connection, 'data') and isinstance(old_connection.data, dict):
-                old_connection.data['proxy_jump'] = list(proxy_jump_value)
-                old_connection.data['proxy_command'] = proxy_command_value
-                old_connection.data['forward_agent'] = forward_agent_value
-        except Exception:
-            pass
-
         # Invalidate any prepared SSH command so future connection attempts
-        # rebuild the argument list using the refreshed proxy settings.
-        try:
-            if hasattr(old_connection, 'ssh_cmd'):
-                old_connection.ssh_cmd = []
-        except Exception:
-            try:
-                delattr(old_connection, 'ssh_cmd')
-            except Exception:
-                pass
-
-        try:
-            old_connection.pre_command = connection_data.get('pre_command', '')
-            old_connection.local_command = connection_data.get('local_command', '')
-            old_connection.remote_command = connection_data.get('remote_command', '')
-            old_connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
-        except Exception:
-            pass
+        # rebuild the argument list using the refreshed settings.
+        if hasattr(old_connection, 'ssh_cmd'):
+            old_connection.ssh_cmd = []
 
         return True
 
