@@ -357,6 +357,13 @@ def install_sidebar_css():
           background-color: alpha(@window_bg_color, 0.86);
         }
 
+        /* Chrome-free panel for modes whose content draws its own frame
+           (the omni-search box). */
+        .sidebar-popup.sidebar-popup-plain {
+          background-color: transparent;
+          box-shadow: none;
+        }
+
         .sidebar-popup-scrim {
           background-color: transparent;
         }
@@ -364,7 +371,7 @@ def install_sidebar_css():
         /* Dim backdrop for the centered/spotlight popup modes (see
            SearchPopup.set_backdrop) — pushes the work area back. */
         .sidebar-popup-scrim.sidebar-popup-scrim-dim {
-          background-color: rgba(0, 0, 0, 0.35);
+          background-color: rgba(0, 0, 0, 0.75);
         }
 
         """

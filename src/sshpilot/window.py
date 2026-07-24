@@ -89,7 +89,11 @@ from .window_dialogs import (
 )
 from . import shutdown
 from .search_utils import connection_matches
-from .shortcut_utils import get_primary_modifier_label
+from .shortcut_utils import (
+    DOUBLE_SHIFT_SHORTCUT,
+    DoubleShiftDetector,
+    get_primary_modifier_label,
+)
 from .platform_utils import (
     get_config_dir,
     get_default_terminal_command,
@@ -307,6 +311,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Set up window
         self.setup_window()
         self.setup_ui()
+        self._setup_omnisearch_shortcut()
         self.setup_connections()
         self.setup_signals()
         self._setup_ssh_config_monitor()
@@ -1675,9 +1680,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.nav_view.connect('popped', self._on_navigation_popped)
             except Exception:
                 logger.debug('Could not connect NavigationView::popped', exc_info=True)
-            main_box.append(self.nav_view)
+            root_widget = self.nav_view
         else:
-            main_box.append(self._content_overlay)
+            root_widget = self._content_overlay
+
+        # The omni-search must float above both the work page and pages pushed
+        # onto NavigationView (Preferences, editors, plugin pages).
+        self._global_overlay = Gtk.Overlay()
+        self._global_overlay.set_hexpand(True)
+        self._global_overlay.set_vexpand(True)
+        self._global_overlay.set_child(root_widget)
+        main_box.append(self._global_overlay)
+
+        from .omni_search import OmniSearchController
+        self._omni_search = OmniSearchController(
+            self,
+            self._global_overlay,
+            self.welcome_view.omni_home,
+        )
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -2253,7 +2273,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 msg = _("Pinned {n} connections to start page").format(n=len(conns))
             if hasattr(self, 'toast_overlay') and self.toast_overlay:
-                self.toast_overlay.add_toast(Adw.Toast.new(msg))
+                previous = getattr(self, '_pin_status_toast', None)
+                if previous is not None:
+                    previous.dismiss()
+
+                toast = Adw.Toast.new(msg)
+                toast.set_timeout(3)
+                self._pin_status_toast = toast
+
+                def _clear_pin_status_toast(dismissed_toast):
+                    if getattr(self, '_pin_status_toast', None) is dismissed_toast:
+                        self._pin_status_toast = None
+
+                toast.connect('dismissed', _clear_pin_status_toast)
+                self.toast_overlay.add_toast(toast)
             if hasattr(self, 'welcome_view') and self.welcome_view:
                 self.welcome_view.refresh_pinned()
         except Exception as e:
@@ -3360,6 +3393,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _focus_connection_list_first_row(self):
         """Focus the first row of the connection list so arrow-key navigation works immediately."""
         try:
+            omni = getattr(self, '_omni_search', None)
+            if omni is not None and omni.popup.visible:
+                return False
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
             if not self.connection_list.get_parent():
@@ -3518,6 +3554,88 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.toast_overlay.add_toast(toast)
         except Exception as e:
             logger.error(f"Failed to activate search entry: {e}")
+
+    def activate_omni_search(self):
+        """Show and focus the global omni-search."""
+        omni = getattr(self, '_omni_search', None)
+        if omni is not None:
+            omni.show()
+
+    def _setup_omnisearch_shortcut(self) -> None:
+        """Install the window-level double-Shift gesture detector."""
+        self._omnisearch_double_shift = DoubleShiftDetector()
+        controller = Gtk.EventControllerKey()
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        controller.connect('key-pressed', self._on_omnisearch_key_pressed)
+        controller.connect('key-released', self._on_omnisearch_key_released)
+        self.add_controller(controller)
+        self._omnisearch_key_controller = controller
+
+    def _omnisearch_uses_double_shift(self) -> bool:
+        app = self.get_application()
+        if app is None or not getattr(app, 'accelerators_enabled', True):
+            return False
+        try:
+            shortcuts = app.get_effective_shortcuts('omnisearch') or []
+        except Exception:
+            return False
+        return DOUBLE_SHIFT_SHORTCUT in shortcuts
+
+    @staticmethod
+    def _is_shift_key(keyval: int) -> bool:
+        return keyval in (Gdk.KEY_Shift_L, Gdk.KEY_Shift_R)
+
+    @staticmethod
+    def _shortcut_event_time() -> float:
+        return GLib.get_monotonic_time() / 1_000_000
+
+    def _on_omnisearch_key_pressed(
+        self, _controller, keyval, _keycode, _state
+    ) -> bool:
+        detector = self._omnisearch_double_shift
+        if not self._omnisearch_uses_double_shift():
+            detector.reset()
+            return False
+        detector.key_pressed(
+            self._is_shift_key(keyval), self._shortcut_event_time()
+        )
+        # Shift itself must continue to the focused widget, especially VTE.
+        return False
+
+    def _on_omnisearch_key_released(
+        self, _controller, keyval, _keycode, _state
+    ) -> None:
+        detector = self._omnisearch_double_shift
+        if not self._omnisearch_uses_double_shift():
+            detector.reset()
+            return
+        if detector.key_released(
+            self._is_shift_key(keyval), self._shortcut_event_time()
+        ):
+            self.activate_omni_search()
+
+    def open_omni_transfer_intent(self, intent, connection=None):
+        """Route command-like transfer searches to their existing GUI flows."""
+        if intent == 'sftp':
+            self._open_builtin_file_manager(connection)
+            return
+        if intent == 'ssh-copy-id':
+            if connection is None:
+                self.show_connection_selection_for_ssh_copy()
+            else:
+                from .sshcopyid_window import SshCopyIdWindow
+                SshCopyIdWindow(
+                    self, connection, self.key_manager, self.connection_manager,
+                )
+            return
+        if intent != 'scp':
+            return
+        if connection is None and not self.connection_manager.get_connections():
+            self.get_application().activate_action('new-connection')
+            return
+        # The transfer chooser has its own built-in server picker, so it
+        # handles a missing connection itself — no separate host selector.
+        self.scp_controller.open_for_connection(connection)
 
     def focus_search_entry(self):
         """Toggle search on/off and show appropriate toast notification."""

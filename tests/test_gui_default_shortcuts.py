@@ -10,7 +10,10 @@ Opt-in only: SSHPILOT_GUI_TESTS=1 pytest -m gui
 
 import pytest
 
+from gi.repository import Gdk, Gtk
+
 from sshpilot.platform_utils import is_macos
+from sshpilot.shortcut_utils import DOUBLE_SHIFT_SHORTCUT
 from tests._gui_harness import requires_gui  # the `gui` fixture comes from conftest
 
 requires_gui()
@@ -40,6 +43,7 @@ KEEP = {
     'manage-files': ['<primary><shift>o'],
     'broadcast-command': ['<primary><shift>b'],
     'search': ['<primary>f'],  # kept on Ctrl+F by request
+    'omnisearch': [DOUBLE_SHIFT_SHORTCUT],
 }
 
 # Conflict-prone defaults rebound to safe combos.
@@ -100,3 +104,48 @@ def test_disabled_action_can_be_assigned(gui):
         app.config.set_shortcut_override(name, None)
         app.apply_shortcut_overrides()
     assert app.get_effective_shortcuts(name) == []
+
+
+def _walk_widgets(widget):
+    yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from _walk_widgets(child)
+        child = child.get_next_sibling()
+
+
+def test_search_and_omnisearch_have_separate_editor_and_viewer_entries(gui):
+    from sshpilot.shortcut_editor import ShortcutsPreferencesPage
+
+    page = ShortcutsPreferencesPage(
+        parent_widget=gui.window, app=gui.app, config=gui.app.config
+    )
+    assert page._rows['search']['row'].get_title() == 'Search'
+    assert page._rows['omnisearch']['row'].get_title() == 'Omnisearch'
+    assert page._rows['omnisearch']['row'].get_subtitle() == 'Double Shift'
+
+    viewer = gui.window._build_shortcuts_window()
+    titles = {
+        widget.get_property('title')
+        for widget in _walk_widgets(viewer)
+        if isinstance(widget, Gtk.ShortcutsShortcut)
+    }
+    assert 'Search' in titles
+    assert 'Omnisearch' in titles
+
+
+def test_double_shift_opens_omnisearch(gui, monkeypatch):
+    win = gui.window
+    times = iter((1.0, 1.05, 1.2, 1.25))
+    monkeypatch.setattr(
+        win, '_shortcut_event_time', lambda: next(times)
+    )
+    win._omni_search.dismiss(clear=True)
+
+    win._on_omnisearch_key_pressed(None, Gdk.KEY_Shift_L, 0, 0)
+    win._on_omnisearch_key_released(None, Gdk.KEY_Shift_L, 0, 0)
+    win._on_omnisearch_key_pressed(None, Gdk.KEY_Shift_R, 0, 0)
+    win._on_omnisearch_key_released(None, Gdk.KEY_Shift_R, 0, 0)
+    gui.pump(100)
+
+    assert win._omni_search.popup.visible

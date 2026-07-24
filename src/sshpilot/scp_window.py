@@ -134,45 +134,115 @@ class ScpWindowController:
 
     def on_scp_button_clicked(self, button):
         """Prompt the user to choose between uploading or downloading with scp."""
+        selected_row = self.window.connection_list.get_selected_row()
+        connection = getattr(selected_row, 'connection', None) if selected_row else None
+        if connection is not None:
+            self.open_for_connection(connection)
+
+    def open_for_connection(self, connection):
+        """Open the SCP transfer chooser for a connection.
+
+        Mirrors the ssh-copy-id window: a styled ``Adw.Window`` with a header
+        bar and a searchable server picker (so the target can be changed here),
+        plus the Upload/Download cards.
+        """
         try:
-            selected_row = self.window.connection_list.get_selected_row()
-            if not selected_row:
-                return
-            connection = getattr(selected_row, 'connection', None)
-            if not connection:
-                return
-
             from sshpilot import icon_utils
+            from .host_picker import show_host_picker
 
-            alias = _get_connection_alias(connection)
-            host = _get_connection_host(connection)
-            display = (
-                getattr(connection, 'nickname', None)
-                or alias
-                or host
-                or _('server')
-            )
+            state = {'conn': connection}
 
-            heading = _('Transfer files')
-            body = _('Copy files to or from {name}').format(name=display)
-            if hasattr(Adw, 'AlertDialog'):
-                chooser = Adw.AlertDialog(heading=heading, body=body)
-                present = lambda: chooser.present(self.window)
-            else:
-                chooser = Adw.MessageDialog(
-                    transient_for=self.window,
-                    modal=True,
-                    heading=heading,
-                    body=body,
+            win = Adw.Window()
+            win.set_transient_for(self.window)
+            win.set_modal(True)
+            win.set_title(_('Transfer files with scp'))
+            win.set_default_size(480, -1)
+            try:
+                win.set_resizable(False)
+            except Exception:
+                pass
+            install_esc_to_close(win)
+            # Register with the app so routed askpass prompts can find this modal
+            # window as their parent (a bare Adw.Window is absent from
+            # Gtk.Application.get_windows()).
+            try:
+                app = self.window.get_application()
+                if app is not None:
+                    win.set_application(app)
+            except Exception:
+                pass
+
+            toolbar = Adw.ToolbarView()
+            win.set_content(toolbar)
+
+            header = Adw.HeaderBar()
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            cancel_button.connect('clicked', lambda *_: win.close())
+            header.pack_start(cancel_button)
+            toolbar.add_top_bar(header)
+
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+            content.set_margin_top(18)
+            content.set_margin_bottom(18)
+            content.set_margin_start(18)
+            content.set_margin_end(18)
+            toolbar.set_content(content)
+
+            # ---- Server picker (mirrors SshCopyIdWindow) ----
+            server_group = Adw.PreferencesGroup()
+            server_row = Adw.ActionRow(title=_('Server'))
+            server_row.set_activatable(True)
+            server_label = Gtk.Label()
+            server_label.add_css_class('dim-label')
+            server_label.set_valign(Gtk.Align.CENTER)
+            server_row.add_suffix(server_label)
+            pick_btn = Gtk.Button()
+            pick_btn.set_icon_name('pan-down-symbolic')
+            pick_btn.set_tooltip_text(_('Pick from inventory'))
+            pick_btn.add_css_class('flat')
+            pick_btn.set_valign(Gtk.Align.CENTER)
+            server_row.add_suffix(pick_btn)
+            server_group.add(server_row)
+            content.append(server_group)
+
+            def _set_server(conn) -> None:
+                state['conn'] = conn
+                if conn is None:
+                    server_label.set_label('')
+                    server_label.set_visible(False)
+                    server_row.set_subtitle(_('Choose a server…'))
+                else:
+                    nick = getattr(conn, 'nickname', '') or _get_connection_alias(conn) or ''
+                    host = _get_connection_host(conn) or _get_connection_alias(conn) or ''
+                    user = getattr(conn, 'username', '')
+                    server_label.set_label(nick)
+                    server_label.set_visible(bool(nick))
+                    server_row.set_subtitle(f"{user}@{host}" if user and host else host)
+                cards.set_sensitive(conn is not None)
+
+            def _open_server_picker(*_a) -> None:
+                popover = show_host_picker(
+                    self.window, server_row, _set_server,
+                    connections=self.window.connection_manager.get_connections(),
                 )
-                present = chooser.present
+                # Anchored to the row: stretch to its full width.
+                if popover is not None:
+                    width = server_row.get_width()
+                    if width > 0:
+                        popover.set_size_request(width, -1)
+
+            pick_btn.connect('clicked', _open_server_picker)
+            server_row.connect('activated', lambda _r: _open_server_picker())
 
             def _choose(action: str) -> None:
-                chooser.close()
+                conn = state['conn']
+                win.close()
+                if conn is None:
+                    return
                 if action == 'upload':
-                    self._start_scp_upload_flow(connection)
+                    self._start_scp_upload_flow(conn)
                 elif action == 'download':
-                    self._prompt_scp_download(connection)
+                    self._prompt_scp_download(conn)
 
             def _choice_card(title: str, tooltip: str, icon_name: str, action: str):
                 content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -206,7 +276,7 @@ class ScpWindowController:
                 return button
 
             cards = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            cards.set_halign(Gtk.Align.CENTER)
+            cards.set_hexpand(True)
             cards.set_homogeneous(True)
             cards.append(
                 _choice_card(
@@ -225,10 +295,10 @@ class ScpWindowController:
                 )
             )
 
-            chooser.set_extra_child(cards)
-            chooser.add_response('cancel', _('Cancel'))
-            chooser.set_close_response('cancel')
-            present()
+            content.append(cards)
+
+            _set_server(connection)
+            win.present()
         except Exception as e:
             logger.error(f'SCP transfer chooser failed: {e}')
 

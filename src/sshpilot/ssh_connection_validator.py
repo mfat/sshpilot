@@ -119,9 +119,35 @@ class SSHConnectionValidator:
                 return ValidationResult(True, "")
             return ValidationResult(False, _("Hostname is required"), "error")
         hostname = hostname.strip()
-        ip_result = self._validate_ip_address(hostname)
-        if ip_result.is_valid or not ip_result.message.startswith("Invalid IP"):
-            return ip_result
+
+        # Entry fields commonly preserve brackets around IPv6 literals. Keep
+        # that presentation concern out of callers and validate the address
+        # itself here.
+        if hostname.startswith('[') or hostname.endswith(']'):
+            if not (
+                hostname.startswith('[')
+                and hostname.endswith(']')
+                and len(hostname) > 2
+            ):
+                return ValidationResult(
+                    False, _("Invalid bracketed IP address"), "error"
+                )
+            hostname = hostname[1:-1]
+            try:
+                ipaddress.ip_address(hostname)
+            except ValueError:
+                return ValidationResult(
+                    False, _("Invalid bracketed IP address"), "error"
+                )
+            return self._validate_ip_address(hostname)
+
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            pass
+        else:
+            return self._validate_ip_address(hostname)
+
         # If looks like numeric IPv4 but invalid, treat as error explicitly
         if re.fullmatch(r"[0-9.]+", hostname):
             return ValidationResult(False, _("Invalid IPv4 address format"), "error")

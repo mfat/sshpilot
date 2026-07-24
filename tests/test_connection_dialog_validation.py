@@ -20,8 +20,6 @@ def test_connection_dialog_inherits_the_validation_mixin():
 def test_moved_methods_are_owned_by_the_mixin():
     for name in (
         "_validate_field_row",
-        "_validate_host_row",
-        "_validate_port_row",
         "_is_nickname_taken",
         "_install_inline_validators",
         "_validate_all_required_for_save",
@@ -67,58 +65,6 @@ def _dialog():
     return d
 
 
-class TestPortRow:
-    def test_empty_is_error(self):
-        d, row = _dialog(), FakeRow("")
-        assert d._validate_port_row(row) is False
-        assert "error" in row.css
-
-    def test_non_numeric_is_error(self):
-        d, row = _dialog(), FakeRow("abc")
-        assert d._validate_port_row(row) is False
-
-    def test_out_of_range_is_error(self):
-        d = _dialog()
-        assert d._validate_port_row(FakeRow("0")) is False
-        assert d._validate_port_row(FakeRow("70000")) is False
-
-    def test_valid_port_clears_error(self):
-        d, row = _dialog(), FakeRow("22")
-        assert d._validate_port_row(row) is True
-        assert "error" not in row.css
-
-
-class TestHostRow:
-    def test_required(self):
-        d = _dialog()
-        assert d._validate_host_row(FakeRow("")) is False
-
-    def test_allow_empty(self):
-        d = _dialog()
-        assert d._validate_host_row(FakeRow(""), allow_empty=True) is True
-
-    def test_localhost_ok(self):
-        d = _dialog()
-        assert d._validate_host_row(FakeRow("localhost")) is True
-
-    def test_private_ip_ok(self):
-        d = _dialog()
-        assert d._validate_host_row(FakeRow("192.168.1.10")) is True
-
-    def test_bracketed_ipv6_ok(self):
-        d = _dialog()
-        assert d._validate_host_row(FakeRow("[::1]")) is True
-
-    def test_invalid_numeric_ip_is_error(self):
-        d, row = _dialog(), FakeRow("999.1.1.1")
-        assert d._validate_host_row(row) is False
-        assert "error" in row.css
-
-    def test_fqdn_ok(self):
-        d = _dialog()
-        assert d._validate_host_row(FakeRow("example.com")) is True
-
-
 class TestNicknameTaken:
     def _mgr_dialog(self, names, editing_nickname=None):
         d = _dialog()
@@ -152,5 +98,17 @@ class TestValidateFieldRow:
     def test_invalid_name_marks_error(self):
         d, row = _dialog(), FakeRow("bad name")  # whitespace not allowed
         result = d._validate_field_row("name", row)
+        assert result.is_valid is False
+        assert "error" in row.css
+
+    def test_invalid_host_marks_error(self):
+        d, row = _dialog(), FakeRow("999.1.1.1")
+        result = d._validate_field_row("hostname", row)
+        assert result.is_valid is False
+        assert "error" in row.css
+
+    def test_invalid_port_marks_error(self):
+        d, row = _dialog(), FakeRow("70000")
+        result = d._validate_field_row("port", row)
         assert result.is_valid is False
         assert "error" in row.css

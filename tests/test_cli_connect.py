@@ -7,6 +7,7 @@ from sshpilot.cli_connect import (
     build_ssh_argv,
     parse_sshpilot_cli,
     resolve_cli_connect,
+    validate_cli_tokens,
 )
 
 
@@ -62,11 +63,31 @@ def test_resolve_user_at_host_is_ephemeral():
 
 
 def test_validate_rejects_scp_and_empty():
-    from sshpilot.cli_connect import validate_cli_tokens
     assert validate_cli_tokens([]) is not None
     assert validate_cli_tokens(['scp', 'a', 'b']) is not None
     assert validate_cli_tokens(['root@host']) is None
     assert validate_cli_tokens(['myalias']) is None
+
+
+def test_validate_reuses_shared_host_and_port_rules():
+    assert validate_cli_tokens(['ssh', 'root@999.1.1.1']) is not None
+    assert validate_cli_tokens(['ssh', '-p', '70000', 'root@host']) is not None
+    assert validate_cli_tokens(['ssh', '-p', 'abc', 'root@host']) is not None
+    assert (
+        validate_cli_tokens(
+            ['ssh', '-Jbastion', '-p', '70000', 'root@host']
+        )
+        is not None
+    )
+    assert (
+        validate_cli_tokens(['ssh', '-o', 'Port=0', 'root@host'])
+        is not None
+    )
+
+
+def test_validate_preserves_ssh_config_aliases():
+    assert validate_cli_tokens(['team_alias']) is None
+    assert validate_cli_tokens(['ssh', 'root@team_alias']) is None
 
 
 def test_resolve_rejects_non_ssh_like_command():

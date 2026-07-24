@@ -17,11 +17,12 @@ action from ``on_connection_activated`` via ``Gtk.Widget.activate_action``.
 from __future__ import annotations
 
 import gettext
-from typing import List, Tuple
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk
+
+from .omni_search import collect_commands
 
 _ = gettext.gettext
 
@@ -61,25 +62,6 @@ class CommandRow(Gtk.ListBoxRow):
         self.set_child(box)
 
 
-def _menu_string(model, index, attr):
-    value = model.get_item_attribute_value(index, attr, None)
-    return value.get_string() if value is not None else None
-
-
-def _walk_menu(model, out: List[Tuple[str, str, object]]) -> None:
-    """Flatten a Gio.MenuModel into (label, detailed_action, target) triples,
-    descending through sections and submenus."""
-    for i in range(model.get_n_items()):
-        label = _menu_string(model, i, "label")
-        action = _menu_string(model, i, "action")
-        if label and action:
-            target = model.get_item_attribute_value(i, "target", None)
-            out.append((label, action, target))
-        links = model.iterate_item_links(i)
-        while links.next():
-            _walk_menu(links.get_value(), out)
-
-
 def _matches(title: str, query: str) -> bool:
     """Every whitespace-separated keyword must be a substring of the title."""
     title = title.lower()
@@ -95,27 +77,16 @@ def append_command_rows(window, query: str) -> int:
     if not query.strip():
         return 0
 
-    pairs: List[Tuple[str, str, object]] = []
-    try:
-        _walk_menu(window.create_menu(), pairs)
-    except Exception:
-        return 0
-
-    seen = set()
     count = 0
-    for label, action, target in pairs:
-        if action in seen:
-            continue
-        seen.add(action)
-        title = label.replace("_", "")  # strip any mnemonic marker
-        if not _matches(title, query):
+    for command in collect_commands(window):
+        if not _matches(command.title, query):
             continue
         row = CommandRow(
-            title,
+            command.title,
             _("Command"),
-            "application-x-executable-symbolic",
-            action,
-            target,
+            command.icon_name,
+            command.action,
+            command.target,
         )
         window.connection_list.append(row)
         count += 1

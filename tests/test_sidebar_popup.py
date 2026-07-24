@@ -31,6 +31,8 @@ def _popup():
     p._backdrop = 'none'
     p._search_only = False
     p._show_groups = True
+    p._anchor = None
+    p._overlay = MagicMock()
     return p
 
 
@@ -174,3 +176,17 @@ def test_set_backdrop_dim_then_none():
     p._scrim.add_css_class.assert_any_call('sidebar-popup-scrim-dim')
     p.set_backdrop('none')
     p._scrim.remove_css_class.assert_any_call('sidebar-popup-scrim-dim')
+
+
+def test_anchored_preset_uses_anchor_bounds():
+    p = _popup()
+    anchor = MagicMock()
+    anchor.translate_coordinates.return_value = (True, 24, 80)
+    anchor.get_width.return_value = 560
+    p.set_anchor(anchor)
+
+    p.apply_preset('anchored')
+
+    p._panel.set_margin_start.assert_called_with(24)
+    p._panel.set_margin_top.assert_called_with(80)
+    p._panel.set_size_request.assert_called_with(560, -1)
