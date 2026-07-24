@@ -391,14 +391,11 @@ def parse_account(account: str, *, username_hint: Optional[str] = None) -> Dict[
 
 
 def master_password_spec(backend_name: str = "bitwarden", profile: str = "") -> SecretSpec:
-    """Spec for a session vault's **master password** (e.g. the Bitwarden unlock
-    password), keyed by backend and account/profile so multiple accounts don't collide.
+    """Spec historically used for a session vault's master password in the OS keyring.
 
-    This is the one secret that must NOT live in the session vault it unlocks (circular),
-    so it is always stored in the platform keyring via
-    :meth:`SecretManager.store_in_keyring`. ``type=vault_master`` keeps it distinct from
-    host passwords, and the unique account id is carried in the schema's ``key_path``
-    attribute (the libsecret schema has no ``backend``/``profile`` keys)."""
+    The unlock UI no longer persists the master password (alternative backends exist to
+    avoid Keychain). Kept for tests and any leftover keyring cleanup tooling.
+    ``type=vault_master`` keeps it distinct from host passwords."""
     account = f"{backend_name}-master:{profile or 'default'}"
     return SecretSpec(
         keyring_service=SERVICE_NAME,
@@ -414,9 +411,7 @@ def master_password_spec(backend_name: str = "bitwarden", profile: str = "") -> 
 
 
 def selected_master_spec(manager: Optional["SecretManager"] = None) -> SecretSpec:
-    """:func:`master_password_spec` for the currently-selected backend + profile —
-    the single source of truth shared by the unlock dialog and Preferences so a saved
-    password is stored, read, and forgotten under the same key."""
+    """:func:`master_password_spec` for the currently-selected backend + profile."""
     mgr = manager if manager is not None else get_secret_manager()
     backend = mgr.selected_backend()
     name = (getattr(backend, "name", "") or "session").strip().lower()
@@ -2140,9 +2135,9 @@ class SecretManager:
         return ["keyring"] if is_macos() else ["libsecret", "keyring"]
 
     # -- platform keyring (selection-independent) -------------------------
-    # Used for the session vault's master password, which must be stored in the OS
-    # keyring regardless of the selected backend (it cannot live in the vault it
-    # unlocks, nor in `pass`/`agent`).
+    # Generic helpers for callers that need the OS keyring specifically.
+    # Session-vault master passwords are NOT stored here — they are typed per
+    # unlock and held only in the in-process session (see secret_unlock_dialog).
     def _platform_keyring_backends(self) -> List[SecretBackend]:
         out: List[SecretBackend] = []
         for name in self._platform_default_order():   # libsecret then keyring (Linux)

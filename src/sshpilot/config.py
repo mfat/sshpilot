@@ -155,7 +155,9 @@ class Config(GObject.Object):
                     'profile': '',
                 },
                 # KeePass (.kdbx) backend: path to the database file and an optional key
-                # file. The master password is typed per launch (kept in memory).
+                # file. The master password is typed per launch and kept only in memory
+                # for the session (never in the OS keyring / Keychain). Use a key file
+                # if you want a second factor or less password typing.
                 'keepassxc': {
                     'database': '',
                     'keyfile': '',
