@@ -218,20 +218,6 @@ class ConnectionDialogValidationMixin:
         self._row_clear_message(row)
         return True
 
-    def _validate_host_row(self, row, allow_empty: bool = False):
-        text = row.get_text() if hasattr(row, 'get_text') else ""
-        result = self.validator.validate_hostname(text, allow_empty=allow_empty)
-        self._apply_validation_to_row(row, result)
-        return result.is_valid
-
-    def _validate_port_row(self, row, label_text: str = "Port"):
-        text = row.get_text() if hasattr(row, 'get_text') else ""
-        result = self.validator.validate_port(text, context="SSH")
-        if not text.strip() and label_text != "Port":
-            result.message = _("{label} is required").format(label=label_text)
-        self._apply_validation_to_row(row, result)
-        return result.is_valid
-
     def _install_inline_validators(self):
         # General page fields
         if hasattr(self, 'nickname_row'):
