@@ -306,6 +306,11 @@ def merged_block_lines(old_block: Optional[HostBlock],
             managed_inserted = True
 
     for raw in old_block.lines[1:]:
+        # A block that was the file's last, with no trailing newline, has a
+        # final raw line missing its '\n'. Managed/extra lines get appended
+        # after it, so without this it glues onto (and corrupts) that line.
+        if raw and not raw.endswith('\n'):
+            raw += '\n'
         stripped = raw.strip()
         if not stripped:
             out_body.append(raw)
