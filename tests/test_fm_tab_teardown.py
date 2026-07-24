@@ -129,6 +129,29 @@ def test_embed_lookup_recurses_into_subtree():
     assert win._file_manager_embed_for_child(None) is None
 
 
+def test_embeds_lookup_finds_all_in_subtree():
+    """A split tab can hold several files panels; teardown must find them all."""
+    wm = _window_module()
+    from sshpilot.file_manager_integration import FileManagerTabEmbed
+
+    win = wm.MainWindow.__new__(wm.MainWindow)
+
+    def _embed():
+        e = FileManagerTabEmbed.__new__(FileManagerTabEmbed)
+        e._controller = object()
+        e.get_first_child = lambda: None
+        e.get_next_sibling = lambda: None
+        return e
+
+    e1, e2 = _embed(), _embed()
+    e1.get_next_sibling = lambda: e2  # two sibling embeds under one wrapper
+    root = types.SimpleNamespace(get_first_child=lambda: e1,
+                                 get_next_sibling=lambda: None)
+
+    assert win._file_manager_embeds_for_child(root) == [e1, e2]
+    assert win._file_manager_embeds_for_child(None) == []
+
+
 # ── on_tab_detached routing ─────────────────────────────────────────────────
 
 def test_on_tab_detached_skips_teardown_when_moving_to_pane():
@@ -156,7 +179,7 @@ def test_on_tab_detached_tears_down_fm_embed():
     sentinel_embed = object()
     child = object()
     torn = []
-    win._file_manager_embed_for_child = lambda c: sentinel_embed if c is child else None
+    win._file_manager_embeds_for_child = lambda c: [sentinel_embed] if c is child else []
     win._teardown_file_manager_embed = lambda embed: torn.append(embed)
     win.terminal_to_connection = {}
     win._update_tab_button_visibility = lambda: None

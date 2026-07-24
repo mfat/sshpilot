@@ -1555,6 +1555,14 @@ class SplitViewTab(Gtk.Box):
     def _cleanup_terminal(self, terminal) -> None:
         """Disconnect terminal and remove it from window tracking dicts."""
         window = self.window
+        # Dispose an attached files panel first: pane close bypasses the
+        # main tab_view detach path, so the embed's controller must be torn
+        # down here (outside GC) to avoid the destroy-during-GC segfault.
+        try:
+            if hasattr(terminal, 'clear_file_panel'):
+                terminal.clear_file_panel()
+        except Exception:
+            logger.debug("Failed to clear files panel during pane cleanup", exc_info=True)
         try:
             terminal.disconnect()
         except Exception:
