@@ -4650,10 +4650,36 @@ def _build_sidebar_toolbar(window, sidebar_box):
         pass
     window._sidebar_minimize_button = minimize_button
 
-    # Add both toolbars to main toolbar
+    # Keep every selection state in one homogeneous stack. If the connection
+    # and group toolbars are visibility-swapped as sibling boxes, their very
+    # different button counts change the toolbar's natural width and make the
+    # split-view sidebar resize while keyboard navigation crosses a group row.
+    window._empty_selection_toolbar = Gtk.Box(
+        orientation=Gtk.Orientation.HORIZONTAL
+    )
+    window._empty_selection_toolbar.set_hexpand(True)
+
+    window._sidebar_selection_toolbar = Gtk.Stack()
+    window._sidebar_selection_toolbar.set_hexpand(True)
+    window._sidebar_selection_toolbar.set_hhomogeneous(True)
+    window._sidebar_selection_toolbar.set_vhomogeneous(True)
+    window._sidebar_selection_toolbar.set_transition_type(
+        Gtk.StackTransitionType.NONE
+    )
+    window._sidebar_selection_toolbar.add_named(
+        window.connection_toolbar, 'connection'
+    )
+    window._sidebar_selection_toolbar.add_named(
+        window.group_toolbar, 'group'
+    )
+    window._sidebar_selection_toolbar.add_named(
+        window._empty_selection_toolbar, 'empty'
+    )
+    window._sidebar_selection_toolbar.set_visible_child_name('empty')
+
+    # Add the stable toolbar slot to the main toolbar.
     toolbar.append(minimize_button)
-    toolbar.append(window.connection_toolbar)
-    toolbar.append(window.group_toolbar)
+    toolbar.append(window._sidebar_selection_toolbar)
 
     window._sidebar_toolbar_box = toolbar
     # Clip so the toolbar's button row can't force the sidebar wider than the strip.

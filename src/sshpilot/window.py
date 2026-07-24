@@ -4102,8 +4102,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         has_groups = bool(group_rows)
 
         if has_connections and not has_groups:
-            self.connection_toolbar.set_visible(True)
-            self.group_toolbar.set_visible(False)
+            self._set_sidebar_selection_toolbar('connection')
 
             multiple_connections = len(connection_rows) > 1
             selected_conn = getattr(connection_rows[0], 'connection', None)
@@ -4133,8 +4132,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.rename_group_button.set_sensitive(False)
             self.delete_group_button.set_sensitive(False)
         elif has_groups and not has_connections:
-            self.connection_toolbar.set_visible(False)
-            self.group_toolbar.set_visible(True)
+            self._set_sidebar_selection_toolbar('group')
 
             # Rename works for tag groups too (renames the tag); delete does not.
             allow_single_group = len(group_rows) == 1
@@ -4154,8 +4152,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.rename_group_button.set_sensitive(allow_single_group)
             self.delete_group_button.set_sensitive(allow_group_delete)
         else:
-            self.connection_toolbar.set_visible(False)
-            self.group_toolbar.set_visible(False)
+            self._set_sidebar_selection_toolbar('empty')
             self.delete_button.set_sensitive(False)
             if hasattr(self, 'copy_key_button'):
                 self.copy_key_button.set_sensitive(False)
@@ -4167,6 +4164,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(False)
             self.delete_group_button.set_sensitive(False)
+
+    def _set_sidebar_selection_toolbar(self, name: str) -> None:
+        """Switch toolbar contents without changing the sidebar's natural size."""
+        stack = getattr(self, '_sidebar_selection_toolbar', None)
+        if stack is not None:
+            stack.set_visible_child_name(name)
+            return
+
+        # Defensive fallback for partially constructed/test windows.
+        self.connection_toolbar.set_visible(name == 'connection')
+        self.group_toolbar.set_visible(name == 'group')
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
