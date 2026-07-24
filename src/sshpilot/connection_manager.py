@@ -33,6 +33,19 @@ from .askpass_utils import (
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
 
+# Directives the app owns end-to-end: parsed into typed Connection fields and
+# re-emitted from data by format_ssh_config_entry. Anything else in a Host
+# block is "unknown" — surfaced through extra_ssh_config for editing and
+# preserved verbatim (authored form) by the surgical block merge on save.
+MANAGED_HOST_OPTIONS = frozenset({
+    'host', 'hostname', 'aliases', 'port', 'user', 'identityfile', 'certificatefile',
+    'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
+    'proxycommand', 'proxyjump', 'forwardagent', 'localcommand', 'remotecommand', 'requesttty',
+    'identitiesonly', 'permitlocalcommand',
+    'preferredauthentications', 'pubkeyauthentication',
+    'identityagent', 'addkeystoagent', 'pkcs11provider', 'securitykeyprovider',
+})
+
 
 def _ensure_event_loop() -> asyncio.AbstractEventLoop:
     """Return the running asyncio event loop or create one if missing.
@@ -1667,17 +1680,9 @@ class ConnectionManager(GObject.Object):
             parsed['auth_method'] = auth_method
 
             # Custom options not handled by standard UI fields
-            standard_options = {
-                'host', 'hostname', 'aliases', 'port', 'user', 'identityfile', 'certificatefile',
-                'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
-                'proxycommand', 'proxyjump', 'forwardagent', 'localcommand', 'remotecommand', 'requesttty',
-                'identitiesonly', 'permitlocalcommand',
-                'preferredauthentications', 'pubkeyauthentication',
-                'identityagent', 'addkeystoagent', 'pkcs11provider', 'securitykeyprovider',
-            }
             extra_config_lines = []
             for key, value in config.items():
-                if key.lower() in standard_options:
+                if key.lower() in MANAGED_HOST_OPTIONS:
                     continue
                 if isinstance(value, list):
                     extra_config_lines.extend(f"{key} {val}" for val in value)
@@ -2243,6 +2248,81 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Failed to split host block for '{original_host}': {e}")
             return False
 
+    def _merged_block_lines(self, old_block: Optional[HostBlock],
+                            new_data: Dict[str, Any]) -> List[str]:
+        """Render the edited Host block surgically instead of wholesale.
+
+        Managed directives (MANAGED_HOST_OPTIONS) are re-emitted from
+        *new_data* at the position of the first managed line in the old block.
+        Comments, blank lines, and unknown directives keep their authored form
+        and position. Unknown directives are reconciled against the payload's
+        ``extra_ssh_config``: an entry still present there keeps its authored
+        line; an entry the user removed in the editor is dropped; entries the
+        user added are appended. A payload with no ``extra_ssh_config`` key
+        (programmatic callers) preserves every authored unknown line.
+        """
+        if old_block is None:
+            # New block: the full formatter already handles extras (verbatim,
+            # indented) and its auth-directive cleanup pass.
+            formatted = self.format_ssh_config_entry(new_data).split('\n')
+            return [ln + '\n' for ln in formatted]
+
+        managed_only = dict(new_data)
+        managed_only['extra_ssh_config'] = ''
+        formatted = self.format_ssh_config_entry(managed_only).split('\n')
+        header, managed_body = formatted[0] + '\n', [ln + '\n' for ln in formatted[1:]]
+
+        has_extra_key = 'extra_ssh_config' in new_data
+        # (normalized (key, value), authored line) — match on the former, emit
+        # the latter so casing/spelling is never rewritten.
+        remaining_extras: List[Tuple[Tuple[str, str], str]] = []
+        for line in str(new_data.get('extra_ssh_config') or '').splitlines():
+            stripped_extra = line.strip()
+            key, value = _split_config_option(stripped_extra)
+            if key is not None:
+                remaining_extras.append(((key.lower(), value), stripped_extra))
+
+        out_body: List[str] = []
+        managed_inserted = False
+
+        def _insert_managed():
+            nonlocal managed_inserted
+            if not managed_inserted:
+                out_body.extend(managed_body)
+                managed_inserted = True
+
+        for raw in old_block.lines[1:]:
+            stripped = raw.strip()
+            if not stripped:
+                out_body.append(raw)
+                continue
+            if stripped.startswith('#'):
+                if stripped.startswith('# sshpilot:PreCommand '):
+                    _insert_managed()  # re-emitted from data
+                else:
+                    out_body.append(raw)
+                continue
+            key = _split_keyword(stripped)[0]
+            if key in MANAGED_HOST_OPTIONS:
+                _insert_managed()
+                continue
+            # Unknown directive: keep the authored line when the payload still
+            # carries it (or carries no extras at all).
+            if not has_extra_key:
+                out_body.append(raw)
+                continue
+            parsed_key, parsed_value = _split_config_option(stripped)
+            entry = (parsed_key.lower(), parsed_value) if parsed_key else None
+            match = next((item for item in remaining_extras if item[0] == entry), None)
+            if match is not None:
+                remaining_extras.remove(match)
+                out_body.append(raw)
+            # else: removed in the editor — drop it
+
+        _insert_managed()
+        out_body.extend(f"    {authored}\n" for _entry, authored in remaining_extras)
+        return [header] + out_body
+
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: Optional[str] = None):
         """Update SSH config file with new connection data"""
         try:
@@ -2276,19 +2356,18 @@ class ConnectionManager(GObject.Object):
                 if isinstance(node, HostBlock) and \
                         any(token in candidate_names for token in node.tokens):
                     if not host_found:
-                        # Replace the first matching block in place; later
+                        # Surgically merge into the first matching block; later
                         # duplicates are dropped (ssh merge semantics — the app
                         # writes the one merged block it loaded).
-                        formatted = self.format_ssh_config_entry(new_data)
-                        new_nodes.append(RawSpan(lines=[formatted + '\n']))
+                        new_nodes.append(RawSpan(lines=self._merged_block_lines(node, new_data)))
                     host_found = True
                     continue
                 new_nodes.append(node)
 
             # If the host was not found, append the new config
             if not host_found:
-                formatted = self.format_ssh_config_entry(new_data)
-                new_nodes.append(RawSpan(lines=['\n' + formatted + '\n']))
+                block_lines = self._merged_block_lines(None, new_data)
+                new_nodes.append(RawSpan(lines=['\n'] + block_lines))
             doc.nodes = new_nodes
 
             try:

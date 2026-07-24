@@ -6,16 +6,14 @@ Two families:
   target block's span, byte-for-byte. A block's span runs from its ``Host``
   header up to (not including) the next ``Host``/``Match``/``Include`` header —
   so trailing comments/blank lines inside that span belong to the block today.
-- TARGET tests (strict xfail) encode what the document model must add:
-  in-block comments, trailing comments, and authored casing surviving edits.
-  They flip to failures the moment the model delivers, forcing the xfail
-  markers to be removed.
+- Surgical-merge tests assert what the document model delivers: in-block
+  comments, trailing comments, and authored casing of unknown directives
+  survive edits.
 """
 
 import asyncio
 import types
 
-import pytest
 
 from sshpilot.connection_manager import ConnectionManager
 
@@ -162,11 +160,9 @@ def test_edit_included_host_leaves_root_untouched(tmp_path):
     assert "    User bob\n" in frag.read_text()
 
 
-# --- TARGET: what the document model must add (strict xfail) ---------------
+# --- Surgical-merge guarantees (delivered by the document model) -----------
 
 
-@pytest.mark.xfail(strict=True, reason="document model target: comments inside "
-                   "the edited block must survive the rewrite")
 def test_comment_inside_edited_block_survives(tmp_path):
     text = (
         "Host web\n"
@@ -182,8 +178,6 @@ def test_comment_inside_edited_block_survives(tmp_path):
     assert "# pinned to the old DC on purpose" in (tmp_path / "config").read_text()
 
 
-@pytest.mark.xfail(strict=True, reason="document model target: trailing comments "
-                   "between the edited block and the next header must survive")
 def test_trailing_comment_after_edited_block_survives(tmp_path):
     text = (
         "Host web\n"
@@ -201,8 +195,6 @@ def test_trailing_comment_after_edited_block_survives(tmp_path):
     assert "# db cluster below" in (tmp_path / "config").read_text()
 
 
-@pytest.mark.xfail(strict=True, reason="document model target: authored casing of "
-                   "unknown directives must survive an edit")
 def test_unknown_directive_casing_survives_edit(tmp_path):
     text = (
         "Host web\n"
