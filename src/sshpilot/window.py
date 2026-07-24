@@ -11,6 +11,7 @@ import logging
 import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
+import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
@@ -30,7 +31,7 @@ except Exception:
     _HAS_VTE = False
 
 gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
 import threading
 
 # Feature detection for libadwaita versions across distros
@@ -999,11 +1000,35 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return os.path.abspath(os.path.expanduser(path))
 
     def _ssh_config_fingerprint(self):
+        return self._ssh_config_file_fingerprint(self._ssh_config_path())
+
+    @staticmethod
+    def _ssh_config_file_fingerprint(path):
         try:
-            stat = os.stat(self._ssh_config_path())
+            stat = os.stat(path)
             return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
         except OSError:
             return None
+
+    def _ssh_config_paths(self):
+        root = self._ssh_config_path()
+        paths = {root}
+        try:
+            from .ssh_config_utils import resolve_ssh_config_files
+            paths.update(
+                os.path.abspath(os.path.expanduser(path))
+                for path in resolve_ssh_config_files(root)
+                if path
+            )
+        except Exception:
+            logger.debug("Failed to resolve SSH config includes", exc_info=True)
+        return paths
+
+    def _ssh_config_fingerprints(self):
+        return {
+            path: self._ssh_config_file_fingerprint(path)
+            for path in self._ssh_config_paths()
+        }
 
     def _reload_ssh_config(self, create_missing=True):
         """Reload connections after any internal or external config save."""
@@ -1053,6 +1078,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             "connection: %s", e)
 
             self.rebuild_connection_list()
+            if hasattr(self, '_ssh_config_monitors'):
+                self._refresh_ssh_config_monitors()
             logger.info("SSH config reloaded after file change")
         except Exception as e:
             logger.error(
@@ -1060,34 +1087,36 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _observe_and_reload_ssh_config(self):
         """Record the current file state and reload immediately."""
-        self._ssh_config_observed_fingerprint = self._ssh_config_fingerprint()
+        self._ssh_config_observed_fingerprints = (
+            self._ssh_config_fingerprints())
         self._reload_ssh_config()
 
     def _reload_ssh_config_if_changed(self):
         self._ssh_config_reload_timeout_id = 0
-        fingerprint = self._ssh_config_fingerprint()
-        if fingerprint == self._ssh_config_observed_fingerprint:
+        fingerprints = self._ssh_config_fingerprints()
+        if fingerprints == self._ssh_config_observed_fingerprints:
             return False
-        self._ssh_config_observed_fingerprint = fingerprint
+        self._ssh_config_observed_fingerprints = fingerprints
         self._reload_ssh_config(create_missing=False)
         return False
 
     def _on_connection_manager_config_written(self, _manager, path):
         """Prevent the directory watcher from replaying an app-owned write."""
-        if os.path.abspath(path) == self._ssh_config_path():
-            self._ssh_config_observed_fingerprint = (
-                self._ssh_config_fingerprint())
+        path = os.path.abspath(os.path.expanduser(path))
+        if path in self._ssh_config_observed_fingerprints:
+            self._ssh_config_observed_fingerprints[path] = (
+                self._ssh_config_file_fingerprint(path))
 
     def _on_ssh_config_directory_changed(
             self, _monitor, file, other_file, _event_type):
         try:
-            config_path = self._ssh_config_path()
             changed_paths = {
                 os.path.abspath(candidate.get_path())
                 for candidate in (file, other_file)
                 if candidate is not None and candidate.get_path()
             }
-            if config_path not in changed_paths:
+            if not changed_paths.intersection(
+                    self._ssh_config_observed_fingerprints):
                 return
             timeout_id = getattr(
                 self, '_ssh_config_reload_timeout_id', 0)
@@ -1098,22 +1127,96 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Error handling SSH config change", exc_info=True)
 
+    def _refresh_ssh_config_monitors(self):
+        """Watch directories containing the root config and resolved Includes."""
+        for monitor, handler_id in getattr(
+                self, '_ssh_config_monitors', {}).values():
+            try:
+                monitor.disconnect(handler_id)
+            except Exception:
+                pass
+            try:
+                monitor.cancel()
+            except Exception:
+                pass
+        self._ssh_config_monitors = {}
+        self._ssh_config_observed_fingerprints = (
+            self._ssh_config_fingerprints())
+        window_ref = weakref.ref(self)
+
+        def _changed(monitor, file, other_file, event_type):
+            window = window_ref()
+            if window is not None:
+                window._on_ssh_config_directory_changed(
+                    monitor, file, other_file, event_type)
+
+        for config_dir in {
+                os.path.dirname(path)
+                for path in self._ssh_config_observed_fingerprints
+        }:
+            try:
+                monitor = Gio.File.new_for_path(config_dir).monitor_directory(
+                    Gio.FileMonitorFlags.WATCH_MOVES, None)
+                handler_id = monitor.connect("changed", _changed)
+                self._ssh_config_monitors[config_dir] = (
+                    monitor, handler_id)
+            except Exception:
+                logger.debug(
+                    "Failed to monitor SSH config directory %s",
+                    config_dir, exc_info=True)
+
     def _setup_ssh_config_monitor(self):
-        """Watch the config's directory so atomic external saves are observed."""
+        """Set up lifetime-safe monitoring for root and included config files."""
         self._ssh_config_reload_timeout_id = 0
-        self._ssh_config_observed_fingerprint = self._ssh_config_fingerprint()
+        self._ssh_config_monitors = {}
+        self._refresh_ssh_config_monitors()
+        window_ref = weakref.ref(self)
+
+        def _written(manager, path):
+            window = window_ref()
+            if window is not None:
+                window._on_connection_manager_config_written(manager, path)
+
         try:
-            config_dir = os.path.dirname(self._ssh_config_path())
-            monitor = Gio.File.new_for_path(config_dir).monitor_directory(
-                Gio.FileMonitorFlags.WATCH_MOVES, None)
-            monitor.connect("changed", self._on_ssh_config_directory_changed)
-            self._ssh_config_monitor = monitor
-            self._ssh_config_written_handler = self.connection_manager.connect_after(
-                'config-written', self._on_connection_manager_config_written)
+            self._ssh_config_written_handler = (
+                self.connection_manager.connect_after(
+                    'config-written', _written))
         except Exception:
-            self._ssh_config_monitor = None
+            self._ssh_config_written_handler = None
             logger.debug(
-                "Failed to monitor SSH config directory", exc_info=True)
+                "Failed to observe app-owned SSH config writes",
+                exc_info=True)
+
+    def _teardown_ssh_config_monitor(self):
+        """Release timeouts, native monitors, and manager signal handlers."""
+        timeout_id = getattr(self, '_ssh_config_reload_timeout_id', 0)
+        if timeout_id:
+            try:
+                GLib.source_remove(timeout_id)
+            except Exception:
+                pass
+            self._ssh_config_reload_timeout_id = 0
+
+        for monitor, handler_id in getattr(
+                self, '_ssh_config_monitors', {}).values():
+            try:
+                monitor.disconnect(handler_id)
+            except Exception:
+                pass
+            try:
+                monitor.cancel()
+            except Exception:
+                pass
+        self._ssh_config_monitors = {}
+
+        handler_id = getattr(self, '_ssh_config_written_handler', None)
+        if handler_id is not None:
+            try:
+                GObject.Object.disconnect(
+                    self.connection_manager, handler_id)
+            except Exception:
+                pass
+            self._ssh_config_written_handler = None
 
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
@@ -4688,6 +4791,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_close_request(self, window):
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:
+            self._teardown_ssh_config_monitor()
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch
@@ -4734,6 +4838,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 return True  # Prevent close, let dialog handle it
         
         # No active connections or all local terminals are idle, safe to close
+        self._teardown_ssh_config_monitor()
         return False  # Allow close
 
     def _askpass_dialog_parent(self):
