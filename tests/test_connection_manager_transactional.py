@@ -75,6 +75,45 @@ def test_failed_reload_preserves_connections(tmp_path, monkeypatch):
     assert cm.find_connection_by_nickname("web") is not None
 
 
+def test_unreadable_root_config_preserves_connections(tmp_path, monkeypatch):
+    """resolve_ssh_config_files silently drops unreadable files; if the root
+    itself is unreadable the reload must roll back, not commit an empty set."""
+    cm = make_cm(tmp_path)
+    (tmp_path / "config").write_text(CONFIG)
+    cm.load_ssh_config()
+    assert len(cm.connections) == 1
+
+    import sshpilot.connection_manager as cm_mod
+
+    monkeypatch.setattr(cm_mod, "resolve_ssh_config_files", lambda path: [])
+    cm.load_ssh_config()
+    assert cm.find_connection_by_nickname("web") is not None
+
+
+def test_partial_parse_failure_does_not_mutate_reused_objects(tmp_path):
+    """A malformed block aborting the reload must leave previously-parsed,
+    reused Connection objects with their pre-reload fields."""
+    cm = make_cm(tmp_path)
+    (tmp_path / "config").write_text(CONFIG)
+    cm.load_ssh_config()
+    conn = cm.find_connection_by_nickname("web")
+    assert conn.username == "alice"
+
+    # web parses fine (flushed when 'Host other' is reached), then the
+    # unbalanced quote on the third Host line raises mid-parse.
+    (tmp_path / "config").write_text(
+        "Host web\n"
+        "    HostName example.com\n"
+        "    User bob\n"
+        "Host other\n"
+        "    HostName o.example.com\n"
+        'Host "broken\n'
+    )
+    cm.load_ssh_config()
+    assert cm.find_connection_by_nickname("web") is conn
+    assert conn.username == "alice"
+
+
 def test_failed_remove_keeps_connection(tmp_path, monkeypatch):
     cm = make_cm(tmp_path)
     (tmp_path / "config").write_text(CONFIG)

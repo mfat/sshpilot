@@ -1344,6 +1344,13 @@ class ConnectionManager(GObject.Object):
             else:
                 self._ensure_secure_permissions(self.ssh_config_path, 0o600)
             config_files = resolve_ssh_config_files(self.ssh_config_path)
+            # resolve_ssh_config_files logs-and-skips unreadable files. That is
+            # right for optional Include fragments, but if the ROOT itself was
+            # unreadable the list comes back without it and committing would
+            # wipe every SSH connection. Treat that as fatal so the rollback
+            # below keeps the last known-good state.
+            if self._normalize_path(self.ssh_config_path) not in config_files:
+                raise OSError(f"SSH config root not readable: {self.ssh_config_path}")
 
             # Directives that accumulate per ssh_config(5) ("Multiple ...
             # directives will add to the list") rather than first-value-wins.
@@ -1360,6 +1367,12 @@ class ConnectionManager(GObject.Object):
             # scalars, accumulation for IdentityFile/CertificateFile/forwards —
             # mirroring how ``ssh`` itself resolves duplicate Host blocks.
             loaded_this_load: Dict[str, Dict[str, Any]] = {}
+
+            # Reused Connection objects are NOT mutated while parsing: a later
+            # malformed block aborts the whole load (rollback above), and the
+            # rollback can only restore the lists, not object fields. Updates
+            # are queued here and applied only once every file parsed cleanly.
+            pending_updates: List[Tuple[Connection, Dict[str, Any]]] = []
 
             def _merge_raw(into: Dict[str, Any], new: Dict[str, Any]) -> None:
                 """Merge authored directives (first-value-wins; lists accumulate)."""
@@ -1386,8 +1399,7 @@ class ConnectionManager(GObject.Object):
                     connection_data = self.parse_host_config(host_cfg, source=prior['source'])
                     if connection_data:
                         connection_data['source'] = prior['source']
-                        prior['conn'].update_data(connection_data)
-                        prior['conn']._connection_manager = self
+                        pending_updates.append((prior['conn'], connection_data))
                     return
 
                 raw_copy = dict(raw_cfg)
@@ -1401,8 +1413,7 @@ class ConnectionManager(GObject.Object):
                 nickname = connection_data.get('nickname', '')
                 existing = existing_by_nickname.get(nickname)
                 if existing:
-                    existing.update_data(connection_data)
-                    existing._connection_manager = self
+                    pending_updates.append((existing, connection_data))
                     self.connections.append(existing)
                     conn = existing
                 else:
@@ -1508,6 +1519,11 @@ class ConnectionManager(GObject.Object):
                     i += 1
                 if current_hosts and current_config:
                     flush_block(current_hosts, current_config, cfg_file)
+            # Every file parsed cleanly — now it is safe to mutate the reused
+            # objects (dict merges below cannot realistically fail mid-way).
+            for conn, connection_data in pending_updates:
+                conn.update_data(connection_data)
+                conn._connection_manager = self
             self._load_non_ssh_connections(existing_by_nickname)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
