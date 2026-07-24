@@ -15,7 +15,7 @@ import threading
 from gettext import gettext as _
 from typing import Dict, List, Optional, Tuple
 
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, Pango
 
 try:
     from .shortcut_utils import install_esc_to_close
@@ -250,10 +250,10 @@ class EffectiveConfigDialog(Adw.Window):
         edit_button.connect("clicked", self._on_edit_clicked)
         header.pack_start(edit_button)
 
-        self._full_toggle = Gtk.ToggleButton(label=_("Show full comparison"))
+        self._full_toggle = Gtk.ToggleButton(label=_("Show full configuration"))
         self._full_toggle.set_tooltip_text(
             _("Show the complete host-block and effective SSH configurations"))
-        self._full_toggle.connect("toggled", lambda _b: self._render())
+        self._full_toggle.connect("toggled", self._on_view_toggled)
         header.pack_end(self._full_toggle)
         toolbar.add_top_bar(header)
 
@@ -289,6 +289,17 @@ class EffectiveConfigDialog(Adw.Window):
         return False
 
     # ---- rendering ---------------------------------------------------------
+
+    def _on_view_toggled(self, button) -> None:
+        if button.get_active():
+            button.set_label(_("Show differences only"))
+            button.set_tooltip_text(
+                _("Return to the summary of settings changed by global config"))
+        else:
+            button.set_label(_("Show full configuration"))
+            button.set_tooltip_text(
+                _("Show the complete host-block and effective SSH configurations"))
+        self._render()
 
     def _clear_body(self):
         child = self._body.get_first_child()
@@ -340,7 +351,7 @@ class EffectiveConfigDialog(Adw.Window):
         if not self._changes:
             self._placeholder(_(
                 "No differences — your global SSH configuration does not change "
-                "this host. Toggle “Show full comparison” to inspect every setting."
+                "this host. Choose “Show full configuration” to inspect every setting."
             ))
             return
 
@@ -447,6 +458,14 @@ class EffectiveConfigDialog(Adw.Window):
         label = Gtk.Label()
         label.set_xalign(0.0)
         label.set_wrap(True)
+        # ssh -G emits long comma-separated algorithm lists with no spaces.
+        # WORD wrapping treats each as one enormous token and makes the window
+        # grow horizontally when full comparison is enabled. Permit character
+        # breaks and cap the label's natural width so the existing window size
+        # and centered placement remain stable.
+        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_max_width_chars(48)
+        label.set_hexpand(True)
         label.set_selectable(True)
         label.add_css_class("monospace")
         if not text:
