@@ -113,9 +113,21 @@ CASES = {
         {"remote_command": "uptime"},
         {"remote_command": "uptime ; exec $SHELL -l"},
     ),
-    "request_tty_standalone": (
+    "request_tty_force_preserved": (
+        {"request_tty": "force"},
+        {"request_tty": "force"},
+    ),
+    "request_tty_yes": (
+        {"request_tty": "yes"},
+        {"request_tty": "yes"},
+    ),
+    "request_tty_no_preserved": (
+        {"request_tty": "no"},
+        {"request_tty": "no"},
+    ),
+    "request_tty_legacy_bool": (
         {"request_tty": True},
-        {"request_tty": True},
+        {"request_tty": "yes"},
     ),
     "extra_ssh_config": (
         {"extra_ssh_config": "Compression yes"},
@@ -146,7 +158,7 @@ def test_field_roundtrip(tmp_path, name):
     assert conn is not None, entry
 
     for key, want in expected.items():
-        got = getattr(conn, key, None)
-        if got is None:
-            got = conn.data.get(key)
+        # Every supported model field must be a real attribute, not just a
+        # key that happens to survive in conn.data.
+        got = getattr(conn, key)
         assert got == want, f"{name}.{key}: {got!r} != {want!r}\n---\n{entry}"

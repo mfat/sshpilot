@@ -813,6 +813,9 @@ class Connection:
             pj = [h.strip() for h in re.split(r'[\s,]+', pj) if h.strip()]
         self.proxy_jump = pj
         self.forward_agent = bool(data.get('forward_agent', False))
+        # ForwardAgent socket/$ENV target and RequestTTY token (yes/no/force/auto)
+        self.forward_agent_target = data.get('forward_agent_target', '')
+        self.request_tty = data.get('request_tty', '')
         # Commands (pre_command is preserved when absent so a partial update
         # can't leave the attribute stale relative to data)
         self.pre_command = data.get('pre_command', getattr(self, 'pre_command', ''))
@@ -1687,9 +1690,15 @@ class ConnectionManager(GObject.Object):
                 if 'remotecommand' in config:
                     parsed['remote_command'] = _unescape_cfg_value(config.get('remotecommand', ''))
                 if 'requesttty' in config:
-                    parsed['request_tty'] = str(config.get('requesttty', '')).strip().lower() in (
-                        'yes', 'force', 'true', '1', 'on'
-                    )
+                    # Keep the normalized token: yes/force/auto/no have distinct
+                    # ssh semantics, so an edit must not rewrite force as yes.
+                    tty_val = str(_unwrap_ssh_value(config.get('requesttty', ''))).strip().lower()
+                    if tty_val in ('true', '1', 'on'):
+                        tty_val = 'yes'
+                    elif tty_val in ('false', '0', 'off'):
+                        tty_val = 'no'
+                    if tty_val in ('yes', 'no', 'force', 'auto'):
+                        parsed['request_tty'] = tty_val
             except Exception:
                 pass
 
@@ -2094,9 +2103,15 @@ class ConnectionManager(GObject.Object):
             lines.append(f"    RemoteCommand {remote_cmd_aug}")
             lines.append("    RequestTTY yes")
         elif data.get('request_tty'):
-            # Standalone authored RequestTTY (parsed as a bool, so yes/force
-            # both normalize to yes on rewrite).
-            lines.append("    RequestTTY yes")
+            # Standalone authored RequestTTY: preserve the token (legacy bool
+            # True from older stored data degrades to yes).
+            tty_val = data['request_tty']
+            if not (isinstance(tty_val, str) and
+                    tty_val.strip().lower() in ('yes', 'no', 'force', 'auto')):
+                tty_val = 'yes'
+            else:
+                tty_val = tty_val.strip().lower()
+            lines.append(f"    RequestTTY {tty_val}")
 
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
