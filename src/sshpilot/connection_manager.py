@@ -975,7 +975,7 @@ class ConnectionManager(GObject.Object):
                 logger.exception("Failed to load non-SSH connection %r",
                                  data.get('nickname'))
 
-    def _persist_non_ssh_connections(self) -> None:
+    def _persist_non_ssh_connections(self) -> bool:
         """Write all plugin-protocol connections back to the app config."""
         try:
             payload = [
@@ -984,8 +984,10 @@ class ConnectionManager(GObject.Object):
                 if getattr(conn, 'protocol', 'ssh') != 'ssh'
             ]
             self.config.set_setting(self._NON_SSH_SETTING, payload)
+            return True
         except Exception:
             logger.exception("Failed to persist non-SSH connections")
+            return False
 
     def _update_non_ssh_connection(self, connection: Connection,
                                    new_data: Dict[str, Any]) -> bool:
@@ -1003,7 +1005,25 @@ class ConnectionManager(GObject.Object):
             password = new_data.pop('password', None)
             new_data.pop('password_changed', None)
 
+            # The JSON payload is serialized from the live list, so the object
+            # must be mutated and registered before persisting — snapshot first
+            # so a failed persist rolls both back instead of reporting success.
+            prev_data = copy.deepcopy(connection.data) if isinstance(connection.data, dict) else {}
+            was_registered = connection in self.connections
+
             connection.update_data(new_data)
+            if not was_registered:
+                self._register_connection(connection)
+
+            if not self._persist_non_ssh_connections():
+                if not was_registered:
+                    try:
+                        self.connections.remove(connection)
+                    except ValueError:
+                        pass
+                connection.data = prev_data
+                connection._update_properties_from_data(prev_data)
+                return False
 
             if password is not None:
                 curr_host = self._non_ssh_password_host(connection)
@@ -1018,9 +1038,6 @@ class ConnectionManager(GObject.Object):
                             except Exception:
                                 pass
 
-            if connection not in self.connections:
-                self._register_connection(connection)
-            self._persist_non_ssh_connections()
             self.emit('connection-updated', connection)
             logger.info(f"Non-SSH connection updated: {connection.nickname}")
             return True
@@ -2680,21 +2697,24 @@ class ConnectionManager(GObject.Object):
             if getattr(connection, 'protocol', 'ssh') == 'ssh':
                 removed = self.remove_ssh_config_entry(connection.nickname, getattr(connection, 'source', None))
                 logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
-
-            # Remove from list
-            if connection in self.connections:
-                self.connections.remove(connection)
+                if connection in self.connections:
+                    self.connections.remove(connection)
+            else:
+                # The JSON store is serialized from the live list: remove from
+                # the list, persist, and roll the removal back if that fails.
+                idx = self.connections.index(connection) if connection in self.connections else -1
+                if idx >= 0:
+                    self.connections.remove(connection)
+                if not self._persist_non_ssh_connections():
+                    if idx >= 0:
+                        self.connections.insert(idx, connection)
+                    return False
 
             # Remove password from secure storage (all host aliases)
             try:
                 self.delete_connection_passwords(connection)
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
-
-            # Non-SSH (plugin) connections persist the remaining list to the
-            # JSON store, so this must run after the list removal above.
-            if getattr(connection, 'protocol', 'ssh') != 'ssh':
-                self._persist_non_ssh_connections()
 
             # Remove per-connection metadata (auth method, etc.) to avoid lingering entries
             try:

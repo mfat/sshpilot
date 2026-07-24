@@ -150,6 +150,57 @@ def test_remove_not_on_disk_still_removes_from_memory(tmp_path, monkeypatch):
     assert conn not in cm.connections
 
 
+def _failing_config():
+    def bad_set(key, value):
+        raise OSError("disk full")
+
+    return types.SimpleNamespace(get_setting=lambda *a, **k: [], set_setting=bad_set)
+
+
+def test_non_ssh_update_rolls_back_on_persist_failure(tmp_path):
+    cm = make_cm(tmp_path)
+    conn = Connection(
+        {"nickname": "tel", "hostname": "h", "username": "u", "protocol": "telnet"}
+    )
+    cm.connections.append(conn)
+    cm.config = _failing_config()
+    cm.emitted.clear()
+    ok = cm.update_connection(
+        conn, {"nickname": "tel2", "hostname": "h2", "protocol": "telnet"}
+    )
+    assert ok is False
+    assert conn.nickname == "tel"
+    assert not any(sig[0] == "connection-updated" for sig in cm.emitted)
+
+
+def test_non_ssh_create_rolls_back_on_persist_failure(tmp_path):
+    cm = make_cm(tmp_path)
+    cm.config = _failing_config()
+    conn = Connection(
+        {"nickname": "tel", "hostname": "h", "username": "u", "protocol": "telnet"}
+    )
+    ok = cm.update_connection(
+        conn, {"nickname": "tel", "hostname": "h", "protocol": "telnet"}
+    )
+    assert ok is False
+    assert conn not in cm.connections
+
+
+def test_non_ssh_remove_rolls_back_on_persist_failure(tmp_path):
+    cm = make_cm(tmp_path)
+    conn = Connection(
+        {"nickname": "tel", "hostname": "h", "username": "u", "protocol": "telnet"}
+    )
+    cm.connections.append(conn)
+    cm.config = _failing_config()
+    cm.delete_connection_passwords = lambda *a, **k: False
+    cm.emitted.clear()
+    ok = cm.remove_connection(conn, reload_config=False)
+    assert ok is False
+    assert conn in cm.connections
+    assert not any(sig[0] == "connection-removed" for sig in cm.emitted)
+
+
 def test_edit_preserves_unsurfaced_directives(tmp_path):
     """A dialog-style save payload omits ProxyCommand / standalone RequestTTY /
     ForwardAgent targets entirely; editing must not delete them from disk."""
