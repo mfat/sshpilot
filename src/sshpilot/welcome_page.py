@@ -121,23 +121,15 @@ class WelcomePage(Gtk.Overlay):
     # --- Main view ---
 
     def _build_minimal_view(self, current_shortcuts):
-        """Compact start page: clickable terminal hero, connection summary and a
-        Recent list, with the secondary actions tucked behind a revealer."""
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        scrolled.set_can_focus(False)
-        # Reserve the overlay footer's band so centred content never drifts
+        """Compact start page: omnisearch anchored at the vertical midpoint
+        (top half of a homogeneous split), lists and secondary actions in a
+        scrollable bottom half so the search never drifts as content grows."""
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, homogeneous=True)
+        outer.set_hexpand(True)
+        outer.set_vexpand(True)
+        # Reserve the overlay footer's band so content never drifts
         # into (or under) it as the window shrinks.
-        scrolled.set_margin_bottom(72)
-
-        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        inner.set_halign(Gtk.Align.FILL)
-        inner.set_hexpand(True)
-        inner.set_valign(Gtk.Align.CENTER)
-        inner.set_margin_top(24)
-        inner.set_margin_bottom(24)
+        outer.set_margin_bottom(72)
 
         search_clamp = Adw.Clamp()
         search_clamp.set_maximum_size(600)
@@ -146,8 +138,22 @@ class WelcomePage(Gtk.Overlay):
         search_clamp.set_margin_start(24)
         search_clamp.set_margin_end(24)
         search_clamp.set_margin_bottom(28)
+        search_clamp.set_valign(Gtk.Align.END)
+        search_clamp.set_vexpand(True)
         search_clamp.set_child(self.omni_home)
-        inner.append(search_clamp)
+        outer.append(search_clamp)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_hexpand(True)
+        scrolled.set_can_focus(False)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        inner.set_halign(Gtk.Align.FILL)
+        inner.set_hexpand(True)
+        inner.set_valign(Gtk.Align.START)
+        inner.set_margin_bottom(24)
 
         lists = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         lists.set_hexpand(True)
@@ -186,7 +192,8 @@ class WelcomePage(Gtk.Overlay):
         inner.append(revealer)
 
         scrolled.set_child(inner)
-        return scrolled
+        outer.append(scrolled)
+        return outer
 
     # --- Shared row/section widgets ---
 
