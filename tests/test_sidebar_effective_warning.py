@@ -13,13 +13,9 @@ class _Row:
 
     def __init__(self):
         self.effective_warning_icon = MagicMock()
-        self._selected = False
-
-    def is_selected(self):
-        return self._selected
 
 
-def test_warning_is_hidden_until_differing_row_is_hovered_or_selected():
+def test_warning_is_visible_only_while_differing_row_is_hovered():
     row = _Row()
 
     row.set_effective_warning(True)
@@ -31,11 +27,6 @@ def test_warning_is_hidden_until_differing_row_is_hovered_or_selected():
     row.effective_warning_icon.set_opacity.assert_called_with(1.0)
 
     row._is_hovering = False
-    row._selected = True
-    row._update_effective_warning_reveal()
-    row.effective_warning_icon.set_opacity.assert_called_with(1.0)
-
-    row._selected = False
     row._update_effective_warning_reveal()
     row.effective_warning_icon.set_opacity.assert_called_with(0.0)
 

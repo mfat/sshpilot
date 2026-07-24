@@ -1601,7 +1601,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.effective_warning_icon.connect("clicked", self._on_effective_warning_clicked)
         content.append(self.effective_warning_icon)
         self._effective_warning_differs = False
-        self.connect("notify::selected", self._on_row_selection_changed)
 
         warning_motion_controller = Gtk.EventControllerMotion()
         warning_motion_controller.connect("enter", self._on_button_enter)
@@ -1682,27 +1681,19 @@ class ConnectionRow(Gtk.ListBoxRow):
         GLib.timeout_add(100, self._maybe_hide_button)
 
     def _maybe_hide_button(self):
-        """Hide hover actions unless the warning belongs to a selected row."""
+        """Hide row actions when the pointer is no longer hovering."""
         if not self._is_hovering and self.file_manager_button:
             self.file_manager_button.set_opacity(0.0)
         self._update_effective_warning_reveal()
         return False  # Don't repeat
 
-    def _on_row_selection_changed(self, *_args) -> None:
-        self._update_effective_warning_reveal()
-
     def _update_effective_warning_reveal(self) -> None:
         icon = getattr(self, 'effective_warning_icon', None)
         if icon is None:
             return
-        selected = False
-        try:
-            selected = self.is_selected()
-        except Exception:
-            pass
         reveal = (
             getattr(self, '_effective_warning_differs', False)
-            and (getattr(self, '_is_hovering', False) or selected)
+            and getattr(self, '_is_hovering', False)
         )
         icon.set_opacity(1.0 if reveal else 0.0)
 
