@@ -2273,7 +2273,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 msg = _("Pinned {n} connections to start page").format(n=len(conns))
             if hasattr(self, 'toast_overlay') and self.toast_overlay:
-                self.toast_overlay.add_toast(Adw.Toast.new(msg))
+                previous = getattr(self, '_pin_status_toast', None)
+                if previous is not None:
+                    previous.dismiss()
+
+                toast = Adw.Toast.new(msg)
+                toast.set_timeout(3)
+                self._pin_status_toast = toast
+
+                def _clear_pin_status_toast(dismissed_toast):
+                    if getattr(self, '_pin_status_toast', None) is dismissed_toast:
+                        self._pin_status_toast = None
+
+                toast.connect('dismissed', _clear_pin_status_toast)
+                self.toast_overlay.add_toast(toast)
             if hasattr(self, 'welcome_view') and self.welcome_view:
                 self.welcome_view.refresh_pinned()
         except Exception as e:
