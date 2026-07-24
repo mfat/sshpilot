@@ -1853,41 +1853,6 @@ class ConnectionDialog(
             filters = None
         self._browse_file(_("Select SSH Certificate File"), on_chosen, filters=filters)
 
-    def validate_ssh_config_syntax(self, config_text):
-        """Basic SSH config syntax validation"""
-        try:
-            lines = config_text.strip().split('\n')
-            for i, line in enumerate(lines, 1):
-                line = line.strip()
-                # Skip empty lines and comments
-                if not line or line.startswith('#'):
-                    continue
-                
-                # Check for Host directive (should be at start of line)
-                if line.startswith('Host '):
-                    host_name = line[5:].strip()
-                    if not host_name:
-                        return False, f"Line {i}: Host directive requires a name"
-                
-                # Check for indented options (should start with spaces/tabs)
-                elif line.startswith(' ') or line.startswith('\t'):
-                    # Basic option format check
-                    if ' ' not in line.strip():
-                        return False, f"Line {i}: Invalid option format"
-                    
-                    option_parts = line.strip().split(' ', 1)
-                    if len(option_parts) < 2:
-                        return False, f"Line {i}: Option requires a value"
-                
-                # Check for non-indented, non-comment lines
-                elif not line.startswith('#'):
-                    return False, f"Line {i}: Expected 'Host' directive or indented option"
-            
-            return True, "SSH config syntax is valid"
-            
-        except Exception as e:
-            return False, f"Validation error: {e}"
-    
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""
         try:
