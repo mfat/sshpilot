@@ -86,6 +86,25 @@ def test_transfer_intent_uses_single_saved_alias(monkeypatch):
     assert result.payload == ("scp", web)
 
 
+def test_transfer_intent_suggests_hosts(monkeypatch):
+    web = _connection("web")
+    db = _connection("database", host="db.internal")
+    monkeypatch.setattr(
+        "sshpilot.omni_search.collect_commands",
+        lambda _window: [],
+    )
+
+    # Partial name after the tool fuzzy-matches hosts.
+    partial = search_omni(_window([web, db]), "sftp we")
+    assert partial[0].kind == "transfer"
+    assert partial[0].payload == ("sftp", web)
+
+    # Bare tool offers the chooser plus recent/pinned hosts.
+    bare = search_omni(_window([web, db], recent={"web": 5}), "sftp")
+    assert bare[0].payload == ("sftp", None)
+    assert any(result.payload == ("sftp", web) for result in bare)
+
+
 def test_transfer_intents_do_not_become_terminal_commands(monkeypatch):
     monkeypatch.setattr(
         "sshpilot.omni_search.collect_commands",

@@ -216,26 +216,57 @@ def _looks_like_ssh(query: str, tokens: Sequence[str]) -> bool:
     ))
 
 
-def _intent_result(query: str, connections: Sequence[Any]) -> Optional[OmniResult]:
-    tokens, _error = _parse_tokens(query)
-    if not tokens:
-        return None
-    command = tokens[0].casefold()
-    intent = _TRANSFER_INTENTS.get(command)
-    if intent is None:
-        return None
-    connection = _find_saved_alias(connections, tokens[1]) if len(tokens) == 2 else None
-    subtitle = (
-        _("Use saved connection {name}").format(
-            name=getattr(connection, "nickname", ""),
-        )
-        if connection is not None
-        else _("Choose a connection")
+def _transfer_result(intent, connection, score: int) -> OmniResult:
+    title = str(
+        getattr(connection, "display_name", "")
+        or getattr(connection, "nickname", "")
     )
     return OmniResult(
-        "transfer", intent[1], subtitle, intent[2], 1400,
+        "transfer", title, intent[1], intent[2], score,
         (intent[0], connection),
     )
+
+
+def _intent_results(
+    window, query: str, connections: Sequence[Any]
+) -> List[OmniResult]:
+    tokens, _error = _parse_tokens(query)
+    if not tokens:
+        return []
+    intent = _TRANSFER_INTENTS.get(tokens[0].casefold())
+    if intent is None:
+        return []
+
+    chooser = OmniResult(
+        "transfer", intent[1], _("Choose a connection"), intent[2], 1400,
+        (intent[0], None),
+    )
+
+    if len(tokens) == 1:
+        # Bare tool: offer the chooser plus recent/pinned hosts to run it on.
+        results = [chooser]
+        for index, connection in enumerate(
+            _recent_and_pinned(window, connections)[:5]
+        ):
+            results.append(_transfer_result(intent, connection, 1390 - index))
+        return results
+
+    if len(tokens) == 2:
+        # "sftp <partial>": fuzzy-match hosts, exact alias first.
+        matches = []
+        for connection in connections:
+            score = _match_score(tokens[1], _connection_phrases(connection))
+            if score:
+                matches.append((score, connection))
+        matches.sort(key=lambda item: -item[0])
+        if not matches:
+            return [chooser]
+        return [
+            _transfer_result(intent, connection, 900 + score // 2)
+            for score, connection in matches[:5]
+        ]
+
+    return [chooser]
 
 
 def _ssh_result(query: str) -> Optional[OmniResult]:
@@ -316,9 +347,7 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
         return suggestions[:limit]
 
     results: List[OmniResult] = []
-    intent = _intent_result(query, connections)
-    if intent is not None:
-        results.append(intent)
+    results.extend(_intent_results(window, query, connections))
 
     ssh = _ssh_result(query)
     if ssh is not None:
