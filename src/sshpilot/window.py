@@ -308,6 +308,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.setup_ui()
         self.setup_connections()
         self.setup_signals()
+        self._setup_ssh_config_monitor()
 
         # Apply the persisted sidebar mode (full / minimal icon strip).
         try:
@@ -989,6 +990,121 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             checker.schedule(connection)
         except Exception:
             logger.debug("Failed to prime effective-config warning", exc_info=True)
+
+    def _ssh_config_path(self):
+        path = getattr(self.connection_manager, 'ssh_config_path', None)
+        if not path:
+            from .platform_utils import get_ssh_dir
+            path = os.path.join(get_ssh_dir(), 'config')
+        return os.path.abspath(os.path.expanduser(path))
+
+    def _ssh_config_fingerprint(self):
+        try:
+            stat = os.stat(self._ssh_config_path())
+            return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return None
+
+    def _reload_ssh_config(self):
+        """Reload connections after any internal or external config save."""
+        try:
+            old_connections = {
+                conn.nickname: conn
+                for conn in self.connection_manager.get_connections()
+            }
+            old_group_memberships = {}
+            for nickname in old_connections:
+                group_id = self.group_manager.get_connection_group(nickname)
+                if group_id:
+                    old_group_memberships[nickname] = group_id
+
+            self.connection_manager.load_ssh_config()
+            checker = getattr(self, 'effective_config_checker', None)
+            if checker is not None:
+                checker.invalidate()
+            new_connections = {
+                conn.nickname: conn
+                for conn in self.connection_manager.get_connections()
+            }
+
+            for old_nickname, old_conn in old_connections.items():
+                if old_nickname not in old_group_memberships:
+                    continue
+                group_id = old_group_memberships[old_nickname]
+                matching_new_nickname = None
+                for new_nickname, new_conn in new_connections.items():
+                    if (new_conn.hostname == old_conn.hostname and
+                            new_conn.username == old_conn.username and
+                            new_conn.port == old_conn.port):
+                        matching_new_nickname = new_nickname
+                        break
+                if (matching_new_nickname and
+                        matching_new_nickname != old_nickname):
+                    try:
+                        self.group_manager.rename_connection(
+                            old_nickname, matching_new_nickname)
+                        logger.info(
+                            "Preserved group membership: '%s' -> '%s' in group %s",
+                            old_nickname, matching_new_nickname, group_id)
+                    except Exception as e:
+                        logger.error(
+                            "Failed to preserve group membership for renamed "
+                            "connection: %s", e)
+
+            self.rebuild_connection_list()
+            logger.info("SSH config reloaded after file change")
+        except Exception as e:
+            logger.error(
+                "Failed to refresh connections after SSH config change: %s", e)
+
+    def _observe_and_reload_ssh_config(self):
+        """Record the current file state and reload immediately."""
+        self._ssh_config_observed_fingerprint = self._ssh_config_fingerprint()
+        self._reload_ssh_config()
+
+    def _reload_ssh_config_if_changed(self):
+        self._ssh_config_reload_timeout_id = 0
+        fingerprint = self._ssh_config_fingerprint()
+        if fingerprint == self._ssh_config_observed_fingerprint:
+            return False
+        self._ssh_config_observed_fingerprint = fingerprint
+        self._reload_ssh_config()
+        return False
+
+    def _on_ssh_config_directory_changed(
+            self, _monitor, file, other_file, _event_type):
+        try:
+            config_path = self._ssh_config_path()
+            changed_paths = {
+                os.path.abspath(candidate.get_path())
+                for candidate in (file, other_file)
+                if candidate is not None and candidate.get_path()
+            }
+            if config_path not in changed_paths:
+                return
+            timeout_id = getattr(
+                self, '_ssh_config_reload_timeout_id', 0)
+            if timeout_id:
+                GLib.source_remove(timeout_id)
+            self._ssh_config_reload_timeout_id = GLib.timeout_add(
+                150, self._reload_ssh_config_if_changed)
+        except Exception:
+            logger.debug("Error handling SSH config change", exc_info=True)
+
+    def _setup_ssh_config_monitor(self):
+        """Watch the config's directory so atomic external saves are observed."""
+        self._ssh_config_reload_timeout_id = 0
+        self._ssh_config_observed_fingerprint = self._ssh_config_fingerprint()
+        try:
+            config_dir = os.path.dirname(self._ssh_config_path())
+            monitor = Gio.File.new_for_path(config_dir).monitor_directory(
+                Gio.FileMonitorFlags.WATCH_MOVES, None)
+            monitor.connect("changed", self._on_ssh_config_directory_changed)
+            self._ssh_config_monitor = monitor
+        except Exception:
+            self._ssh_config_monitor = None
+            logger.debug(
+                "Failed to monitor SSH config directory", exc_info=True)
 
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
@@ -3479,108 +3595,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             from .text_editor import RemoteFileEditorWindow
             from .ssh_config_utils import validate_ssh_config_text
 
-            config_path = getattr(self.connection_manager, 'ssh_config_path', None)
-            if not config_path:
-                from .platform_utils import get_ssh_dir
-                config_path = os.path.join(get_ssh_dir(), 'config')
-
-            config_path = os.path.abspath(os.path.expanduser(config_path))
+            config_path = self._ssh_config_path()
             config_name = os.path.basename(config_path)
-
-            # Set up file monitoring to detect when the file is saved
-            file_modified_time = 0.0
-            if os.path.exists(config_path):
-                try:
-                    file_modified_time = os.path.getmtime(config_path)
-                except Exception:
-                    pass
-
-            def _reload_ssh_config():
-                """Reload SSH config and refresh connection list, preserving group membership"""
-                try:
-                    # Capture current connections and their group memberships before reload
-                    old_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
-                    old_group_memberships = {}
-                    for nickname in old_connections.keys():
-                        group_id = self.group_manager.get_connection_group(nickname)
-                        if group_id:
-                            old_group_memberships[nickname] = group_id
-
-                    # Reload SSH config (this creates new Connection objects)
-                    self.connection_manager.load_ssh_config()
-                    # Globals may have changed: drop all cached checks. Hovering
-                    # a rebuilt row schedules a fresh check.
-                    checker = getattr(self, 'effective_config_checker', None)
-                    if checker is not None:
-                        checker.invalidate()
-                    new_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
-
-                    # Detect nickname changes by matching connections on hostname/username/port
-                    # This handles the case where Host value changes but connection is otherwise the same
-                    for old_nickname, old_conn in old_connections.items():
-                        if old_nickname in old_group_memberships:
-                            # This connection was in a group, try to find its new nickname
-                            group_id = old_group_memberships[old_nickname]
-
-                            # Try to find matching connection by hostname/username/port
-                            matching_new_nickname = None
-                            for new_nickname, new_conn in new_connections.items():
-                                if (new_conn.hostname == old_conn.hostname and
-                                    new_conn.username == old_conn.username and
-                                    new_conn.port == old_conn.port):
-                                    matching_new_nickname = new_nickname
-                                    break
-
-                            # If we found a match and nickname changed, update group membership
-                            if matching_new_nickname and matching_new_nickname != old_nickname:
-                                try:
-                                    self.group_manager.rename_connection(old_nickname, matching_new_nickname)
-                                    logger.info(f"Preserved group membership: '{old_nickname}' -> '{matching_new_nickname}' in group {group_id}")
-                                except Exception as e:
-                                    logger.error(f"Failed to preserve group membership for renamed connection: {e}")
-                            # If old nickname still exists, group membership is already preserved
-
-                    self.rebuild_connection_list()
-                    logger.info("SSH config reloaded after file save")
-                except Exception as e:
-                    logger.error(f"Failed to refresh connections after SSH config save: {e}")
-
-            def _on_ssh_config_saved():
-                """Synchronously observe saves made by our atomic local editor."""
-                nonlocal file_modified_time
-                try:
-                    file_modified_time = os.path.getmtime(config_path)
-                except OSError:
-                    pass
-                _reload_ssh_config()
-
-            # Monitor file for changes
-            def _on_file_changed(monitor, file, other_file, event_type):
-                """Handle file system changes to detect saves"""
-                if event_type in (Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT):
-                    try:
-                        if os.path.exists(config_path):
-                            new_mtime = os.path.getmtime(config_path)
-                            nonlocal file_modified_time
-                            if new_mtime > file_modified_time:
-                                file_modified_time = new_mtime
-                                # Reload after a short delay to ensure file is fully written
-                                GLib.timeout_add(100, _reload_ssh_config)
-                    except Exception as e:
-                        logger.debug(f"Error checking file modification time: {e}")
-
-            # Create file monitor
-            try:
-                gfile = Gio.File.new_for_path(config_path)
-                file_monitor = gfile.monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
-                file_monitor.connect("changed", _on_file_changed)
-                # Store monitor reference to keep it alive
-                if not hasattr(self, '_ssh_config_monitors'):
-                    self._ssh_config_monitors = []
-                self._ssh_config_monitors.append(file_monitor)
-            except Exception as e:
-                logger.debug(f"Failed to set up file monitoring for SSH config: {e}")
-                file_monitor = None
 
             editor = RemoteFileEditorWindow(
                 parent=self,
@@ -3590,7 +3606,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 sftp_manager=None,
                 file_manager_window=None,
                 pre_save_validator=validate_ssh_config_text,
-                on_local_saved=_on_ssh_config_saved,
+                on_local_saved=self._observe_and_reload_ssh_config,
                 language_id="sshconfig",
                 show_outline=True,
             )
@@ -3601,27 +3617,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(editor, 'set_editor_title'):
                 editor.set_editor_title(_("SSH Config"))
 
-            # Also reload when the editor closes (fallback)
-            def _on_editor_close_request(window):
-                # Clean up file monitor
-                if hasattr(self, '_ssh_config_monitors') and file_monitor:
-                    try:
-                        if file_monitor in self._ssh_config_monitors:
-                            self._ssh_config_monitors.remove(file_monitor)
-                        file_monitor.cancel()
-                    except Exception:
-                        pass
-                # Final reload check when closing
-                try:
-                    if os.path.exists(config_path):
-                        new_mtime = os.path.getmtime(config_path)
-                        if new_mtime > file_modified_time:
-                            _reload_ssh_config()
-                except Exception:
-                    pass
-                return False  # Allow window to close
-
-            editor.connect("close-request", _on_editor_close_request)
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
