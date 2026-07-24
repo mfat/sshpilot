@@ -122,8 +122,8 @@ class WelcomePage(Gtk.Overlay):
 
     def _build_minimal_view(self, current_shortcuts):
         """Compact start page: omnisearch anchored at the vertical midpoint
-        (top half of a homogeneous split), lists and secondary actions in a
-        scrollable bottom half so the search never drifts as content grows."""
+        (top half of a homogeneous split), lists in a scrollable bottom half so
+        the search never drifts, and secondary actions in a popover."""
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, homogeneous=True)
         outer.set_hexpand(True)
         outer.set_vexpand(True)
@@ -170,29 +170,40 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_child(lists)
         inner.append(clamp)
 
-        # Secondary actions + pinned sections, hidden by default
-        revealer = Gtk.Revealer()
-        revealer.set_transition_type(Gtk.RevealerTransitionType.NONE)
-        revealer.set_child(self._build_extras(current_shortcuts))
-        revealer.set_reveal_child(False)
+        # Secondary actions, tucked behind a popover so they never fight the
+        # lists for the bottom half's limited height.
+        extras = self._build_extras(current_shortcuts)
+        extras.set_margin_top(12)
+        extras.set_margin_bottom(12)
+        extras.set_margin_start(12)
+        extras.set_margin_end(12)
+        popover = Gtk.Popover()
+        # Prefer opening upward from the bottom edge; GTK may still flip it
+        # below (outside the window) when monitor space above runs out.
+        popover.set_position(Gtk.PositionType.TOP)
+        popover.set_child(extras)
+        self._close_on_click(extras, popover.popdown)
 
         more_icon = icon_utils.new_image_from_icon_name('view-more-horizontal-symbolic')
         more_icon.add_css_class('dim-label')
-        more_btn = Gtk.Button()
+        more_btn = Gtk.MenuButton()
         more_btn.set_child(more_icon)
+        more_btn.set_popover(popover)
         more_btn.add_css_class('flat')
         more_btn.add_css_class('circular')
         more_btn.add_css_class('dim-label')
         more_btn.set_halign(Gtk.Align.CENTER)
-        more_btn.set_margin_top(16)
+        more_btn.set_margin_top(8)
         more_btn.set_can_focus(False)
         more_btn.set_tooltip_text(_('Show more actions'))
-        more_btn.connect('clicked', self._on_toggle_more, revealer)
-        inner.append(more_btn)
-        inner.append(revealer)
 
         scrolled.set_child(inner)
-        outer.append(scrolled)
+        # Keep the "…" button out of the scroll area so it is always visible,
+        # pinned under the lists just above the footer band.
+        bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        bottom.append(scrolled)
+        bottom.append(more_btn)
+        outer.append(bottom)
         return outer
 
     # --- Shared row/section widgets ---
@@ -377,18 +388,12 @@ class WelcomePage(Gtk.Overlay):
         return footer
 
     def _make_chip_row(self, actions, size_group=None):
-        """Build a homogeneous 3-column FlowBox of equal-width chip buttons."""
-        fb = Gtk.FlowBox()
-        fb.set_selection_mode(Gtk.SelectionMode.NONE)
-        fb.set_halign(Gtk.Align.CENTER)
-        fb.set_max_children_per_line(3)
-        fb.set_min_children_per_line(3)
-        fb.set_column_spacing(8)
-        fb.set_row_spacing(8)
-        fb.set_can_focus(False)
+        """Build a row of equal-width chip buttons."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.CENTER)
         for icon_name, label, cb, action_name in actions:
-            fb.append(self._build_chip(icon_name, label, cb, action_name, size_group))
-        return fb
+            row.append(self._build_chip(icon_name, label, cb, action_name, size_group))
+        return row
 
     def _build_chip(self, icon_name, label, callback, action_name=None, size_group=None):
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -412,10 +417,19 @@ class WelcomePage(Gtk.Overlay):
         accel = self._get_action_accel_display(getattr(self, '_shortcuts', {}) or {}, action_name) if action_name else ''
         return f"{text}  ({accel})" if accel else text
 
-    def _on_toggle_more(self, button, revealer):
-        reveal = not revealer.get_reveal_child()
-        revealer.set_reveal_child(reveal)
-        button.set_tooltip_text(_('Show fewer actions') if reveal else _('Show more actions'))
+    @classmethod
+    def _close_on_click(cls, widget, close_fn):
+        """Close the extras popover after any of its buttons is clicked.
+
+        Connected after each button's own handler, so the action (which may use
+        the button as a dialog/popover anchor) runs before the close."""
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Button):
+                child.connect('clicked', lambda *_a: close_fn())
+            else:
+                cls._close_on_click(child, close_fn)
+            child = child.get_next_sibling()
 
     def _prompt_create_connection(self):
         """No hosts yet — offer to create one."""
