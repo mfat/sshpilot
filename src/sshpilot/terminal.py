@@ -442,6 +442,15 @@ class TerminalWidget(Gtk.Box):
         self.container_box.set_vexpand(True)
         self.container_box.append(self.terminal_stack)
 
+        # Rounded-corner card framing the terminal, matching the file manager
+        # panes. overflow=HIDDEN clips the VTE content to the rounded corners.
+        self.container_box.add_css_class("card")
+        self.container_box.set_overflow(Gtk.Overflow.HIDDEN)
+        self.container_box.set_margin_top(8)
+        self.container_box.set_margin_bottom(8)
+        self.container_box.set_margin_start(8)
+        self.container_box.set_margin_end(8)
+
         self.append(self.container_box)
 
         # Files panel (embedded SFTP file manager shown below the terminal);
