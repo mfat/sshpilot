@@ -109,6 +109,8 @@ def _ensure_browser_card_css() -> None:
 actionbar.fm-bottom-card > revealer > box {
     background: transparent;
     border-top: none;
+    /* libadwaita draws the actionbar's top hairline as an inset box-shadow */
+    box-shadow: none;
 }
 """)
         Gtk.StyleContext.add_provider_for_display(
