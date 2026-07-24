@@ -64,6 +64,7 @@ def _ensure_event_loop() -> asyncio.AbstractEventLoop:
 from .ssh_config_document import (  # noqa: F401  (re-export)
     _CONFIG_OPTION_RE,
     HostBlock,
+    RawSpan,
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,
@@ -2255,78 +2256,42 @@ class ConnectionManager(GObject.Object):
                 return
 
             try:
-                with open(target_path) as f:
-                    lines = f.readlines()
+                doc = SSHConfigDocument.parse_file(target_path)
             except OSError as e:
                 logger.error(f"Failed to read SSH config: {e}")
                 raise
-            
-            # Find and update the connection's Host block using nickname matching
-            updated_lines = []
-            new_name = str(new_data.get('nickname') or '')
-            host_found = False
-            replaced_once = False
 
-            # For renaming, we need to find the existing block by the original nickname
-            # The connection object might already have the new nickname, so we need to be smarter
+            new_name = str(new_data.get('nickname') or '')
+            # For renaming, find the existing block by the original nickname —
+            # the connection object might already carry the new one.
             candidate_names = {new_name}
-            
-            # Add the original nickname to candidate names for proper matching during renames
             if original_nickname:
                 candidate_names.add(original_nickname)
-            
             logger.debug(f"Looking for host block with candidate names: {candidate_names}")
-            logger.debug(f"Original nickname: {original_nickname}, New name: {new_name}")
 
-            i = 0
-            while i < len(lines):
-                raw_line = lines[i]
-                lstripped = raw_line.lstrip()
-                # Detect the Host header honouring every ssh_config(5) separator
-                # (``Host x``, ``Host=x``, ``Host = x``, tabs) — the same logic the
-                # loader uses — so an equals/tab-form block is found and replaced
-                # rather than leaving a stale block and appending a duplicate.
-                kw, remainder = _split_keyword(lstripped)
+            host_found = False
+            new_nodes: List[Any] = []
+            for node in doc.nodes:
+                if isinstance(node, HostBlock) and \
+                        any(token in candidate_names for token in node.tokens):
+                    if not host_found:
+                        # Replace the first matching block in place; later
+                        # duplicates are dropped (ssh merge semantics — the app
+                        # writes the one merged block it loaded).
+                        formatted = self.format_ssh_config_entry(new_data)
+                        new_nodes.append(RawSpan(lines=[formatted + '\n']))
+                    host_found = True
+                    continue
+                new_nodes.append(node)
 
-                if kw == 'host':
-                    host_names = shlex.split(remainder) if remainder else []
-
-                    logger.debug(
-                        f"Found Host line: '{lstripped.strip()}' -> host_names={host_names}"
-                    )
-
-                    if any(host_name in candidate_names for host_name in host_names):
-                        logger.debug(
-                            f"MATCH FOUND! Host '{host_names}' matches candidate names {candidate_names}"
-                        )
-                        host_found = True
-                        if not replaced_once:
-                            updated_config = self.format_ssh_config_entry(new_data)
-                            updated_lines.append(updated_config + '\n')
-                            replaced_once = True
-                        # Skip this Host line and the block's lines until the next
-                        # Host/Match/Include header (Include stops the skip so an
-                        # Include directive is never swallowed).
-                        i += 1
-                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                            i += 1
-                        continue
-                    else:
-                        # This is a different Host block, keep it
-                        updated_lines.append(raw_line)
-                else:
-                    # Not a Host line, keep it
-                    updated_lines.append(raw_line)
-
-                i += 1
-            
-            # If host not found, append the new config
+            # If the host was not found, append the new config
             if not host_found:
-                updated_config = self.format_ssh_config_entry(new_data)
-                updated_lines.append('\n' + updated_config + '\n')
-            
+                formatted = self.format_ssh_config_entry(new_data)
+                new_nodes.append(RawSpan(lines=['\n' + formatted + '\n']))
+            doc.nodes = new_nodes
+
             try:
-                self._safe_write_config(target_path, ''.join(updated_lines))
+                self._safe_write_config(target_path, doc.text())
                 logger.info(
                     "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
                     new_name,
