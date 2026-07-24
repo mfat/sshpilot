@@ -63,6 +63,7 @@ def _ensure_event_loop() -> asyncio.AbstractEventLoop:
 # long-standing importers (and this module's scanners) keep working.
 from .ssh_config_document import (  # noqa: F401  (re-export)
     _CONFIG_OPTION_RE,
+    HostBlock,
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,
@@ -2199,44 +2200,25 @@ class ConnectionManager(GObject.Object):
             target_path = self._ensure_config_parent_dir(target_path)
 
             try:
-                with open(target_path) as f:
-                    lines = f.readlines()
+                doc = SSHConfigDocument.parse_file(target_path)
             except FileNotFoundError:
-                lines = []
+                doc = SSHConfigDocument.parse_text('', target_path)
 
-            updated_lines: List[str] = []
-            i = 0
             found = False
-            while i < len(lines):
-                raw_line = lines[i]
-                lstripped = raw_line.lstrip()
-                # Detect the Host header honouring all separators (Host=x, tabs).
-                kw, full_value = _split_keyword(lstripped)
-                if kw == 'host':
-                    try:
-                        host_names = shlex.split(full_value)
-                    except ValueError:
-                        host_names = [h for h in full_value.split() if h]
+            for idx, node in enumerate(doc.nodes):
+                if isinstance(node, HostBlock) and original_host in node.tokens:
+                    found = True
+                    remaining = [t for t in node.tokens if t != original_host]
+                    if remaining:
+                        header = node.lines[0]
+                        indent = header[:len(header) - len(header.lstrip())]
+                        node.tokens = remaining
+                        node.lines[0] = f"{indent}Host {shlex.join(remaining)}\n"
+                    else:
+                        del doc.nodes[idx]
+                    break
 
-                    if not found and original_host in host_names:
-                        found = True
-                        remaining_hosts = [h for h in host_names if h != original_host]
-                        indent_len = len(raw_line) - len(lstripped)
-                        indent = raw_line[:indent_len]
-                        if remaining_hosts:
-                            updated_lines.append(f"{indent}Host {' '.join(remaining_hosts)}\n")
-                            i += 1
-                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                                updated_lines.append(lines[i])
-                                i += 1
-                        else:
-                            i += 1
-                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                                i += 1
-                        continue
-                updated_lines.append(raw_line)
-                i += 1
-
+            updated_lines = doc.text().splitlines(keepends=True)
             formatted_block = self.format_ssh_config_entry(new_data).rstrip('\n')
             if updated_lines:
                 if not updated_lines[-1].endswith('\n'):
