@@ -1105,6 +1105,16 @@ class ConnectionManager(GObject.Object):
             except OSError:
                 pass
             raise
+        # Fsync the parent directory so the rename itself is durable after a
+        # crash (the file's fsync above only covers its contents).
+        try:
+            dir_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
         self._ensure_secure_permissions(path, 0o600)
         emit = getattr(self, 'emit', None)
         if emit is not None:
