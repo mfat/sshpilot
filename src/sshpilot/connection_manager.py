@@ -59,40 +59,13 @@ def _ensure_event_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
-# Per ssh_config(5): "Configuration options may be separated by whitespace or
-# optional whitespace and exactly one '='". A keyword and its argument may be
-# separated by any run of whitespace (spaces or tabs) or by a single '=' with
-# optional surrounding whitespace.
-_CONFIG_OPTION_RE = re.compile(r'^(\S+?)(?:\s*=\s*|\s+)(.*)$')
-
-
-def _split_config_option(line: str) -> Tuple[Optional[str], Optional[str]]:
-    """Split a config line into (key, value) honouring whitespace and '=' separators.
-
-    Returns ``(None, None)`` for lines that carry no value (a bare keyword), which
-    the caller skips just as the old ``' ' in line`` guard did.
-    """
-    match = _CONFIG_OPTION_RE.match(line)
-    if not match:
-        return None, None
-    key, value = match.group(1), match.group(2).strip()
-    if not value:
-        return None, None
-    return key, value
-
-
-def _split_keyword(line: str) -> Tuple[str, str]:
-    """Return ``(lowercased keyword, remainder)`` for a config line.
-
-    Honours every ssh_config(5) separator, so ``Host x``, ``Host=x``,
-    ``Host = x`` and tab-separated forms all yield ``('host', 'x')``. A bare
-    keyword with no argument yields ``('host', '')``. Used to dispatch the
-    Host/Match/Include block keywords regardless of separator.
-    """
-    match = _CONFIG_OPTION_RE.match(line)
-    if match:
-        return match.group(1).lower(), match.group(2).strip()
-    return line.strip().lower(), ''
+# Tokenization lives with the lossless document model; re-exported here so
+# long-standing importers (and this module's scanners) keep working.
+from .ssh_config_document import (  # noqa: F401  (re-export)
+    _CONFIG_OPTION_RE,
+    _split_config_option,
+    _split_keyword,
+)
 
 
 def _safe_int(value: Any, default: int) -> int:
