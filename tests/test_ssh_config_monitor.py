@@ -9,6 +9,8 @@ class _Window:
     _on_ssh_config_directory_changed = (
         MainWindow._on_ssh_config_directory_changed)
     _reload_ssh_config_if_changed = MainWindow._reload_ssh_config_if_changed
+    _on_connection_manager_config_written = (
+        MainWindow._on_connection_manager_config_written)
 
     def __init__(self):
         self._ssh_config_reload_timeout_id = 0
@@ -60,4 +62,25 @@ def test_debounced_reload_observes_atomic_replacement():
 
     assert window._reload_ssh_config_if_changed() is False
     assert window._ssh_config_observed_fingerprint == (9, 2, 3)
-    window._reload_ssh_config.assert_called_once_with()
+    window._reload_ssh_config.assert_called_once_with(create_missing=False)
+
+
+def test_app_owned_root_config_write_updates_observed_fingerprint():
+    window = _Window()
+    window._ssh_config_fingerprint = lambda: (7, 8, 9)
+
+    window._on_connection_manager_config_written(
+        None, "/tmp/.ssh/config")
+
+    assert window._ssh_config_observed_fingerprint == (7, 8, 9)
+
+
+def test_app_owned_include_write_does_not_change_root_fingerprint():
+    window = _Window()
+    window._ssh_config_fingerprint = MagicMock()
+
+    window._on_connection_manager_config_written(
+        None, "/tmp/.ssh/conf.d/work.conf")
+
+    assert window._ssh_config_observed_fingerprint == (1, 2, 3)
+    window._ssh_config_fingerprint.assert_not_called()

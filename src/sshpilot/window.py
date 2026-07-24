@@ -1005,7 +1005,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except OSError:
             return None
 
-    def _reload_ssh_config(self):
+    def _reload_ssh_config(self, create_missing=True):
         """Reload connections after any internal or external config save."""
         try:
             old_connections = {
@@ -1018,7 +1018,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if group_id:
                     old_group_memberships[nickname] = group_id
 
-            self.connection_manager.load_ssh_config()
+            self.connection_manager.load_ssh_config(
+                create_missing=create_missing)
             checker = getattr(self, 'effective_config_checker', None)
             if checker is not None:
                 checker.invalidate()
@@ -1068,8 +1069,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if fingerprint == self._ssh_config_observed_fingerprint:
             return False
         self._ssh_config_observed_fingerprint = fingerprint
-        self._reload_ssh_config()
+        self._reload_ssh_config(create_missing=False)
         return False
+
+    def _on_connection_manager_config_written(self, _manager, path):
+        """Prevent the directory watcher from replaying an app-owned write."""
+        if os.path.abspath(path) == self._ssh_config_path():
+            self._ssh_config_observed_fingerprint = (
+                self._ssh_config_fingerprint())
 
     def _on_ssh_config_directory_changed(
             self, _monitor, file, other_file, _event_type):
@@ -1101,6 +1108,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 Gio.FileMonitorFlags.WATCH_MOVES, None)
             monitor.connect("changed", self._on_ssh_config_directory_changed)
             self._ssh_config_monitor = monitor
+            self._ssh_config_written_handler = self.connection_manager.connect_after(
+                'config-written', self._on_connection_manager_config_written)
         except Exception:
             self._ssh_config_monitor = None
             logger.debug(

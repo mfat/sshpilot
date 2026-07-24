@@ -968,6 +968,7 @@ class ConnectionManager(GObject.Object):
         'connection-added': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         'connection-removed': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         'connection-updated': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        'config-written': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         # Legacy boolean status signal (connection, is_connected). Retained for
         # backward compatibility; emitted alongside the richer signal below.
         'connection-status-changed': (GObject.SignalFlags.RUN_FIRST, None, (object, bool)),
@@ -1196,6 +1197,9 @@ class ConnectionManager(GObject.Object):
                 pass
             raise
         self._ensure_secure_permissions(path, 0o600)
+        emit = getattr(self, 'emit', None)
+        if emit is not None:
+            emit('config-written', self._normalize_path(path))
 
     # -- managed global identity defaults (Host *) -----------------------
     _MANAGED_BEGIN = "# >>> sshpilot: identity defaults (managed) >>>"
@@ -1414,7 +1418,7 @@ class ConnectionManager(GObject.Object):
         return key
 
         
-    def load_ssh_config(self):
+    def load_ssh_config(self, create_missing: bool = True):
         """Load connections from SSH config file"""
         try:
             existing_by_nickname = {conn.nickname: conn for conn in self.connections}
@@ -1426,11 +1430,15 @@ class ConnectionManager(GObject.Object):
                 logger.error("Unable to prepare SSH config path '%s': %s", self.ssh_config_path, exc)
                 return
             if not os.path.exists(self.ssh_config_path):
-                logger.info("SSH config file not found, creating empty one")
-                with open(self.ssh_config_path, 'w', encoding='utf-8') as f:
-                    f.write("# SSH configuration file\n")
-                    f.write('\n')
-                self._ensure_secure_permissions(self.ssh_config_path, 0o600)
+                if create_missing:
+                    logger.info("SSH config file not found, creating empty one")
+                    with open(self.ssh_config_path, 'w', encoding='utf-8') as f:
+                        f.write("# SSH configuration file\n")
+                        f.write('\n')
+                    self._ensure_secure_permissions(
+                        self.ssh_config_path, 0o600)
+                else:
+                    logger.info("SSH config file was removed")
                 self._load_non_ssh_connections(existing_by_nickname)
                 return
             else:
