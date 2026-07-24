@@ -164,11 +164,14 @@ class SSHConfigDocument:
         return ''.join(node.text() for node in self.nodes)
 
     def render_lines(self, lines: List[str]) -> List[str]:
-        """Convert generated LF-terminated lines to this document's newline
-        style so edits never mix line endings."""
+        """Convert lines to this document's newline style so edits never mix
+        endings. Idempotent: input may mix generated LF lines with preserved
+        lines that already carry the document's CRLF (a bare replace would
+        double-convert those to CR CR LF)."""
         if self.newline == '\n':
             return list(lines)
-        return [line.replace('\n', self.newline) for line in lines]
+        return [line.replace('\r\n', '\n').replace('\n', self.newline)
+                for line in lines]
 
     def host_blocks(self, token: Optional[str] = None) -> List[HostBlock]:
         """All Host blocks, or only those whose token list contains *token*

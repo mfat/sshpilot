@@ -221,6 +221,33 @@ def test_crlf_config_fully_preserved_on_edit(tmp_path):
     assert "Host db\r\n    HostName db.internal\r\n" in raw
 
 
+def test_crlf_edit_preserving_comment_and_unknown_directive(tmp_path):
+    """Preserved lines already carry CRLF; merging them with generated LF
+    lines must not double-convert them to CR CR LF."""
+    text = (
+        "Host web\r\n"
+        "    # keep\r\n"
+        "    HostName example.com\r\n"
+        "    SendEnv FOO\r\n"
+    )
+    (tmp_path / "config").write_bytes(text.encode())
+    cm = make_cm(tmp_path)
+    cm.load_ssh_config()
+    conn = cm.find_connection_by_nickname("web")
+    cm.update_ssh_config_file(
+        conn,
+        {"nickname": "web", "hostname": "example.com", "username": "bob",
+         "extra_ssh_config": conn.extra_ssh_config},
+        "web",
+    )
+    raw = (tmp_path / "config").read_bytes().decode()
+    assert "\r\r" not in raw
+    assert "\n" not in raw.replace("\r\n", "")  # every ending is a single CRLF
+    assert "    # keep\r\n" in raw
+    assert "    SendEnv FOO\r\n" in raw
+    assert "    User bob\r\n" in raw
+
+
 def test_crlf_remove_keeps_other_blocks_byte_identical(tmp_path):
     text = (
         "Host web\r\n"
