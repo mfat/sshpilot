@@ -104,6 +104,12 @@ def _ensure_browser_card_css() -> None:
 .fm-browser-card gridview {
     background: transparent;
 }
+/* ActionBar paints its background/border on an inner box, which would
+   square-fill the rounded card; let the card class show through instead. */
+actionbar.fm-bottom-card > revealer > box {
+    background: transparent;
+    border-top: none;
+}
 """)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
@@ -274,7 +280,7 @@ class FilePane(Gtk.Box):
         content_overlay.add_css_class("fm-browser-card")
         content_overlay.set_overflow(Gtk.Overflow.HIDDEN)
         content_overlay.set_margin_top(2)
-        content_overlay.set_margin_bottom(8)
+        content_overlay.set_margin_bottom(2)
         content_overlay.set_margin_start(8)
         content_overlay.set_margin_end(8)
 
@@ -295,6 +301,12 @@ class FilePane(Gtk.Box):
         self._action_buttons: Dict[str, Gtk.Button] = {}
         action_bar = Gtk.ActionBar()
         action_bar.add_css_class("inline-toolbar")
+        # Same rounded-card framing as the toolbar and browser area above.
+        action_bar.add_css_class("card")
+        action_bar.add_css_class("fm-bottom-card")
+        action_bar.set_margin_bottom(8)
+        action_bar.set_margin_start(8)
+        action_bar.set_margin_end(8)
 
         def _create_action_button(
             name: str,
