@@ -1995,8 +1995,13 @@ class ConnectionManager(GObject.Object):
             proxy_jump = [h.strip() for h in re.split(r'[\s,]+', proxy_jump) if h.strip()]
         if proxy_jump:
             lines.append(f"    ProxyJump {','.join(proxy_jump)}")
+        proxy_command = (data.get('proxy_command') or '').strip()
+        if proxy_command:
+            lines.append(f"    ProxyCommand {proxy_command}")
         if data.get('forward_agent'):
-            lines.append("    ForwardAgent yes")
+            # ForwardAgent also accepts a socket path / $ENV per ssh_config(5).
+            forward_target = str(data.get('forward_agent_target') or '').strip()
+            lines.append(f"    ForwardAgent {forward_target or 'yes'}")
 
         # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
@@ -2097,7 +2102,11 @@ class ConnectionManager(GObject.Object):
             # Write RemoteCommand first, then RequestTTY (order for readability)
             lines.append(f"    RemoteCommand {remote_cmd_aug}")
             lines.append("    RequestTTY yes")
-        
+        elif data.get('request_tty'):
+            # Standalone authored RequestTTY (parsed as a bool, so yes/force
+            # both normalize to yes on rewrite).
+            lines.append("    RequestTTY yes")
+
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
             listen_addr = (rule.get('listen_addr') or '').strip()
@@ -2510,6 +2519,29 @@ class ConnectionManager(GObject.Object):
 
         _reconcile('identity_files', 'keyfile')
         _reconcile('certificate_files', 'certificate')
+
+        # Directives parsed from ssh_config but not surfaced in the dialog:
+        # carry them forward when the save payload omits them, so an unrelated
+        # edit never silently deletes them from ~/.ssh/config. An explicit
+        # empty/False value from a caller still clears them. Skip any directive
+        # the user (re)authored in the extra-config editor this save.
+        extra = str(new_data.get('extra_ssh_config') or '')
+        extra_keys = {
+            _split_keyword(line.strip())[0]
+            for line in extra.splitlines() if line.strip()
+        }
+        for attr, directive in (
+            ('proxy_command', 'proxycommand'),
+            ('request_tty', 'requesttty'),
+            ('forward_agent_target', 'forwardagent'),
+        ):
+            if attr in new_data or directive in extra_keys:
+                continue
+            existing = getattr(connection, attr, None)
+            if existing is None and isinstance(getattr(connection, 'data', None), dict):
+                existing = connection.data.get(attr)
+            if existing not in (None, '', False):
+                new_data[attr] = existing
 
     def add_connection_from_data(self, data: Dict[str, Any]) -> Connection:
         """Create, persist, and announce a new connection from a data dict.

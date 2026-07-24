@@ -111,6 +111,39 @@ def test_remove_not_on_disk_still_removes_from_memory(tmp_path, monkeypatch):
     assert conn not in cm.connections
 
 
+def test_edit_preserves_unsurfaced_directives(tmp_path):
+    """A dialog-style save payload omits ProxyCommand / standalone RequestTTY /
+    ForwardAgent targets entirely; editing must not delete them from disk."""
+    cm = make_cm(tmp_path)
+    (tmp_path / "config").write_text(
+        "Host bast\n"
+        "    HostName example.com\n"
+        "    User alice\n"
+        "    ProxyCommand ssh -W %h:%p jumphost\n"
+        "    RequestTTY yes\n"
+        "    ForwardAgent $SSH_AUTH_SOCK\n"
+    )
+    cm.load_ssh_config()
+    conn = cm.find_connection_by_nickname("bast")
+    assert conn is not None
+
+    ok = cm.update_connection(
+        conn,
+        {
+            "nickname": "bast",
+            "hostname": "example.com",
+            "username": "bob",
+            "forward_agent": True,
+        },
+    )
+    assert ok is True
+    text = (tmp_path / "config").read_text()
+    assert "ProxyCommand ssh -W %h:%p jumphost" in text
+    assert "RequestTTY yes" in text
+    assert "ForwardAgent $SSH_AUTH_SOCK" in text
+    assert "User bob" in text
+
+
 def test_failed_create_leaves_no_phantom(tmp_path, monkeypatch):
     cm = make_cm(tmp_path)
     monkeypatch.setattr(cm, "update_connection", lambda *a, **k: False)
