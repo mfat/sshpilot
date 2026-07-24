@@ -105,6 +105,28 @@ def test_transfer_intent_suggests_hosts(monkeypatch):
     assert any(result.payload == ("sftp", web) for result in bare)
 
 
+def test_explicit_ssh_suggests_matching_saved_hosts(monkeypatch):
+    router = _connection("GoogleRouter", host="192.168.8.1", user="root")
+    monkeypatch.setattr(
+        "sshpilot.omni_search.collect_commands",
+        lambda _window: [],
+    )
+
+    for query in ("ssh g", "ssh root@goo", "root@goo"):
+        results = search_omni(_window([router]), query)
+        assert any(
+            result.kind == "connection" and result.payload is router
+            for result in results
+        ), query
+
+    # Bare "ssh" offers recent hosts.
+    bare = search_omni(_window([router], recent={"GoogleRouter": 5}), "ssh")
+    assert any(
+        result.kind == "connection" and result.payload is router
+        for result in bare
+    )
+
+
 def test_transfer_intents_do_not_become_terminal_commands(monkeypatch):
     monkeypatch.setattr(
         "sshpilot.omni_search.collect_commands",

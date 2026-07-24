@@ -293,6 +293,44 @@ def _ssh_result(query: str) -> Optional[OmniResult]:
     )
 
 
+def _ssh_host_suggestions(
+    window, query: str, connections: Sequence[Any]
+) -> List[OmniResult]:
+    """Saved connections matching the destination of an ssh-like query.
+
+    "ssh g" or "root@g" scores connections against just "g", so saved hosts
+    surface next to the ad-hoc "Connect using SSH" row; a bare "ssh" offers
+    recent/pinned. Callers gate on the query already looking like ssh.
+    """
+    tokens, _error = _parse_tokens(query)
+    if not tokens:
+        return []
+    rest = tokens[1:] if tokens[0].casefold() == "ssh" else tokens
+    if not rest:
+        return [
+            _connection_result(connection, 1390 - index)
+            for index, connection in enumerate(
+                _recent_and_pinned(window, connections)[:5]
+            )
+        ]
+    dest = rest[-1]
+    if dest.startswith("-"):
+        return []
+    dest = dest.rsplit("@", 1)[-1]
+    if not dest:
+        return []
+    matches = []
+    for connection in connections:
+        score = _match_score(dest, _connection_phrases(connection))
+        if score:
+            matches.append((score, connection))
+    matches.sort(key=lambda item: -item[0])
+    return [
+        _connection_result(connection, 900 + score // 2)
+        for score, connection in matches[:5]
+    ]
+
+
 def _recent_and_pinned(window, connections: Sequence[Any]) -> List[Any]:
     by_name = {
         str(getattr(connection, "nickname", "")): connection
@@ -352,6 +390,7 @@ def search_omni(window, query: str, limit: int = _MAX_RESULTS) -> List[OmniResul
     ssh = _ssh_result(query)
     if ssh is not None:
         results.append(ssh)
+        results.extend(_ssh_host_suggestions(window, query, connections))
 
     for connection in connections:
         score = _match_score(query, _connection_phrases(connection))
