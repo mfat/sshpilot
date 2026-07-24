@@ -13,6 +13,7 @@ from typing import Optional, Tuple, Callable, Any
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
 from .platform_utils import is_flatpak, is_macos
+from .shortcut_utils import install_esc_to_close
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,13 @@ def _show_password_dialog_for_mount(
     )
 
 
-class PasswordMountOperation(Gtk.MountOperation):
+# Real GTK ships Gtk.MountOperation (native host-key/question dialogs). The
+# no-GTK CI stub doesn't, so fall back to Gio.MountOperation there — import must
+# never hard-fail at class-definition time (mounting never runs under the stub).
+_MountOperationBase = getattr(Gtk, "MountOperation", None) or Gio.MountOperation
+
+
+class PasswordMountOperation(_MountOperationBase):
     """Mount operation that auto-fills the stored password.
 
     Subclasses ``Gtk.MountOperation`` so every prompt we don't handle — most
@@ -1417,6 +1424,7 @@ class SftpConnectionDialog(Adw.Window):
 
     def __init__(self, user: str, host: str, port: Optional[int], uri: str):
         super().__init__()
+        install_esc_to_close(self)
         self.user = user
         self.host = host
         self.port = port

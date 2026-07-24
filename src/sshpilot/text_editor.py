@@ -42,6 +42,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _clear_undo_history(buffer) -> None:
+    """Drop the undo/redo queue after a load/save, across GtkSource versions.
+
+    GtkSource 5 (GTK4) removed ``begin/end_not_undoable_action``; the GTK4
+    ``Gtk.TextBuffer`` replacement is ``begin/end_irreversible_action``, whose
+    ``begin`` also clears any existing undo queue. Fall back to the old API for
+    GtkSource 4, and to toggling ``enable-undo`` as a last resort.
+    """
+    try:
+        if hasattr(buffer, 'begin_irreversible_action'):
+            buffer.begin_irreversible_action()
+            buffer.end_irreversible_action()
+        elif hasattr(buffer, 'begin_not_undoable_action'):
+            buffer.begin_not_undoable_action()
+            buffer.end_not_undoable_action()
+        elif hasattr(buffer, 'set_enable_undo'):
+            buffer.set_enable_undo(False)
+            buffer.set_enable_undo(True)
+    except (AttributeError, TypeError) as e:
+        logger.debug(f"Failed to reset undo stack: {e}")
+
+
 _BUNDLED_LANG_PATH = "resource:///io/github/mfat/sshpilot/language-specs/"
 _lang_manager = None
 
@@ -126,6 +148,7 @@ class RemoteFileEditorWindow(Adw.Window):
         sftp_manager: Optional[Any] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
         pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
+        on_local_saved: Optional[Callable[[], None]] = None,
         language_id: Optional[str] = None,
         show_outline: bool = False,
     ) -> None:
@@ -144,6 +167,10 @@ class RemoteFileEditorWindow(Adw.Window):
         # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
         # error string to block the save, or None to allow it.
         self._pre_save_validator = pre_save_validator
+        # Optional owner notification after an atomic local save. File monitors
+        # are not sufficient here: replacing a file can detach an inode-based
+        # monitor before it reports the new file.
+        self._on_local_saved = on_local_saved
         # Optional GtkSourceView language id (e.g. 'sshconfig') + a Host/Match
         # outline sidebar — used by the SSH config editor only.
         self._language_id = language_id
@@ -736,15 +763,9 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_text(text)
             self._buffer.set_modified(False)
             
-            # Reset undo/redo state after loading
-            # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
-            # This ensures file loading doesn't create undo history entries
+            # Reset undo/redo state after loading so it isn't undoable.
             if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-                try:
-                    self._buffer.begin_not_undoable_action()
-                    self._buffer.end_not_undoable_action()
-                except (AttributeError, TypeError) as e:
-                    logger.debug(f"Failed to reset undo stack: {e}")
+                _clear_undo_history(self._buffer)
                 # Update undo/redo button states
                 if hasattr(self, '_undo_button'):
                     self._undo_button.set_sensitive(False)
@@ -970,14 +991,8 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo stack after save
-            # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
-            # This ensures saving doesn't create undo history entries
             if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-                try:
-                    self._buffer.begin_not_undoable_action()
-                    self._buffer.end_not_undoable_action()
-                except (AttributeError, TypeError) as e:
-                    logger.debug(f"Failed to reset undo stack: {e}")
+                _clear_undo_history(self._buffer)
                 # Update undo/redo button states
                 if hasattr(self, '_undo_button'):
                     self._undo_button.set_sensitive(False)
@@ -992,6 +1007,11 @@ class RemoteFileEditorWindow(Adw.Window):
                 # For local files, just save and refresh the pane
                 self._show_toast("Saved", timeout=2)
                 self._save_button.set_sensitive(False)
+                if self._on_local_saved is not None:
+                    try:
+                        self._on_local_saved()
+                    except Exception:
+                        logger.debug("local-save callback failed", exc_info=True)
                 # Refresh the file manager to show updated file
                 if self._file_manager_window:
                     pane = self._file_manager_window._left_pane
@@ -1041,14 +1061,8 @@ class RemoteFileEditorWindow(Adw.Window):
         self._buffer.set_modified(False)
         
         # Reset undo stack after save
-        # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
-        # This ensures saving doesn't create undo history entries
         if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-            try:
-                self._buffer.begin_not_undoable_action()
-                self._buffer.end_not_undoable_action()
-            except (AttributeError, TypeError) as e:
-                logger.debug(f"Failed to reset undo stack: {e}")
+            _clear_undo_history(self._buffer)
             # Update undo/redo button states
             if hasattr(self, '_undo_button'):
                 self._undo_button.set_sensitive(False)
@@ -1728,4 +1742,3 @@ class RemoteFileEditorWindow(Adw.Window):
         self._zoom_level = 1.0
         self._apply_zoom()
         logger.debug("Editor zoom reset to 1.0x")
-

@@ -954,14 +954,31 @@ class WindowTabsMixin:
 
         # Sidebar behavior: a session (SSH or local) just opened. Hide after a
         # short delay so the terminal settles, then the sidebar slides away.
+        # The pinned Start page attaches at startup too — it is not a session,
+        # so it must not trigger hide/minimize. Detect it by child type: at
+        # attach time `_start_tab_page` isn't assigned yet (prepend() emits
+        # page-attached synchronously before the return value is stored), so an
+        # identity check via _is_start_tab_page() would miss it.
         try:
-            if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
+            from .welcome_page import WelcomePage
+            start_child = page.get_child() if page else None
+            is_start = self._is_start_tab_page(page) or isinstance(start_child, WelcomePage)
+        except Exception:
+            is_start = self._is_start_tab_page(page)
+        try:
+            action = self._sidebar_on_terminal_open() if not is_start else 'none'
+            if action == 'hide':
                 self._cancel_pending_sidebar_hide()
                 self._sidebar_hide_timer_id = GLib.timeout_add(
                     350, self._hide_sidebar_after_terminal
                 )
+            elif action == 'minimize':
+                self._cancel_pending_sidebar_hide()
+                self._sidebar_hide_timer_id = GLib.timeout_add(
+                    350, self._minimize_sidebar_after_terminal
+                )
         except Exception:
-            logger.debug("sidebar hide-on-terminal-open failed", exc_info=True)
+            logger.debug("sidebar-on-terminal-open failed", exc_info=True)
 
     def _register_convert_to_split_drop(self, terminal, page) -> None:
         """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
@@ -1393,6 +1410,9 @@ class WindowTabsMixin:
         Otherwise open a new tab for the server.
         """
         self._return_to_tab_view_if_welcome()
+        # Executing a result dismisses search (and restores the icon strip if
+        # search expanded it). No-op when not searching.
+        self._close_search_if_open()
         try:
             # Check if there are open tabs for this connection
             terms_for_conn = []
@@ -1435,6 +1455,9 @@ class WindowTabsMixin:
         Otherwise open a new tab for the server.
         """
         self._return_to_tab_view_if_welcome()
+        # Executing a result dismisses search (and restores the icon strip if
+        # search expanded it). No-op when not searching.
+        self._close_search_if_open()
         try:
             # Collect current pages in visual/tab order
             terms_for_conn = []
@@ -1484,7 +1507,13 @@ class WindowTabsMixin:
         if terminal is None:
             return
 
+        def _omni_is_visible() -> bool:
+            omni = getattr(self, '_omni_search', None)
+            return bool(omni is not None and omni.popup.visible)
+
         def _focus_attempt(_source=None) -> bool:
+            if _omni_is_visible():
+                return GLib.SOURCE_REMOVE
             try:
                 # Use backend's grab_focus method if available (works for both VTE and PyXterm.js)
                 if hasattr(terminal, 'backend') and terminal.backend:
@@ -1500,6 +1529,8 @@ class WindowTabsMixin:
 
         # Try immediate focus
         try:
+            if _omni_is_visible():
+                return
             if hasattr(terminal, 'backend') and terminal.backend:
                 terminal.backend.grab_focus()
             elif hasattr(terminal, 'vte') and terminal.vte:
@@ -1536,9 +1567,15 @@ class WindowTabsMixin:
             if self._is_start_tab_page(page):
                 GLib.idle_add(self._focus_connection_list_first_row)
                 try:
-                    if (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
-                            and not self.has_user_tabs()):
-                        self._apply_sidebar_visible(True)
+                    if not self.has_user_tabs():
+                        # Back at the welcome screen with no sessions: undo a
+                        # transient minimize-on-connect, but keep the strip when
+                        # minimal is the configured resting mode.
+                        if (getattr(self, '_sidebar_minimal', False)
+                                and not self._sidebar_mode_is_minimal()):
+                            self.set_sidebar_minimal(False)
+                        if self.config.get_setting('ui.sidebar_show_when_no_tabs', False):
+                            self._apply_sidebar_visible(True)
                 except Exception:
                     pass
                 return

@@ -45,16 +45,6 @@
     min-height: 64px;
 }
 .startpage-hero image { color: @accent_color; }
-.startpage-chip {
-    padding: 7px 16px;
-    border-radius: 9999px;
-    min-height: 0;
-    background: transparent;
-    border: 1px solid alpha(@window_fg_color, 0.18);
-    box-shadow: none;
-}
-.startpage-chip:hover { background: alpha(@window_fg_color, 0.08); }
-.startpage-chip:active { background: alpha(@window_fg_color, 0.14); }
 .startpage-mono {
     font-family: monospace;
     font-size: 0.85em;
@@ -76,3 +66,37 @@
     border-bottom: 1px solid alpha(@window_fg_color, 0.08);
 }
 .startpage-recent-row:hover { background: alpha(@window_fg_color, 0.06); }
+
+/* Shared welcome/global omni-search (omni_search.py). */
+/* Invisible at rest — just the placeholder text; the box materializes with an
+   accent ring + soft glow on focus (wrapping the results list too).
+   (@accent_bg_color + alpha() instead of var(--accent-color)/color-mix so it
+   also works on libadwaita/GTK versions predating CSS variables.) */
+.omni-search {
+    border-radius: 8px;
+    transition: box-shadow 180ms ease-out, background-color 180ms ease-out;
+}
+.omni-search:focus-within {
+    background-color: @window_bg_color;
+    box-shadow:
+        0 0 0 2px alpha(@accent_bg_color, 0.65),
+        0 0 12px 3px alpha(@accent_bg_color, 0.35),
+        0 8px 28px alpha(#000000, 0.28);
+}
+.omni-search-entry {
+    min-height: 56px;
+    border-radius: 8px;
+    box-shadow: none;
+    background: none;
+}
+/* The container ring replaces the entry's own focus outline. */
+.omni-search-entry:focus-within {
+    outline: none;
+}
+.omni-search-results {
+    border-top: 1px solid alpha(@window_fg_color, 0.12);
+}
+/* With the results list attached below, the entry only rounds its top. */
+.omni-search-open .omni-search-entry {
+    border-radius: 8px 8px 0 0;
+}

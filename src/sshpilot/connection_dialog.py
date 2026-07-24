@@ -42,6 +42,7 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .platform_utils import is_macos, get_ssh_dir, get_config_dir
+from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
     _fingerprint_for_pub_line,
@@ -300,53 +301,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.content_box.append(self.empty_label)
         
         self.append(scrolled)
-        
-        # Config preview section
-        self.setup_config_preview()
-        
-    def setup_config_preview(self):
-        """Setup the SSH config preview section"""
-        self.preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.preview_box.set_margin_top(12)
-        
-        preview_title = Gtk.Label(label=_("Generated SSH Config"))
-        preview_title.set_markup(_("<b>Generated SSH Config</b>"))
-        preview_title.set_halign(Gtk.Align.START)
-        
-        # Text view for config preview
-        self.config_text_view = Gtk.TextView()
-        self.config_text_view.set_editable(False)
-        self.config_text_view.set_monospace(True)
-        self.config_text_view.add_css_class("monospace")
-        self.config_text_view.add_css_class("small-font")
-        
-        # Apply CSS for smaller font
-        css_provider = Gtk.CssProvider()
-        css_provider.load_from_data(b"""
-        .small-font {
-            font-size: 11px;
-        }
-        """)
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            css_provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        
-        preview_scrolled = Gtk.ScrolledWindow()
-        preview_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        preview_scrolled.set_min_content_height(150)
-        preview_scrolled.set_child(self.config_text_view)
-        
-        self.preview_box.append(preview_title)
-        self.preview_box.append(preview_scrolled)
 
-        # Always show preview
-        self.append(self.preview_box)
-        
-        
-
-        
     def create_config_entry_row(self):
         """Create a new config entry row"""
         row_grid = Gtk.Grid()
@@ -461,62 +416,13 @@ class SSHConfigAdvancedTab(Gtk.Box):
             next_row.key_dropdown.grab_focus()
         
     def update_config_preview(self):
-        """Update the SSH config preview"""
-        # Get the complete SSH config from the connection manager
-        if hasattr(self, 'connection_manager') and self.connection_manager:
-            try:
-                # Get current connection data from the parent dialog
-                parent_dialog = self.get_ancestor(Adw.Window)
-                if parent_dialog and hasattr(parent_dialog, 'connection'):
-                    connection = parent_dialog.connection
-                    if connection:
-                        # Generate the complete SSH config
-                        extra_config = self.get_extra_ssh_config()
-                        logger.debug(f"Advanced tab extra_ssh_config: {extra_config}")
-                        
-                        config_data = {
-                            'nickname': getattr(connection, 'nickname', 'your-host-name'),
-                            'hostname': getattr(connection, 'hostname', getattr(connection, 'host', '')),
-                            'username': getattr(connection, 'username', ''),
-                            'port': getattr(connection, 'port', 22),
-                            'auth_method': getattr(connection, 'auth_method', 0),
-                            'key_select_mode': getattr(connection, 'key_select_mode', 0),
-                            'keyfile': getattr(connection, 'keyfile', ''),
-                            'certificate': getattr(connection, 'certificate', ''),
-                            'x11_forwarding': getattr(connection, 'x11_forwarding', False),
-                            'local_command': getattr(connection, 'local_command', ''),
-                            'remote_command': getattr(connection, 'remote_command', ''),
-                            'forwarding_rules': getattr(connection, 'forwarding_rules', []),
-                            'extra_ssh_config': extra_config
-                        }
-                        
-                        logger.debug(f"Config data for preview: {config_data}")
-                        
-                        # Generate the complete SSH config block
-                        config_text = self.connection_manager.format_ssh_config_entry(config_data)
-                        
-                        logger.debug(f"Generated config text: {config_text}")
-                        
-                        buffer = self.config_text_view.get_buffer()
-                        buffer.set_text(config_text)
-                        return
-            except Exception as e:
-                logger.error(f"Error updating SSH config preview: {e}")
-        
-        # Fallback: show only the extra config parameters
-        config_lines = []
-        
-        for row_grid in self.config_entries:
-            key = self._get_dropdown_selected_text(row_grid.key_dropdown)
-            value = row_grid.value_entry.get_text().strip()
-            
-            if key and value and key != "Select SSH option...":
-                config_lines.append(f"    {key} {value}")
-                
-        config_text = "Host your-host-name\n" + "\n".join(config_lines)
-        
-        buffer = self.config_text_view.get_buffer()
-        buffer.set_text(config_text)
+        """No-op retained for existing callers.
+
+        The live "Generated SSH Config" dump was replaced by the on-demand
+        effective-config viewer opened from the dialog's "Verify Configuration"
+        button; nothing needs to be refreshed as fields change.
+        """
+        return
 
     def get_config_entries(self):
         """Get all valid config entries"""
@@ -735,6 +641,7 @@ class KeyChooserDialog(Adw.Window):
         super().__init__()
         if parent is not None:
             self.set_transient_for(parent)
+        install_esc_to_close(self)
 
         self._on_add = on_add
         self._on_browse = on_browse
@@ -1946,41 +1853,6 @@ class ConnectionDialog(
             filters = None
         self._browse_file(_("Select SSH Certificate File"), on_chosen, filters=filters)
 
-    def validate_ssh_config_syntax(self, config_text):
-        """Basic SSH config syntax validation"""
-        try:
-            lines = config_text.strip().split('\n')
-            for i, line in enumerate(lines, 1):
-                line = line.strip()
-                # Skip empty lines and comments
-                if not line or line.startswith('#'):
-                    continue
-                
-                # Check for Host directive (should be at start of line)
-                if line.startswith('Host '):
-                    host_name = line[5:].strip()
-                    if not host_name:
-                        return False, f"Line {i}: Host directive requires a name"
-                
-                # Check for indented options (should start with spaces/tabs)
-                elif line.startswith(' ') or line.startswith('\t'):
-                    # Basic option format check
-                    if ' ' not in line.strip():
-                        return False, f"Line {i}: Invalid option format"
-                    
-                    option_parts = line.strip().split(' ', 1)
-                    if len(option_parts) < 2:
-                        return False, f"Line {i}: Option requires a value"
-                
-                # Check for non-indented, non-comment lines
-                elif not line.startswith('#'):
-                    return False, f"Line {i}: Expected 'Host' directive or indented option"
-            
-            return True, "SSH config syntax is valid"
-            
-        except Exception as e:
-            return False, f"Validation error: {e}"
-    
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""
         try:
@@ -3124,47 +2996,47 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.show_error("\n".join(errors))
             return
 
-        self._persist_connection_meta(nickname)
+        # The live object is only mutated by the manager after a successful
+        # persist; metadata rides the payload and the dialog closes only once
+        # the window reports the save outcome.
+        data['__meta'] = self._collect_connection_meta()
+        completion_called = [False]
 
-        if self.is_editing and self.connection:
-            try:
-                self.connection.data.update(data)
-            except Exception:
-                pass
+        def _after_saved(ok):
+            completion_called[0] = True
+            if ok:
+                self.close()
+            else:
+                self.show_error(_("The connection settings could not be saved."))
 
+        data['__save_completion'] = _after_saved
         self.emit('connection-saved', data)
-        self.close()
+        if not completion_called[0]:
+            if '__save_completion' in data:
+                # No consumer popped the marker (standalone dialog, e.g. in
+                # tests): keep the legacy emit-then-close behavior.
+                data.pop('__save_completion', None)
+                self.close()
+            else:
+                _after_saved(False)
 
-    def _persist_connection_meta(self, nickname_for_meta):
-        """Persist Wake-on-LAN and tags metadata (protocol-agnostic app meta)."""
-        if nickname_for_meta and hasattr(self, 'wol_mac_row'):
+    def _collect_connection_meta(self):
+        """Collect Wake-on-LAN and tags metadata (protocol-agnostic app meta)
+        for the save payload; the window persists it only after the config
+        write succeeds."""
+        meta = {}
+        if hasattr(self, 'wol_mac_row'):
+            meta['wol_mac'] = (self.wol_mac_row.get_text() or '').strip()
+            meta['wol_broadcast_ip'] = (self.wol_broadcast_row.get_text() or '').strip()
             try:
-                cfg = getattr(self.parent_window, 'config', None)
-                if cfg:
-                    meta = cfg.get_connection_meta(nickname_for_meta)
-                    wol_mac = (self.wol_mac_row.get_text() or '').strip()
-                    wol_broadcast = (self.wol_broadcast_row.get_text() or '').strip()
-                    try:
-                        wol_port = int((self.wol_port_row.get_text() or '9').strip() or '9')
-                    except ValueError:
-                        wol_port = 9
-                    meta['wol_mac'] = wol_mac
-                    meta['wol_broadcast_ip'] = wol_broadcast
-                    meta['wol_port'] = wol_port
-                    cfg.set_connection_meta(nickname_for_meta, meta)
-            except Exception as e:
-                logger.debug("Save WoL meta: %s", e)
-
+                meta['wol_port'] = int((self.wol_port_row.get_text() or '9').strip() or '9')
+            except ValueError:
+                meta['wol_port'] = 9
         # Tags are keyed by the new nickname, so renames carry them forward.
-        if nickname_for_meta and hasattr(self, 'tags_row'):
-            try:
-                cfg = getattr(self.parent_window, 'config', None)
-                if cfg:
-                    tags_raw = (self.tags_row.get_text() or '').strip()
-                    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
-                    cfg.set_connection_tags(nickname_for_meta, tags)
-            except Exception as e:
-                logger.debug("Save tags meta: %s", e)
+        if hasattr(self, 'tags_row'):
+            tags_raw = (self.tags_row.get_text() or '').strip()
+            meta['tags'] = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+        return meta
 
     def on_save_clicked(self, *_args):
         """Handle save button click or dialog save response"""
@@ -3277,9 +3149,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if getattr(self, 'split_original_nickname', None):
                 connection_data['__split_original_nickname'] = self.split_original_nickname
 
-        # Persist Wake-on-LAN and tags metadata to connections_meta
-        nickname_for_meta = connection_data.get('nickname', '').strip()
-        self._persist_connection_meta(nickname_for_meta)
+        # Wake-on-LAN and tags metadata ride the payload; the window persists
+        # them only after the config write succeeds.
+        connection_data['__meta'] = self._collect_connection_meta()
 
         if self.is_editing and self.connection:
             connection_data['__previous_secret_identity'] = {
@@ -3289,20 +3161,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 'username': getattr(self.connection, 'username', ''),
             }
 
-        # Update the connection object locally when editing (do not persist here; window handles persistence)
+        # Editing rewrites the block as `Host <nickname>` (multi-host blocks go
+        # through the split path), so aliases are cleared via the payload. The
+        # live object itself is NOT touched here: update_connection syncs it
+        # via update_data() only after the config write succeeds, so a failed
+        # save leaves the in-memory connection unchanged.
         if self.is_editing and self.connection:
-            try:
-                self.connection.data.update(connection_data)
-                self.connection.data.pop('aliases', None)
-            except Exception:
-                pass
-            if hasattr(self.connection, 'aliases'):
-                self.connection.aliases = []
-            self.connection.proxy_jump = connection_data.get('proxy_jump', [])
-            self.connection.forward_agent = connection_data.get('forward_agent', False)
-            # Explicitly update forwarding rules to ensure they're fresh
-            self.connection.forwarding_rules = forwarding_rules
-            
+            connection_data['aliases'] = []
+
+
         # Unlock first when needed, then persist all changed secrets in one worker. Secret
         # backends may invoke external tools (notably ``bw``), so none of this I/O may run
         # in the GTK signal handler.
@@ -3365,8 +3232,29 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # as pre-handled even when nothing changed so it does not repeat backend I/O.
         connection_data['__secret_storage_done'] = True
         if not operations:
-            self._set_secret_save_busy(False)
-            self._emit_connection_saved(connection_data)
+            # No secret I/O — but the dialog still only closes once the window
+            # reports a successful config write.
+            plain_completion_called = [False]
+
+            def _after_plain_save(ok):
+                plain_completion_called[0] = True
+                self._set_secret_save_busy(False)
+                if ok:
+                    self.close()
+                else:
+                    self.show_error(_("The connection settings could not be saved."))
+
+            connection_data['__save_completion'] = _after_plain_save
+            self.emit('connection-saved', connection_data)
+            if not plain_completion_called[0]:
+                if '__save_completion' in connection_data:
+                    # No consumer popped the marker (standalone dialog, e.g. in
+                    # tests): keep the legacy emit-then-close behavior.
+                    connection_data.pop('__save_completion', None)
+                    self._set_secret_save_busy(False)
+                    self.close()
+                else:
+                    _after_plain_save(False)
             return
         if manager is None:
             self._set_secret_save_busy(False)
@@ -3463,11 +3351,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not connected:
             _after_closed()
         return False
-
-    def _emit_connection_saved(self, connection_data):
-        """Emit the saved signal and close the dialog."""
-        self.emit('connection-saved', connection_data)
-        self.close()
 
     def _needs_secret_unlock_before_save(self, connection_data) -> bool:
         """True when saving would store or delete a secret — a host password or a key

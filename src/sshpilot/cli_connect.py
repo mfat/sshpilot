@@ -16,18 +16,22 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Sequence
 
-from .command_converter import parse_ssh_command
+from .command_converter import SSH_OPTIONS_EXPECTING_ARGUMENT, parse_ssh_command
 from .connection_manager import Connection
 from .ssh_connection_builder import SSHConnectionCommand
+from .ssh_connection_validator import SSHConnectionValidator
 
 logger = logging.getLogger(__name__)
 
 # Connection.data flag: ephemeral from parser; may offer save-if-unsaved.
 CLI_CONNECT_FLAG = '__cli_connect'
+_INPUT_VALIDATOR = SSHConnectionValidator()
+_HOST_ALIAS_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*$')
 
 
 @dataclass
@@ -67,6 +71,72 @@ def build_ssh_argv(tokens: Sequence[str]) -> List[str]:
     return ['ssh', *parts]
 
 
+def _validate_option_ports(ssh_argv: Sequence[str]) -> Optional[str]:
+    """Validate explicit SSH ports before the destination token."""
+    args = list(ssh_argv[1:])
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '--' or not arg.startswith('-'):
+            break
+
+        raw_port = None
+        if arg == '-p':
+            raw_port = args[i + 1] if i + 1 < len(args) else ''
+            i += 2
+        elif arg.startswith('-p') and len(arg) > 2:
+            raw_port = arg[2:]
+            i += 1
+        elif arg == '-o':
+            option = args[i + 1] if i + 1 < len(args) else ''
+            raw_port = _port_from_o_option(option)
+            i += 2
+        elif arg.startswith('-o') and len(arg) > 2:
+            raw_port = _port_from_o_option(arg[2:])
+            i += 1
+        else:
+            option_key = arg[:2]
+            attached_value = arg[2:]
+            i += (
+                2
+                if option_key in SSH_OPTIONS_EXPECTING_ARGUMENT
+                and not attached_value
+                and i + 1 < len(args)
+                else 1
+            )
+
+        if raw_port is not None:
+            result = _INPUT_VALIDATOR.validate_port(raw_port, context='SSH')
+            if not result.is_valid:
+                return result.message
+    return None
+
+
+def _port_from_o_option(option: str) -> Optional[str]:
+    match = re.match(r'^\s*port(?:\s*=\s*|\s+)(.*?)\s*$', option, re.I)
+    return match.group(1) if match else None
+
+
+def _validate_parsed_destination(parsed: dict) -> Optional[str]:
+    port_result = _INPUT_VALIDATOR.validate_port(
+        str(parsed.get('port', 22)), context='SSH'
+    )
+    if not port_result.is_valid:
+        return port_result.message
+
+    host = str(parsed.get('hostname') or parsed.get('host') or '').strip()
+    host_result = _INPUT_VALIDATOR.validate_hostname(host)
+    if host_result.is_valid:
+        return None
+
+    # OpenSSH destinations may be Host aliases rather than DNS names. Preserve
+    # simple aliases (including underscores), but never reinterpret a malformed
+    # numeric IP address as an alias.
+    if not re.fullmatch(r'[0-9.]+', host) and _HOST_ALIAS_RE.fullmatch(host):
+        return None
+    return host_result.message
+
+
 def validate_cli_tokens(tokens: Sequence[str]) -> Optional[str]:
     """Return an error message if *tokens* cannot be an SSH destination.
 
@@ -79,16 +149,17 @@ def validate_cli_tokens(tokens: Sequence[str]) -> Optional[str]:
         return 'No SSH destination specified'
     if parts[0] in ('scp', 'sftp', 'rsync', 'ssh-copy-id'):
         return 'Only SSH commands are allowed. Example: ssh user@host'
-    if _is_simple_host_alias(parts):
-        return None
     ssh_argv = build_ssh_argv(parts)
+    port_error = _validate_option_ports(ssh_argv)
+    if port_error:
+        return port_error
     command_text = shlex.join(ssh_argv)
     parsed = parse_ssh_command(command_text)
     if parsed is None:
         return f'Could not parse SSH destination: {command_text}'
     if isinstance(parsed, dict) and parsed.get('error'):
         return str(parsed['error'])
-    return None
+    return _validate_parsed_destination(parsed)
 
 
 def parse_sshpilot_cli(argv: Sequence[str]) -> CliConnectOptions:

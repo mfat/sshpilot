@@ -22,6 +22,7 @@ from typing import List, Optional
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from .platform_utils import get_state_dir
+from .shortcut_utils import install_esc_to_close, install_search_esc
 
 
 logger = logging.getLogger(__name__)
@@ -365,6 +366,7 @@ class LogViewerWindow(Adw.Window):
         super().__init__()
         if parent is not None:
             self.set_transient_for(parent)
+        install_esc_to_close(self)
 
         # Template-child aliases keep the rest of the class using its original
         # ``self._x`` names (the .blp ids are underscore-free identifiers).
@@ -471,6 +473,7 @@ class LogViewerWindow(Adw.Window):
         self._path_label.set_tooltip_text(self._log_path)
 
         self._search_entry.connect("search-changed", self._on_search_changed)
+        install_search_esc(self._search_entry, self)
 
         # Per-level highlight tags. INFO/DEBUG are intentionally left
         # unstyled so they read as background context; only the levels that

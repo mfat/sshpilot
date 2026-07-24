@@ -22,6 +22,7 @@ src/sshpilot/host_picker.py
 src/sshpilot/known_hosts_editor.py
 src/sshpilot/log_viewer.py
 src/sshpilot/main.py
+src/sshpilot/omni_search.py
 src/sshpilot/plugins/builtin/docker_manager/dialogs.py
 src/sshpilot/plugins/builtin/docker_manager/page.py
 src/sshpilot/plugins/builtin/docker_manager/tab_compose.py

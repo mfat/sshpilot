@@ -11,6 +11,7 @@ import logging
 import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
+import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
@@ -30,7 +31,7 @@ except Exception:
     _HAS_VTE = False
 
 gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
 import threading
 
 # Feature detection for libadwaita versions across distros
@@ -88,7 +89,11 @@ from .window_dialogs import (
 )
 from . import shutdown
 from .search_utils import connection_matches
-from .shortcut_utils import get_primary_modifier_label
+from .shortcut_utils import (
+    DOUBLE_SHIFT_SHORTCUT,
+    DoubleShiftDetector,
+    get_primary_modifier_label,
+)
 from .platform_utils import (
     get_config_dir,
     get_default_terminal_command,
@@ -154,6 +159,9 @@ def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) ->
 _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
+
+# Width of the minimal (icon-only) sidebar strip.
+_MINIMAL_STRIP_WIDTH = 64
 
 
 def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
@@ -227,6 +235,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
 
+        # Lazy, cached, off-main-thread check of each connection against its
+        # effective SSH config (shows a warning icon on mismatched rows).
+        from .effective_config_check import EffectiveConfigChecker
+        self.effective_config_checker = EffectiveConfigChecker(
+            self.connection_manager, on_result=self._on_effective_config_result)
+
         # Menu section that plugin pages append to (built before create_menu
         # runs during setup_ui; the host mutates it on bind).
         self._plugins_menu_section = Gio.Menu()
@@ -270,6 +284,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
+        self._sidebar_minimal = False   # icon-only strip state
+        self._sidebar_overlay = False   # overlay (covers content) vs side-by-side
+        self._sidebar_width_animation = None
         self._context_menu_row = None
         self._context_menu_popover = None
         # Hide hosts toggle state
@@ -294,8 +311,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Set up window
         self.setup_window()
         self.setup_ui()
+        self._setup_omnisearch_shortcut()
         self.setup_connections()
         self.setup_signals()
+        self._setup_ssh_config_monitor()
+
+        # Apply the persisted sidebar mode (full / minimal icon strip).
+        try:
+            if str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal':
+                self.set_sidebar_minimal(True, animate=False)
+        except Exception:
+            logger.debug("apply startup sidebar mode failed", exc_info=True)
 
         # Terminal manager handles terminal-related operations (import deferred so
         # terminal.py stays off the window module import path until __init__).
@@ -926,6 +952,277 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
 
+    def _on_effective_config_result(self, nickname: str, differs: bool):
+        """Background checker result (main thread): update matching rows' icons."""
+        try:
+            for conn, rows in list(self.connection_rows.items()):
+                if getattr(conn, 'nickname', None) != nickname:
+                    continue
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, 'set_effective_warning'):
+                        row.set_effective_warning(differs)
+        except Exception:
+            logger.debug("Failed to apply effective-config result", exc_info=True)
+        return False
+
+    def _invalidate_effective_check(self, nickname, connection=None):
+        """Drop a cached effective-config result; optionally recompute now.
+
+        Called when a connection's own block changes. Pass ``connection`` to
+        re-check it immediately (rows updated via the result callback).
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None or not nickname:
+            return
+        try:
+            checker.invalidate(nickname)
+            if connection is not None:
+                checker.schedule(connection)
+        except Exception:
+            logger.debug("effective-config invalidate failed", exc_info=True)
+
+    def _request_effective_warning(self, row, connection):
+        """Resolve a hovered row from cache or enqueue its background check.
+
+        Called only from the row's hover handler, never while building the list.
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None:
+            return
+        try:
+            status = checker.status(getattr(connection, 'nickname', '') or '')
+            if status is not None and hasattr(row, 'set_effective_warning'):
+                row.set_effective_warning(status)
+            checker.schedule(connection)
+        except Exception:
+            logger.debug("Failed to prime effective-config warning", exc_info=True)
+
+    def _ssh_config_path(self):
+        path = getattr(self.connection_manager, 'ssh_config_path', None)
+        if not path:
+            from .platform_utils import get_ssh_dir
+            path = os.path.join(get_ssh_dir(), 'config')
+        return os.path.abspath(os.path.expanduser(path))
+
+    def _ssh_config_fingerprint(self):
+        return self._ssh_config_file_fingerprint(self._ssh_config_path())
+
+    @staticmethod
+    def _ssh_config_file_fingerprint(path):
+        try:
+            stat = os.stat(path)
+            return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return None
+
+    def _ssh_config_paths(self):
+        root = self._ssh_config_path()
+        paths = {root}
+        try:
+            from .ssh_config_utils import resolve_ssh_config_files
+            paths.update(
+                os.path.abspath(os.path.expanduser(path))
+                for path in resolve_ssh_config_files(root)
+                if path
+            )
+        except Exception:
+            logger.debug("Failed to resolve SSH config includes", exc_info=True)
+        return paths
+
+    def _ssh_config_fingerprints(self):
+        return {
+            path: self._ssh_config_file_fingerprint(path)
+            for path in self._ssh_config_paths()
+        }
+
+    def _reload_ssh_config(self, create_missing=True):
+        """Reload connections after any internal or external config save."""
+        try:
+            old_connections = {
+                conn.nickname: conn
+                for conn in self.connection_manager.get_connections()
+            }
+            old_group_memberships = {}
+            for nickname in old_connections:
+                group_id = self.group_manager.get_connection_group(nickname)
+                if group_id:
+                    old_group_memberships[nickname] = group_id
+
+            self.connection_manager.load_ssh_config(
+                create_missing=create_missing)
+            checker = getattr(self, 'effective_config_checker', None)
+            if checker is not None:
+                checker.invalidate()
+            new_connections = {
+                conn.nickname: conn
+                for conn in self.connection_manager.get_connections()
+            }
+
+            for old_nickname, old_conn in old_connections.items():
+                if old_nickname not in old_group_memberships:
+                    continue
+                group_id = old_group_memberships[old_nickname]
+                matching_new_nickname = None
+                for new_nickname, new_conn in new_connections.items():
+                    if (new_conn.hostname == old_conn.hostname and
+                            new_conn.username == old_conn.username and
+                            new_conn.port == old_conn.port):
+                        matching_new_nickname = new_nickname
+                        break
+                if (matching_new_nickname and
+                        matching_new_nickname != old_nickname):
+                    try:
+                        self.group_manager.rename_connection(
+                            old_nickname, matching_new_nickname)
+                        logger.info(
+                            "Preserved group membership: '%s' -> '%s' in group %s",
+                            old_nickname, matching_new_nickname, group_id)
+                    except Exception as e:
+                        logger.error(
+                            "Failed to preserve group membership for renamed "
+                            "connection: %s", e)
+
+            self.rebuild_connection_list()
+            if hasattr(self, '_ssh_config_monitors'):
+                self._refresh_ssh_config_monitors()
+            logger.info("SSH config reloaded after file change")
+        except Exception as e:
+            logger.error(
+                "Failed to refresh connections after SSH config change: %s", e)
+
+    def _observe_and_reload_ssh_config(self):
+        """Record the current file state and reload immediately."""
+        self._ssh_config_observed_fingerprints = (
+            self._ssh_config_fingerprints())
+        self._reload_ssh_config()
+
+    def _reload_ssh_config_if_changed(self):
+        self._ssh_config_reload_timeout_id = 0
+        fingerprints = self._ssh_config_fingerprints()
+        if fingerprints == self._ssh_config_observed_fingerprints:
+            return False
+        self._ssh_config_observed_fingerprints = fingerprints
+        self._reload_ssh_config(create_missing=False)
+        return False
+
+    def _on_connection_manager_config_written(self, _manager, path):
+        """Prevent the directory watcher from replaying an app-owned write."""
+        path = os.path.abspath(os.path.expanduser(path))
+        if path in self._ssh_config_observed_fingerprints:
+            self._ssh_config_observed_fingerprints[path] = (
+                self._ssh_config_file_fingerprint(path))
+
+    def _on_ssh_config_directory_changed(
+            self, _monitor, file, other_file, _event_type):
+        try:
+            changed_paths = {
+                os.path.abspath(candidate.get_path())
+                for candidate in (file, other_file)
+                if candidate is not None and candidate.get_path()
+            }
+            if not changed_paths.intersection(
+                    self._ssh_config_observed_fingerprints):
+                return
+            timeout_id = getattr(
+                self, '_ssh_config_reload_timeout_id', 0)
+            if timeout_id:
+                GLib.source_remove(timeout_id)
+            self._ssh_config_reload_timeout_id = GLib.timeout_add(
+                150, self._reload_ssh_config_if_changed)
+        except Exception:
+            logger.debug("Error handling SSH config change", exc_info=True)
+
+    def _refresh_ssh_config_monitors(self):
+        """Watch directories containing the root config and resolved Includes."""
+        for monitor, handler_id in getattr(
+                self, '_ssh_config_monitors', {}).values():
+            try:
+                monitor.disconnect(handler_id)
+            except Exception:
+                pass
+            try:
+                monitor.cancel()
+            except Exception:
+                pass
+        self._ssh_config_monitors = {}
+        self._ssh_config_observed_fingerprints = (
+            self._ssh_config_fingerprints())
+        window_ref = weakref.ref(self)
+
+        def _changed(monitor, file, other_file, event_type):
+            window = window_ref()
+            if window is not None:
+                window._on_ssh_config_directory_changed(
+                    monitor, file, other_file, event_type)
+
+        for config_dir in {
+                os.path.dirname(path)
+                for path in self._ssh_config_observed_fingerprints
+        }:
+            try:
+                monitor = Gio.File.new_for_path(config_dir).monitor_directory(
+                    Gio.FileMonitorFlags.WATCH_MOVES, None)
+                handler_id = monitor.connect("changed", _changed)
+                self._ssh_config_monitors[config_dir] = (
+                    monitor, handler_id)
+            except Exception:
+                logger.debug(
+                    "Failed to monitor SSH config directory %s",
+                    config_dir, exc_info=True)
+
+    def _setup_ssh_config_monitor(self):
+        """Set up lifetime-safe monitoring for root and included config files."""
+        self._ssh_config_reload_timeout_id = 0
+        self._ssh_config_monitors = {}
+        self._refresh_ssh_config_monitors()
+        window_ref = weakref.ref(self)
+
+        def _written(manager, path):
+            window = window_ref()
+            if window is not None:
+                window._on_connection_manager_config_written(manager, path)
+
+        try:
+            self._ssh_config_written_handler = (
+                self.connection_manager.connect_after(
+                    'config-written', _written))
+        except Exception:
+            self._ssh_config_written_handler = None
+            logger.debug(
+                "Failed to observe app-owned SSH config writes",
+                exc_info=True)
+
+    def _teardown_ssh_config_monitor(self):
+        """Release timeouts, native monitors, and manager signal handlers."""
+        timeout_id = getattr(self, '_ssh_config_reload_timeout_id', 0)
+        if timeout_id:
+            try:
+                GLib.source_remove(timeout_id)
+            except Exception:
+                pass
+            self._ssh_config_reload_timeout_id = 0
+
+        for monitor, handler_id in getattr(
+                self, '_ssh_config_monitors', {}).values():
+            try:
+                monitor.disconnect(handler_id)
+            except Exception:
+                pass
+            try:
+                monitor.cancel()
+            except Exception:
+                pass
+        self._ssh_config_monitors = {}
+
+        handler_id = getattr(self, '_ssh_config_written_handler', None)
+        if handler_id is not None:
+            try:
+                GObject.Object.disconnect(
+                    self.connection_manager, handler_id)
+            except Exception:
+                pass
+            self._ssh_config_written_handler = None
+
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
 
@@ -1208,7 +1505,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.header_bar.set_show_start_title_buttons(True)
         self.header_bar.set_show_end_title_buttons(True)
         # Empty title so Adw doesn't repeat the window title beside tab actions.
-        self.header_bar.set_title_widget(Gtk.Box())
+        # In minimal-strip mode the "SSH Pilot" title moves here (the sidebar
+        # header is too narrow) — see _apply_sidebar_minimal_chrome.
+        self._content_empty_title = Gtk.Box()
+        self.header_bar.set_title_widget(self._content_empty_title)
 
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
@@ -1334,6 +1634,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Create main content area
         self.setup_content_area()
 
+        # Wrap the work UI in an overlay so the detachable sidebar popup can
+        # float over the content without affecting layout (see search_popup.py).
+        self._content_overlay = Gtk.Overlay()
+        self._content_overlay.set_hexpand(True)
+        self._content_overlay.set_vexpand(True)
+        self._content_overlay.set_child(self.split_view)
+        from .search_popup import SearchPopup
+        self._search_popup = SearchPopup(
+            self._content_overlay,
+            self._sidebar_toolbar_view,
+            self._sidebar_box,
+            self._popup_target_width,
+            on_shown=self._on_search_popup_shown,
+            on_hidden=self._on_search_popup_hidden,
+            on_dismiss=self._dismiss_search_popup,
+            focus_func=lambda: getattr(self, 'search_entry', None),
+        )
+
         # Outer NavigationView: work UI is the root page; Settings is pushed on
         # top (Telegram-style mode). Back / Esc pops Settings and restores work.
         self.nav_view = None
@@ -1342,7 +1660,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.nav_view = Adw.NavigationView()
             self.nav_view.set_hexpand(True)
             self.nav_view.set_vexpand(True)
-            self._work_page = Adw.NavigationPage.new(self.split_view, _('SSH Pilot'))
+            # Work UI <-> Settings is a mode switch, not a deeper page: swap
+            # instantly instead of the forward slide push() would animate.
+            try:
+                self.nav_view.set_animate_transitions(False)
+            except Exception:
+                logger.debug('NavigationView animate-transitions unavailable', exc_info=True)
+            self._work_page = Adw.NavigationPage.new(self._content_overlay, _('SSH Pilot'))
             try:
                 self._work_page.set_tag('work')
             except Exception:
@@ -1356,9 +1680,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.nav_view.connect('popped', self._on_navigation_popped)
             except Exception:
                 logger.debug('Could not connect NavigationView::popped', exc_info=True)
-            main_box.append(self.nav_view)
+            root_widget = self.nav_view
         else:
-            main_box.append(self.split_view)
+            root_widget = self._content_overlay
+
+        # The omni-search must float above both the work page and pages pushed
+        # onto NavigationView (Preferences, editors, plugin pages).
+        self._global_overlay = Gtk.Overlay()
+        self._global_overlay.set_hexpand(True)
+        self._global_overlay.set_vexpand(True)
+        self._global_overlay.set_child(root_widget)
+        main_box.append(self._global_overlay)
+
+        from .omni_search import OmniSearchController
+        self._omni_search = OmniSearchController(
+            self,
+            self._global_overlay,
+            self.welcome_view.omni_home,
+        )
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
@@ -1471,6 +1810,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Show/hide the toggleable header-bar buttons per preferences
         (Settings ▸ Interface ▸ Header Bar)."""
         mapping = (
+            ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', False),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
             ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', True),
@@ -1522,8 +1862,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 row.count_label.set_visible(show_group_count)
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
-            
+
             row = row.get_next_sibling()
+
+        # These per-preference updates re-show widgets that minimized mode hides;
+        # re-collapse so the icon strip isn't broken by a preference change (but
+        # not while detached into the popup, which shows full rows).
+        if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
+            self._apply_sidebar_minimal_rows(True)
 
     def update_sidebar_max_width(self, max_width: int):
         """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
@@ -1537,8 +1883,310 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to update max-sidebar-width: {e}")
 
+    # --- Minimal (icon-only) sidebar strip -----------------------------------
+    def _apply_sidebar_width(self, width: int) -> None:
+        """Pin the split view sidebar to exactly ``width`` px (one animation tick).
 
-    
+        Both min and max are driven to ``width``. They must be set in the order
+        that never leaves the pair transiently ``min > max`` — OverlaySplitView
+        mishandles that and the sidebar fails to follow (the width jump). The
+        safe order depends on the *current* constraints, not the logical
+        animation direction: if the target is at/above the current max, raise the
+        max ceiling first; otherwise lower the min floor first. (Deriving it from
+        direction breaks the collapse "lock" step in narrow windows, where the
+        current allocation can already be below the resting min.)
+        """
+        sv = getattr(self, 'split_view', None)
+        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+            return
+        try:
+            current_max = int(sv.get_max_sidebar_width())
+        except Exception:
+            current_max = width
+        try:
+            if width >= current_max:
+                sv.set_max_sidebar_width(width)
+                sv.set_min_sidebar_width(width)
+            else:
+                sv.set_min_sidebar_width(width)
+                sv.set_max_sidebar_width(width)
+        except Exception:
+            pass
+
+    def _set_sidebar_clipping(self, enabled: bool) -> None:
+        """Flip the sidebar's scrollers between clip (EXTERNAL) and fit (NEVER).
+
+        Clipping is only wanted *during* the expand animation, so full-width
+        rows/chrome can be revealed by the widening instead of forcing the
+        sidebar to their minimum width. At rest the fit behaviour must return so
+        rows ellipsize to the sidebar width and toolbar buttons spread.
+        """
+        hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
+        # In the minimal strip the vertical scrollbar is hidden the documented
+        # way — EXTERNAL keeps the list scrollable (wheel/touch) without drawing
+        # a scrollbar over the icons; full mode shows it on demand (AUTOMATIC).
+        # _set_sidebar_clipping(False) is the resting call after every
+        # transition, and _sidebar_minimal is already updated by then.
+        conn_vpol = (Gtk.PolicyType.EXTERNAL
+                     if getattr(self, '_sidebar_minimal', False)
+                     else Gtk.PolicyType.AUTOMATIC)
+        targets = (
+            ('connection_scrolled', conn_vpol),
+            ('_sidebar_header_clip', Gtk.PolicyType.NEVER),
+            ('_sidebar_toolbar_clip', Gtk.PolicyType.NEVER),
+        )
+        for attr, vpol in targets:
+            sw = getattr(self, attr, None)
+            if sw is not None:
+                try:
+                    sw.set_policy(hpol, vpol)
+                except Exception:
+                    pass
+
+    def _apply_sidebar_minimal_chrome(self, minimal: bool) -> None:
+        """Hide the header/search/toolbar chrome that can't fit the strip."""
+        show = not minimal
+        # The "SSH Pilot" title label has a natural min width that floors how
+        # narrow the sidebar can get; hide it so the strip can shrink fully, and
+        # move the title to the content header bar instead.
+        title = getattr(self, '_sidebar_title_label', None)
+        if title is not None:
+            try:
+                title.set_visible(show)
+            except Exception:
+                pass
+        self._move_title_to_content_header(minimal)
+        for attr in ('_sidebar_header_handle', 'search_container', '_sidebar_toolbar_box'):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            # The search container manages its own visibility (search mode); only
+            # force it hidden in minimal, never force it visible on restore.
+            if attr == 'search_container' and show:
+                continue
+            try:
+                widget.set_visible(show)
+            except Exception:
+                pass
+        # The expand button takes the (hidden) toolbar's slot in minimal mode.
+        btn = getattr(self, '_sidebar_expand_button', None)
+        if btn is not None:
+            try:
+                btn.set_visible(minimal)
+            except Exception:
+                pass
+        box = getattr(self, '_sidebar_box', None)
+        if box is not None:
+            try:
+                (box.add_css_class if minimal else box.remove_css_class)('sidebar-minimal')
+            except Exception:
+                pass
+
+    def _move_title_to_content_header(self, minimal: bool) -> None:
+        """Put the "SSH Pilot" title in the content header while the sidebar is a
+        strip (its own header is too narrow), and clear it again when full."""
+        hb = getattr(self, 'header_bar', None)
+        if hb is None:
+            return
+        if minimal and not hasattr(self, '_content_title_label'):
+            self._content_title_label = Gtk.Label(label='SSH Pilot')
+            self._content_title_label.add_css_class('title')
+        title = getattr(self, '_content_title_label', None)
+        empty = getattr(self, '_content_empty_title', None)
+        try:
+            hb.set_title_widget(title if minimal else empty)
+        except Exception:
+            pass
+
+    def _apply_sidebar_minimal_rows(self, minimal: bool) -> None:
+        """Toggle compact rendering on every connection/group row."""
+        lb = getattr(self, 'connection_list', None)
+        if lb is None:
+            return
+        row = lb.get_first_child()
+        while row is not None:
+            if hasattr(row, 'set_compact'):
+                try:
+                    row.set_compact(minimal)
+                except Exception:
+                    logger.debug("row set_compact failed", exc_info=True)
+            row = row.get_next_sibling()
+
+    def _measure_sidebar_content_min(self) -> int:
+        """Largest minimum width among the sidebar's full-content strips.
+
+        The header/toolbar button rows and the connection rows each request a
+        minimum width; the widest is the floor the sidebar rests at once fit
+        (unclipped), which can exceed the user's max-width setting.
+        """
+        widest = 0
+        for attr in ('_sidebar_header_handle', '_sidebar_toolbar_box', 'connection_list'):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            try:
+                minimum, _nat, _a, _b = widget.measure(Gtk.Orientation.HORIZONTAL, -1)
+                widest = max(widest, int(minimum))
+            except Exception:
+                pass
+        return widest
+
+    def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
+        """Collapse the sidebar to an icon-only strip, or restore its full width.
+
+        The split view's min/max sidebar width is the single width lever; the
+        transition is animated with ``Adw.TimedAnimation`` when available.
+        """
+        minimal = bool(minimal)
+        if minimal == getattr(self, '_sidebar_minimal', False):
+            return
+        self._sidebar_minimal = minimal
+
+        if minimal:
+            # A strip implies the sidebar is on screen.
+            try:
+                self._toggle_sidebar_visibility(True)
+                if hasattr(self, 'sidebar_toggle_button'):
+                    self.sidebar_toggle_button.set_active(False)
+            except Exception:
+                logger.debug("show-for-minimal failed", exc_info=True)
+
+        saved_max = _effective_max_sidebar_width(
+            self.config.get_setting('ui.max-sidebar-width', None))
+        # A user-chosen max width can be below the nominal minimum; the resting
+        # min must never exceed the max (OverlaySplitView breaks on min > max,
+        # bringing the jump back at small max widths).
+        base_min = min(180 if HAS_OVERLAY_SPLIT else 200, saved_max)
+
+        anim = getattr(self, '_sidebar_width_animation', None)
+        if anim is not None:
+            try:
+                anim.pause()
+            except Exception:
+                pass
+            self._sidebar_width_animation = None
+
+        sv = getattr(self, 'split_view', None)
+        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+            # No width lever — just swap the content to the target state.
+            self._apply_sidebar_minimal_chrome(minimal)
+            self._apply_sidebar_minimal_rows(minimal)
+            self._set_sidebar_clipping(False)  # apply the minimal-aware vpolicy
+            return
+
+        def _fraction_width():
+            try:
+                frac = sv.get_sidebar_width_fraction()
+                win_w = sv.get_width() or 0
+                if win_w > 0:
+                    return max(base_min, min(saved_max, int(frac * win_w)))
+            except Exception:
+                pass
+            return saved_max
+
+        # Decide the full (expanded) width and prepare the content. The chrome's
+        # min width can push the resting width *above* saved_max, so the full
+        # endpoint must reflect that or the end of the animation snaps to it.
+        if minimal:
+            # Collapsing: lock the current (full) width before compacting so
+            # releasing the chrome's min width doesn't drop the sidebar first.
+            full_width = 0
+            box = getattr(self, '_sidebar_box', None)
+            if box is not None:
+                try:
+                    full_width = int(box.get_width())
+                except Exception:
+                    full_width = 0
+            if full_width <= _MINIMAL_STRIP_WIDTH:
+                full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+            self._apply_sidebar_width(full_width)
+            self._apply_sidebar_minimal_chrome(True)
+            self._apply_sidebar_minimal_rows(True)
+        else:
+            # Expanding: clip first so restoring full content can't force the
+            # width, then restore and measure the width it will rest at.
+            self._set_sidebar_clipping(True)
+            self._apply_sidebar_minimal_chrome(False)
+            self._apply_sidebar_minimal_rows(False)
+            full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+
+        full_width = max(int(full_width), _MINIMAL_STRIP_WIDTH)
+
+        def _pin_endpoints():
+            try:
+                if minimal:
+                    sv.set_min_sidebar_width(_MINIMAL_STRIP_WIDTH)
+                    sv.set_max_sidebar_width(_MINIMAL_STRIP_WIDTH)
+                else:
+                    sv.set_min_sidebar_width(base_min)
+                    sv.set_max_sidebar_width(saved_max)
+            except Exception:
+                pass
+
+        if not animate or not HAS_TIMED_ANIMATION:
+            self._set_sidebar_clipping(False)
+            _pin_endpoints()
+            return
+
+        if minimal:
+            start, target = float(full_width), float(_MINIMAL_STRIP_WIDTH)
+        else:
+            start, target = float(_MINIMAL_STRIP_WIDTH), float(full_width)
+
+        def _tick(value, *_):
+            self._apply_sidebar_width(int(value))
+
+        target_cb = Adw.CallbackAnimationTarget.new(_tick)
+        animation = Adw.TimedAnimation.new(sv, start, float(target), 200, target_cb)
+        try:
+            animation.set_easing(Adw.Easing.EASE_OUT_CUBIC)
+        except Exception:
+            pass
+
+        def _on_done(*_a):
+            self._set_sidebar_clipping(False)
+            _pin_endpoints()
+            self._sidebar_width_animation = None
+
+        animation.connect('done', _on_done)
+        self._sidebar_width_animation = animation
+        animation.play()
+
+    #: Delay before collapsing the drag-expanded strip, so the drop settles first.
+    _DRAG_COLLAPSE_DELAY_MS = 900
+
+    def begin_sidebar_drag_expand(self) -> None:
+        """Temporarily expand a minimal strip while a drag is in progress so
+        drop targets (groups, ungrouped area) are visible and reachable. Paired
+        with :meth:`end_sidebar_drag_expand` on drag-end."""
+        self._cancel_pending_drag_collapse()
+        if getattr(self, '_sidebar_minimal', False):
+            self._sidebar_expanded_for_drag = True
+            self.set_sidebar_minimal(False)
+
+    def end_sidebar_drag_expand(self) -> None:
+        """Collapse the strip back if it was auto-expanded for a drag, after a
+        short delay so the drop lands before the sidebar snaps closed."""
+        if getattr(self, '_sidebar_expanded_for_drag', False):
+            self._sidebar_expanded_for_drag = False
+            self._cancel_pending_drag_collapse()
+            self._drag_collapse_timeout_id = GLib.timeout_add(
+                self._DRAG_COLLAPSE_DELAY_MS, self._collapse_after_drag)
+
+    def _collapse_after_drag(self) -> bool:
+        self._drag_collapse_timeout_id = 0
+        self.set_sidebar_minimal(True)
+        return False  # one-shot
+
+    def _cancel_pending_drag_collapse(self) -> None:
+        tid = getattr(self, '_drag_collapse_timeout_id', 0)
+        if tid:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+            self._drag_collapse_timeout_id = 0
+
     def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
         """Display an error dialog when duplication fails."""
         try:
@@ -1625,7 +2273,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 msg = _("Pinned {n} connections to start page").format(n=len(conns))
             if hasattr(self, 'toast_overlay') and self.toast_overlay:
-                self.toast_overlay.add_toast(Adw.Toast.new(msg))
+                previous = getattr(self, '_pin_status_toast', None)
+                if previous is not None:
+                    previous.dismiss()
+
+                toast = Adw.Toast.new(msg)
+                toast.set_timeout(3)
+                self._pin_status_toast = toast
+
+                def _clear_pin_status_toast(dismissed_toast):
+                    if getattr(self, '_pin_status_toast', None) is dismissed_toast:
+                        self._pin_status_toast = None
+
+                toast.connect('dismissed', _clear_pin_status_toast)
+                self.toast_overlay.add_toast(toast)
             if hasattr(self, 'welcome_view') and self.welcome_view:
                 self.welcome_view.refresh_pinned()
         except Exception as e:
@@ -2308,6 +2969,39 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
     
+    def _finish_rebuild(self, scroll_position) -> None:
+        """Common tail for every rebuild_connection_list() exit path.
+
+        Freshly-built rows always start expanded; re-collapse them when the
+        sidebar is the icon strip (the filtered search/tag paths return early and
+        would otherwise show full rows inside the strip), then restore scroll.
+        While the sidebar is detached into the popup it shows full rows, so skip
+        the re-collapse then.
+        """
+        self._ungrouped_area_row = None
+        # Command/settings results in the popup are parked until the welcome-page
+        # omnisearch lands — re-enable by calling self._append_command_matches().
+        if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
+            self._apply_sidebar_minimal_rows(True)
+        if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                GLib.idle_add(lambda: vadj.set_value(scroll_position))
+
+    def _append_command_matches(self) -> None:
+        """When the search popup is open with a query, append in-app commands
+        (settings/utilities) below the connection results — see
+        command_palette.py."""
+        popup = getattr(self, '_search_popup', None)
+        if popup is None or not popup.visible:
+            return
+        entry = getattr(self, 'search_entry', None)
+        query = entry.get_text().strip() if entry else ''
+        if not query:
+            return
+        from .command_palette import append_command_rows
+        append_command_rows(self, query)
+
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
         reset_connection_list_drag_session(self)
@@ -2341,6 +3035,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             search_text = self.search_entry.get_text().strip().lower()
 
         tag_filter = getattr(self, '_tag_filter', None)
+
+        # When the search popup asks for a flat list (no group headers), show a
+        # plain connection list honouring the active search/tag filters.
+        popup = getattr(self, '_search_popup', None)
+        if popup is not None and popup.visible and not popup.show_groups:
+            matches = [
+                c for c in connections
+                if (not tag_filter or tag_filter in {str(t).casefold()
+                    for t in (getattr(c, 'tags', None) or [])})
+                and (not search_text or connection_matches(c, search_text))
+            ]
+            for conn in sorted(matches, key=lambda c: c.nickname.lower()):
+                self.add_connection_row(conn)
+            self._finish_rebuild(scroll_position)
+            return
+
         if tag_filter:
             matches = [
                 c for c in connections
@@ -2349,12 +3059,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-            self._ungrouped_area_row = None
-            # Restore scroll position
-            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
-                vadj = self.connection_scrolled.get_vadjustment()
-                if vadj:
-                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            self._finish_rebuild(scroll_position)
             return
 
         if search_text:
@@ -2397,12 +3102,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
                 displayed_connections.add(conn.nickname)
-            self._ungrouped_area_row = None
-            # Restore scroll position
-            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
-                vadj = self.connection_scrolled.get_vadjustment()
-                if vadj:
-                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            self._finish_rebuild(scroll_position)
             return
 
 
@@ -2444,14 +3144,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.add_connection_row(conn)
 
 
-        # Store reference to ungrouped area (hidden by default)
-        self._ungrouped_area_row = None
-        
-        # Restore scroll position
-        if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
-            vadj = self.connection_scrolled.get_vadjustment()
-            if vadj:
-                GLib.idle_add(lambda: vadj.set_value(scroll_position))
+        self._finish_rebuild(scroll_position)
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list.
 
@@ -2520,6 +3213,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.group_manager,
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
+            effective_warning_callback=self._request_effective_warning,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
         )
@@ -2530,7 +3224,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_list.append(row)
         # A connection can appear under multiple groups, so keep a list of rows
         self.connection_rows.setdefault(connection, []).append(row)
-        
+
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
@@ -2551,6 +3245,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Hide the search container
         if hasattr(self, 'search_container') and self.search_container:
             self.search_container.set_visible(False)
+        self._restore_sidebar_after_search()
         # Return focus to connection list
         if hasattr(self, 'connection_list') and self.connection_list:
             self.connection_list.grab_focus()
@@ -2698,6 +3393,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _focus_connection_list_first_row(self):
         """Focus the first row of the connection list so arrow-key navigation works immediately."""
         try:
+            omni = getattr(self, '_omni_search', None)
+            if omni is not None and omni.popup.visible:
+                return False
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
             if not self.connection_list.get_parent():
@@ -2745,6 +3443,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         self.search_entry.set_text('')
                     self.rebuild_connection_list()
                     self.search_container.set_visible(False)
+                    self._restore_sidebar_after_search()
 
                 # Ensure a row is selected before focusing
                 try:
@@ -2782,6 +3481,40 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Error focusing connection list: {e}")
 
+    def _expand_sidebar_for_search(self, sidebar_hidden: bool = False):
+        """Give search room when the sidebar is unavailable as a full pane.
+
+        Detaches the sidebar into the floating popup (looks like the expanded
+        sidebar, floats over the content) rather than expanding the split view —
+        so the terminal never resizes. This applies both to minimal mode and a
+        sidebar manually hidden with F9. Remembered so it re-attaches on close.
+        """
+        self._search_expanded_sidebar = (
+            getattr(self, '_sidebar_minimal', False) or sidebar_hidden
+        )
+        if self._search_expanded_sidebar:
+            self._search_popup.show()
+
+    def _restore_sidebar_after_search(self):
+        """Re-attach the strip if opening search is what detached it."""
+        if getattr(self, '_search_expanded_sidebar', False):
+            self._search_expanded_sidebar = False
+            self._search_popup.hide()
+
+    def _close_search_if_open(self):
+        """Dismiss the search bar (clear filter, rebuild, restore the sidebar).
+
+        A no-op when search isn't showing, so it can be called from every
+        connection-open path to make executing a result stop the search.
+        """
+        if not (getattr(self, 'search_container', None) and self.search_container.get_visible()):
+            return
+        if getattr(self, 'search_entry', None):
+            self.search_entry.set_text('')
+        self.rebuild_connection_list()
+        self.search_container.set_visible(False)
+        self._restore_sidebar_after_search()
+
     def activate_search_entry(self):
         """Show (if hidden) and focus the connection search entry.
 
@@ -2793,15 +3526,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not (hasattr(self, 'search_entry') and self.search_entry):
                 return
 
-            # If the sidebar is hidden, reveal it first
-            if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                if self.sidebar_toggle_button.get_active():
-                    self.sidebar_toggle_button.set_active(False)
+            sidebar_hidden = bool(
+                getattr(self, 'sidebar_toggle_button', None)
+                and self.sidebar_toggle_button.get_active()
+            )
 
             was_visible = True
             if hasattr(self, 'search_container') and self.search_container:
                 was_visible = self.search_container.get_visible()
-                if not was_visible:
+                if not was_visible or sidebar_hidden:
+                    self._expand_sidebar_for_search(sidebar_hidden)
                     self.search_container.set_visible(True)
 
             # Always focus and select any existing text so typing replaces it
@@ -2821,20 +3555,104 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to activate search entry: {e}")
 
+    def activate_omni_search(self):
+        """Show and focus the global omni-search."""
+        omni = getattr(self, '_omni_search', None)
+        if omni is not None:
+            omni.show()
+
+    def _setup_omnisearch_shortcut(self) -> None:
+        """Install the window-level double-Shift gesture detector."""
+        self._omnisearch_double_shift = DoubleShiftDetector()
+        controller = Gtk.EventControllerKey()
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        controller.connect('key-pressed', self._on_omnisearch_key_pressed)
+        controller.connect('key-released', self._on_omnisearch_key_released)
+        self.add_controller(controller)
+        self._omnisearch_key_controller = controller
+
+    def _omnisearch_uses_double_shift(self) -> bool:
+        app = self.get_application()
+        if app is None or not getattr(app, 'accelerators_enabled', True):
+            return False
+        try:
+            shortcuts = app.get_effective_shortcuts('omnisearch') or []
+        except Exception:
+            return False
+        return DOUBLE_SHIFT_SHORTCUT in shortcuts
+
+    @staticmethod
+    def _is_shift_key(keyval: int) -> bool:
+        return keyval in (Gdk.KEY_Shift_L, Gdk.KEY_Shift_R)
+
+    @staticmethod
+    def _shortcut_event_time() -> float:
+        return GLib.get_monotonic_time() / 1_000_000
+
+    def _on_omnisearch_key_pressed(
+        self, _controller, keyval, _keycode, _state
+    ) -> bool:
+        detector = self._omnisearch_double_shift
+        if not self._omnisearch_uses_double_shift():
+            detector.reset()
+            return False
+        detector.key_pressed(
+            self._is_shift_key(keyval), self._shortcut_event_time()
+        )
+        # Shift itself must continue to the focused widget, especially VTE.
+        return False
+
+    def _on_omnisearch_key_released(
+        self, _controller, keyval, _keycode, _state
+    ) -> None:
+        detector = self._omnisearch_double_shift
+        if not self._omnisearch_uses_double_shift():
+            detector.reset()
+            return
+        if detector.key_released(
+            self._is_shift_key(keyval), self._shortcut_event_time()
+        ):
+            self.activate_omni_search()
+
+    def open_omni_transfer_intent(self, intent, connection=None):
+        """Route command-like transfer searches to their existing GUI flows."""
+        if intent == 'sftp':
+            self._open_builtin_file_manager(connection)
+            return
+        if intent == 'ssh-copy-id':
+            if connection is None:
+                self.show_connection_selection_for_ssh_copy()
+            else:
+                from .sshcopyid_window import SshCopyIdWindow
+                SshCopyIdWindow(
+                    self, connection, self.key_manager, self.connection_manager,
+                )
+            return
+        if intent != 'scp':
+            return
+        if connection is None and not self.connection_manager.get_connections():
+            self.get_application().activate_action('new-connection')
+            return
+        # The transfer chooser has its own built-in server picker, so it
+        # handles a missing connection itself — no separate host selector.
+        self.scp_controller.open_for_connection(connection)
+
     def focus_search_entry(self):
         """Toggle search on/off and show appropriate toast notification."""
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
-                # If sidebar is hidden, show it first
-                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(False)
+                sidebar_hidden = bool(
+                    getattr(self, 'sidebar_toggle_button', None)
+                    and self.sidebar_toggle_button.get_active()
+                )
                 
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
                     is_visible = self.search_container.get_visible()
+                    if not is_visible:
+                        self._expand_sidebar_for_search(sidebar_hidden)
                     self.search_container.set_visible(not is_visible)
-                    
+
                     if not is_visible:
                         # Search was hidden, now showing it
                         # Focus the search entry
@@ -2857,7 +3675,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         # Clear search text
                         self.search_entry.set_text('')
                         self.rebuild_connection_list()
-                        
+                        self._restore_sidebar_after_search()
+
                         # Return focus to connection list
                         if hasattr(self, 'connection_list') and self.connection_list:
                             self.connection_list.grab_focus()
@@ -3006,94 +3825,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             from .text_editor import RemoteFileEditorWindow
             from .ssh_config_utils import validate_ssh_config_text
 
-            config_path = getattr(self.connection_manager, 'ssh_config_path', None)
-            if not config_path:
-                from .platform_utils import get_ssh_dir
-                config_path = os.path.join(get_ssh_dir(), 'config')
-
-            config_path = os.path.abspath(os.path.expanduser(config_path))
+            config_path = self._ssh_config_path()
             config_name = os.path.basename(config_path)
-
-            # Set up file monitoring to detect when the file is saved
-            file_modified_time = 0.0
-            if os.path.exists(config_path):
-                try:
-                    file_modified_time = os.path.getmtime(config_path)
-                except Exception:
-                    pass
-
-            def _reload_ssh_config():
-                """Reload SSH config and refresh connection list, preserving group membership"""
-                try:
-                    # Capture current connections and their group memberships before reload
-                    old_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
-                    old_group_memberships = {}
-                    for nickname in old_connections.keys():
-                        group_id = self.group_manager.get_connection_group(nickname)
-                        if group_id:
-                            old_group_memberships[nickname] = group_id
-
-                    # Reload SSH config (this creates new Connection objects)
-                    self.connection_manager.load_ssh_config()
-                    new_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
-
-                    # Detect nickname changes by matching connections on hostname/username/port
-                    # This handles the case where Host value changes but connection is otherwise the same
-                    for old_nickname, old_conn in old_connections.items():
-                        if old_nickname in old_group_memberships:
-                            # This connection was in a group, try to find its new nickname
-                            group_id = old_group_memberships[old_nickname]
-
-                            # Try to find matching connection by hostname/username/port
-                            matching_new_nickname = None
-                            for new_nickname, new_conn in new_connections.items():
-                                if (new_conn.hostname == old_conn.hostname and
-                                    new_conn.username == old_conn.username and
-                                    new_conn.port == old_conn.port):
-                                    matching_new_nickname = new_nickname
-                                    break
-
-                            # If we found a match and nickname changed, update group membership
-                            if matching_new_nickname and matching_new_nickname != old_nickname:
-                                try:
-                                    self.group_manager.rename_connection(old_nickname, matching_new_nickname)
-                                    logger.info(f"Preserved group membership: '{old_nickname}' -> '{matching_new_nickname}' in group {group_id}")
-                                except Exception as e:
-                                    logger.error(f"Failed to preserve group membership for renamed connection: {e}")
-                            # If old nickname still exists, group membership is already preserved
-
-                    self.rebuild_connection_list()
-                    logger.info("SSH config reloaded after file save")
-                except Exception as e:
-                    logger.error(f"Failed to refresh connections after SSH config save: {e}")
-
-            # Monitor file for changes
-            def _on_file_changed(monitor, file, other_file, event_type):
-                """Handle file system changes to detect saves"""
-                if event_type in (Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT):
-                    try:
-                        if os.path.exists(config_path):
-                            new_mtime = os.path.getmtime(config_path)
-                            nonlocal file_modified_time
-                            if new_mtime > file_modified_time:
-                                file_modified_time = new_mtime
-                                # Reload after a short delay to ensure file is fully written
-                                GLib.timeout_add(100, _reload_ssh_config)
-                    except Exception as e:
-                        logger.debug(f"Error checking file modification time: {e}")
-
-            # Create file monitor
-            try:
-                gfile = Gio.File.new_for_path(config_path)
-                file_monitor = gfile.monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
-                file_monitor.connect("changed", _on_file_changed)
-                # Store monitor reference to keep it alive
-                if not hasattr(self, '_ssh_config_monitors'):
-                    self._ssh_config_monitors = []
-                self._ssh_config_monitors.append(file_monitor)
-            except Exception as e:
-                logger.debug(f"Failed to set up file monitoring for SSH config: {e}")
-                file_monitor = None
 
             editor = RemoteFileEditorWindow(
                 parent=self,
@@ -3103,6 +3836,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 sftp_manager=None,
                 file_manager_window=None,
                 pre_save_validator=validate_ssh_config_text,
+                on_local_saved=self._observe_and_reload_ssh_config,
                 language_id="sshconfig",
                 show_outline=True,
             )
@@ -3113,27 +3847,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(editor, 'set_editor_title'):
                 editor.set_editor_title(_("SSH Config"))
 
-            # Also reload when the editor closes (fallback)
-            def _on_editor_close_request(window):
-                # Clean up file monitor
-                if hasattr(self, '_ssh_config_monitors') and file_monitor:
-                    try:
-                        if file_monitor in self._ssh_config_monitors:
-                            self._ssh_config_monitors.remove(file_monitor)
-                        file_monitor.cancel()
-                    except Exception:
-                        pass
-                # Final reload check when closing
-                try:
-                    if os.path.exists(config_path):
-                        new_mtime = os.path.getmtime(config_path)
-                        if new_mtime > file_modified_time:
-                            _reload_ssh_config()
-                except Exception:
-                    pass
-                return False  # Allow window to close
-
-            editor.connect("close-request", _on_editor_close_request)
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
@@ -3439,6 +4152,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     # Signal handlers
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
+        if row is not None and hasattr(row, 'command_action'):
+            # Close the popup first (restores the sidebar), then run the command
+            # so the dialog/page it opens isn't fighting the popup for the overlay.
+            action, target = row.command_action, row.command_target
+            self._dismiss_search_popup()
+            Gtk.Widget.activate_action(self, action, target)
+            return
         self._return_to_tab_view_if_welcome()
         logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
         if row and hasattr(row, 'connection'):
@@ -3500,8 +4220,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         has_groups = bool(group_rows)
 
         if has_connections and not has_groups:
-            self.connection_toolbar.set_visible(True)
-            self.group_toolbar.set_visible(False)
+            self._set_sidebar_selection_toolbar('connection')
 
             multiple_connections = len(connection_rows) > 1
             selected_conn = getattr(connection_rows[0], 'connection', None)
@@ -3531,8 +4250,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.rename_group_button.set_sensitive(False)
             self.delete_group_button.set_sensitive(False)
         elif has_groups and not has_connections:
-            self.connection_toolbar.set_visible(False)
-            self.group_toolbar.set_visible(True)
+            self._set_sidebar_selection_toolbar('group')
 
             # Rename works for tag groups too (renames the tag); delete does not.
             allow_single_group = len(group_rows) == 1
@@ -3552,8 +4270,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.rename_group_button.set_sensitive(allow_single_group)
             self.delete_group_button.set_sensitive(allow_group_delete)
         else:
-            self.connection_toolbar.set_visible(False)
-            self.group_toolbar.set_visible(False)
+            self._set_sidebar_selection_toolbar('empty')
             self.delete_button.set_sensitive(False)
             if hasattr(self, 'copy_key_button'):
                 self.copy_key_button.set_sensitive(False)
@@ -3565,6 +4282,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(False)
             self.delete_group_button.set_sensitive(False)
+
+    def _set_sidebar_selection_toolbar(self, name: str) -> None:
+        """Switch toolbar contents without changing the sidebar's natural size."""
+        stack = getattr(self, '_sidebar_selection_toolbar', None)
+        if stack is not None:
+            stack.set_visible_child_name(name)
+            return
+
+        # Defensive fallback for partially constructed/test windows.
+        self.connection_toolbar.set_visible(name == 'connection')
+        self.group_toolbar.set_visible(name == 'group')
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
@@ -3611,9 +4339,89 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to toggle sidebar: {e}")
 
     # --- Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior) ------------
+    def set_sidebar_overlay(self, overlay: bool) -> None:
+        """Switch the sidebar between its two reusable presentation modes.
+
+        - ``False`` (default): side-by-side — the sidebar takes its own column
+          and the content is laid out beside it.
+        - ``True`` (overlay): the sidebar is drawn as an overlay *above* the
+          content (covering it) with a dimming scrim; the content keeps the full
+          width underneath.
+
+        This is a pure presentation switch — sidebar visibility is untouched, so
+        it composes with show/hide and with minimal mode. Only the
+        ``AdwOverlaySplitView`` backend supports a true overlay; other split
+        variants stay side-by-side.
+        """
+        overlay = bool(overlay)
+        self._sidebar_overlay = overlay
+        sv = getattr(self, 'split_view', None)
+        if sv is None:
+            return
+        if getattr(self, '_split_variant', '') == 'overlay' and hasattr(sv, 'set_collapsed'):
+            try:
+                sv.set_collapsed(overlay)
+            except Exception:
+                logger.debug("set_sidebar_overlay failed", exc_info=True)
+
+    # --- Search popup owner callbacks (see search_popup.SearchPopup) ---------
+    def _popup_target_width(self) -> int:
+        """Panel width for the search popup: the *actual* expanded-sidebar width
+        (fraction-based, clamped to [base_min, max]), not the raw max."""
+        saved_max = _effective_max_sidebar_width(
+            self.config.get_setting('ui.max-sidebar-width', None))
+        try:
+            sv = getattr(self, 'split_view', None)
+            if sv is not None and hasattr(sv, 'get_sidebar_width_fraction'):
+                base_min = 180 if HAS_OVERLAY_SPLIT else 200
+                win_w = sv.get_width() or 0
+                if win_w > 0:
+                    frac = sv.get_sidebar_width_fraction()
+                    return max(base_min, min(saved_max, int(frac * win_w)))
+        except Exception:
+            pass
+        return saved_max
+
+    def _on_search_popup_shown(self) -> None:
+        """Detached: show the full sidebar even when the strip is minimal, and
+        hide the connection list for search-only modes (spotlight)."""
+        self._set_sidebar_clipping(False)
+        self._apply_sidebar_minimal_chrome(False)
+        self._apply_sidebar_minimal_rows(False)
+        if getattr(self, 'connection_scrolled', None):
+            self.connection_scrolled.set_visible(not self._search_popup.search_only)
+
+    def _on_search_popup_hidden(self) -> None:
+        """Re-attached: restore the list and re-collapse the strip if minimal."""
+        if getattr(self, 'connection_scrolled', None):
+            self.connection_scrolled.set_visible(True)
+        if getattr(self, '_sidebar_minimal', False):
+            self._apply_sidebar_minimal_chrome(True)
+            self._apply_sidebar_minimal_rows(True)
+
+    def _dismiss_search_popup(self) -> None:
+        """Esc / click-outside: route through search teardown when search is
+        active (cleans the filter/entry) so the popup also closes."""
+        if getattr(self, 'search_container', None) and self.search_container.get_visible():
+            self._close_search_if_open()
+        else:
+            self._search_popup.hide()
+
+    def _sidebar_mode_is_minimal(self) -> bool:
+        """True when the icon strip is the user's configured resting mode."""
+        try:
+            return str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal'
+        except Exception:
+            return False
+
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
         sync (used by the behavior hooks)."""
+        # Leave a *transient* minimal strip (minimize-on-connect) so the next
+        # reveal is the full sidebar; keep it when minimal is the configured
+        # resting mode so it survives show/hide.
+        if getattr(self, '_sidebar_minimal', False) and not self._sidebar_mode_is_minimal():
+            self.set_sidebar_minimal(False, animate=False)
         try:
             self._toggle_sidebar_visibility(visible)
             if hasattr(self, 'sidebar_toggle_button'):
@@ -3639,6 +4447,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._apply_sidebar_visible(False)
         except Exception:
             logger.debug("hide_sidebar_after_terminal failed", exc_info=True)
+        return GLib.SOURCE_REMOVE
+
+    def _sidebar_on_terminal_open(self) -> str:
+        """What to do to the sidebar when a session opens: 'none'|'minimize'|'hide'.
+
+        Falls back to the legacy boolean settings for configs saved before the
+        options were merged into one selector.
+        """
+        try:
+            value = self.config.get_setting('ui.sidebar_on_terminal_open', None)
+        except Exception:
+            value = None
+        if value in ('none', 'minimize', 'hide'):
+            return value
+        # Legacy fallback.
+        try:
+            if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
+                return 'hide'
+            if self.config.get_setting('ui.sidebar_minimize_on_connect', False):
+                return 'minimize'
+        except Exception:
+            pass
+        return 'none'
+
+    def _minimize_sidebar_after_terminal(self) -> bool:
+        """Deferred collapse to the icon strip once a session settles."""
+        self._sidebar_hide_timer_id = None
+        try:
+            self.set_sidebar_minimal(True)
+        except Exception:
+            logger.debug("minimize_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
 
     def _toggle_sidebar_visibility(self, is_visible):
@@ -4078,6 +4917,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_close_request(self, window):
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:
+            self._teardown_ssh_config_monitor()
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch
@@ -4124,6 +4964,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 return True  # Prevent close, let dialog handle it
         
         # No active connections or all local terminals are idle, safe to close
+        self._teardown_ssh_config_monitor()
         return False  # Allow close
 
     def _askpass_dialog_parent(self):
@@ -4486,6 +5327,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to edit connection: {e}")
 
+    def on_verify_configuration_action(self, action=None, param=None):
+        """Open the effective-config viewer for the context-menu connection."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            from .effective_config_dialog import EffectiveConfigDialog
+            EffectiveConfigDialog.for_connection(self, connection, self.connection_manager)
+        except Exception:
+            logger.debug("Failed to open effective config viewer", exc_info=True)
+
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
@@ -4834,15 +5689,48 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to save window state: {e}")
     
-    def _on_plugin_connection_saved(self, dialog, connection_data):
+    def _apply_saved_connection_meta(self, nickname, meta):
+        """Persist the dialog's WoL/tags metadata after a successful save."""
+        if not nickname or not isinstance(meta, dict):
+            return
+        try:
+            if 'tags' in meta:
+                self.config.set_connection_tags(nickname, list(meta.get('tags') or []))
+            wol = {k: meta[k] for k in ('wol_mac', 'wol_broadcast_ip', 'wol_port') if k in meta}
+            if wol:
+                existing = self.config.get_connection_meta(nickname)
+                existing.update(wol)
+                self.config.set_connection_meta(nickname, existing)
+        except Exception:
+            # The connection itself saved; only the app-side metadata failed.
+            # Surface it — a silent miss here means WoL/tags quietly vanish.
+            logger.warning("Connection saved, but its WoL/tags metadata could not "
+                           "be persisted for '%s'", nickname, exc_info=True)
+            try:
+                if getattr(self, 'toast_overlay', None):
+                    self.toast_overlay.add_toast(Adw.Toast.new(
+                        _("Saved, but tags/Wake-on-LAN settings could not be stored.")))
+            except Exception:
+                pass
+
+    def _on_plugin_connection_saved(self, dialog, connection_data, complete=None,
+                                    pending_meta=None):
         """Persist a plugin-protocol connection (JSON store, no ssh_config)."""
+        def _done(ok):
+            if callable(complete):
+                complete(bool(ok))
+
         if dialog.is_editing and dialog.connection is not None:
             old_connection = dialog.connection
             original_nickname = old_connection.nickname
             if not self.connection_manager.update_connection(old_connection, connection_data):
                 logger.error("Failed to update plugin connection")
+                _done(False)
                 return
             new_nickname = connection_data.get('nickname') or original_nickname
+            # Meta goes under the new nickname BEFORE the rename migration so
+            # the dialog's fields win the merge, and before rows re-read tags.
+            self._apply_saved_connection_meta(new_nickname, pending_meta)
             if original_nickname != new_nickname:
                 try:
                     self.group_manager.rename_connection(original_nickname, new_nickname)
@@ -4870,17 +5758,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 self.rebuild_connection_list()
             logger.info(f"Updated plugin connection: {old_connection.nickname}")
+            _done(True)
         else:
             connection = Connection(connection_data)
             if self.connection_manager.update_connection(connection, connection_data):
+                self._apply_saved_connection_meta(
+                    connection_data.get('nickname'), pending_meta)
                 self.rebuild_connection_list()
                 logger.info(f"Created new plugin connection: {connection_data['nickname']}")
+                _done(True)
             else:
                 logger.error("Failed to save plugin connection")
+                _done(False)
 
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
         save_completion = connection_data.pop('__save_completion', None)
+        pending_meta = connection_data.pop('__meta', None)
 
         def _complete_save(ok):
             if callable(save_completion):
@@ -4888,7 +5782,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         try:
             if connection_data.get('protocol', 'ssh') != 'ssh':
-                self._on_plugin_connection_saved(dialog, connection_data)
+                self._on_plugin_connection_saved(
+                    dialog, connection_data, _complete_save, pending_meta)
                 return
             if dialog.is_editing:
                 # Update existing connection
@@ -4912,6 +5807,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.error("Failed to update connection in SSH config")
                     _complete_save(False)
                     return
+
+                # Meta goes under the (possibly new) nickname BEFORE the rename
+                # migration below, so the dialog's fields win the merge — and
+                # before the tags re-read that drives the row refresh.
+                self._apply_saved_connection_meta(
+                    connection_data.get('nickname'), pending_meta)
 
                 # Preserve group assignment if nickname changed
                 new_nickname = connection_data['nickname']
@@ -4965,14 +5866,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     old_connection._terminal_instance = terminal
                     self.terminal_manager.prompt_reconnect(old_connection)
                 _complete_save(True)
+                # Its own block changed: drop the stale result and recompute.
+                self._invalidate_effective_check(original_nickname)
+                self._invalidate_effective_check(connection_data.get('nickname'), old_connection)
+                self._warn_if_effective_config_differs(old_connection, connection_data)
 
             else:
                 # Create new connection (connection_manager owns persistence)
                 connection = self.connection_manager.create_connection(connection_data)
                 if connection is not None:
+                    self._apply_saved_connection_meta(
+                        connection_data.get('nickname'), pending_meta)
+                    # Fresh nickname isn't cached; rebuild re-primes it.
                     self.rebuild_connection_list()
                     logger.info(f"Created new connection: {connection_data['nickname']}")
                     _complete_save(True)
+                    self._warn_if_effective_config_differs(connection, connection_data)
                 else:
                     logger.error("Failed to save connection to SSH config")
                     _complete_save(False)
@@ -4982,6 +5891,92 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
     
+    def _warn_if_effective_config_differs(self, connection, connection_data):
+        """After a save, warn if global SSH config overrides/adds values for this
+        connection. Informational only — offers a diff view and a shortcut to the
+        SSH config editor. Best-effort: any failure is swallowed silently.
+
+        The two ``ssh -G`` resolutions run on a worker thread (they can block for
+        seconds on slow name resolution / ProxyJump); the dialog is presented
+        back on the GTK main thread via ``GLib.idle_add``.
+        """
+        try:
+            host = (connection_data.get('nickname')
+                    or getattr(connection, 'nickname', '') or '')
+            if not host:
+                return
+            from .effective_config_dialog import saved_connection_block
+            own_block = saved_connection_block(
+                self.connection_manager,
+                connection,
+                host=host,
+                fallback_data=connection_data,
+            )
+            # Resolve against the ROOT config (the file ssh reads top-down and
+            # that pulls in Include'd fragments + Host * globals). `source` may be
+            # an included fragment, which alone misses root/sibling globals.
+            config_file = getattr(connection, 'config_root', '') or None
+            if not config_file:
+                try:
+                    config_file = connection._resolve_config_override_path()
+                except Exception:
+                    config_file = None
+        except Exception:
+            logger.debug("effective-config diff setup failed", exc_info=True)
+            return
+
+        def _work():
+            try:
+                from .ssh_config_utils import diff_effective_config
+                result = diff_effective_config(host, config_file, own_block)
+            except Exception:
+                logger.debug("effective-config diff check failed", exc_info=True)
+                result = None
+            GLib.idle_add(self._present_effective_config_warning, host, result)
+
+        try:
+            threading.Thread(target=_work, name="effcfg-diff", daemon=True).start()
+        except Exception:
+            logger.debug("Could not start effective-config check thread", exc_info=True)
+
+    def _present_effective_config_warning(self, host, result):
+        """Show the global-config warning dialog on the GTK main thread."""
+        try:
+            from gettext import gettext as _
+
+            if not result or not result.get('has_diff'):
+                return False
+
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Global SSH config may change this connection"),
+                body=_(
+                    "Some of the values you set may be overridden or added by "
+                    "your global SSH configuration (for example a 'Host *' "
+                    "block or an included file). SSH will use the effective "
+                    "values, not only what you entered here."
+                ),
+            )
+            dialog.add_response('dismiss', _('Dismiss'))
+            dialog.add_response('view', _('View differences…'))
+            dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('view')
+
+            def _on_response(dlg, response):
+                if response == 'view':
+                    try:
+                        from .effective_config_dialog import EffectiveConfigDialog
+                        EffectiveConfigDialog.for_result(self, host, result)
+                    except Exception:
+                        logger.debug("Failed to open effective-config diff", exc_info=True)
+
+            dialog.connect('response', _on_response)
+            dialog.present()
+        except Exception:
+            logger.debug("Failed to present effective-config warning", exc_info=True)
+        return False
+
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
         try:

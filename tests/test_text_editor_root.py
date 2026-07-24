@@ -71,6 +71,26 @@ def test_resolve_root_pw_none_when_nothing_stored(monkeypatch):
     assert ed._resolve_root_pw() == (None, False)
 
 
+def test_local_save_notifies_owner(tmp_path):
+    saved = []
+    ed = Ed.__new__(Ed)
+    ed._temp_file = tmp_path / "config"
+    ed._temp_file.write_text("old")
+    ed._buffer = types.SimpleNamespace(set_modified=lambda _value: None)
+    ed._gtksource_enabled = False
+    ed._is_local = True
+    ed._on_local_saved = lambda: saved.append(True)
+    ed._update_title = lambda _modified: None
+    ed._show_toast = lambda *_args, **_kwargs: None
+    ed._save_button = types.SimpleNamespace(set_sensitive=lambda _value: None)
+    ed._file_manager_window = None
+
+    ed._perform_save("new")
+
+    assert ed._temp_file.read_text() == "new"
+    assert saved == [True]
+
+
 @pytest.mark.parametrize("text,expected", [
     ("webuser is not in the sudoers file", True),
     ("user is not allowed to execute '/usr/bin/tee'", True),

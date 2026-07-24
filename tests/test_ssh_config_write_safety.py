@@ -16,6 +16,7 @@ block-targeted rewrite, and these tests pin the safety properties:
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,6 +30,7 @@ def make_cm(path):
     cm.connections = []
     cm.rules = []
     cm.ssh_config_path = str(path)
+    cm.emit = MagicMock()
     return cm
 
 
@@ -40,6 +42,24 @@ def _edit(cm, path, nickname, new_data):
 
 
 class TestWriteSafety:
+    def test_atomic_write_emits_config_written(self, tmp_path):
+        cfg = tmp_path / "config"
+        cm = make_cm(cfg)
+
+        cm._safe_write_config(str(cfg), "Host test\n")
+
+        cm.emit.assert_called_once_with("config-written", str(cfg))
+
+    def test_reload_can_leave_externally_deleted_config_missing(self, tmp_path):
+        cfg = tmp_path / "config"
+        cm = make_cm(cfg)
+        cm._load_non_ssh_connections = lambda _existing: None
+
+        cm.load_ssh_config(create_missing=False)
+
+        assert not cfg.exists()
+        assert cm.connections == []
+
     def test_write_creates_backup_and_no_temp_leftovers(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.write_text("Host edit\n    HostName old.example.com\n    Port 22\n")

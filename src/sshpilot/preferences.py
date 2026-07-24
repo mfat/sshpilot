@@ -305,8 +305,26 @@ class PreferencesWindow(Adw.NavigationPage):
 
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
 
+        # Explicit "Done" action in place of the window-close (X) button, which
+        # would quit the app rather than Settings. Hide the X / window controls
+        # and the Back arrow so Done is the sole, unambiguous way to leave.
+        self.header_bar.set_show_end_title_buttons(False)
+        self.header_bar.set_show_back_button(False)
+        done_button = Gtk.Button(label=_("Done"))
+        done_button.add_css_class('suggested-action')
+        done_button.set_tooltip_text(_("Close Settings"))
+        done_button.connect('clicked', self._on_done_clicked)
+        self.header_bar.pack_end(done_button)
+
         self.pages = {}
         self._update_header_title()
+
+    def _on_done_clicked(self, _button):
+        """Leave Settings mode (pop back to the work UI)."""
+        try:
+            self.parent_window.leave_preferences()
+        except Exception:
+            logger.debug('Failed to leave preferences from Done button', exc_info=True)
 
     def _sync_split_show_content(self, *_args):
         """Keep show_content aligned with layout so Back pops Settings on first press.
@@ -1144,6 +1162,22 @@ class PreferencesWindow(Adw.NavigationPage):
         # Sidebar group (at bottom of Interface page)
         sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
 
+        # Sidebar mode (full width vs. minimal icon strip)
+        self._sidebar_mode_values = ['full', 'minimal']
+        sidebar_mode_row = Adw.ComboRow()
+        sidebar_mode_row.set_title(_("Sidebar Mode"))
+        sidebar_mode_row.set_subtitle(_("Show the full sidebar or a minimal strip of icons"))
+        mode_options = Gtk.StringList()
+        mode_options.append(_("Full"))
+        mode_options.append(_("Minimal"))
+        sidebar_mode_row.set_model(mode_options)
+        current_mode = str(self.config.get_setting('ui.sidebar_mode', 'full')).lower()
+        if current_mode not in self._sidebar_mode_values:
+            current_mode = 'full'
+        sidebar_mode_row.set_selected(self._sidebar_mode_values.index(current_mode))
+        sidebar_mode_row.connect('notify::selected', self.on_sidebar_mode_changed)
+        sidebar_group.add(sidebar_mode_row)
+
         # Maximum width slider
         max_width_row = Adw.ActionRow()
         max_width_row.set_title(_("Maximum Width"))
@@ -1270,17 +1304,28 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(hide_on_startup_switch)
 
-        hide_on_terminal_switch = Adw.SwitchRow()
-        hide_on_terminal_switch.set_title(_("Hide When a Terminal Opens"))
-        hide_on_terminal_switch.set_subtitle(_("Collapse the sidebar when any session opens, including local terminals"))
-        hide_on_terminal_switch.set_active(
-            bool(self.config.get_setting('ui.sidebar_hide_on_terminal_open', False))
-        )
-        hide_on_terminal_switch.connect(
-            'notify::active',
-            lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_terminal_open', bool(r.get_active())),
-        )
-        sidebar_behavior_group.add(hide_on_terminal_switch)
+        # When a terminal opens: do nothing / minimize to icons / hide.
+        self._on_terminal_open_values = ['none', 'minimize', 'hide']
+        on_terminal_open_row = Adw.ComboRow()
+        on_terminal_open_row.set_title(_("When a Terminal Opens"))
+        on_terminal_open_row.set_subtitle(
+            _("What happens to the sidebar when any session opens, including local terminals"))
+        on_terminal_options = Gtk.StringList()
+        on_terminal_options.append(_("Do Nothing"))
+        on_terminal_options.append(_("Minimize to Icons"))
+        on_terminal_options.append(_("Hide Sidebar"))
+        on_terminal_open_row.set_model(on_terminal_options)
+        current_on_open = 'none'
+        win = self.parent_window
+        if win is not None and hasattr(win, '_sidebar_on_terminal_open'):
+            current_on_open = win._sidebar_on_terminal_open()
+        if current_on_open not in self._on_terminal_open_values:
+            current_on_open = 'none'
+        on_terminal_open_row.set_selected(
+            self._on_terminal_open_values.index(current_on_open))
+        on_terminal_open_row.connect(
+            'notify::selected', self.on_sidebar_on_terminal_open_changed)
+        sidebar_behavior_group.add(on_terminal_open_row)
 
         show_when_no_tabs_switch = Adw.SwitchRow()
         show_when_no_tabs_switch.set_title(_("Show When No Tab Is Open"))
@@ -1294,7 +1339,71 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(show_when_no_tabs_switch)
 
+        # Minimized row style (initials circle vs. plain icon)
+        self._minimal_row_style_values = ['initials', 'icon']
+        minimal_row_style_row = Adw.ComboRow()
+        minimal_row_style_row.set_title(_("Minimized Row Style"))
+        minimal_row_style_row.set_subtitle(_("How connections look in the icon strip"))
+        style_options = Gtk.StringList()
+        style_options.append(_("Initials"))
+        style_options.append(_("Icon"))
+        minimal_row_style_row.set_model(style_options)
+        current_style = str(
+            self.config.get_setting('ui.sidebar_minimal_row_style', 'initials')).lower()
+        if current_style not in self._minimal_row_style_values:
+            current_style = 'initials'
+        minimal_row_style_row.set_selected(
+            self._minimal_row_style_values.index(current_style))
+        minimal_row_style_row.connect(
+            'notify::selected', self.on_sidebar_minimal_row_style_changed)
+        sidebar_behavior_group.add(minimal_row_style_row)
+
         interface_page.add(sidebar_behavior_group)
+
+    def on_sidebar_on_terminal_open_changed(self, combo_row, _param):
+        """Persist the merged 'when a terminal opens' behavior."""
+        try:
+            idx = combo_row.get_selected()
+            values = getattr(self, '_on_terminal_open_values', ['none', 'minimize', 'hide'])
+            action = values[idx] if 0 <= idx < len(values) else 'none'
+            self.config.set_setting('ui.sidebar_on_terminal_open', action)
+            # Keep the legacy booleans consistent for any older readers.
+            self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')
+            self.config.set_setting('ui.sidebar_minimize_on_connect', action == 'minimize')
+        except Exception:
+            logger.debug("sidebar on-terminal-open change failed", exc_info=True)
+
+    def on_sidebar_mode_changed(self, combo_row, _param):
+        """Persist the sidebar mode and apply it to the live window."""
+        try:
+            idx = combo_row.get_selected()
+            values = getattr(self, '_sidebar_mode_values', ['full', 'minimal'])
+            mode = values[idx] if 0 <= idx < len(values) else 'full'
+            self.config.set_setting('ui.sidebar_mode', mode)
+            win = self.parent_window
+            if win is not None and hasattr(win, 'set_sidebar_minimal'):
+                # Fully tear down any active search first (clears the filter,
+                # rebuilds, closes the popup) so the new mode can't inherit an
+                # invisible filter; then clear the restore flag and apply.
+                if hasattr(win, '_close_search_if_open'):
+                    win._close_search_if_open()
+                win._search_expanded_sidebar = False
+                win.set_sidebar_minimal(mode == 'minimal')
+        except Exception:
+            logger.debug("sidebar mode change failed", exc_info=True)
+
+    def on_sidebar_minimal_row_style_changed(self, combo_row, _param):
+        """Persist the minimized row style and refresh a live icon strip."""
+        try:
+            idx = combo_row.get_selected()
+            values = getattr(self, '_minimal_row_style_values', ['initials', 'icon'])
+            style = values[idx] if 0 <= idx < len(values) else 'initials'
+            self.config.set_setting('ui.sidebar_minimal_row_style', style)
+            win = self.parent_window
+            if win is not None and getattr(win, '_sidebar_minimal', False):
+                win._apply_sidebar_minimal_rows(True)
+        except Exception:
+            logger.debug("minimal row style change failed", exc_info=True)
 
     def _add_interface_headerbar_and_tips_groups(self, interface_page):
         """Add Header Bar Buttons and Tips preferences groups."""
@@ -1315,6 +1424,12 @@ class PreferencesWindow(Adw.NavigationPage):
             row.connect('notify::active', _on_toggled)
             headerbar_group.add(row)
 
+        _add_headerbar_switch(
+            "Sidebar Toggle Button",
+            "Show the button that hides/shows the sidebar (F9 still works when hidden)",
+            'ui.headerbar_show_sidebar_toggle',
+            default=False,
+        )
         _add_headerbar_switch(
             "Split View Button",
             "Show the split-view button (the grid icon that starts a split view)",

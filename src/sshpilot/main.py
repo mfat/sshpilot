@@ -40,6 +40,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
+from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
 
 # Build-time paths written by Meson at install time. Absent in a setuptools /
 # editable checkout, where we fall back to package-relative discovery.
@@ -303,6 +304,14 @@ class SshPilotApplication(Adw.Application):
             if not should_hide_file_manager_options():
                 self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
+
+        # Double Shift is handled by MainWindow's key controller because GTK
+        # accelerators represent key combinations, not multi-press gestures.
+        # A normal accelerator assigned in the shortcut editor is applied to
+        # this action by _apply_shortcut_for_action.
+        self.create_action(
+            'omnisearch', self.on_omnisearch, [DOUBLE_SHIFT_SHORTCUT]
+        )
 
         # Sidebar toggle is a window action; register its default accels so
         # it shows up in the shortcut editor and respects overrides.
@@ -986,7 +995,11 @@ class SshPilotApplication(Adw.Application):
             self.set_accels_for_action(action_name, [])
             logger.debug(f"Action '{name}' shortcuts disabled via {source}")
         else:
-            self.set_accels_for_action(action_name, effective)
+            gtk_accelerators = [
+                accel for accel in effective
+                if accel != DOUBLE_SHIFT_SHORTCUT
+            ]
+            self.set_accels_for_action(action_name, gtk_accelerators)
             logger.debug(
                 "Registered action '%s' with shortcuts from %s: %s",
                 name,
@@ -1087,12 +1100,16 @@ class SshPilotApplication(Adw.Application):
             self.props.active_window.toggle_list_focus()
 
     def on_search(self, action, param):
-        """Handle search action"""
+        """Show the original connection-list search."""
         logger.debug("Search action triggered")
         if self.props.active_window:
-            # The shortcut only ever turns search on (and focuses it). Hiding
-            # the search bar is done exclusively via the toolbar search button.
-            self.props.active_window.activate_search_entry()
+            self.props.active_window.focus_search_entry()
+
+    def on_omnisearch(self, action, param):
+        """Show the global Omnisearch."""
+        logger.debug("Omnisearch action triggered")
+        if self.props.active_window:
+            self.props.active_window.activate_omni_search()
 
     def on_new_key(self, action, param):
         """Handle new SSH key action"""

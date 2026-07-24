@@ -61,6 +61,13 @@
 
 
 
+    <release version="5.7.0" date="2026-07-24">
+      <description>
+        <p>Introducing Omnisearch - a powerful, versatile pop-up search box you can activate from anywhere by double-pressing the Shift key</p>
+        <p>Introducing a minimal mode for the sidebar - use a narrow, icon-only strip instead of the default full sidebar to reclaim more horizontal screen space</p>
+        <p>Various bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.6.6" date="2026-07-22">
       <description>
         <p>Enhanced CLI interface - start sshpilot from commandline like &quot;sshpilot user@host&quot;, use --sftp to open the file manager</p>

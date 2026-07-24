@@ -9,6 +9,8 @@ gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
 from gi.repository import Adw, Gdk, Gtk
 
+from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT, install_esc_to_close
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +51,8 @@ ACTION_LABELS: Dict[str, str] = {
     'new-connection': _('New Connection'),
     'open-new-connection-tab': _('Open New Connection Tab'),
     'toggle-list': _('Focus Connection List'),
-    'search': _('Search Connections'),
+    'search': _('Search'),
+    'omnisearch': _('Omnisearch'),
     'terminal-search': _('Search in Terminal'),
     'new-key': _('Copy Key to Server'),
     'manage-files': _('Manage Files'),
@@ -255,7 +258,10 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         split_group.set_description(_('Active whenever a split view tab is open.'))
 
         # Categorize actions
-        general_actions = ['quit', 'preferences', 'help', 'shortcuts', 'toggle_sidebar']
+        general_actions = [
+            'quit', 'preferences', 'help', 'shortcuts', 'toggle_sidebar',
+            'omnisearch',
+        ]
         connection_actions = [
             'new-connection',
             'open-new-connection-tab',
@@ -438,6 +444,9 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
         labels: List[str] = []
         for accel in accelerators:
+            if accel == DOUBLE_SHIFT_SHORTCUT:
+                labels.append(_('Double Shift'))
+                continue
             success, keyval, modifiers = Gtk.accelerator_parse(accel)
             if not success or (keyval == 0 and modifiers == 0):
                 labels.append(accel)
@@ -495,7 +504,9 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         if accelerators and len(accelerators) == 1:
             conflict = self._find_conflict(action_name, accelerators[0])
             if conflict:
-                self._show_conflict_dialog(conflict)
+                self._show_conflict_dialog(
+                    action_name, accelerators[0], conflict
+                )
                 return
 
         default = self._default_shortcuts.get(action_name)
@@ -558,22 +569,54 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             current = self._get_effective_shortcuts(other)
             if not current:
                 continue
-            if accelerator in current:
+            if any(
+                self._accelerators_equal([accelerator], [candidate])
+                for candidate in current
+            ):
                 return other
         return None
 
-    def _show_conflict_dialog(self, conflict_action: str):
+    def _replace_conflicting_shortcut(
+        self, action_name: str, accelerator: str, conflict_action: str
+    ):
+        current = self._get_effective_shortcuts(conflict_action) or []
+        remaining = [
+            candidate
+            for candidate in current
+            if not self._accelerators_equal([accelerator], [candidate])
+        ]
+        self._attempt_set_override(conflict_action, remaining)
+        self._attempt_set_override(action_name, [accelerator])
+
+    def _show_conflict_dialog(
+        self, action_name: str, accelerator: str, conflict_action: str
+    ):
         dialog_parent = self._transient_parent or self.get_root()
         dialog = Adw.MessageDialog(
             transient_for=dialog_parent,
             modal=True,
             heading=_('Shortcut Already In Use'),
-            body=_('The selected shortcut is already assigned to “{action}”.').format(
-                action=_get_action_label(conflict_action)
-            ),
+            body=_(
+                'This shortcut is already assigned to “{action}”. '
+                'Replacing it will disable that assignment.'
+            ).format(action=_get_action_label(conflict_action)),
         )
-        dialog.add_response('ok', _('OK'))
-        dialog.connect('response', lambda d, _r: d.close())
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('replace', _('Replace'))
+        dialog.set_default_response('replace')
+        dialog.set_close_response('cancel')
+        dialog.set_response_appearance(
+            'replace', Adw.ResponseAppearance.SUGGESTED
+        )
+
+        def _on_response(response_dialog, response: str):
+            if response == 'replace':
+                self._replace_conflicting_shortcut(
+                    action_name, accelerator, conflict_action
+                )
+            response_dialog.close()
+
+        dialog.connect('response', _on_response)
         dialog.present()
 
     def _apply_shortcuts(self):
@@ -656,6 +699,7 @@ class ShortcutEditorWindow(Adw.Window):
 
     def __init__(self, parent_window):
         super().__init__(transient_for=parent_window)
+        install_esc_to_close(self)
 
         self._parent_window = parent_window
         self._app = parent_window.get_application()

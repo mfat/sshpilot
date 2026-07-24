@@ -3,15 +3,26 @@ This document outlines the various scenarios and complexities involved in parsin
 
 ## 1. Core Concepts
 ### Connectable Hosts
-These are specific, named entries that a user can directly connect to. Each `Host` block is expected to declare a single label, and the parser treats each label as its own connection. Multi-label alias lists (for example, `Host webapp webapp-backup`) are unsupported.
+These are specific, named entries that a user can directly connect to. A `Host`
+block may contain one or more concrete labels. sshPilot materializes each label
+as a connection while retaining the shared block as its source.
 
 ### Configuration Rules
 These are patterns or conditional blocks that apply settings to a class of connections. They are not directly connectable and should be hidden from a primary server list.
 
 ## 2. Scenarios for Connectable Hosts
-These entries should be parsed and presented to the user as valid connection targets. Each `Host` block should contain exactly one label; alias lists are unsupported and must be split into discrete entries.
+These entries should be parsed and presented to the user as valid connection
+targets. A block containing only concrete labels produces one connection per
+label:
 
-> Unsupported: `Host webapp webapp-backup` (alias list). Create separate blocks for each label so that every connection can be listed individually.
+```ssh-config
+Host webapp webapp-backup
+  User deploy
+```
+
+Both `webapp` and `webapp-backup` appear in the connection list. Editing one
+label splits it into its own block so the other label keeps the original shared
+settings.
 
 **Example: Single Host Label**
 
@@ -21,7 +32,8 @@ Host webapp
   Port 2222
 Classification: Connectable
 
-Key Info: The label `webapp` identifies the connection. Use additional `Host` blocks if you need `webapp-backup` or other names.
+Key Info: The label `webapp` identifies the connection. Additional concrete
+labels may share the same block.
 
 **Example: Implicit Hostname**
 
@@ -66,7 +78,9 @@ Host server* *.dev *.staging !prod
   StrictHostKeyChecking no
 Classification: Rule
 
-Reason: It defines a set of conditions for applying settings, not a single destination. The parser must split the line into individual patterns, and alias lists (multiple plain labels) should be considered unsupported for connectable hosts.
+Reason: It defines a set of conditions for applying settings, not a fixed set of
+destinations. Any `Host` line containing a wildcard or negated token is treated
+as a rule; a line containing only plain labels is materialized as connections.
 
 ### Scenario: Negated Patterns
 A pattern starting with ! is an exception. It matches everything except the pattern.
@@ -121,10 +135,33 @@ Process Include: Recursively read and parse included files.
 ### The Gold Standard: Offload to `ssh -G`
 The most robust and accurate method is to avoid writing a complex custom parser.
 
-Discover Hosts: Use a simple regex like ^\s*Host\s+([^\s*?!]+)$ to find candidate labels for your UI. This is a "best-effort" discovery step that intentionally ignores `Host` lines with multiple labels because alias lists are unsupported.
+Discover Hosts: sshPilot recursively resolves `Include` directives, tokenizes
+`Host` lines with shell-style quoting, and materializes every concrete label.
+Wildcard or negated declarations and `Match` blocks are retained as rules
+instead of appearing as connections. Repeated concrete `Host` declarations are
+merged using OpenSSH's first-value-wins behavior, except for directives such as
+identity files, certificates, and forwarding rules that accumulate.
 
 Evaluate Configuration: For a selected label (e.g., webapp), run the command ssh -G webapp.
 
 Parse the Output: The command produces a simple, definitive key value list of the final, effective configuration for that host. This output accounts for all Host blocks, Match blocks, Include files, and precedence rules.
 
-This strategy guarantees 100% accuracy with the user's native SSH environment and is future-proof against new ssh_config features.
+`ssh -G` remains the authority for the effective configuration used by a
+connection. The custom parser is for discovery, display, and safe editing; it
+does not attempt to reproduce every OpenSSH evaluation rule.
+
+## 5. Reloading and Persistence
+
+- The root configuration file is monitored for external changes. Reloads are
+  debounced and preserve existing `Connection` objects when nicknames remain
+  present, avoiding unnecessary sidebar and selection churn.
+- Included files are parsed, but their directories are not currently monitored.
+  An external edit to an included fragment becomes visible after the root file
+  changes or another explicit reload.
+- In-app writes use an atomic replacement and synchronize the parent directory.
+  The manager updates live connection objects only after persistence succeeds.
+- An unexpected reload/read failure or failed write retains the last known-good
+  in-memory state. Monitoring a deleted root file does not recreate it; normal
+  startup may still create a missing root configuration.
+- Non-SSH plugin connections are stored in the application configuration rather
+  than in `ssh_config`, with the same apply-after-success rollback behavior.
