@@ -6,6 +6,7 @@ from sshpilot.sidebar import ConnectionRow
 
 class _Row:
     _is_hovering = False
+    _compact = False
     _effective_warning_differs = False
     _update_effective_warning_reveal = (
         ConnectionRow._update_effective_warning_reveal
@@ -61,4 +62,16 @@ def test_non_ssh_hover_never_requests_effective_config_check():
 
     row._on_row_enter(None, 0, 0)
 
+    row._effective_warning_callback.assert_not_called()
+
+
+def test_compact_row_hides_warning_and_skips_check():
+    row = _Row()
+    row._compact = True
+    row._is_hovering = True
+
+    row.set_effective_warning(True)
+    row._on_row_enter(None, 0, 0)
+
+    row.effective_warning_icon.set_visible.assert_called_with(False)
     row._effective_warning_callback.assert_not_called()

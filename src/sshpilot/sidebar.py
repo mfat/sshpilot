@@ -1663,7 +1663,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         if self.file_manager_button and self._file_manager_callback:
             self.file_manager_button.set_opacity(1.0)
         if (
-            self._effective_warning_callback
+            not getattr(self, '_compact', False)
+            and self._effective_warning_callback
             and getattr(self.connection, 'protocol', 'ssh') == 'ssh'
         ):
             try:
@@ -2246,6 +2247,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._info_box.set_visible(True)
             self.indicator_box.set_visible(True)
             self.file_manager_button.set_visible(True)
+            warning_icon = getattr(self, 'effective_warning_icon', None)
+            if warning_icon is not None:
+                warning_icon.set_visible(
+                    getattr(self, '_effective_warning_differs', False))
             self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
             self.connection_icon.remove_css_class('conn-status-up')
             try:
@@ -2275,6 +2280,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_badge.set_visible(False)
         self.color_dot.set_visible(False)
         self.file_manager_button.set_visible(False)
+        warning_icon = getattr(self, 'effective_warning_icon', None)
+        if warning_icon is not None:
+            warning_icon.set_visible(False)
         self.status_icon.set_visible(False)
         self.set_tooltip_text(self.connection.nickname)
 
@@ -2300,7 +2308,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Show/hide the "global config overrides this host" warning icon."""
         try:
             self._effective_warning_differs = bool(differs)
-            self.effective_warning_icon.set_visible(self._effective_warning_differs)
+            self.effective_warning_icon.set_visible(
+                self._effective_warning_differs
+                and not getattr(self, '_compact', False)
+            )
             self._update_effective_warning_reveal()
         except Exception:
             pass
