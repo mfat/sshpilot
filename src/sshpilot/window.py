@@ -1674,8 +1674,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         rows ellipsize to the sidebar width and toolbar buttons spread.
         """
         hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
+        # In the minimal strip the vertical scrollbar is hidden the documented
+        # way — EXTERNAL keeps the list scrollable (wheel/touch) without drawing
+        # a scrollbar over the icons; full mode shows it on demand (AUTOMATIC).
+        # _set_sidebar_clipping(False) is the resting call after every
+        # transition, and _sidebar_minimal is already updated by then.
+        conn_vpol = (Gtk.PolicyType.EXTERNAL
+                     if getattr(self, '_sidebar_minimal', False)
+                     else Gtk.PolicyType.AUTOMATIC)
         targets = (
-            ('connection_scrolled', Gtk.PolicyType.AUTOMATIC),
+            ('connection_scrolled', conn_vpol),
             ('_sidebar_header_clip', Gtk.PolicyType.NEVER),
             ('_sidebar_toolbar_clip', Gtk.PolicyType.NEVER),
         )
@@ -1815,6 +1823,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # No width lever — just swap the content to the target state.
             self._apply_sidebar_minimal_chrome(minimal)
             self._apply_sidebar_minimal_rows(minimal)
+            self._set_sidebar_clipping(False)  # apply the minimal-aware vpolicy
             return
 
         def _fraction_width():

@@ -279,19 +279,6 @@ def install_sidebar_css():
           background-color: alpha(currentColor, 0.16);
         }
 
-        /* Minimal strip: hide the scrollbar but keep the list scrollable
-           (wheel/touch still work — only the overlay scrollbar is made
-           invisible and zero-width so it never draws over the icons). */
-        .sidebar-minimal scrollbar {
-          opacity: 0;
-          min-width: 0;
-          min-height: 0;
-        }
-        .sidebar-minimal scrollbar slider {
-          min-width: 0;
-          min-height: 0;
-        }
-
         /* Reorder placeholder: a slim transparent gap row whose child
            DragIndicator draws the accent bar; the list parts around it. */
         .drop-placeholder-row {
