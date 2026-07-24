@@ -54,6 +54,12 @@ class TestHostname:
     def test_loopback(self):
         assert self.v.validate_hostname("127.0.0.1").is_valid is True
 
+    def test_bracketed_ipv6(self):
+        assert self.v.validate_hostname("[::1]").is_valid is True
+
+    def test_invalid_bracketed_address(self):
+        assert self.v.validate_hostname("[not-an-ip]").is_valid is False
+
     def test_invalid_numeric_ip(self):
         assert self.v.validate_hostname("999.1.1.1").is_valid is False
 

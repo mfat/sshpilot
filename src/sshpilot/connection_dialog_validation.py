@@ -7,8 +7,6 @@ user-entered rows (nickname, host, port, username) against ``self.validator`` an
 style the rows inline; they never open an SSH connection.
 """
 
-import re
-import ipaddress
 from typing import Optional
 
 try:
@@ -94,10 +92,7 @@ class ConnectionDialogValidationMixin:
             self._update_existing_names_in_validator()
             result = self.validator.validate_connection_name(text)
         elif field_name == 'hostname':
-            raw = (text or '').strip()
-            if raw.startswith('[') and raw.endswith(']') and len(raw) > 2:
-                raw = raw[1:-1]
-            result = self.validator.validate_hostname(raw, allow_empty=True)
+            result = self.validator.validate_hostname(text, allow_empty=True)
         elif field_name == 'port':
             result = self.validator.validate_port(text, context)
         elif field_name == 'username':
@@ -224,52 +219,18 @@ class ConnectionDialogValidationMixin:
         return True
 
     def _validate_host_row(self, row, allow_empty: bool = False):
-        text = (row.get_text() if hasattr(row, 'get_text') else "").strip()
-        if not text:
-            if allow_empty:
-                self._row_clear_message(row)
-                return True
-            self._row_set_message(row, _("Host is required"), is_error=True)
-            return False
-        # Support bracketed IPv6 like [::1]
-        text_unbr = text[1:-1] if (text.startswith('[') and text.endswith(']') and len(text) > 2) else text
-        lower = text_unbr.lower()
-        if lower in ("localhost",):
-            self._row_clear_message(row)
-            return True
-        try:
-            ipaddress.ip_address(text_unbr)
-            self._row_clear_message(row)
-            return True
-        except Exception:
-            # digits/dots but not valid ip → error
-            if re.fullmatch(r"[0-9.]+", text_unbr):
-                self._row_set_message(row, _("Invalid IPv4 address"), is_error=True)
-                return False
-            # RFC1123-ish hostname
-            hostname_regex = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$")
-            if not hostname_regex.match(text_unbr):
-                self._row_set_message(row, _("Invalid hostname"), is_error=True)
-                return False
-        self._row_clear_message(row)
-        return True
+        text = row.get_text() if hasattr(row, 'get_text') else ""
+        result = self.validator.validate_hostname(text, allow_empty=allow_empty)
+        self._apply_validation_to_row(row, result)
+        return result.is_valid
 
     def _validate_port_row(self, row, label_text: str = "Port"):
-        text = (row.get_text() if hasattr(row, 'get_text') else "").strip()
-        if not text:
-            self._row_set_message(row, _(f"{label_text} is required"), is_error=True)
-            return False
-        try:
-            value = int(text)
-            if value < 1 or value > 65535:
-                self._row_set_message(row, _("Port must be between 1 and 65535"), is_error=True)
-                return False
-            # Clear errors; we are not styling warnings inline
-            self._row_clear_message(row)
-            return True
-        except Exception:
-            self._row_set_message(row, _("Port must be a number"), is_error=True)
-            return False
+        text = row.get_text() if hasattr(row, 'get_text') else ""
+        result = self.validator.validate_port(text, context="SSH")
+        if not text.strip() and label_text != "Port":
+            result.message = _("{label} is required").format(label=label_text)
+        self._apply_validation_to_row(row, result)
+        return result.is_valid
 
     def _install_inline_validators(self):
         # General page fields

@@ -166,3 +166,24 @@ def test_malformed_explicit_ssh_is_disabled(monkeypatch):
 
     assert result.kind == "validation"
     assert result.enabled is False
+
+
+def test_ssh_results_share_field_validation_without_rejecting_aliases(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "sshpilot.omni_search.collect_commands",
+        lambda _window: [],
+    )
+
+    invalid_host = search_omni(_window(), "ssh alice@999.1.1.1")[0]
+    invalid_port = search_omni(
+        _window(), "ssh -p 70000 alice@example.com"
+    )[0]
+    alias = search_omni(_window(), "ssh alice@team_alias")[0]
+
+    assert invalid_host.kind == "validation"
+    assert invalid_host.enabled is False
+    assert invalid_port.kind == "validation"
+    assert invalid_port.enabled is False
+    assert alias.kind == "ssh"
