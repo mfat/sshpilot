@@ -1354,16 +1354,23 @@ class ConnectionManager(GObject.Object):
     # No _ensure_collection needed with libsecret's high-level API
 
     def load_ssh_config(self, create_missing: bool = True):
-        """Load connections from SSH config file"""
+        """Load connections from SSH config file.
+
+        Rebuilds the in-memory lists from disk. On any unexpected parse/read
+        failure the previous connections/rules are restored, so a transient
+        I/O error or bad external edit can't wipe the last known-good state.
+        """
+        prev_connections = getattr(self, 'connections', [])
+        prev_rules = getattr(self, 'rules', [])
+        existing_by_nickname = {conn.nickname: conn for conn in prev_connections}
         try:
-            existing_by_nickname = {conn.nickname: conn for conn in self.connections}
-            self.connections = []
-            self.rules = []
-            try:
-                self.ssh_config_path = self._ensure_config_parent_dir(self.ssh_config_path)
-            except Exception as exc:
-                logger.error("Unable to prepare SSH config path '%s': %s", self.ssh_config_path, exc)
-                return
+            self.ssh_config_path = self._ensure_config_parent_dir(self.ssh_config_path)
+        except Exception as exc:
+            logger.error("Unable to prepare SSH config path '%s': %s", self.ssh_config_path, exc)
+            return
+        self.connections = []
+        self.rules = []
+        try:
             if not os.path.exists(self.ssh_config_path):
                 if create_missing:
                     logger.info("SSH config file not found, creating empty one")
@@ -1547,6 +1554,8 @@ class ConnectionManager(GObject.Object):
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
+            # Keep the last known-good state rather than a partial/empty list.
+            self.connections, self.rules = prev_connections, prev_rules
 
     def parse_host_config(self, config: Dict[str, Any], source: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Parse host configuration from SSH config"""
@@ -1968,8 +1977,13 @@ class ConnectionManager(GObject.Object):
         # Add basic connection info
         if host and host != nickname:
             lines.append(f"    HostName {host}")
-        lines.append(f"    User {data.get('username', '')}")
-        
+        # Omit User when empty: a bare "User" line is a fatal ssh_config parse
+        # error that makes ssh reject the ENTIRE file, and ssh defaults to the
+        # local user anyway (as does parse_host_config on read-back).
+        username = str(data.get('username', '') or '').strip()
+        if username:
+            lines.append(f"    User {username}")
+
         # Add port if specified and not default
         port = data.get('port')
         if port and port != 22:  # Only add port if it's not the default 22
@@ -2408,87 +2422,69 @@ class ConnectionManager(GObject.Object):
     def remove_ssh_config_entry(self, host_nickname: str, source: Optional[str] = None) -> bool:
         """Remove a host label from SSH config, or entire block if it's the only label.
 
-        Returns True if a modification was made, False if not found or on error.
+        Returns True if a modification was made, False when the host was not
+        found. Read/write failures raise so callers can abort instead of
+        silently diverging memory from disk.
         """
-        try:
-            target_path = source or self.ssh_config_path
-            if not os.path.exists(target_path):
-                return False
-            try:
-                with open(target_path) as f:
-                    lines = f.readlines()
-            except OSError as e:
-                logger.error(f"Failed to read SSH config for delete: {e}")
-                return False
-
-            updated_lines = []
-            i = 0
-            modified = False
-
-            while i < len(lines):
-                raw_line = lines[i]
-                lstripped = raw_line.lstrip()
-                # Match the Host header honouring all separators (Host=x, tabs).
-                kw, full_value = _split_keyword(lstripped)
-
-                if kw == 'host':
-                    try:
-                        current_names = shlex.split(full_value) if full_value else []
-                    except ValueError:
-                        # Fallback to simple split if shlex fails
-                        current_names = [h for h in full_value.split() if h]
-                    
-                    # Check if our target host is in this Host directive
-                    if host_nickname in current_names:
-                        modified = True
-                        # Remove the target hostname from the list
-                        remaining_names = [name for name in current_names if name != host_nickname]
-                        
-                        if remaining_names:
-                            # Update the Host line with remaining names
-                            indent = raw_line[:len(raw_line) - len(lstripped)]
-                            # Use shlex.join if available (Python 3.8+), otherwise manual quoting
-                            try:
-                                remaining_hosts_str = shlex.join(remaining_names)
-                            except AttributeError:
-                                # Fallback for older Python versions
-                                remaining_hosts_str = ' '.join(
-                                    f'"{name}"' if ' ' in name or '"' in name else name 
-                                    for name in remaining_names
-                                )
-                            updated_line = f"{indent}Host {remaining_hosts_str}\n"
-                            updated_lines.append(updated_line)
-                            logger.info(f"Updated Host line: removed '{host_nickname}', remaining: {remaining_names}")
-                            
-                            # Keep the rest of the block
-                            i += 1
-                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                                updated_lines.append(lines[i])
-                                i += 1
-                        else:
-                            # No remaining names, delete the entire block
-                            logger.info(f"Deleting entire Host block for '{host_nickname}' (was the only host)")
-                            i += 1
-                            # Skip the entire block
-                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                                i += 1
-                        continue
-                
-                # Keep line as-is
-                updated_lines.append(raw_line)
-                i += 1
-
-            if modified:
-                try:
-                    self._safe_write_config(target_path, ''.join(updated_lines))
-                    logger.info(f"SSH config updated: {'removed' if host_nickname else 'modified'} entry for '{host_nickname}'")
-                except OSError as e:
-                    logger.error(f"Failed to write SSH config after delete: {e}")
-                    return False
-            return modified
-        except Exception as e:
-            logger.error(f"Error removing SSH config entry: {e}", exc_info=True)
+        target_path = source or self.ssh_config_path
+        if not os.path.exists(target_path):
             return False
+        with open(target_path) as f:
+            lines = f.readlines()
+
+        updated_lines = []
+        i = 0
+        modified = False
+
+        while i < len(lines):
+            raw_line = lines[i]
+            lstripped = raw_line.lstrip()
+            # Match the Host header honouring all separators (Host=x, tabs).
+            kw, full_value = _split_keyword(lstripped)
+
+            if kw == 'host':
+                try:
+                    current_names = shlex.split(full_value) if full_value else []
+                except ValueError:
+                    # Fallback to simple split if shlex fails
+                    current_names = [h for h in full_value.split() if h]
+
+                # Check if our target host is in this Host directive
+                if host_nickname in current_names:
+                    modified = True
+                    # Remove the target hostname from the list
+                    remaining_names = [name for name in current_names if name != host_nickname]
+
+                    if remaining_names:
+                        # Update the Host line with remaining names
+                        indent = raw_line[:len(raw_line) - len(lstripped)]
+                        remaining_hosts_str = shlex.join(remaining_names)
+                        updated_line = f"{indent}Host {remaining_hosts_str}\n"
+                        updated_lines.append(updated_line)
+                        logger.info(f"Updated Host line: removed '{host_nickname}', remaining: {remaining_names}")
+
+                        # Keep the rest of the block
+                        i += 1
+                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
+                            updated_lines.append(lines[i])
+                            i += 1
+                    else:
+                        # No remaining names, delete the entire block
+                        logger.info(f"Deleting entire Host block for '{host_nickname}' (was the only host)")
+                        i += 1
+                        # Skip the entire block
+                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
+                            i += 1
+                    continue
+
+            # Keep line as-is
+            updated_lines.append(raw_line)
+            i += 1
+
+        if modified:
+            self._safe_write_config(target_path, ''.join(updated_lines))
+            logger.info(f"SSH config updated: removed entry for '{host_nickname}'")
+        return modified
 
     def _preserve_multivalue_on_update(self, connection: 'Connection', new_data: Dict[str, Any]) -> None:
         """Carry forward extra IdentityFile/CertificateFile entries on edit.
@@ -2550,16 +2546,14 @@ class ConnectionManager(GObject.Object):
             if self.ssh_config_path:
                 connection.data['config_root'] = self.ssh_config_path
 
-        self._register_connection(connection)
         # update_connection persists to the protocol's store (ssh_config for
         # SSH — including password keyring handling — or the non-SSH JSON
-        # store) and emits 'connection-updated'.
+        # store) and emits 'connection-updated'. Persist first; only list the
+        # connection once it's actually on disk.
         if not self.update_connection(connection, dict(data)):
-            try:
-                self.connections.remove(connection)
-            except ValueError:
-                pass
             raise RuntimeError("Failed to persist connection")
+        if connection not in self.connections:
+            self._register_connection(connection)
 
         # Announce on the main loop: provider plugins may call from workers.
         GLib.idle_add(self.emit, 'connection-added', connection)
@@ -2596,6 +2590,17 @@ class ConnectionManager(GObject.Object):
             # keys from ~/.ssh/config.
             self._preserve_multivalue_on_update(connection, new_data)
 
+            # Persist FIRST (with the original nickname for proper matching);
+            # the live object is only mutated after the write succeeds, so a
+            # failed write can't leave memory diverged from ~/.ssh/config.
+            if split_from_group:
+                original_token = split_original_host or original_nickname
+                if not self._split_host_block(original_token, new_data, target_path):
+                    logger.error("Failed to split host block for %s", original_token)
+                    return False
+            else:
+                self.update_ssh_config_file(connection, new_data, original_nickname)
+
             # Update existing object IN-PLACE instead of creating new ones
             connection.update_data(new_data)
 
@@ -2616,15 +2621,6 @@ class ConnectionManager(GObject.Object):
                         connection.data['__host_tokens'] = [alias] + extra_aliases
             except Exception:
                 logger.debug("Failed to refresh host tokens after update", exc_info=True)
-
-            # Update the SSH config file with original nickname for proper matching
-            if split_from_group:
-                original_token = split_original_host or original_nickname
-                if not self._split_host_block(original_token, new_data, target_path):
-                    logger.error("Failed to split host block for %s", original_token)
-                    return False
-            else:
-                self.update_ssh_config_file(connection, new_data, original_nickname)
 
             # Handle password storage/removal
             if 'password' in new_data and not secret_storage_done:
@@ -2672,27 +2668,28 @@ class ConnectionManager(GObject.Object):
     ) -> bool:
         """Remove a connection, optionally deferring the final config reload."""
         try:
+            # Persist FIRST for SSH connections: if the config write fails we
+            # abort with the connection intact, so the row doesn't vanish from
+            # memory only to resurrect from disk on the next reload.
+            if getattr(connection, 'protocol', 'ssh') == 'ssh':
+                removed = self.remove_ssh_config_entry(connection.nickname, getattr(connection, 'source', None))
+                logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
+
             # Remove from list
             if connection in self.connections:
                 self.connections.remove(connection)
-            
+
             # Remove password from secure storage (all host aliases)
             try:
                 self.delete_connection_passwords(connection)
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
-            
-            # Remove from the protocol's store (ssh_config for SSH, the JSON
-            # list for plugin protocols)
+
+            # Non-SSH (plugin) connections persist the remaining list to the
+            # JSON store, so this must run after the list removal above.
             if getattr(connection, 'protocol', 'ssh') != 'ssh':
                 self._persist_non_ssh_connections()
-            else:
-                try:
-                    removed = self.remove_ssh_config_entry(connection.nickname, getattr(connection, 'source', None))
-                    logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove SSH config entry for {connection.nickname}: {e}")
-            
+
             # Remove per-connection metadata (auth method, etc.) to avoid lingering entries
             try:
                 from .config import Config
@@ -3102,10 +3099,13 @@ class ConnectionManager(GObject.Object):
             connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
         except Exception:
             connection.extra_ssh_config = ''
-        self.connections.append(connection)
 
+        # Persist first; only list the connection once it's actually on disk,
+        # so a failed write doesn't leave a phantom in-memory entry.
         if not self.update_connection(connection, connection_data):
             return None
+        if connection not in self.connections:
+            self._register_connection(connection)
 
         # Reload from SSH config so the in-memory list matches disk
         try:
