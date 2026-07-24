@@ -3196,20 +3196,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 'username': getattr(self.connection, 'username', ''),
             }
 
-        # Update the connection object locally when editing (do not persist here; window handles persistence)
+        # Editing rewrites the block as `Host <nickname>` (multi-host blocks go
+        # through the split path), so aliases are cleared via the payload. The
+        # live object itself is NOT touched here: update_connection syncs it
+        # via update_data() only after the config write succeeds, so a failed
+        # save leaves the in-memory connection unchanged.
         if self.is_editing and self.connection:
-            try:
-                self.connection.data.update(connection_data)
-                self.connection.data.pop('aliases', None)
-            except Exception:
-                pass
-            if hasattr(self.connection, 'aliases'):
-                self.connection.aliases = []
-            self.connection.proxy_jump = connection_data.get('proxy_jump', [])
-            self.connection.forward_agent = connection_data.get('forward_agent', False)
-            # Explicitly update forwarding rules to ensure they're fresh
-            self.connection.forwarding_rules = forwarding_rules
-            
+            connection_data['aliases'] = []
+
+
         # Unlock first when needed, then persist all changed secrets in one worker. Secret
         # backends may invoke external tools (notably ``bw``), so none of this I/O may run
         # in the GTK signal handler.
