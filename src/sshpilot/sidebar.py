@@ -1604,8 +1604,15 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.effective_warning_icon.set_tooltip_text(
             _("Global SSH config changes this connection's effective settings — click to compare"))
         self.effective_warning_icon.set_visible(False)
+        self.effective_warning_icon.set_opacity(0.0)
         self.effective_warning_icon.connect("clicked", self._on_effective_warning_clicked)
         content.append(self.effective_warning_icon)
+        self._effective_warning_differs = False
+
+        warning_motion_controller = Gtk.EventControllerMotion()
+        warning_motion_controller.connect("enter", self._on_button_enter)
+        warning_motion_controller.connect("leave", self._on_button_leave)
+        self.effective_warning_icon.add_controller(warning_motion_controller)
 
         # Now add the content to main_box
         main_box.append(content)
@@ -1656,10 +1663,11 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.file_manager_button.add_controller(button_motion_controller)
 
     def _on_row_enter(self, controller, x, y):
-        """Show file manager button when mouse enters row"""
+        """Reveal hover actions when the mouse enters the row."""
         self._is_hovering = True
         if self.file_manager_button and self._file_manager_callback:
             self.file_manager_button.set_opacity(1.0)
+        self._update_effective_warning_reveal()
 
     def _on_row_leave(self, controller):
         """Hide file manager button when mouse leaves row"""
@@ -1668,10 +1676,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         GLib.timeout_add(100, self._maybe_hide_button)
 
     def _on_button_enter(self, controller, x, y):
-        """Keep button visible when hovering over it"""
+        """Keep row actions visible while hovering over either button."""
         self._is_hovering = True
         if self.file_manager_button:
             self.file_manager_button.set_opacity(1.0)
+        self._update_effective_warning_reveal()
 
     def _on_button_leave(self, controller):
         """Handle mouse leaving the button"""
@@ -1679,10 +1688,21 @@ class ConnectionRow(Gtk.ListBoxRow):
         GLib.timeout_add(100, self._maybe_hide_button)
 
     def _maybe_hide_button(self):
-        """Hide button if not hovering"""
+        """Hide row actions when the pointer is no longer hovering."""
         if not self._is_hovering and self.file_manager_button:
             self.file_manager_button.set_opacity(0.0)
+        self._update_effective_warning_reveal()
         return False  # Don't repeat
+
+    def _update_effective_warning_reveal(self) -> None:
+        icon = getattr(self, 'effective_warning_icon', None)
+        if icon is None:
+            return
+        reveal = (
+            getattr(self, '_effective_warning_differs', False)
+            and getattr(self, '_is_hovering', False)
+        )
+        icon.set_opacity(1.0 if reveal else 0.0)
 
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -2275,7 +2295,9 @@ class ConnectionRow(Gtk.ListBoxRow):
     def set_effective_warning(self, differs: bool) -> None:
         """Show/hide the "global config overrides this host" warning icon."""
         try:
-            self.effective_warning_icon.set_visible(bool(differs))
+            self._effective_warning_differs = bool(differs)
+            self.effective_warning_icon.set_visible(self._effective_warning_differs)
+            self._update_effective_warning_reveal()
         except Exception:
             pass
 
