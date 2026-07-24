@@ -128,6 +128,9 @@ class WelcomePage(Gtk.Overlay):
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
         scrolled.set_can_focus(False)
+        # Reserve the overlay footer's band so centred content never drifts
+        # into (or under) it as the window shrinks.
+        scrolled.set_margin_bottom(72)
 
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         inner.set_halign(Gtk.Align.FILL)
@@ -387,7 +390,7 @@ class WelcomePage(Gtk.Overlay):
         content.append(Gtk.Label(label=label))
         btn = Gtk.Button()
         btn.set_child(content)
-        btn.add_css_class('startpage-chip')
+        btn.add_css_class('pill')
         btn.set_can_focus(False)
         if size_group is not None:
             size_group.add_widget(btn)
