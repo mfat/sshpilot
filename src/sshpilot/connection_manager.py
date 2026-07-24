@@ -63,6 +63,7 @@ def _ensure_event_loop() -> asyncio.AbstractEventLoop:
 # long-standing importers (and this module's scanners) keep working.
 from .ssh_config_document import (  # noqa: F401  (re-export)
     _CONFIG_OPTION_RE,
+    SSHConfigDocument,
     _split_config_option,
     _split_keyword,
 )
@@ -2132,49 +2133,34 @@ class ConnectionManager(GObject.Object):
         return '\n'.join(cleaned_lines)
 
     def get_host_block_details(self, host_identifier: str, source: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Return details for the first Host block matching *host_identifier*."""
+        """Return details for the first Host block matching *host_identifier*.
+
+        Callers consume ``hosts`` (the block's token list) and ``source``;
+        ``lines`` carries the block verbatim (newline-stripped).
+        """
+        host_identifier = (host_identifier or '').strip()
+        if not host_identifier:
+            return None
+
+        target_path = source or self.ssh_config_path
+        if not target_path or not os.path.exists(target_path):
+            return None
+
         try:
-            host_identifier = (host_identifier or '').strip()
-            if not host_identifier:
-                return None
-
-            target_path = source or self.ssh_config_path
-            if not target_path or not os.path.exists(target_path):
-                return None
-
-            with open(target_path) as f:
-                lines = f.readlines()
-
-            i = 0
-            while i < len(lines):
-                raw_line = lines[i]
-                lstripped = raw_line.lstrip()
-                # Detect the Host header honouring all separators (Host=x, tabs).
-                kw, full_value = _split_keyword(lstripped)
-                if kw == 'host':
-                    try:
-                        host_names = shlex.split(full_value)
-                    except ValueError:
-                        host_names = [h for h in full_value.split() if h]
-
-                    if host_identifier in host_names:
-                        start_index = i
-                        i += 1
-                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                            i += 1
-                        end_index = i
-                        block_lines = [lines[j].rstrip('\n') for j in range(start_index, end_index)]
-                        return {
-                            'source': target_path,
-                            'hosts': host_names,
-                            'start': start_index,
-                            'end': end_index,
-                            'lines': block_lines,
-                        }
-                i += 1
+            doc = SSHConfigDocument.parse_file(target_path)
         except Exception as e:
             logger.debug(f"Failed to inspect host block for '{host_identifier}': {e}")
-        return None
+            return None
+
+        blocks = doc.host_blocks(host_identifier)
+        if not blocks:
+            return None
+        block = blocks[0]
+        return {
+            'source': target_path,
+            'hosts': list(block.tokens),
+            'lines': [line.rstrip('\n') for line in block.lines],
+        }
 
     def collect_host_block_lines(self, host_identifier: str) -> List[str]:
         """Combined lines of every *concrete* Host stanza matching *host_identifier*.
