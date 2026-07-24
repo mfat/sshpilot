@@ -1,3 +1,15 @@
+sshpilot (5.7.0-1) unstable; urgency=medium
+
+  * Release v5.7.0.
+  * Introducing Omnisearch - a powerful, versatile pop-up search box you
+    can activate from anywhere by double-pressing the Shift key
+  * Introducing a minimal mode for the sidebar - use a narrow, icon-only
+    strip instead of the default full sidebar to reclaim more horizontal
+    screen space
+  * Various bug fixes and improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 24 Jul 2026 14:33:24 +0000
+
 sshpilot (5.6.6-1) unstable; urgency=medium
 
   * Release v5.6.6.
