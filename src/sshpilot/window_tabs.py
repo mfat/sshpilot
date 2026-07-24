@@ -244,13 +244,8 @@ class WindowTabsMixin:
         sec2 = Gio.Menu()
         sec2.append_item(_item(_('Reconnect'), 'tabmenu-reconnect'))
         sec2.append_item(_item(_('Manage Files'), 'tabmenu-manage-files'))
-<<<<<<< HEAD
         sec2.append_item(_item(_('Show File Pane'), 'tabmenu-show-files-panel'))
         sec2.append_item(_item(_('Hide File Pane'), 'tabmenu-hide-files-panel'))
-=======
-        sec2.append_item(_item(_('Show Files Below'), 'tabmenu-show-files-panel'))
-        sec2.append_item(_item(_('Hide Files Below'), 'tabmenu-hide-files-panel'))
->>>>>>> d0c431ec31ebe414ee1acdd10ac2407b5492b4ae
         sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
         sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
         sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
