@@ -12,7 +12,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 
-from gi.repository import Gtk
+from gi.repository import GLib, Gtk
 
 from .platform_utils import is_flatpak, is_macos
 from .sftp_utils import open_remote_in_file_manager
@@ -188,8 +188,83 @@ if isinstance(getattr(Gtk, 'Box', None), type):
             if content.get_parent() is not None:
                 content.unparent()
 
+            self._content = content
             self.append(content)
             self.connect('destroy', self._on_destroy)
+
+            # Terminal panel (a TerminalWidget shown below the file manager);
+            # mirror of TerminalWidget's files panel — see set_terminal_panel().
+            self._terminal_panel = None
+            self._terminal_panel_paned = None
+            self._terminal_panel_teardown = None
+
+        # ── terminal panel (terminal below the file manager) ────────────────
+
+        def has_terminal_panel(self) -> bool:
+            return self._terminal_panel is not None
+
+        def set_terminal_panel(self, terminal, teardown=None) -> None:
+            """Show *terminal* below the file manager in a vertical Gtk.Paned.
+
+            The page child stays this embed, so tab bookkeeping and the
+            embed-subtree teardown search are unaffected. *teardown* is invoked
+            from clear_terminal_panel() so the caller can disconnect the
+            terminal and drop it from the window tracking dicts.
+            """
+            if self._terminal_panel is not None:
+                self.clear_terminal_panel()
+
+            paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+            paned.set_wide_handle(True)
+            paned.set_hexpand(True)
+            paned.set_vexpand(True)
+            paned.set_shrink_start_child(False)
+            paned.set_shrink_end_child(False)
+            self.remove(self._content)
+            paned.set_start_child(self._content)
+            paned.set_end_child(terminal)
+            self.append(paned)
+
+            self._terminal_panel = terminal
+            self._terminal_panel_paned = paned
+            self._terminal_panel_teardown = teardown
+
+            def _apply_position() -> bool:
+                if self._terminal_panel_paned is not paned:
+                    return False  # panel was cleared before allocation
+                height = self.get_height()
+                if height <= 0:
+                    return True  # not allocated yet — retry on idle
+                paned.set_position(int(height * 0.6))
+                return False
+
+            if _apply_position():
+                GLib.idle_add(_apply_position)
+
+        def clear_terminal_panel(self) -> None:
+            """Remove the terminal panel and restore the manager-only layout."""
+            paned = self._terminal_panel_paned
+            teardown = self._terminal_panel_teardown
+            self._terminal_panel = None
+            self._terminal_panel_paned = None
+            self._terminal_panel_teardown = None
+            if paned is None:
+                return
+            # Disconnect the terminal while the tree is still intact.
+            if teardown is not None:
+                try:
+                    teardown()
+                except Exception:
+                    logger.debug("Terminal panel teardown failed", exc_info=True)
+            try:
+                # set_*_child(None) instead of unparent(): unparenting a Paned
+                # child can silently fail in GTK4 (see split_view._release_paned).
+                paned.set_end_child(None)
+                paned.set_start_child(None)
+                self.remove(paned)
+                self.append(self._content)
+            except Exception:
+                logger.debug("Terminal panel layout restore failed", exc_info=True)
 
         def _on_destroy(self, *_args) -> None:
             controller = getattr(self, '_controller', None)
@@ -226,6 +301,13 @@ else:  # pragma: no cover - fallback for test doubles
             self._controller = controller
             self._content = content
             self._destroy_handlers: list[Any] = []
+            self._terminal_panel = None
+
+        def has_terminal_panel(self) -> bool:
+            return False
+
+        def clear_terminal_panel(self) -> None:
+            return None
 
         # Compatibility shims used by window code
         def set_hexpand(self, *_args, **_kwargs):

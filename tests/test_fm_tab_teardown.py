@@ -191,3 +191,66 @@ def test_on_tab_detached_tears_down_fm_embed():
                         page=page, position=0)
 
     assert torn == [sentinel_embed]
+
+
+def test_on_tab_detached_clears_terminal_panel_before_embed_teardown():
+    """An FM tab's terminal panel is disconnected before the controller dies."""
+    wm = _window_module()
+    win = wm.MainWindow.__new__(wm.MainWindow)
+    win._moving_tab_to_pane = False
+
+    order = []
+    child = object()
+    embed = types.SimpleNamespace(
+        clear_terminal_panel=lambda: order.append('clear-terminal'),
+    )
+    win._file_manager_embeds_for_child = lambda c: [embed] if c is child else []
+    win._teardown_file_manager_embed = lambda e: order.append('teardown-embed')
+    win.terminal_to_connection = {}
+    win._update_tab_button_visibility = lambda: None
+    win._update_layout_toggle_state = lambda: None
+    win.has_user_tabs = lambda: True
+
+    page = types.SimpleNamespace(get_child=lambda: child)
+    win.on_tab_detached(tab_view=types.SimpleNamespace(get_n_pages=lambda: 1),
+                        page=page, position=0)
+
+    assert order == ['clear-terminal', 'teardown-embed']
+
+
+# ── FileManagerTabEmbed.clear_terminal_panel (duck-typed, no GTK build) ─────
+
+def _fake_embed_with_panel(order):
+    paned = types.SimpleNamespace(
+        set_end_child=lambda c: order.append(('end_child', c)),
+        set_start_child=lambda c: order.append(('start_child', c)),
+    )
+    fake = types.SimpleNamespace(
+        _terminal_panel=object(),
+        _terminal_panel_paned=paned,
+        _terminal_panel_teardown=lambda: order.append('teardown'),
+        _content=object(),
+        remove=lambda w: order.append(('remove', w)),
+        append=lambda w: order.append(('append', w)),
+    )
+    return fake, paned
+
+
+def test_clear_terminal_panel_runs_teardown_before_detach():
+    _ensure_cairo_stub()
+    from sshpilot.file_manager_integration import FileManagerTabEmbed
+
+    order = []
+    fake, paned = _fake_embed_with_panel(order)
+    FileManagerTabEmbed.clear_terminal_panel(fake)
+
+    assert order[0] == 'teardown'
+    assert ('remove', paned) in order
+    assert order[-1] == ('append', fake._content)
+    assert fake._terminal_panel is None
+    assert fake._terminal_panel_paned is None
+
+    # Idempotent: a second call is a no-op.
+    order.clear()
+    FileManagerTabEmbed.clear_terminal_panel(fake)
+    assert order == []
