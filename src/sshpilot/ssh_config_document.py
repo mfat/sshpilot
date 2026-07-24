@@ -107,9 +107,13 @@ Node = Union[HostBlock, MatchBlock, RawSpan]
 class SSHConfigDocument:
     """Ordered, lossless view of one ssh_config file."""
 
-    def __init__(self, nodes: List[Node], path: Optional[str] = None):
+    def __init__(self, nodes: List[Node], path: Optional[str] = None,
+                 newline: str = '\n'):
         self.nodes = nodes
         self.path = path
+        # The file's line-ending style; generated lines are converted to it
+        # via render_lines() so an edit never mixes endings.
+        self.newline = newline
 
     @classmethod
     def parse_text(cls, text: str, path: Optional[str] = None) -> 'SSHConfigDocument':
@@ -143,18 +147,28 @@ class SSHConfigDocument:
             i += 1
         flush_raw()
 
-        doc = cls(nodes, path=path)
+        doc = cls(nodes, path=path,
+                  newline='\r\n' if '\r\n' in text else '\n')
         # Losslessness is the whole point — fail loudly, not subtly.
         assert doc.text() == text, "SSHConfigDocument lost bytes while parsing"
         return doc
 
     @classmethod
     def parse_file(cls, path: str) -> 'SSHConfigDocument':
-        with open(path, encoding='utf-8') as f:
+        # newline='' disables universal-newline translation so CRLF configs
+        # are seen (and re-serialized) byte-for-byte.
+        with open(path, encoding='utf-8', newline='') as f:
             return cls.parse_text(f.read(), path=path)
 
     def text(self) -> str:
         return ''.join(node.text() for node in self.nodes)
+
+    def render_lines(self, lines: List[str]) -> List[str]:
+        """Convert generated LF-terminated lines to this document's newline
+        style so edits never mix line endings."""
+        if self.newline == '\n':
+            return list(lines)
+        return [line.replace('\n', self.newline) for line in lines]
 
     def host_blocks(self, token: Optional[str] = None) -> List[HostBlock]:
         """All Host blocks, or only those whose token list contains *token*

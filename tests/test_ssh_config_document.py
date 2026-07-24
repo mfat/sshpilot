@@ -40,9 +40,19 @@ FIXTURE = (
     "Host lone\n",                        # header with no body, no newline issues
     "    Host indented\n    HostName x\n",  # indented header
     'Host "unbalanced\n    HostName x\n',   # malformed quoting (fallback split)
+    "Host crlf\r\n    HostName x\r\n",      # CRLF endings kept byte-for-byte
 ])
 def test_roundtrip_is_byte_for_byte(text):
     assert SSHConfigDocument.parse_text(text).text() == text
+
+
+def test_crlf_newline_detected_and_rendered(tmp_path):
+    p = tmp_path / "config"
+    p.write_bytes(b"Host crlf\r\n    HostName x\r\n")
+    doc = SSHConfigDocument.parse_file(str(p))
+    assert doc.newline == "\r\n"
+    assert doc.text() == "Host crlf\r\n    HostName x\r\n"
+    assert doc.render_lines(["Host y\n", "\n"]) == ["Host y\r\n", "\r\n"]
 
 
 def test_block_boundaries_and_tokens():

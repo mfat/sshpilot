@@ -195,6 +195,67 @@ def test_trailing_comment_after_edited_block_survives(tmp_path):
     assert "# db cluster below" in (tmp_path / "config").read_text()
 
 
+def test_crlf_config_fully_preserved_on_edit(tmp_path):
+    """A CRLF config stays CRLF everywhere after an edit — untouched blocks
+    byte-for-byte, generated lines converted to the document's style."""
+    text = (
+        "Host web\r\n"
+        "    HostName example.com\r\n"
+        "    User alice\r\n"
+        "\r\n"
+        "Host db\r\n"
+        "    HostName db.internal\r\n"
+    )
+    (tmp_path / "config").write_bytes(text.encode())
+    cm = make_cm(tmp_path)
+    cm.load_ssh_config()
+    conn = cm.find_connection_by_nickname("web")
+    assert conn is not None and conn.hostname == "example.com"
+
+    cm.update_ssh_config_file(
+        conn, {"nickname": "web", "hostname": "example.com", "username": "bob"}, "web"
+    )
+    raw = (tmp_path / "config").read_bytes().decode()
+    assert "\n" not in raw.replace("\r\n", "")  # every line ending is CRLF
+    assert "    User bob\r\n" in raw
+    assert "Host db\r\n    HostName db.internal\r\n" in raw
+
+
+def test_crlf_remove_keeps_other_blocks_byte_identical(tmp_path):
+    text = (
+        "Host web\r\n"
+        "    HostName example.com\r\n"
+        "Host db\r\n"
+        "    HostName db.internal\r\n"
+    )
+    (tmp_path / "config").write_bytes(text.encode())
+    cm = make_cm(tmp_path)
+    cm.load_ssh_config()
+    assert cm.remove_ssh_config_entry("web") is True
+    assert (tmp_path / "config").read_bytes() == \
+        b"Host db\r\n    HostName db.internal\r\n"
+
+
+def test_missing_final_newline_preserved_when_other_block_edited(tmp_path):
+    text = (
+        "Host web\n"
+        "    HostName example.com\n"
+        "\n"
+        "Host tail\n"
+        "    HostName tail.example.com"  # no final newline
+    )
+    (tmp_path / "config").write_text(text)
+    cm = make_cm(tmp_path)
+    cm.load_ssh_config()
+    conn = cm.find_connection_by_nickname("web")
+    cm.update_ssh_config_file(
+        conn, {"nickname": "web", "hostname": "example.com", "username": "bob"}, "web"
+    )
+    saved = (tmp_path / "config").read_text()
+    assert saved.endswith("    HostName tail.example.com")
+    assert "    User bob\n" in saved
+
+
 def test_repeated_unknown_directives_survive_edit(tmp_path):
     """SendEnv/SetEnv legitimately repeat; every authored occurrence must be
     parsed into extra_ssh_config and survive a dialog-style edit."""

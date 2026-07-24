@@ -1097,7 +1097,7 @@ class ConnectionManager(GObject.Object):
 
         fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.sshpilot-', suffix='.tmp')
         try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='') as f:
                 f.write(text)
                 f.flush()
                 os.fsync(f.fileno())
@@ -1499,7 +1499,7 @@ class ConnectionManager(GObject.Object):
                         if pending_tokens and pending_config:
                             flush_block(pending_tokens, pending_config, cfg_file)
                         pending_tokens, pending_config = [], {}
-                        block_lines = [line.rstrip('\n') for line in node.lines]
+                        block_lines = [line.rstrip('\r\n') for line in node.lines]
                         while block_lines and block_lines[-1].strip() == '':
                             block_lines.pop()
                         self.rules.append({'raw': '\n'.join(block_lines), 'source': cfg_file})
@@ -1964,7 +1964,7 @@ class ConnectionManager(GObject.Object):
         return {
             'source': target_path,
             'hosts': list(block.tokens),
-            'lines': [line.rstrip('\n') for line in block.lines],
+            'lines': [line.rstrip('\r\n') for line in block.lines],
         }
 
     def collect_host_block_lines(self, host_identifier: str) -> List[str]:
@@ -1993,7 +1993,7 @@ class ConnectionManager(GObject.Object):
             except (OSError, UnicodeDecodeError):
                 continue
             for block in doc.host_blocks(host_identifier):
-                combined.extend(line.rstrip('\n') for line in block.lines)
+                combined.extend(line.rstrip('\r\n') for line in block.lines)
         return combined
 
     def _split_host_block(self, original_host: str, new_data: Dict[str, Any], target_path: str) -> bool:
@@ -2017,20 +2017,21 @@ class ConnectionManager(GObject.Object):
                         header = node.lines[0]
                         indent = header[:len(header) - len(header.lstrip())]
                         node.tokens = remaining
-                        node.lines[0] = f"{indent}Host {shlex.join(remaining)}\n"
+                        node.lines[0] = doc.render_lines([f"{indent}Host {shlex.join(remaining)}\n"])[0]
                     else:
                         del doc.nodes[idx]
                     break
 
             updated_lines = doc.text().splitlines(keepends=True)
             formatted_block = self.format_ssh_config_entry(new_data).rstrip('\n')
+            tail: List[str] = []
             if updated_lines:
                 if not updated_lines[-1].endswith('\n'):
-                    updated_lines[-1] = updated_lines[-1] + '\n'
+                    updated_lines[-1] = updated_lines[-1] + doc.newline
                 if updated_lines[-1].strip():
-                    updated_lines.append('\n')
-
-            updated_lines.append(formatted_block + '\n')
+                    tail.append('\n')
+            tail.append(formatted_block + '\n')
+            updated_lines.extend(doc.render_lines(tail))
 
             self._safe_write_config(target_path, ''.join(updated_lines))
 
@@ -2085,7 +2086,7 @@ class ConnectionManager(GObject.Object):
                     # Surgically merge into the first matching block; later
                     # duplicates are dropped (ssh merge semantics — the app
                     # writes the one merged block it loaded).
-                    new_nodes.append(RawSpan(lines=self._merged_block_lines(node, new_data)))
+                    new_nodes.append(RawSpan(lines=doc.render_lines(self._merged_block_lines(node, new_data))))
                 host_found = True
                 continue
             new_nodes.append(node)
@@ -2093,7 +2094,7 @@ class ConnectionManager(GObject.Object):
         # If the host was not found, append the new config
         if not host_found:
             block_lines = self._merged_block_lines(None, new_data)
-            new_nodes.append(RawSpan(lines=['\n'] + block_lines))
+            new_nodes.append(RawSpan(lines=doc.render_lines(['\n'] + block_lines)))
         doc.nodes = new_nodes
 
         self._safe_write_config(target_path, doc.text())
@@ -2130,7 +2131,7 @@ class ConnectionManager(GObject.Object):
                 header = node.lines[0]
                 indent = header[:len(header) - len(header.lstrip())]
                 node.tokens = remaining
-                node.lines[0] = f"{indent}Host {shlex.join(remaining)}\n"
+                node.lines[0] = doc.render_lines([f"{indent}Host {shlex.join(remaining)}\n"])[0]
                 new_nodes.append(node)
                 logger.info(f"Updated Host line: removed '{host_nickname}', remaining: {remaining}")
             else:
