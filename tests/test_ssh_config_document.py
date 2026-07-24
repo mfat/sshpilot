@@ -4,6 +4,7 @@ import pytest
 
 from sshpilot.ssh_config_document import (
     HostBlock,
+    MatchBlock,
     RawSpan,
     SSHConfigDocument,
     split_host_tokens,
@@ -53,9 +54,11 @@ def test_block_boundaries_and_tokens():
         ["two words", "plain"],
         ["tail"],
     ]
-    # The Match block and the Include line live in RawSpans, not HostBlocks.
+    # The Match block is its own node; the Include line stays raw.
+    match_nodes = [n for n in doc.nodes if isinstance(n, MatchBlock)]
+    assert len(match_nodes) == 1
+    assert match_nodes[0].text() == "Match host *.internal\n    User matchuser\n\n"
     raw_text = "".join(n.text() for n in doc.nodes if isinstance(n, RawSpan))
-    assert "Match host *.internal" in raw_text
     assert "Include fragments/*" in raw_text
     # In-block comments and blank lines up to the next header belong to the block.
     web = doc.host_blocks("web")[0]
@@ -97,6 +100,6 @@ def test_split_host_tokens_fallback():
     assert split_host_tokens("") == []
 
 
-def test_node_types_are_exactly_two():
+def test_node_types_are_exactly_three():
     doc = SSHConfigDocument.parse_text(FIXTURE)
-    assert all(isinstance(n, (HostBlock, RawSpan)) for n in doc.nodes)
+    assert all(isinstance(n, (HostBlock, MatchBlock, RawSpan)) for n in doc.nodes)

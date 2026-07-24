@@ -64,6 +64,7 @@ def _ensure_event_loop() -> asyncio.AbstractEventLoop:
 from .ssh_config_document import (  # noqa: F401  (re-export)
     _CONFIG_OPTION_RE,
     HostBlock,
+    MatchBlock,
     RawSpan,
     SSHConfigDocument,
     _split_config_option,
@@ -1417,81 +1418,81 @@ class ConnectionManager(GObject.Object):
                 for token in cleaned:
                     _materialise(token, config, cleaned, cfg_file)
 
-            for cfg_file in config_files:
-                current_hosts: List[str] = []
-                current_config: Dict[str, Any] = {}
-                try:
-                    with open(cfg_file) as f:
-                        lines = f.readlines()
-                except Exception as e:
-                    logger.warning(f"Skipping unreadable config {cfg_file}: {e}")
-                    continue
-                i = 0
-                while i < len(lines):
-                    raw_line = lines[i]
+            def _absorb_option_lines(raw_lines, config: Dict[str, Any]) -> None:
+                """Accumulate option lines into *config* with ssh_config(5)
+                semantics (first-value-wins; ACCUMULATE_KEYS append)."""
+                for raw_line in raw_lines:
                     line = raw_line.strip()
                     if not line:
-                        i += 1
                         continue
                     if line.startswith('#'):
-                        if current_hosts and line.startswith('# sshpilot:PreCommand '):
-                            current_config['__pre_command'] = line[len('# sshpilot:PreCommand '):].strip()
-                        i += 1
+                        if line.startswith('# sshpilot:PreCommand '):
+                            config['__pre_command'] = line[len('# sshpilot:PreCommand '):].strip()
                         continue
-                    # Identify the leading keyword honouring all separators
-                    # (``Host x``, ``Host=x``, ``Host = x``, tabs) so equals-form
-                    # block headers are recognised, not merged into the prior host.
-                    keyword, remainder = _split_keyword(line)
-                    if keyword == 'include':
-                        i += 1
+                    if _split_keyword(line)[0] == 'include':
+                        continue  # resolve_ssh_config_files handles Includes
+                    key, value = _split_config_option(line)
+                    if key is None:
                         continue
-                    if keyword == 'match':
-                        if current_hosts and current_config:
-                            flush_block(current_hosts, current_config, cfg_file)
-                        current_hosts = []
-                        current_config = {}
-                        block_lines = [raw_line.rstrip('\n')]
-                        i += 1
-                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                            block_lines.append(lines[i].rstrip('\n'))
-                            i += 1
+                    key = key.lower()
+                    if key in config:
+                        if key in ACCUMULATE_KEYS:
+                            if not isinstance(config[key], list):
+                                config[key] = [config[key]]
+                            config[key].append(value)
+                        # Otherwise ssh_config(5) is first-value-wins: a
+                        # repeated non-accumulating option is ignored.
+                    else:
+                        config[key] = value
+
+            for cfg_file in config_files:
+                try:
+                    doc = SSHConfigDocument.parse_file(cfg_file)
+                except (OSError, UnicodeDecodeError) as e:
+                    logger.warning(f"Skipping unreadable config {cfg_file}: {e}")
+                    continue
+
+                # An Include line terminates a HostBlock in the document (the
+                # edit paths must never swallow one), but per ssh semantics the
+                # options AFTER an inline Include still belong to the host — so
+                # the pending host absorbs following RawSpans until the next
+                # Host/Match header.
+                pending_tokens: List[str] = []
+                pending_config: Dict[str, Any] = {}
+
+                for node in doc.nodes:
+                    if isinstance(node, MatchBlock):
+                        if pending_tokens and pending_config:
+                            flush_block(pending_tokens, pending_config, cfg_file)
+                        pending_tokens, pending_config = [], {}
+                        block_lines = [line.rstrip('\n') for line in node.lines]
                         while block_lines and block_lines[-1].strip() == '':
                             block_lines.pop()
                         self.rules.append({'raw': '\n'.join(block_lines), 'source': cfg_file})
                         continue
-                    if keyword == 'host':
+                    if isinstance(node, HostBlock):
+                        # STRICT header tokenization on load: unbalanced quoting
+                        # aborts the whole reload (the rollback keeps the last
+                        # known-good state). The document's tolerant tokens are
+                        # for addressing existing blocks, not for loading.
+                        _, remainder = _split_keyword(node.lines[0].lstrip())
                         tokens = shlex.split(remainder) if remainder else []
                         if not tokens:
-                            i += 1
+                            # Bare ``Host`` header: options keep flowing to the
+                            # pending host, matching the old scanner.
+                            _absorb_option_lines(node.lines[1:], pending_config)
                             continue
-                        if current_hosts and current_config:
-                            flush_block(current_hosts, current_config, cfg_file)
-                        current_hosts = tokens
-                        current_config = {}
-                        i += 1
+                        if pending_tokens and pending_config:
+                            flush_block(pending_tokens, pending_config, cfg_file)
+                        pending_tokens, pending_config = tokens, {}
+                        _absorb_option_lines(node.lines[1:], pending_config)
                         continue
-                    key, value = _split_config_option(line)
-                    if key is not None:
-                        key = key.lower()
-                        # Directives that accumulate per ssh_config(5): forwardings
-                        # and IdentityFile/CertificateFile ("Multiple ... directives
-                        # will add to the list").
-                        accumulates = key in (
-                            'localforward', 'remoteforward', 'dynamicforward',
-                            'identityfile', 'certificatefile',
-                        )
-                        if key in current_config:
-                            if accumulates:
-                                if not isinstance(current_config[key], list):
-                                    current_config[key] = [current_config[key]]
-                                current_config[key].append(value)
-                            # Otherwise ssh_config(5) is first-value-wins: a
-                            # repeated non-accumulating option is ignored.
-                        else:
-                            current_config[key] = value
-                    i += 1
-                if current_hosts and current_config:
-                    flush_block(current_hosts, current_config, cfg_file)
+                    # RawSpan: continuation lines (post-Include options,
+                    # comments, blanks) for the pending host, if any.
+                    _absorb_option_lines(node.lines, pending_config)
+
+                if pending_tokens and pending_config:
+                    flush_block(pending_tokens, pending_config, cfg_file)
             # Every file parsed cleanly — now it is safe to mutate the reused
             # objects (dict merges below cannot realistically fail mid-way).
             for conn, connection_data in pending_updates:

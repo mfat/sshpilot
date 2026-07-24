@@ -12,10 +12,11 @@ connection_manager: a block starts at a line whose keyword is ``Host``
 ``Host``/``Match``/``Include`` header — trailing comments/blank lines before
 the next header belong to the preceding block's span.
 
-Only ``Host`` blocks are modeled because they are the only thing the app
-edits; promote a ``RawSpan`` to a real node type if an operation ever needs
-more. Multi-file resolution (Include) stays in ``ssh_config_utils`` — a
-document is always a single file.
+``Host`` blocks are modeled because they are the only thing the app edits;
+``Match`` blocks are modeled (lines only, never edited) because the loader
+collects them as preservation rules. Everything else stays ``RawSpan``.
+Multi-file resolution (Include) stays in ``ssh_config_utils`` — a document
+is always a single file.
 """
 
 import re
@@ -82,6 +83,16 @@ class HostBlock:
 
 
 @dataclass
+class MatchBlock:
+    """One ``Match`` stanza, lines verbatim. Never edited; the loader keeps
+    these as preservation rules."""
+    lines: List[str] = field(default_factory=list)
+
+    def text(self) -> str:
+        return ''.join(self.lines)
+
+
+@dataclass
 class RawSpan:
     """Any run of lines the app never edits — preserved byte-for-byte."""
     lines: List[str] = field(default_factory=list)
@@ -90,7 +101,7 @@ class RawSpan:
         return ''.join(self.lines)
 
 
-Node = Union[HostBlock, RawSpan]
+Node = Union[HostBlock, MatchBlock, RawSpan]
 
 
 class SSHConfigDocument:
@@ -114,10 +125,13 @@ class SSHConfigDocument:
         i = 0
         while i < len(lines):
             keyword, remainder = _split_keyword(lines[i].lstrip())
-            if keyword == 'host':
+            if keyword in ('host', 'match'):
                 flush_raw()
-                block = HostBlock(tokens=split_host_tokens(remainder),
-                                  lines=[lines[i]])
+                if keyword == 'host':
+                    block: Node = HostBlock(tokens=split_host_tokens(remainder),
+                                            lines=[lines[i]])
+                else:
+                    block = MatchBlock(lines=[lines[i]])
                 i += 1
                 while i < len(lines) and \
                         _split_keyword(lines[i].strip())[0] not in _BLOCK_HEADERS:
