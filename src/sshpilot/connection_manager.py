@@ -1028,7 +1028,7 @@ class ConnectionManager(GObject.Object):
             logger.info(f"Non-SSH connection updated: {connection.nickname}")
             return True
         except Exception as e:
-            logger.error(f"Failed to update non-SSH connection: {e}")
+            logger.error(f"Failed to update non-SSH connection: {e}", exc_info=True)
             return False
 
     def set_isolated_mode(self, isolated: bool):
@@ -1948,7 +1948,7 @@ class ConnectionManager(GObject.Object):
 
         try:
             doc = SSHConfigDocument.parse_file(target_path)
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             logger.debug(f"Failed to inspect host block for '{host_identifier}': {e}")
             return None
 
@@ -1985,7 +1985,7 @@ class ConnectionManager(GObject.Object):
                 if not path or not os.path.exists(path):
                     continue
                 doc = SSHConfigDocument.parse_file(path)
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 continue
             for block in doc.host_blocks(host_identifier):
                 combined.extend(line.rstrip('\n') for line in block.lines)
@@ -2037,7 +2037,7 @@ class ConnectionManager(GObject.Object):
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to split host block for '{original_host}': {e}")
+            logger.error(f"Failed to split host block for '{original_host}': {e}", exc_info=True)
             return False
 
     def _merged_block_lines(self, old_block: Optional[HostBlock],
@@ -2046,67 +2046,59 @@ class ConnectionManager(GObject.Object):
         return merged_block_lines(old_block, new_data)
 
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: Optional[str] = None):
-        """Update SSH config file with new connection data"""
-        try:
-            target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
-            target_path = self._ensure_config_parent_dir(target_path)
-            if not os.path.exists(target_path):
-                updated_config = self.format_ssh_config_entry(new_data)
-                self._safe_write_config(
-                    target_path,
-                    "# SSH configuration file\n\n" + updated_config.rstrip('\n') + '\n',
-                )
-                return
+        """Update SSH config file with new connection data.
 
-            try:
-                doc = SSHConfigDocument.parse_file(target_path)
-            except OSError as e:
-                logger.error(f"Failed to read SSH config: {e}")
-                raise
+        Read/write failures propagate; update_connection() is the recovery
+        boundary that logs (with traceback) and returns False.
+        """
+        target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
+        target_path = self._ensure_config_parent_dir(target_path)
+        if not os.path.exists(target_path):
+            updated_config = self.format_ssh_config_entry(new_data)
+            self._safe_write_config(
+                target_path,
+                "# SSH configuration file\n\n" + updated_config.rstrip('\n') + '\n',
+            )
+            return
 
-            new_name = str(new_data.get('nickname') or '')
-            # For renaming, find the existing block by the original nickname —
-            # the connection object might already carry the new one.
-            candidate_names = {new_name}
-            if original_nickname:
-                candidate_names.add(original_nickname)
-            logger.debug(f"Looking for host block with candidate names: {candidate_names}")
+        doc = SSHConfigDocument.parse_file(target_path)
 
-            host_found = False
-            new_nodes: List[Any] = []
-            for node in doc.nodes:
-                if isinstance(node, HostBlock) and \
-                        any(token in candidate_names for token in node.tokens):
-                    if not host_found:
-                        # Surgically merge into the first matching block; later
-                        # duplicates are dropped (ssh merge semantics — the app
-                        # writes the one merged block it loaded).
-                        new_nodes.append(RawSpan(lines=self._merged_block_lines(node, new_data)))
-                    host_found = True
-                    continue
-                new_nodes.append(node)
+        new_name = str(new_data.get('nickname') or '')
+        # For renaming, find the existing block by the original nickname —
+        # the connection object might already carry the new one.
+        candidate_names = {new_name}
+        if original_nickname:
+            candidate_names.add(original_nickname)
+        logger.debug(f"Looking for host block with candidate names: {candidate_names}")
 
-            # If the host was not found, append the new config
-            if not host_found:
-                block_lines = self._merged_block_lines(None, new_data)
-                new_nodes.append(RawSpan(lines=['\n'] + block_lines))
-            doc.nodes = new_nodes
+        host_found = False
+        new_nodes: List[Any] = []
+        for node in doc.nodes:
+            if isinstance(node, HostBlock) and \
+                    any(token in candidate_names for token in node.tokens):
+                if not host_found:
+                    # Surgically merge into the first matching block; later
+                    # duplicates are dropped (ssh merge semantics — the app
+                    # writes the one merged block it loaded).
+                    new_nodes.append(RawSpan(lines=self._merged_block_lines(node, new_data)))
+                host_found = True
+                continue
+            new_nodes.append(node)
 
-            try:
-                self._safe_write_config(target_path, doc.text())
-                logger.info(
-                    "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
-                    new_name,
-                    host_found,
-                    len(new_data.get('forwarding_rules', []) or []),
-                    target_path,
-                )
-            except OSError as e:
-                logger.error(f"Failed to write SSH config: {e}")
-                raise
-        except Exception as e:
-            logger.error(f"Error updating SSH config: {e}", exc_info=True)
-            raise
+        # If the host was not found, append the new config
+        if not host_found:
+            block_lines = self._merged_block_lines(None, new_data)
+            new_nodes.append(RawSpan(lines=['\n'] + block_lines))
+        doc.nodes = new_nodes
+
+        self._safe_write_config(target_path, doc.text())
+        logger.info(
+            "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
+            new_name,
+            host_found,
+            len(new_data.get('forwarding_rules', []) or []),
+            target_path,
+        )
 
     def remove_ssh_config_entry(self, host_nickname: str, source: Optional[str] = None) -> bool:
         """Remove a host label from SSH config, or entire block if it's the only label.
@@ -2338,7 +2330,7 @@ class ConnectionManager(GObject.Object):
             return True
             
         except Exception as e:
-            logger.error(f"Failed to update connection: {e}")
+            logger.error(f"Failed to update connection: {e}", exc_info=True)
             return False
 
     def remove_connection(
@@ -2401,7 +2393,7 @@ class ConnectionManager(GObject.Object):
             return True
 
         except Exception as e:
-            logger.error(f"Failed to remove connection: {e}")
+            logger.error(f"Failed to remove connection: {e}", exc_info=True)
             return False
 
     def update_connection_state(
