@@ -16,6 +16,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, GLib, Gtk
 
 from .cli_connect import validate_cli_tokens
+from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
 
 _ = gettext.gettext
 
@@ -371,9 +372,7 @@ class OmniSearchController:
 
         self.entry = Gtk.SearchEntry()
         self.entry.set_can_focus(True)
-        self.entry.set_placeholder_text(
-            _("Search connections, tools, or type a SSH command")
-        )
+        self._update_placeholder()
         self.entry.add_css_class("omni-search-entry")
         self.entry.connect("search-changed", self._on_search_changed)
         self.entry.connect("activate", lambda *_args: self.activate_selected())
@@ -430,6 +429,50 @@ class OmniSearchController:
         delegate = self.entry.get_delegate()
         return delegate if delegate is not None else self.entry
 
+    def _update_placeholder(self) -> None:
+        """Placeholder mentions the current omnisearch shortcut, if any."""
+        label = ""
+        try:
+            app = self.window.get_application()
+            accels = app.get_effective_shortcuts("omnisearch") or []
+            if accels:
+                if accels[0] == DOUBLE_SHIFT_SHORTCUT:
+                    self.entry.set_placeholder_text(
+                        _("Press Shift twice to search connections, tools or type ssh commands")
+                    )
+                    return
+                ok, keyval, mods = Gtk.accelerator_parse(accels[0])
+                if ok and (keyval or mods):
+                    label = Gtk.accelerator_get_label(keyval, mods)
+        except Exception:
+            pass
+        base = _("Search connections, tools or type ssh commands")
+        self.entry.set_placeholder_text(f"{base} · {label}" if label else base)
+
+    def _examples_placeholder(self) -> str:
+        """Example queries shown while the box is open: a connection name, an
+        ssh command and a tool, built from the user's own hosts when possible."""
+        try:
+            connections = list(self.window.connection_manager.get_connections())
+        except Exception:
+            connections = []
+        ordered = _recent_and_pinned(self.window, connections) or connections
+        if ordered:
+            first = ordered[0]
+            nick = str(getattr(first, "nickname", "") or "")
+            host = str(
+                getattr(first, "hostname", "") or getattr(first, "host", "") or ""
+            )
+            user = str(getattr(first, "username", "") or "")
+            target = f"{user}@{host}" if user and host else host or nick
+            second = ordered[1] if len(ordered) > 1 else first
+            nick2 = str(getattr(second, "nickname", "") or "") or nick
+            if nick and target:
+                return _("Try: “{name}”  or  “ssh {target}”  or  “sftp {name2}”").format(
+                    name=nick, target=target, name2=nick2,
+                )
+        return _("Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”")
+
     def _start_is_visible(self) -> bool:
         if not self.window.is_start_tab_selected():
             return False
@@ -450,6 +493,9 @@ class OmniSearchController:
             self.popup.apply_preset("omni")
 
     def show(self, select_all: bool = True) -> None:
+        # While open, the placeholder shows example queries instead of the
+        # shortcut hint; _on_popup_hidden switches it back.
+        self.entry.set_placeholder_text(self._examples_placeholder())
         if self.popup.visible:
             self._apply_presentation()
             if select_all and self.entry.get_text():
@@ -483,6 +529,8 @@ class OmniSearchController:
 
     def _on_popup_hidden(self) -> None:
         self._set_results_visible(False)
+        # Back to the rest-state hint (also picks up shortcut reassignments).
+        self._update_placeholder()
         if self._anchored:
             self._entry_focus_widget().grab_focus()
         elif self._previous_focus is not None:
