@@ -148,6 +148,7 @@ class RemoteFileEditorWindow(Adw.Window):
         sftp_manager: Optional[Any] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
         pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
+        on_local_saved: Optional[Callable[[], None]] = None,
         language_id: Optional[str] = None,
         show_outline: bool = False,
     ) -> None:
@@ -166,6 +167,10 @@ class RemoteFileEditorWindow(Adw.Window):
         # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
         # error string to block the save, or None to allow it.
         self._pre_save_validator = pre_save_validator
+        # Optional owner notification after an atomic local save. File monitors
+        # are not sufficient here: replacing a file can detach an inode-based
+        # monitor before it reports the new file.
+        self._on_local_saved = on_local_saved
         # Optional GtkSourceView language id (e.g. 'sshconfig') + a Host/Match
         # outline sidebar — used by the SSH config editor only.
         self._language_id = language_id
@@ -1002,6 +1007,11 @@ class RemoteFileEditorWindow(Adw.Window):
                 # For local files, just save and refresh the pane
                 self._show_toast("Saved", timeout=2)
                 self._save_button.set_sensitive(False)
+                if self._on_local_saved is not None:
+                    try:
+                        self._on_local_saved()
+                    except Exception:
+                        logger.debug("local-save callback failed", exc_info=True)
                 # Refresh the file manager to show updated file
                 if self._file_manager_window:
                     pane = self._file_manager_window._left_pane
@@ -1732,4 +1742,3 @@ class RemoteFileEditorWindow(Adw.Window):
         self._zoom_level = 1.0
         self._apply_zoom()
         logger.debug("Editor zoom reset to 1.0x")
-

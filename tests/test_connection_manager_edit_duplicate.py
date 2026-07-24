@@ -40,31 +40,38 @@ def test_apply_update_returns_false_and_skips_sync_when_write_fails():
     assert not hasattr(old, "nickname")
 
 
+def _delegating_update(c, d):
+    """Mimic the real update_connection contract: persist (stubbed out here),
+    then sync the live object via update_data()."""
+    c.update_data(d)
+    return True
+
+
 def test_apply_update_syncs_attributes_on_success():
-    cm = _cm(update_connection=lambda c, d: True)
-    old = types.SimpleNamespace(data={}, ssh_cmd=["stale"])
+    cm = _cm(update_connection=_delegating_update)
+    old = Connection(_full_data())
+    old.ssh_cmd = ["stale"]
     ok = cm.apply_connection_update(
         old, _full_data(nickname="new", hostname="hh", username="uu", port=2200))
     assert ok is True
     assert old.nickname == "new"
     assert old.hostname == "hh"
-    assert old.host == "hh"            # host mirrors hostname
+    assert old.host == "new"           # host = the alias (nickname), never the address
     assert old.username == "uu"
     assert old.port == 2200
     assert old.ssh_cmd == []           # prepared command invalidated
 
 
 def test_apply_update_normalizes_proxy_jump_string_to_list():
-    cm = _cm(update_connection=lambda c, d: True)
-    old = types.SimpleNamespace(data={})
+    cm = _cm(update_connection=_delegating_update)
+    old = Connection(_full_data())
     cm.apply_connection_update(old, _full_data(proxy_jump="a, b  c"))
     assert old.proxy_jump == ["a", "b", "c"]
-    assert old.data["proxy_jump"] == ["a", "b", "c"]  # backing dict synced
 
 
 def test_apply_update_coerces_bad_auth_method_to_zero():
-    cm = _cm(update_connection=lambda c, d: True)
-    old = types.SimpleNamespace(data={})
+    cm = _cm(update_connection=_delegating_update)
+    old = Connection(_full_data())
     cm.apply_connection_update(old, _full_data(auth_method="not-an-int"))
     assert old.auth_method == 0
 

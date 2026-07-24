@@ -1125,8 +1125,10 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "ttyhost")
         assert c is not None
-        # request_tty lives in c.data, not as a direct Connection attribute
-        assert c.data.get("request_tty") is True
+        # The normalized token is preserved (force != yes in ssh semantics)
+        # and hydrated as a real attribute.
+        assert c.data.get("request_tty") == "force"
+        assert c.request_tty == "force"
 
     def test_serveraliveinterval_stored_as_extra(self, tmp_path):
         """

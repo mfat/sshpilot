@@ -336,8 +336,11 @@ as remote sudo prompts.)
   used by explicit-command callers like SCP).
 - `ssh_multiplex.py`: ControlMaster socket policy + `invalidate_master`.
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
-  persistence of connections to `~/.ssh/config`, credential storage
-  (`store_connection_password`, `get_connection_password`, …).
+  transactional/atomic persistence of SSH connections to `~/.ssh/config`,
+  internal persistence of non-SSH plugin connections, and credential storage
+  (`store_connection_password`, `get_connection_password`, …). Included SSH
+  config fragments are loaded, while external-change monitoring currently
+  watches only the root config file.
 - `credential_manager.py` / `credential_model.py` / `credential_adapters.py`:
   normalized credential listing and export (see `docs/CREDENTIAL_MANAGER.md`).
 - `askpass_utils.py`: askpass helper for **passphrases and login passwords**,
@@ -375,7 +378,7 @@ over adding command-line flags.
 
 ### SSH Configuration
 - The project uses 2 operation modes: default (loads and saves ~/.ssh/config) and Isolated Mode which stores config in ~/.config/sshpilot
-- Connections are native-only and `~/.ssh/config` is the source of truth. See
+- SSH connections are native-only and `~/.ssh/config` is the source of truth. See
   **SSH Connection & Authentication Architecture** above for how connecting and
   auth work (one connection method, one auth resolver).
 
