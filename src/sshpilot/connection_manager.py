@@ -2184,26 +2184,11 @@ class ConnectionManager(GObject.Object):
             try:
                 if not path or not os.path.exists(path):
                     continue
-                with open(path) as f:
-                    lines = f.readlines()
+                doc = SSHConfigDocument.parse_file(path)
             except Exception:
                 continue
-            i = 0
-            while i < len(lines):
-                kw, full_value = _split_keyword(lines[i].lstrip())
-                if kw == 'host':
-                    try:
-                        host_names = shlex.split(full_value)
-                    except ValueError:
-                        host_names = [h for h in full_value.split() if h]
-                    if host_identifier in host_names:
-                        start = i
-                        i += 1
-                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
-                            i += 1
-                        combined.extend(line.rstrip('\n') for line in lines[start:i])
-                        continue
-                i += 1
+            for block in doc.host_blocks(host_identifier):
+                combined.extend(line.rstrip('\n') for line in block.lines)
         return combined
 
     def _split_host_block(self, original_host: str, new_data: Dict[str, Any], target_path: str) -> bool:
