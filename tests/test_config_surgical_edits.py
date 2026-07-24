@@ -195,6 +195,53 @@ def test_trailing_comment_after_edited_block_survives(tmp_path):
     assert "# db cluster below" in (tmp_path / "config").read_text()
 
 
+def test_repeated_unknown_directives_survive_edit(tmp_path):
+    """SendEnv/SetEnv legitimately repeat; every authored occurrence must be
+    parsed into extra_ssh_config and survive a dialog-style edit."""
+    text = (
+        "Host web\n"
+        "    HostName example.com\n"
+        "    SendEnv FOO\n"
+        "    SendEnv BAR\n"
+        "    SetEnv A=1\n"
+        "    SetEnv B=2\n"
+    )
+    cm = loaded_cm(tmp_path, text)
+    conn = cm.find_connection_by_nickname("web")
+    extras = conn.extra_ssh_config.lower()
+    assert "sendenv foo" in extras and "sendenv bar" in extras
+    assert "setenv a=1" in extras and "setenv b=2" in extras
+
+    cm.update_ssh_config_file(
+        conn,
+        {"nickname": "web", "hostname": "example.com", "username": "u",
+         "extra_ssh_config": conn.extra_ssh_config},
+        "web",
+    )
+    saved = (tmp_path / "config").read_text()
+    for line in ("    SendEnv FOO\n", "    SendEnv BAR\n",
+                 "    SetEnv A=1\n", "    SetEnv B=2\n"):
+        assert line in saved
+
+
+def test_identical_repeated_unknown_directives_survive_edit(tmp_path):
+    text = (
+        "Host web\n"
+        "    HostName example.com\n"
+        "    SendEnv FOO\n"
+        "    SendEnv FOO\n"
+    )
+    cm = loaded_cm(tmp_path, text)
+    conn = cm.find_connection_by_nickname("web")
+    cm.update_ssh_config_file(
+        conn,
+        {"nickname": "web", "hostname": "example.com", "username": "u",
+         "extra_ssh_config": conn.extra_ssh_config},
+        "web",
+    )
+    assert (tmp_path / "config").read_text().count("    SendEnv FOO\n") == 2
+
+
 def test_unknown_directive_casing_survives_edit(tmp_path):
     text = (
         "Host web\n"

@@ -1383,7 +1383,7 @@ class ConnectionManager(GObject.Object):
                     if k in ('host', '__host_tokens'):
                         continue
                     if k in into:
-                        if k in ACCUMULATE_KEYS:
+                        if k in ACCUMULATE_KEYS or k not in MANAGED_HOST_OPTIONS:
                             base = into[k] if isinstance(into[k], list) else [into[k]]
                             extra = v if isinstance(v, list) else [v]
                             into[k] = base + extra
@@ -1465,12 +1465,17 @@ class ConnectionManager(GObject.Object):
                         continue
                     key = key.lower()
                     if key in config:
-                        if key in ACCUMULATE_KEYS:
+                        # Managed scalar directives are first-value-wins per
+                        # ssh_config(5). UNKNOWN directives keep every
+                        # occurrence: some (SendEnv, SetEnv, ...) legitimately
+                        # repeat, and dropping repeats here would silently
+                        # delete authored lines on the next edit — the
+                        # surgical merge can only preserve what the payload's
+                        # extra_ssh_config still carries.
+                        if key in ACCUMULATE_KEYS or key not in MANAGED_HOST_OPTIONS:
                             if not isinstance(config[key], list):
                                 config[key] = [config[key]]
                             config[key].append(value)
-                        # Otherwise ssh_config(5) is first-value-wins: a
-                        # repeated non-accumulating option is ignored.
                     else:
                         config[key] = value
 
