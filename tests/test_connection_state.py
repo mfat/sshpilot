@@ -223,3 +223,51 @@ def test_scan_connect_evidence(text, expected):
     if expected == 'failed':
         # A failure reason line is captured for the exit classifier.
         assert t._connect_failure_hint
+
+
+def test_connect_evidence_poller_keeps_watching_after_grace(monkeypatch):
+    """Late remote output must still promote without guessing from liveness."""
+    try:
+        from sshpilot import terminal as terminal_mod
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        pytest.skip(f"sshpilot.terminal unavailable: {exc}")
+
+    scheduled = []
+
+    def _schedule_slow_poll(seconds, callback):
+        scheduled.append((seconds, callback))
+        return 123
+
+    monkeypatch.setattr(
+        terminal_mod.GLib, 'timeout_add_seconds', _schedule_slow_poll
+    )
+
+    class _T:
+        _is_quitting = False
+        connection_state = ConnectionState.CONNECTING
+        _connect_poll_count = 59
+        _connect_grace_timer_id = 42
+        session_id = 'late-connect'
+        verdict = 'pending'
+        marked_connected = False
+
+        _on_connect_grace_elapsed = (
+            terminal_mod.TerminalWidget._on_connect_grace_elapsed
+        )
+
+        def _scan_connect_evidence(self):
+            return self.verdict
+
+        def _mark_connected(self):
+            self.marked_connected = True
+
+    terminal = _T()
+    assert terminal._on_connect_grace_elapsed() is False
+    assert terminal._connect_grace_timer_id == 123
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == 5
+    assert terminal.marked_connected is False
+
+    terminal.verdict = 'connected'
+    assert scheduled[0][1]() is False
+    assert terminal.marked_connected is True

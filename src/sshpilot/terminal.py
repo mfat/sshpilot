@@ -1499,24 +1499,20 @@ class TerminalWidget(Gtk.Box):
             self._connect_grace_timer_id = None
             return False
 
-        # 'pending' — keep waiting, but don't poll forever.
+        # 'pending' — keep waiting. Never promote on liveness alone: a socket
+        # still stuck in the TCP-connect phase is alive but has never reached
+        # the host. After the initial grace window, keep checking at a slower
+        # rate so a late authentication/network recovery can still promote on
+        # real remote output.
         self._connect_poll_count += 1
-        if self._connect_poll_count >= 60:  # ≈60s, well past typical ConnectTimeout
-            self._connect_grace_timer_id = None
-            # Defense-in-depth: if the ssh child is still alive this long with no
-            # recorded failure, it is connected (auth/network failures exit well
-            # before now). Promote rather than leaving the icon stuck on
-            # "connecting" forever when neither termprops nor scraping fired.
-            child_alive = False
-            try:
-                child_alive = bool(self.backend and self.backend.get_child_pid())
-            except Exception:
-                child_alive = False
-            if child_alive and not self.last_error_message:
-                logger.debug(f"Terminal {self.session_id}: grace elapsed, child alive — marking connected")
-                self._mark_connected()
-            else:
-                logger.debug(f"Terminal {self.session_id}: no connect evidence after grace window; staying pending")
+        if self._connect_poll_count == 60:  # ≈60s
+            self._connect_grace_timer_id = GLib.timeout_add_seconds(
+                5, self._on_connect_grace_elapsed
+            )
+            logger.debug(
+                f"Terminal {self.session_id}: no connect evidence after grace "
+                "window; continuing slow polling"
+            )
             return False
         return True
 
