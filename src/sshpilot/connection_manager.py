@@ -12,7 +12,6 @@ import asyncio
 import enum
 import logging
 import getpass
-import subprocess
 import shlex
 import re
 from gettext import gettext as _
@@ -30,31 +29,6 @@ from .askpass_utils import (
     lookup_passphrase,
     store_passphrase,
 )
-
-# Set up asyncio event loop for GTK integration
-if os.name == 'posix':
-    from gi.repository import GLib
-    
-    # Set up the asyncio event loop
-    if not hasattr(GLib, 'MainLoop'):
-        import asyncio
-        import asyncio.events
-        import asyncio.base_events
-        import asyncio.unix_events
-
-        # ``BaseDefaultEventLoopPolicy`` and the event loop policy machinery were
-        # removed in Python 3.14. Only install the custom policy on interpreters
-        # that still provide it; on newer versions ``_ensure_event_loop`` takes
-        # care of provisioning a loop instead.
-        _base_event_loop_policy = getattr(asyncio.events, 'BaseDefaultEventLoopPolicy', None)
-        if _base_event_loop_policy is not None:
-            class GLibEventLoopPolicy(_base_event_loop_policy):
-                _loop_factory = asyncio.SelectorEventLoop
-
-                def new_event_loop(self):
-                    return asyncio.unix_events.DefaultEventLoopPolicy.new_event_loop(self)
-
-            asyncio.set_event_loop_policy(GLibEventLoopPolicy())
 
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
@@ -618,11 +592,6 @@ class Connection:
                 "IdentityAgent directive disables ssh-agent; forcing askpass for this connection"
             )
 
-    @property
-    def source_file(self) -> str:
-        """Return path to the config file where this host is defined."""
-        return self.source
-        
     async def connect(self):
         """Prepare an SSH connection.
 
@@ -984,8 +953,6 @@ class ConnectionManager(GObject.Object):
         self.rules: List[Dict[str, Any]] = []
         self.ssh_config = {}
         self.loop = _ensure_event_loop()
-        self.active_connections: Dict[str, asyncio.Task] = {}
-        self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
 
@@ -1112,12 +1079,6 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.error(f"Failed to update non-SSH connection: {e}")
             return False
-
-    def _get_active_connection_key(self, connection: Connection) -> str:
-        identifier = connection.resolve_host_identifier()
-        if identifier:
-            return identifier
-        return f"connection-{id(connection)}"
 
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
@@ -1392,32 +1353,6 @@ class ConnectionManager(GObject.Object):
 
     # No _ensure_collection needed with libsecret's high-level API
 
-    def _get_active_connection_key(self, connection: Connection, *, prefer_stored: bool = True) -> str:
-        """Return the key used to track a connection's keepalive task."""
-
-        conn_id = id(connection)
-        if prefer_stored:
-            stored = self._active_connection_keys.get(conn_id)
-            if stored:
-                return stored
-
-        try:
-            effective_host = connection.get_effective_host()
-        except AttributeError:
-            effective_host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '') or ''
-
-        username = getattr(connection, 'username', '') or ''
-        key = effective_host or ''
-        if username:
-            key = f"{key}::{username}" if key else username
-        if not key:
-            key = connection.nickname or str(conn_id)
-
-        if prefer_stored:
-            self._active_connection_keys[conn_id] = key
-        return key
-
-        
     def load_ssh_config(self, create_missing: bool = True):
         """Load connections from SSH config file"""
         try:
@@ -1991,54 +1926,6 @@ class ConnectionManager(GObject.Object):
         """Delete stored key passphrase from system keyring"""
         # Use the unified passphrase clearing from askpass_utils
         return clear_passphrase(key_path)
-
-    def _ensure_ssh_agent(self) -> bool:
-        """Ensure ssh-agent is running and export environment variables"""
-        try:
-            # Check if ssh-agent is already running (via the identity provider so
-            # the agent-presence check lives in one place).
-            from .providers.system_agent import SystemAgentProvider
-            if SystemAgentProvider().is_available():
-                logger.debug("SSH agent already running")
-                return True
-            
-            # Start a new ssh-agent
-            logger.debug("Starting new ssh-agent")
-            result = subprocess.run(
-                ['ssh-agent', '-s'],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode != 0:
-                logger.error(f"Failed to start ssh-agent: {result.stderr}")
-                return False
-            
-            # Parse the output to extract environment variables
-            for line in result.stdout.split('\n'):
-                if line.startswith('export '):
-                    # Extract variable name and value
-                    var_part = line[7:]  # Remove 'export '
-                    if '=' in var_part:
-                        name, value = var_part.split('=', 1)
-                        # Remove quotes if present
-                        value = value.strip().strip('"\'')
-                        os.environ[name] = value
-            
-            logger.debug("SSH agent started successfully")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error ensuring ssh-agent is running: {e}")
-            return False
-
-
-
-    def add_key_to_agent(self, key_path: str) -> bool:
-        """Add SSH key to ssh-agent using secure SSH_ASKPASS script"""
-        from .askpass_utils import ensure_key_in_agent
-        return ensure_key_in_agent(key_path)
 
     def prepare_key_for_connection(self, key_path: str, *, force: bool = True) -> bool:
         """Prepare SSH key for connection by unlocking it in ssh-agent"""
@@ -2835,132 +2722,6 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.error(f"Failed to remove connection: {e}")
             return False
-
-    def _get_active_connection_key(self, connection: Connection) -> str:
-        """Return the dictionary key used to track active connection tasks."""
-        try:
-            key = connection.get_connection_key()
-        except AttributeError:
-            host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
-            username = getattr(connection, 'username', '')
-            if username and host:
-                key = f"{username}@{host}"
-            elif host:
-                key = host
-            elif username:
-                key = username
-            else:
-                key = ''
-        if not key:
-            key = f"connection-{id(connection)}"
-        return key
-
-    async def connect(self, connection: Connection):
-        """Connect to an SSH host asynchronously"""
-        try:
-            if hasattr(self, 'isolated_mode'):
-                connection.isolated_mode = bool(getattr(self, 'isolated_mode', False))
-            # Connect to the SSH server (native-only; connect() delegates to it).
-            if hasattr(connection, 'native_connect'):
-                connected = await connection.native_connect()
-            else:
-                connected = await connection.connect()
-            if not connected:
-                raise Exception("Failed to establish SSH connection")
-
-            # Determine the tracking key used for keepalive management
-            key = self._get_active_connection_key(connection, prefer_stored=False)
-            existing_key = self._active_connection_keys.get(id(connection))
-            if existing_key and existing_key != key:
-                old_task = self.active_connections.pop(existing_key, None)
-                if old_task:
-                    old_task.cancel()
-            self._active_connection_keys[id(connection)] = key
-
-            # Store the connection task
-            if key in self.active_connections:
-                self.active_connections[key].cancel()
-
-            
-            # Create a task to keep the connection alive
-            async def keepalive():
-                try:
-                    while connection.is_connected:
-                        try:
-                            # Send keepalive every 30 seconds
-                            await asyncio.sleep(30)
-                            if connection.connection and connection.is_connected:
-                                await connection.connection.ping()
-                        except (ConnectionError, asyncio.CancelledError):
-                            break
-                        except Exception as e:
-                            logger.error(f"Keepalive error for {connection}: {e}")
-                            break
-                finally:
-                    if connection.is_connected:
-                        await connection.disconnect()
-                    connection.is_connected = False
-                    self.emit('connection-status-changed', connection, False)
-                    logger.info(f"Disconnected from {connection}")
-            
-            # Start the keepalive task
-            task = asyncio.create_task(keepalive())
-            self.active_connections[key] = task
-
-            
-            # Update the connection state and emit status change
-            connection.is_connected = True
-            GLib.idle_add(self.emit, 'connection-status-changed', connection, True)
-            logger.info(f"Connected to {connection}")
-            
-            return True
-            
-        except Exception as e:
-            error_msg = f"Failed to connect to {connection}: {e}"
-            logger.error(error_msg, exc_info=True)
-            if hasattr(connection, 'connection') and connection.connection:
-                await connection.disconnect()
-            connection.is_connected = False
-            raise Exception(error_msg) from e
-    
-    async def disconnect(self, connection: Connection):
-        """Disconnect from SSH host and clean up resources asynchronously"""
-        try:
-            # Cancel the keepalive task if it exists
-            key = self._get_active_connection_key(connection)
-            if key in self.active_connections:
-                self.active_connections[key].cancel()
-                try:
-                    await self.active_connections[key]
-                except asyncio.CancelledError:
-                    pass
-                del self.active_connections[key]
-            self._active_connection_keys.pop(id(connection), None)
-
-            
-            # Disconnect the connection
-            if hasattr(connection, 'connection') and connection.connection and connection.is_connected:
-                await connection.disconnect()
-            
-            # Update the connection state and emit status change signal
-            connection.is_connected = False
-            GLib.idle_add(self.emit, 'connection-status-changed', connection, False)
-            logger.info(f"Disconnected from {connection}")
-            
-        except Exception as e:
-            logger.error(f"Failed to disconnect from {connection}: {e}", exc_info=True)
-            raise
-
-    def update_connection_status(self, connection: Connection, is_connected: bool):
-        """Update connection status in the manager (legacy boolean entry point).
-
-        This method is called by terminals to update the connection manager's
-        tracking of connection status, especially after reconnections. It maps
-        the boolean onto the authoritative state and delegates to
-        :meth:`update_connection_state`.
-        """
-        state = ConnectionState.CONNECTED if is_connected else ConnectionState.DISCONNECTED
-        self.update_connection_state(connection, state)
 
     def update_connection_state(
         self,

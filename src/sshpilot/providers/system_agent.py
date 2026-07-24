@@ -5,8 +5,7 @@ environment so a spawned ssh process talks to the user's running ssh-agent. This
 formalises that previously-implicit inheritance behind the
 :class:`~sshpilot.identity.IdentityProvider` contract.
 
-It deliberately does **not** start an agent (see
-``connection_manager._ensure_ssh_agent``) or add keys to one (see
+It deliberately does **not** start an agent or add keys to one (see
 ``askpass_utils.ensure_key_in_agent``); it only reports the agent and injects the
 socket variables into a child environment.
 """
