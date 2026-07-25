@@ -160,6 +160,27 @@ def test_edit_included_host_leaves_root_untouched(tmp_path):
     assert "    User bob\n" in frag.read_text()
 
 
+def test_edit_last_block_without_trailing_newline_does_not_glue(tmp_path):
+    """A file whose last block has no trailing newline: appending managed
+    directives must start a new line, not concatenate onto the last authored
+    line (which would silently drop the edit and duplicate on re-save)."""
+    text = "Host web\n    UnknownCamelCase foo   # why"  # no trailing "\n"
+    cm = loaded_cm(tmp_path, text)
+    conn = cm.find_connection_by_nickname("web")
+    payload = {"nickname": "web", "hostname": "new.example.com", "username": "bob"}
+    cm.update_ssh_config_file(conn, payload, "web")
+    once = (tmp_path / "config").read_text()
+    assert once == (
+        "Host web\n"
+        "    UnknownCamelCase foo   # why\n"
+        "    HostName new.example.com\n"
+        "    User bob\n"
+    )
+    # ...and the edit is idempotent (no duplicate HostName on a second save).
+    cm.update_ssh_config_file(conn, payload, "web")
+    assert (tmp_path / "config").read_text() == once
+
+
 # --- Surgical-merge guarantees (delivered by the document model) -----------
 
 

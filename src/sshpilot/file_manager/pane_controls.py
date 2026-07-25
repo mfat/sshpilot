@@ -100,8 +100,14 @@ class PaneToolbar(Gtk.Box):
         bar.append(right)
 
         # Don't wrap in ToolbarView to avoid nested ToolbarView theme issues
-        # Instead, add toolbar styling via CSS class and append handle directly
+        # Instead, add toolbar styling via CSS class and append handle directly.
+        # `card` frames the toolbar as a rounded panel matching the browser
+        # card below it (margins align with FilePane's content card).
         handle.add_css_class('toolbar')
+        handle.add_css_class('card')
+        handle.set_margin_top(8)
+        handle.set_margin_start(8)
+        handle.set_margin_end(8)
         self.append(handle)
 
     # Keep your factory

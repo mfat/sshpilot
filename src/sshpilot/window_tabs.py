@@ -29,6 +29,7 @@ from .plugins.registry import capabilities_for
 from .connection_display import get_connection_alias, get_connection_host
 from .file_manager_integration import launch_remote_file_manager
 from .file_manager_integration import (
+    has_internal_file_manager,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
@@ -183,6 +184,8 @@ class WindowTabsMixin:
     _TAB_MENU_ACTIONS = (
         'tabmenu-duplicate', 'tabmenu-rename',
         'tabmenu-reconnect', 'tabmenu-manage-files',
+        'tabmenu-show-files-panel', 'tabmenu-hide-files-panel',
+        'tabmenu-show-terminal-panel', 'tabmenu-hide-terminal-panel',
         'tabmenu-open-system-terminal', 'tabmenu-new-local',
         'tabmenu-fm-new-window',
         'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
@@ -205,6 +208,10 @@ class WindowTabsMixin:
             'tabmenu-rename': self._on_tabmenu_rename,
             'tabmenu-reconnect': self._on_tabmenu_reconnect,
             'tabmenu-manage-files': self._on_tabmenu_manage_files,
+            'tabmenu-show-files-panel': self._on_tabmenu_show_files_panel,
+            'tabmenu-hide-files-panel': self._on_tabmenu_hide_files_panel,
+            'tabmenu-show-terminal-panel': self._on_tabmenu_show_terminal_panel,
+            'tabmenu-hide-terminal-panel': self._on_tabmenu_hide_terminal_panel,
             'tabmenu-open-system-terminal': self._on_tabmenu_open_system_terminal,
             'tabmenu-new-local': self._on_tabmenu_new_local,
             'tabmenu-fm-new-window': self._on_tabmenu_fm_new_window,
@@ -240,6 +247,10 @@ class WindowTabsMixin:
         sec2 = Gio.Menu()
         sec2.append_item(_item(_('Reconnect'), 'tabmenu-reconnect'))
         sec2.append_item(_item(_('Manage Files'), 'tabmenu-manage-files'))
+        sec2.append_item(_item(_('Show File Pane'), 'tabmenu-show-files-panel'))
+        sec2.append_item(_item(_('Hide File Pane'), 'tabmenu-hide-files-panel'))
+        sec2.append_item(_item(_('Show Terminal Pane'), 'tabmenu-show-terminal-panel'))
+        sec2.append_item(_item(_('Hide Terminal Pane'), 'tabmenu-hide-terminal-panel'))
         sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
         sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
         sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
@@ -306,23 +317,31 @@ class WindowTabsMixin:
                 action.set_enabled(name in enabled)
 
     def _file_manager_embed_for_child(self, child):
-        """Return the FileManagerTabEmbed in a tab's child subtree, or None.
+        """Return the first FileManagerTabEmbed in a tab's child subtree, or None.
 
         File-manager tabs wrap the embed inside a placeholder GtkBox, so a
         direct isinstance() check on the page child is insufficient.
         """
+        embeds = self._file_manager_embeds_for_child(child)
+        return embeds[0] if embeds else None
+
+    def _file_manager_embeds_for_child(self, child):
+        """Return ALL FileManagerTabEmbeds in a tab's child subtree.
+
+        A split-view tab can hold several terminals, each with its own files
+        panel, so teardown paths must not stop at the first embed found.
+        """
         from .file_manager_integration import FileManagerTabEmbed
+        found = []
         if child is None:
-            return None
+            return found
         if isinstance(child, FileManagerTabEmbed):
-            return child
+            found.append(child)
         w = child.get_first_child() if hasattr(child, 'get_first_child') else None
         while w is not None:
-            found = self._file_manager_embed_for_child(w)
-            if found is not None:
-                return found
+            found.extend(self._file_manager_embeds_for_child(w))
             w = w.get_next_sibling()
-        return None
+        return found
 
     def _teardown_file_manager_embed(self, embed) -> None:
         """Destroy an embedded file manager synchronously, outside GC.
@@ -390,18 +409,22 @@ class WindowTabsMixin:
             return
         for page in pages:
             try:
-                embed = self._file_manager_embed_for_child(page.get_child())
+                embeds = self._file_manager_embeds_for_child(page.get_child())
             except Exception:
-                embed = None
-            if embed is not None:
+                embeds = []
+            for embed in embeds:
+                clear_panel = getattr(embed, 'clear_terminal_panel', None)
+                if callable(clear_panel):
+                    clear_panel()
                 self._teardown_file_manager_embed(embed)
         # Lifecycle assertion: a tab whose embed still holds a live controller
         # after this pass is a leak that would later be finalized during GC and
         # segfault. Surface it in the log instead of failing silently.
         try:
             for page in pages:
-                embed = self._file_manager_embed_for_child(page.get_child())
-                if embed is not None and getattr(embed, '_controller', None) is not None:
+                for embed in self._file_manager_embeds_for_child(page.get_child()):
+                    if getattr(embed, '_controller', None) is None:
+                        continue
                     logger.warning(
                         'File-manager embed survived shutdown teardown with a live '
                         'controller (%r) — potential GC-finalization crash source', embed)
@@ -425,12 +448,9 @@ class WindowTabsMixin:
                 'tabmenu-layout-default', 'tabmenu-layout-compact',
             }
 
-        if self._file_manager_embed_for_child(child) is not None:
-            enabled = set(common)
-            if not should_hide_file_manager_options():
-                enabled.add('tabmenu-fm-new-window')
-            return enabled
-
+        # Terminal check must precede the embed search: a terminal with a
+        # files panel (set_file_panel) contains a FileManagerTabEmbed in its
+        # subtree but is still a terminal tab.
         if isinstance(child, TerminalWidget):
             try:
                 is_local = child._is_local_terminal()
@@ -445,8 +465,27 @@ class WindowTabsMixin:
             caps = capabilities_for(conn) if conn else frozenset()
             if Capability.FILE_TRANSFER in caps and not should_hide_file_manager_options():
                 enabled.add('tabmenu-manage-files')
+                if conn is not None and has_internal_file_manager():
+                    enabled.add(
+                        'tabmenu-hide-files-panel' if child.has_file_panel()
+                        else 'tabmenu-show-files-panel'
+                    )
             if getattr(conn, 'protocol', 'ssh') == 'ssh' and not should_hide_external_terminal_options():
                 enabled.add('tabmenu-open-system-terminal')
+            return enabled
+
+        embed = self._file_manager_embed_for_child(child)
+        if embed is not None:
+            enabled = set(common)
+            if not should_hide_file_manager_options():
+                enabled.add('tabmenu-fm-new-window')
+            controller = getattr(embed, '_controller', None)
+            conn = getattr(controller, '_connection', None) if controller else None
+            if conn is not None and hasattr(embed, 'has_terminal_panel'):
+                enabled.add(
+                    'tabmenu-hide-terminal-panel' if embed.has_terminal_panel()
+                    else 'tabmenu-show-terminal-panel'
+                )
             return enabled
 
         # Plugin pages (Docker Console, …), WebTab, and other non-terminal
@@ -524,6 +563,113 @@ class WindowTabsMixin:
                 self._open_manage_files_for_connection(conn)
         except Exception as exc:
             logger.error("Tab manage files failed: %s", exc)
+
+    def _on_tabmenu_show_files_panel(self, action, param=None):
+        """Embed the SFTP file manager below the tab's terminal (same session)."""
+        try:
+            page, child = self._tab_menu_target()
+            if not isinstance(child, TerminalWidget) or child.has_file_panel():
+                return
+            conn = self.terminal_to_connection.get(child)
+            if conn is None:
+                return
+            from .file_manager_integration import create_internal_file_manager_tab
+            ssh_config = None
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception:
+                ssh_config = None
+            host_value = _get_connection_host(conn) or _get_connection_alias(conn)
+            port_value = getattr(conn, 'port', 22)
+            widget, controller = create_internal_file_manager_tab(
+                user=str(getattr(conn, 'username', '') or ''),
+                host=str(host_value or ''),
+                port=port_value if port_value and port_value != 22 else None,
+                nickname=str(getattr(conn, 'nickname', '') or host_value or ''),
+                parent_window=self,
+                connection=conn,
+                connection_manager=self.connection_manager,
+                ssh_config=ssh_config,
+            )
+            self._track_internal_file_manager_window(controller, widget=widget)
+            child.set_file_panel(
+                widget,
+                teardown=lambda: self._teardown_file_manager_embed(widget),
+            )
+        except Exception as exc:
+            logger.error("Show files below terminal failed: %s", exc)
+
+    def _on_tabmenu_hide_files_panel(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if isinstance(child, TerminalWidget):
+                child.clear_file_panel()
+        except Exception as exc:
+            logger.error("Hide files below terminal failed: %s", exc)
+
+    def _on_tabmenu_show_terminal_panel(self, action, param=None):
+        """Embed a terminal below the tab's file manager (same connection)."""
+        try:
+            page, child = self._tab_menu_target()
+            embed = self._file_manager_embed_for_child(child)
+            if embed is None or embed.has_terminal_panel():
+                return
+            controller = getattr(embed, '_controller', None)
+            conn = getattr(controller, '_connection', None) if controller else None
+            if conn is None:
+                return
+            terminal = self.terminal_manager.create_terminal_for_pane(conn)
+            embed.set_terminal_panel(
+                terminal,
+                teardown=lambda: self.cleanup_embedded_terminal(terminal),
+            )
+        except Exception as exc:
+            logger.error("Show terminal below file manager failed: %s", exc)
+
+    def _on_tabmenu_hide_terminal_panel(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            embed = self._file_manager_embed_for_child(child)
+            if embed is not None:
+                embed.clear_terminal_panel()
+        except Exception as exc:
+            logger.error("Hide terminal below file manager failed: %s", exc)
+
+    def cleanup_embedded_terminal(self, terminal) -> None:
+        """Disconnect a terminal hosted outside a main tab page and drop it
+        from the tracking dicts.
+
+        Shared by split-view pane cleanup and the file-manager terminal panel —
+        both host terminals whose lifecycle bypasses the main tab_view detach
+        path.
+        """
+        try:
+            if hasattr(terminal, 'clear_file_panel'):
+                terminal.clear_file_panel()
+        except Exception:
+            logger.debug("Failed to clear files panel during terminal cleanup",
+                         exc_info=True)
+        try:
+            terminal.disconnect()
+        except Exception:
+            pass
+        try:
+            connection = self.terminal_to_connection.get(terminal)
+            if connection:
+                terms = self.connection_to_terminals.get(connection, [])
+                if terminal in terms:
+                    terms.remove(terminal)
+                    if not terms:
+                        del self.connection_to_terminals[connection]
+                if self.active_terminals.get(connection) is terminal:
+                    remaining = self.connection_to_terminals.get(connection)
+                    if remaining:
+                        self.active_terminals[connection] = remaining[-1]
+                    else:
+                        self.active_terminals.pop(connection, None)
+            self.terminal_to_connection.pop(terminal, None)
+        except Exception as exc:
+            logger.debug("Error cleaning up embedded terminal dicts: %s", exc)
 
     def _on_tabmenu_open_system_terminal(self, action, param=None):
         try:
@@ -1211,12 +1357,17 @@ class WindowTabsMixin:
         # Python 'destroy' handlers never run during a garbage collection,
         # which segfaults. Covers ×, Close, Close Other Tabs, Close to Right.
         try:
-            embed = (
-                self._file_manager_embed_for_child(page.get_child())
+            embeds = (
+                self._file_manager_embeds_for_child(page.get_child())
                 if page is not None and hasattr(page, 'get_child')
-                else None
+                else []
             )
-            if embed is not None:
+            for embed in embeds:
+                # A live terminal panel below the manager must be disconnected
+                # too (its lifecycle bypasses the terminal-tab close paths).
+                clear_panel = getattr(embed, 'clear_terminal_panel', None)
+                if callable(clear_panel):
+                    clear_panel()
                 self._teardown_file_manager_embed(embed)
         except Exception:
             logger.debug('File manager tab teardown on detach failed', exc_info=True)

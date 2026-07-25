@@ -112,6 +112,36 @@ _SSH_HOSTKEY_BANNER_MARKERS = (
 )
 
 
+# Installed once per process. Inner padding for the terminal text so the
+# prompt doesn't hug the card's rounded left edge (VTE >= 0.76 honors CSS
+# padding; the padding area is painted with the terminal background).
+_terminal_padding_css_installed = False
+
+
+def _ensure_terminal_padding_css() -> None:
+    global _terminal_padding_css_installed
+    if _terminal_padding_css_installed:
+        return
+    try:
+        provider = Gtk.CssProvider()
+        # Bare vte-terminal: every VTE in this process is ours. (A subclass
+        # does NOT get a CSS node from __gtype_name__ — TerminalWidget's node
+        # is plain "box", so scoping via "terminalwidget" matches nothing.)
+        provider.load_from_data(b"""
+vte-terminal {
+    padding: 4px 8px;
+}
+""")
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        _terminal_padding_css_installed = True
+    except Exception:  # pragma: no cover - headless/test doubles
+        logger.debug("Terminal padding CSS install failed", exc_info=True)
+
+
 class TerminalWidget(Gtk.Box):
     """A terminal widget that uses VTE for display and system SSH client for connections"""
     __gtype_name__ = 'TerminalWidget'
@@ -442,7 +472,23 @@ class TerminalWidget(Gtk.Box):
         self.container_box.set_vexpand(True)
         self.container_box.append(self.terminal_stack)
 
+        # Rounded-corner card framing the terminal, matching the file manager
+        # panes. overflow=HIDDEN clips the VTE content to the rounded corners.
+        _ensure_terminal_padding_css()
+        self.container_box.add_css_class("card")
+        self.container_box.set_overflow(Gtk.Overflow.HIDDEN)
+        self.container_box.set_margin_top(4)
+        self.container_box.set_margin_bottom(4)
+        self.container_box.set_margin_start(4)
+        self.container_box.set_margin_end(4)
+
         self.append(self.container_box)
+
+        # Files panel (embedded SFTP file manager shown below the terminal);
+        # see set_file_panel() / clear_file_panel().
+        self._file_panel = None
+        self._file_panel_paned = None
+        self._file_panel_teardown = None
 
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
@@ -472,6 +518,75 @@ class TerminalWidget(Gtk.Box):
         self._fullscreen.setup_shortcut()
         
         logger.debug("Terminal widget initialized")
+
+    # ── files panel (embedded file manager below the terminal) ──────────────
+
+    def has_file_panel(self) -> bool:
+        return self._file_panel is not None
+
+    def set_file_panel(self, panel, teardown=None) -> None:
+        """Show *panel* below the terminal in a vertical Gtk.Paned.
+
+        The page child stays this TerminalWidget (the paned is internal), so
+        all tab bookkeeping keyed on the page child is unaffected. *teardown*
+        is invoked from clear_file_panel() so the caller can dispose the
+        embedded file-manager controller synchronously (outside GC).
+        """
+        if self._file_panel is not None:
+            self.clear_file_panel()
+
+        paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        paned.set_wide_handle(True)
+        paned.set_hexpand(True)
+        paned.set_vexpand(True)
+        paned.set_shrink_start_child(False)
+        paned.set_shrink_end_child(False)
+        self.remove(self.container_box)
+        paned.set_start_child(self.container_box)
+        paned.set_end_child(panel)
+        self.append(paned)
+
+        self._file_panel = panel
+        self._file_panel_paned = paned
+        self._file_panel_teardown = teardown
+
+        def _apply_position() -> bool:
+            if self._file_panel_paned is not paned:
+                return False  # panel was cleared before allocation
+            height = self.get_height()
+            if height <= 0:
+                return True  # not allocated yet — retry on idle
+            paned.set_position(int(height * 0.55))
+            return False
+
+        if _apply_position():
+            GLib.idle_add(_apply_position)
+
+    def clear_file_panel(self) -> None:
+        """Remove the files panel and restore the terminal-only layout."""
+        paned = self._file_panel_paned
+        teardown = self._file_panel_teardown
+        self._file_panel = None
+        self._file_panel_paned = None
+        self._file_panel_teardown = None
+        if paned is None:
+            return
+        # Dispose the controller while the widget tree is still intact, so the
+        # embed's Python 'destroy' handlers never fire during GC (segfault).
+        if teardown is not None:
+            try:
+                teardown()
+            except Exception:
+                logger.debug("Files panel teardown failed", exc_info=True)
+        try:
+            # set_*_child(None) instead of unparent(): unparenting a Paned
+            # child can silently fail in GTK4 (see split_view._release_paned).
+            paned.set_end_child(None)
+            paned.set_start_child(None)
+            self.remove(paned)
+            self.append(self.container_box)
+        except Exception:
+            logger.debug("Files panel layout restore failed", exc_info=True)
 
     def _create_backend(self, preferred: Optional[str] = None) -> BaseTerminalBackend:
         """Create the terminal backend based on configuration."""
@@ -3800,7 +3915,12 @@ class TerminalWidget(Gtk.Box):
         # which case the block below is skipped but the finally clause still
         # references is_quitting.
         root = self.get_root() if hasattr(self, 'get_root') else None
-        is_quitting = bool(getattr(root, '_is_quitting', False))
+        # Prefer this terminal's own flag: cleanup_all() sets terminal._is_quitting
+        # directly, and by the time it runs the window may already be unrooted
+        # (get_root() → None), which would otherwise miss the quit fast-path.
+        is_quitting = bool(getattr(self, '_is_quitting', False)) or bool(
+            getattr(root, '_is_quitting', False)
+        )
 
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")
@@ -3842,13 +3962,18 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.debug(f"Error accessing process manager during disconnect: {e}")
             
-            # Clean up all collected PIDs (with error handling for each)
-            for cleanup_pid in pids_to_clean:
-                if cleanup_pid:
-                    try:
-                        self._cleanup_process(cleanup_pid)
-                    except Exception as e:
-                        logger.debug(f"Error cleaning up PID {cleanup_pid}: {e}")
+            # Clean up all collected PIDs (with error handling for each).
+            # During quit the process manager's cleanup_all() has already
+            # SIGKILLed these same PIDs, so re-running the SIGTERM-then-poll
+            # path here only wastes its full timeout on an already-dead (zombie)
+            # child — skip it and let the manager's kill stand.
+            if not is_quitting:
+                for cleanup_pid in pids_to_clean:
+                    if cleanup_pid:
+                        try:
+                            self._cleanup_process(cleanup_pid)
+                        except Exception as e:
+                            logger.debug(f"Error cleaning up PID {cleanup_pid}: {e}")
             
             # Clean up PTY if it exists
             if hasattr(self, 'pty') and self.pty:

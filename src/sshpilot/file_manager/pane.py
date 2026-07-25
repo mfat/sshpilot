@@ -86,6 +86,43 @@ def _file_manager_window_cls():
     return FileManagerWindow
 
 
+# Installed once per process; scoped to .fm-browser-card so it only affects
+# the file-manager browser cards. The Adwaita `card` class supplies the
+# rounded corners/background; this just keeps the list/grid views from
+# painting their own view background over the card (visible in dark mode).
+_browser_card_css_installed = False
+
+
+def _ensure_browser_card_css() -> None:
+    global _browser_card_css_installed
+    if _browser_card_css_installed:
+        return
+    try:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"""
+.fm-browser-card listview,
+.fm-browser-card gridview {
+    background: transparent;
+}
+/* ActionBar paints its background/border on an inner box, which would
+   square-fill the rounded card; let the card class show through instead. */
+actionbar.fm-bottom-card > revealer > box {
+    background: transparent;
+    border-top: none;
+    /* libadwaita draws the actionbar's top hairline as an inset box-shadow */
+    box-shadow: none;
+}
+""")
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        _browser_card_css_installed = True
+    except Exception:  # pragma: no cover - headless/test doubles
+        logger.debug("Browser card CSS install failed", exc_info=True)
+
+
 class FilePane(Gtk.Box):
     """Represents a single pane in the manager."""
 
@@ -237,6 +274,18 @@ class FilePane(Gtk.Box):
         content_overlay = Gtk.Overlay()
         content_overlay.set_child(self._stack)
 
+        # Rounded-corner card framing the browser area (Adwaita `card` class),
+        # floating clear of the pane edges so the layout reads as distinct
+        # panels. overflow=HIDDEN clips the scrolled content to the corners.
+        _ensure_browser_card_css()
+        content_overlay.add_css_class("card")
+        content_overlay.add_css_class("fm-browser-card")
+        content_overlay.set_overflow(Gtk.Overflow.HIDDEN)
+        content_overlay.set_margin_top(2)
+        content_overlay.set_margin_bottom(2)
+        content_overlay.set_margin_start(8)
+        content_overlay.set_margin_end(8)
+
         overlay.set_child(content_overlay)
         self.append(overlay)
 
@@ -254,6 +303,12 @@ class FilePane(Gtk.Box):
         self._action_buttons: Dict[str, Gtk.Button] = {}
         action_bar = Gtk.ActionBar()
         action_bar.add_css_class("inline-toolbar")
+        # Same rounded-card framing as the toolbar and browser area above.
+        action_bar.add_css_class("card")
+        action_bar.add_css_class("fm-bottom-card")
+        action_bar.set_margin_bottom(8)
+        action_bar.set_margin_start(8)
+        action_bar.set_margin_end(8)
 
         def _create_action_button(
             name: str,

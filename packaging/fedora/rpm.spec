@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.7.0}
+Version:        %{?version}%{!?version:5.7.1}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -143,6 +143,15 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sat Jul 25 2026 mFat <newmfat@gmail.com> - 5.7.1-1
+- Introducing Omnisearch—a powerful, versatile pop-up search box accessible from anywhere by double-pressing the Shift key
+- Added a minimal sidebar mode that uses a narrow, icon-only strip to free up horizontal screen space
+- Added an option to open the file manager in SSH terminal panes from the tab context menu
+- Added an option to open a terminal in file manager tabs
+- Improved the appearance and overall experience of the SFTP file manager
+- Fixed an issue that delayed application shutdown when local terminal tabs were open
+- Various bug fixes and UI improvements
+
 * Fri Jul 24 2026 mFat <newmfat@gmail.com> - 5.7.0-1
 - Introducing Omnisearch - a powerful, versatile pop-up search box you can activate from anywhere by double-pressing the Shift key
 - Introducing a minimal mode for the sidebar - use a narrow, icon-only strip instead of the default full sidebar to reclaim more horizontal screen space

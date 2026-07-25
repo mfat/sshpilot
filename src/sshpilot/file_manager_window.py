@@ -209,22 +209,9 @@ class FileManagerWindow(Adw.Window):
             border-radius: 8px;
         }
         
-        /* Pane toolbar styling to replace nested ToolbarView */
-        /* Scope to file manager window only to avoid affecting sidebar toolbar */
-        /* Use window colors for better cross-platform compatibility */
-        .filemanagerwindow .toolbar,
-        .filemanagerwindow toolbar {
-            background-color: @window_bg_color;
-            color: @window_fg_color;
-            border-bottom: 1px solid @borders;
-        }
-        
-        .filemanagerwindow .toolbar windowhandle,
-        .filemanagerwindow toolbar windowhandle {
-            background-color: @window_bg_color;
-            color: @window_fg_color;
-        }
-        
+        /* Pane toolbars are framed as Adwaita cards (see PaneToolbar); no
+           forced background/border here so the card styling shows through. */
+
         /* Pane divider styling */
         paned {
             background-color: @window_bg_color;
@@ -245,12 +232,8 @@ class FileManagerWindow(Adw.Window):
             min-height: 1px;
         }
         
-        /* Action bar styling */
-        .inline-toolbar {
-            background-color: @window_bg_color;
-            color: @window_fg_color;
-            border-top: 1px solid @borders;
-        }
+        /* Bottom action bars are framed as Adwaita cards (see FilePane); no
+           forced background/border here so the card styling shows through. */
         """
         css_provider.load_from_data(toast_css.encode())
         self._toast_overlay.get_style_context().add_provider(

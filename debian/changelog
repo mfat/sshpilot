@@ -1,3 +1,21 @@
+sshpilot (5.7.1-1) unstable; urgency=medium
+
+  * Release v5.7.1.
+  * Introducing Omnisearch—a powerful, versatile pop-up search box
+    accessible from anywhere by double-pressing the Shift key
+  * Added a minimal sidebar mode that uses a narrow, icon-only strip to
+    free up horizontal screen space
+  * Added an option to open the file manager in SSH terminal panes from
+    the tab context menu
+  * Added an option to open a terminal in file manager tabs
+  * Improved the appearance and overall experience of the SFTP file
+    manager
+  * Fixed an issue that delayed application shutdown when local terminal
+    tabs were open
+  * Various bug fixes and UI improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Sat, 25 Jul 2026 00:58:32 +0000
+
 sshpilot (5.7.0-1) unstable; urgency=medium
 
   * Release v5.7.0.
