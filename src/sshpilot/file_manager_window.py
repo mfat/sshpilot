@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from gettext import gettext as _
 
 
-from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 # Try to import GtkSourceView for syntax highlighting.
 # Probe a type so a missing shared library (incomplete bundle) disables GtkSource
