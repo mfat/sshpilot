@@ -129,7 +129,7 @@ def _ensure_terminal_padding_css() -> None:
         # is plain "box", so scoping via "terminalwidget" matches nothing.)
         provider.load_from_data(b"""
 vte-terminal {
-    padding: 4px 8px;
+    padding: 8px;
 }
 """)
         Gtk.StyleContext.add_provider_for_display(

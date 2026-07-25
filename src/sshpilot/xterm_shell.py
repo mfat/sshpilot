@@ -103,7 +103,7 @@ def _build_shell_html_impl(
   /* Same inner padding as the VTE backend (terminalwidget vte-terminal),
      so the prompt clears the card edge; border-box keeps fit() sizing right. */
   #terminal {{ width:100%; height:100%; background:inherit;
-              padding:4px 8px; box-sizing:border-box; }}
+              padding:8px; box-sizing:border-box; }}
   .xterm, .xterm-viewport, .xterm-screen {{ height:100% !important; }}
   /* Autocomplete popup (window.sshpilotAC); panel/accent colors set at show time. */
   #ac {{ position:absolute; display:none; z-index:10; max-height:16em; overflow:hidden;
