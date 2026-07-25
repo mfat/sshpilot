@@ -39,10 +39,10 @@ class PaneControls(Gtk.Box):
             widget.set_valign(Gtk.Align.CENTER)
         for widget in (self.back_button, self.up_button, self.refresh_button, self.new_folder_button):
             widget.add_css_class("flat")
+        # Only back/up live here (left of the address bar); refresh and
+        # new_folder are packed right of the entry by PaneToolbar.
         self.append(self.back_button)
         self.append(self.up_button)
-        self.append(self.refresh_button)
-        self.append(self.new_folder_button)
 
 
 class PaneToolbar(Gtk.Box):
@@ -78,8 +78,11 @@ class PaneToolbar(Gtk.Box):
         self.path_entry.set_max_width_chars(0)
         bar.append(self.path_entry)
 
-        # Right side (compact, flush-right)
+        # Right side (compact, flush-right): reload immediately after the
+        # address bar, then new folder, then the view controls.
         right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        right.append(self.controls.refresh_button)
+        right.append(self.controls.new_folder_button)
         self._current_view = "list"
 
         # Toggle for showing hidden files within this pane
