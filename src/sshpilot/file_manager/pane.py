@@ -100,13 +100,6 @@ def _ensure_browser_card_css() -> None:
     try:
         provider = Gtk.CssProvider()
         provider.load_from_data(b"""
-/* The browser interior uses the view background (black-ish in dark mode,
-   as in 5.7.0), not the elevated card grey; the card class still supplies
-   the rounded frame. */
-.fm-browser-card {
-    background-color: var(--view-bg-color);
-    color: var(--view-fg-color);
-}
 .fm-browser-card listview,
 .fm-browser-card gridview {
     background: transparent;
@@ -281,11 +274,13 @@ class FilePane(Gtk.Box):
         content_overlay = Gtk.Overlay()
         content_overlay.set_child(self._stack)
 
-        # Rounded-corner card framing the browser area (Adwaita `card` class),
-        # floating clear of the pane edges so the layout reads as distinct
-        # panels. overflow=HIDDEN clips the scrolled content to the corners.
+        # Rounded-corner card framing the browser area: `card` supplies the
+        # radius/shadow, `view` the content-surface colors (its rule follows
+        # .card in the Adwaita stylesheet, so the view background wins).
+        # overflow=HIDDEN clips the scrolled content to the corners.
         _ensure_browser_card_css()
         content_overlay.add_css_class("card")
+        content_overlay.add_css_class("view")
         content_overlay.add_css_class("fm-browser-card")
         content_overlay.set_overflow(Gtk.Overflow.HIDDEN)
         content_overlay.set_margin_top(2)
