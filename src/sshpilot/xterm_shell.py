@@ -100,7 +100,10 @@ def _build_shell_html_impl(
      gap. Page background must match term theme — fit() only paints whole rows. */
   html, body {{ margin:0; padding:0; width:100%; height:100%; overflow:hidden;
                background:{json.dumps(background)[1:-1]}; }}
-  #terminal {{ width:100%; height:100%; background:inherit; }}
+  /* Same inner padding as the VTE backend (terminalwidget vte-terminal),
+     so the prompt clears the card edge; border-box keeps fit() sizing right. */
+  #terminal {{ width:100%; height:100%; background:inherit;
+              padding:4px 8px; box-sizing:border-box; }}
   .xterm, .xterm-viewport, .xterm-screen {{ height:100% !important; }}
   /* Autocomplete popup (window.sshpilotAC); panel/accent colors set at show time. */
   #ac {{ position:absolute; display:none; z-index:10; max-height:16em; overflow:hidden;
