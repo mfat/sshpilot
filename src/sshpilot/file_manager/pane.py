@@ -112,6 +112,14 @@ actionbar.fm-bottom-card > revealer > box {
     /* libadwaita draws the actionbar's top hairline as an inset box-shadow */
     box-shadow: none;
 }
+/* The framed cards already separate the panes; hide the paned hairline.
+   Only the paint is removed - the separator keeps its size and hit area,
+   so drag-resizing still works. */
+paned.fm-panes > separator {
+    background: none;
+    /* the theme draws the paned hairline as an inset box-shadow */
+    box-shadow: none;
+}
 """)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),

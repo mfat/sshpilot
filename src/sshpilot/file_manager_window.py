@@ -251,6 +251,10 @@ class FileManagerWindow(Adw.Window):
 
         # The main content Paned lives in the template (props set there).
         panes = self.panes
+        # The framed pane cards make the paned separator line redundant; the
+        # separator is painted invisible (fm-panes rule in file_manager.pane)
+        # but keeps its size and hit area, so drag-resizing is unaffected.
+        panes.add_css_class('fm-panes')
         # Connect to size changes to maintain proportional split
         self.connect("notify::default-width", self._on_window_resize)
         # Also connect to the panes widget size changes
