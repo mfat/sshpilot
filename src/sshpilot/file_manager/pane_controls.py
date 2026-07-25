@@ -104,7 +104,11 @@ class PaneToolbar(Gtk.Box):
         # `card` frames the toolbar as a rounded panel matching the browser
         # card below it (margins align with FilePane's content card).
         handle.add_css_class('toolbar')
+        # Same surface styling as the browser panes: card radius/shadow,
+        # view content colors, 1px frame border.
         handle.add_css_class('card')
+        handle.add_css_class('view')
+        handle.add_css_class('frame')
         handle.set_margin_top(8)
         handle.set_margin_start(8)
         handle.set_margin_end(8)
