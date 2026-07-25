@@ -281,6 +281,8 @@ class FilePane(Gtk.Box):
         _ensure_browser_card_css()
         content_overlay.add_css_class("card")
         content_overlay.add_css_class("view")
+        # `frame` draws a 1px border following the card's rounded corners.
+        content_overlay.add_css_class("frame")
         content_overlay.add_css_class("fm-browser-card")
         content_overlay.set_overflow(Gtk.Overflow.HIDDEN)
         content_overlay.set_margin_top(2)
