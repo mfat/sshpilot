@@ -124,8 +124,11 @@ def _ensure_terminal_padding_css() -> None:
         return
     try:
         provider = Gtk.CssProvider()
+        # Bare vte-terminal: every VTE in this process is ours. (A subclass
+        # does NOT get a CSS node from __gtype_name__ — TerminalWidget's node
+        # is plain "box", so scoping via "terminalwidget" matches nothing.)
         provider.load_from_data(b"""
-terminalwidget vte-terminal {
+vte-terminal {
     padding: 4px 8px;
 }
 """)
