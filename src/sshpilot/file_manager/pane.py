@@ -100,6 +100,13 @@ def _ensure_browser_card_css() -> None:
     try:
         provider = Gtk.CssProvider()
         provider.load_from_data(b"""
+/* The browser interior uses the view background (black-ish in dark mode,
+   as in 5.7.0), not the elevated card grey; the card class still supplies
+   the rounded frame. */
+.fm-browser-card {
+    background-color: var(--view-bg-color);
+    color: var(--view-fg-color);
+}
 .fm-browser-card listview,
 .fm-browser-card gridview {
     background: transparent;
