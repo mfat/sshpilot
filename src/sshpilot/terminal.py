@@ -3915,7 +3915,12 @@ class TerminalWidget(Gtk.Box):
         # which case the block below is skipped but the finally clause still
         # references is_quitting.
         root = self.get_root() if hasattr(self, 'get_root') else None
-        is_quitting = bool(getattr(root, '_is_quitting', False))
+        # Prefer this terminal's own flag: cleanup_all() sets terminal._is_quitting
+        # directly, and by the time it runs the window may already be unrooted
+        # (get_root() → None), which would otherwise miss the quit fast-path.
+        is_quitting = bool(getattr(self, '_is_quitting', False)) or bool(
+            getattr(root, '_is_quitting', False)
+        )
 
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")

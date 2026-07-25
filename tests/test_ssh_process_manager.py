@@ -50,28 +50,14 @@ def test_register_terminal_tracks_it(pm):
     assert t in pm.terminals
 
 
-def test_terminate_by_pid_signals_process_group(pm, monkeypatch):
+def test_terminate_by_pid_sigkills_process_group(pm, monkeypatch):
+    # Quit/orphan cleanup kills the group outright (no SIGTERM grace poll):
+    # a local interactive shell ignores SIGTERM, so polling just wastes time.
     calls = []
     monkeypatch.setattr(os, "getpgid", lambda pid: 4242)
-    def fake_killpg(pgid, sig):
-        calls.append((pgid, sig))
-        if sig == 0:
-            raise ProcessLookupError  # process gone after SIGTERM
-    monkeypatch.setattr(os, "killpg", fake_killpg)
-    assert pm._terminate_process_by_pid(1234) is True
-    assert (4242, signal.SIGTERM) in calls
-    # process reported gone, so no SIGKILL escalation
-    assert (4242, signal.SIGKILL) not in calls
-
-
-def test_terminate_by_pid_escalates_to_sigkill(pm, monkeypatch):
-    calls = []
-    monkeypatch.setattr(os, "getpgid", lambda pid: 7)
-    monkeypatch.setattr(terminal.time, "sleep", lambda *_: None)
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
     assert pm._terminate_process_by_pid(1234) is True
-    # stayed alive through the poll loop -> force kill
-    assert (7, signal.SIGKILL) in calls
+    assert calls == [(4242, signal.SIGKILL)]
 
 
 def test_terminate_by_pid_returns_false_on_error(pm, monkeypatch):
