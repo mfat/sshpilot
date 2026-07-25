@@ -723,7 +723,7 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
             ".sidebar-avatar {"
             f"  color: {_standalone_glyph_color(color)};"
             "}"
-        ).encode("utf-8")
+        ).encode()
     )
     avatar._color_provider = provider  # type: ignore[attr-defined]
     avatar.get_style_context().add_provider(

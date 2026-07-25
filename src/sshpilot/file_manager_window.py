@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from gettext import gettext as _
 
 
-from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 # Try to import GtkSourceView for syntax highlighting.
 # Probe a type so a missing shared library (incomplete bundle) disables GtkSource
@@ -251,6 +251,10 @@ class FileManagerWindow(Adw.Window):
 
         # The main content Paned lives in the template (props set there).
         panes = self.panes
+        # The framed pane cards make the paned separator line redundant; the
+        # separator is painted invisible (fm-panes rule in file_manager.pane)
+        # but keeps its size and hit area, so drag-resizing is unaffected.
+        panes.add_css_class('fm-panes')
         # Connect to size changes to maintain proportional split
         self.connect("notify::default-width", self._on_window_resize)
         # Also connect to the panes widget size changes
@@ -515,6 +519,12 @@ class FileManagerWindow(Adw.Window):
         box.append(icon)
         self._remote_host_label = Gtk.Label()
         self._remote_host_label.set_css_classes(['title'])
+        # Long hostnames must not blow up the button (it shares the toolbar
+        # with the address bar): ellipsize past ~10 chars, keeping the button
+        # about the size of the left pane's "Local" label. Full name stays
+        # readable via the button tooltip.
+        self._remote_host_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self._remote_host_label.set_max_width_chars(10)
         box.append(self._remote_host_label)
         caret = Gtk.Image.new_from_icon_name('pan-down-symbolic')
         caret.set_pixel_size(12)
@@ -530,6 +540,11 @@ class FileManagerWindow(Adw.Window):
         text = ((str(self._nickname).strip() if self._nickname else '')
                 or self._host or _("Select host"))
         self._remote_host_label.set_text(text)
+        # The label ellipsizes past ~10 chars; the tooltip carries the full name.
+        try:
+            self._remote_host_button.set_tooltip_text(text)
+        except AttributeError:
+            pass
 
     def _on_remote_host_button_clicked(self, btn) -> None:
         from .host_picker import show_host_picker

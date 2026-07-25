@@ -112,6 +112,14 @@ actionbar.fm-bottom-card > revealer > box {
     /* libadwaita draws the actionbar's top hairline as an inset box-shadow */
     box-shadow: none;
 }
+/* The framed cards already separate the panes; hide the paned hairline.
+   Only the paint is removed - the separator keeps its size and hit area,
+   so drag-resizing still works. */
+paned.fm-panes > separator {
+    background: none;
+    /* the theme draws the paned hairline as an inset box-shadow */
+    box-shadow: none;
+}
 """)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
@@ -274,11 +282,15 @@ class FilePane(Gtk.Box):
         content_overlay = Gtk.Overlay()
         content_overlay.set_child(self._stack)
 
-        # Rounded-corner card framing the browser area (Adwaita `card` class),
-        # floating clear of the pane edges so the layout reads as distinct
-        # panels. overflow=HIDDEN clips the scrolled content to the corners.
+        # Rounded-corner card framing the browser area: `card` supplies the
+        # radius/shadow, `view` the content-surface colors (its rule follows
+        # .card in the Adwaita stylesheet, so the view background wins).
+        # overflow=HIDDEN clips the scrolled content to the corners.
         _ensure_browser_card_css()
         content_overlay.add_css_class("card")
+        content_overlay.add_css_class("view")
+        # `frame` draws a 1px border following the card's rounded corners.
+        content_overlay.add_css_class("frame")
         content_overlay.add_css_class("fm-browser-card")
         content_overlay.set_overflow(Gtk.Overflow.HIDDEN)
         content_overlay.set_margin_top(2)
