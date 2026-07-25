@@ -105,18 +105,11 @@ class SSHProcessManager:
         try:
             # Always try process group first
             pgid = os.getpgid(pid)
-            os.killpg(pgid, signal.SIGTERM)
-
-            # Wait with shorter timeout for faster cleanup
-            for _ in range(3):  # 0.3 seconds max (reduced from 1 second)
-                try:
-                    os.killpg(pgid, 0)
-                    time.sleep(0.1)
-                except ProcessLookupError:
-                    break
-            else:
-                # Force kill if still alive
-                os.killpg(pgid, signal.SIGKILL)
+            # This runs only at quit/orphan cleanup, where the child is often a
+            # local interactive shell that *ignores* SIGTERM — a graceful
+            # SIGTERM-then-poll would just burn its full timeout every time.
+            # Kill the group outright; there is nothing to flush on the way out.
+            os.killpg(pgid, signal.SIGKILL)
 
             # Do NOT waitpid() here: the terminal child is spawned by VTE, which
             # owns a GLib child-watch source and reaps it via waitid(). Reaping

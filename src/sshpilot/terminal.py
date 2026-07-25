@@ -446,10 +446,10 @@ class TerminalWidget(Gtk.Box):
         # panes. overflow=HIDDEN clips the VTE content to the rounded corners.
         self.container_box.add_css_class("card")
         self.container_box.set_overflow(Gtk.Overflow.HIDDEN)
-        self.container_box.set_margin_top(8)
-        self.container_box.set_margin_bottom(8)
-        self.container_box.set_margin_start(8)
-        self.container_box.set_margin_end(8)
+        self.container_box.set_margin_top(4)
+        self.container_box.set_margin_bottom(4)
+        self.container_box.set_margin_start(4)
+        self.container_box.set_margin_end(4)
 
         self.append(self.container_box)
 
@@ -3926,13 +3926,18 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.debug(f"Error accessing process manager during disconnect: {e}")
             
-            # Clean up all collected PIDs (with error handling for each)
-            for cleanup_pid in pids_to_clean:
-                if cleanup_pid:
-                    try:
-                        self._cleanup_process(cleanup_pid)
-                    except Exception as e:
-                        logger.debug(f"Error cleaning up PID {cleanup_pid}: {e}")
+            # Clean up all collected PIDs (with error handling for each).
+            # During quit the process manager's cleanup_all() has already
+            # SIGKILLed these same PIDs, so re-running the SIGTERM-then-poll
+            # path here only wastes its full timeout on an already-dead (zombie)
+            # child — skip it and let the manager's kill stand.
+            if not is_quitting:
+                for cleanup_pid in pids_to_clean:
+                    if cleanup_pid:
+                        try:
+                            self._cleanup_process(cleanup_pid)
+                        except Exception as e:
+                            logger.debug(f"Error cleaning up PID {cleanup_pid}: {e}")
             
             # Clean up PTY if it exists
             if hasattr(self, 'pty') and self.pty:
