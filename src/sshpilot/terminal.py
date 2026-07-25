@@ -112,6 +112,33 @@ _SSH_HOSTKEY_BANNER_MARKERS = (
 )
 
 
+# Installed once per process. Inner padding for the terminal text so the
+# prompt doesn't hug the card's rounded left edge (VTE >= 0.76 honors CSS
+# padding; the padding area is painted with the terminal background).
+_terminal_padding_css_installed = False
+
+
+def _ensure_terminal_padding_css() -> None:
+    global _terminal_padding_css_installed
+    if _terminal_padding_css_installed:
+        return
+    try:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"""
+terminalwidget vte-terminal {
+    padding: 4px 8px;
+}
+""")
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        _terminal_padding_css_installed = True
+    except Exception:  # pragma: no cover - headless/test doubles
+        logger.debug("Terminal padding CSS install failed", exc_info=True)
+
+
 class TerminalWidget(Gtk.Box):
     """A terminal widget that uses VTE for display and system SSH client for connections"""
     __gtype_name__ = 'TerminalWidget'
@@ -444,6 +471,7 @@ class TerminalWidget(Gtk.Box):
 
         # Rounded-corner card framing the terminal, matching the file manager
         # panes. overflow=HIDDEN clips the VTE content to the rounded corners.
+        _ensure_terminal_padding_css()
         self.container_box.add_css_class("card")
         self.container_box.set_overflow(Gtk.Overflow.HIDDEN)
         self.container_box.set_margin_top(4)
