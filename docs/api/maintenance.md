@@ -55,6 +55,7 @@ python3 scripts/generate_api_artifacts.py --check
 pytest -q tests/api/test_api_documentation.py
 pytest -q tests/api/test_public_api_snapshot.py
 pytest -q tests/daemon
+pytest -q tests/daemon/test_event_forwarding.py tests/daemon/test_event_backpressure.py
 pytest -q tests/api/test_client_factory.py tests/daemon/test_launcher.py
 pytest -q tests/test_gtk_client_bridge.py
 ruff check src/ tests/ scripts/generate_api_artifacts.py
@@ -87,6 +88,11 @@ schema-only operation signature also requires deliberate snapshot approval.
 Transport envelopes are included as a separate convenience-export surface, and
 the explicit daemon method/capability registry is included so drift cannot add
 an undocumented callable wire method.
+
+Connection event changes additionally require codec round trips, shared client
+contracts, daemon-global sequence and multi-client assertions, response
+interleaving, bounded overflow isolation, transport-failure wakeups, and GTK
+coalescing/responsiveness coverage. Do not infer replay from a sequence field.
 
 ## Example: connection health monitoring
 

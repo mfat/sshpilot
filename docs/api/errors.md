@@ -134,7 +134,10 @@ these composition categories do not change the Protocol v1 error-code surface.
 
 The persistent socket closed or failed. It is retryable and carries the current
 request ID when failure occurred during a request. `DaemonClient` rejects later
-calls with the same stable code until replaced.
+calls with the same stable code until replaced. When a live event subscription
+exists, the client also attempts one safe local `error.occurred` notification
+before closing subscriptions; GTK treats its cached connection view as
+unavailable.
 
 <!-- api-error: transport_timeout -->
 ## `transport_timeout`
@@ -178,8 +181,10 @@ versions, never application environment or client payloads.
 ## `protocol_error`
 
 The peer violated envelope type, request/client correlation, request-ID
-uniqueness, event sequence, or negotiated-version rules. It can originate
-locally or remotely and is not safe to retry on the same connection.
+uniqueness, typed event payload, exact event-sequence continuity, or
+negotiated-version rules. A bounded client event queue overflow has the same
+continuity consequence. It can originate locally or remotely and is not safe to
+retry on the same connection.
 
 <!-- api-error: unsupported_method -->
 ## `unsupported_method`

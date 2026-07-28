@@ -88,10 +88,11 @@ The reusable connection contract suite runs against both `DaemonClient` and
 - unsupported schema-only method errors;
 - close/disconnect behavior.
 
-Daemon-only handshake, framing, correlation, timeout, socket security, and
-lifecycle rules have focused transport tests. Event, terminal-byte, replay,
-prompt, and cancellation parity remain out of scope because the daemon does not
-advertise or implement those capabilities.
+Daemon-only handshake, framing, correlation, timeout, socket security,
+lifecycle, event multiplexing, bounded backpressure, and multi-client sequence
+rules have focused transport tests. Connection event parity is covered under
+`connections.events`. Terminal-byte, replay, prompt, and cancellation parity
+remain out of scope because the daemon does not advertise those capabilities.
 The [public API snapshot](../../tests/api/snapshots/public_api.json) is a review
 aid for structural changes, not proof of semantic compatibility.
 

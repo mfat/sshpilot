@@ -17,13 +17,22 @@ notes remain separate.
 - Added the experimental `SSHPILOT_CLIENT_MODE=daemon` GTK composition path,
   bounded on-demand daemon launcher, application-scoped GTK worker bridge, and
   safe compatibility-mode fallback.
+- Added typed daemon forwarding for `connection.created`,
+  `connection.updated`, and `connection.deleted`, with daemon-global sequences,
+  bounded per-peer queues, selector-driven partial writes, and explicit
+  overflow disconnection.
+- Added one persistent `DaemonClient` reader, pending-response correlation,
+  bounded event dispatch isolated from socket reads, sequence validation, and
+  application-scoped coalesced GTK refreshes.
+- Added the truthful `connections.events` capability; experimental GTK daemon
+  selection now requires both snapshot reads and live connection events.
 - Added the schema-only `replay_terminal` client operation and complete
   package-level convenience exports for all documented model types.
 - Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
 
 ### Changed
 
-- Increased `API_IMPLEMENTATION_VERSION` to `0.2`; `PROTOCOL_VERSION` remains
+- Increased `API_IMPLEMENTATION_VERSION` to `0.3`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon
   response and remains limited to `connections.read`.
@@ -36,6 +45,9 @@ notes remain separate.
 - Daemon-backed GTK connection reads now run off the GTK main thread and use
   GLib delivery with refresh/destruction stale-result suppression. In-process
   mode remains the default.
+- Daemon event continuity is process-lifetime only. Queue overflow, malformed
+  events, sequence gaps, or transport loss close the affected client; no replay
+  or automatic reconnect is implied.
 
 ### Deprecated
 
@@ -97,5 +109,5 @@ notes remain separate.
 - Core-owned runtime sessions, PTYs, terminal input/output, attach, or replay
 - Interaction broker
 - SFTP, forwarding, plugin, or secret client operations
-- Remote access, TCP/WebSocket transport, named pipes, and daemon event or
-  terminal/session transport
+- Remote access, TCP/WebSocket transport, named pipes, and terminal/session
+  event transport

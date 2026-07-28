@@ -13,8 +13,9 @@
     "SshPilotError",
     "Subscription"
   ],
-  "api_implementation_version": "0.2",
+  "api_implementation_version": "0.3",
   "capabilities": [
+    "connections.events",
     "connections.read",
     "connections.write",
     "interactions",
@@ -84,7 +85,7 @@
       "status": "schema-only"
     },
     "subscribe_events": {
-      "capability": null,
+      "capability": "connections.events",
       "status": "implemented"
     },
     "update_connection": {
@@ -691,6 +692,7 @@
     ],
     "Capability": [
       "connections.read",
+      "connections.events",
       "connections.write",
       "terminal",
       "terminal.attach",

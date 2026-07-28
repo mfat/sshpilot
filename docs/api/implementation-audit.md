@@ -1,7 +1,7 @@
 # API implementation audit
 
-Audit date: 2026-07-29. This inventory describes the repository after the
-Phase 1 connection-read daemon transport. “Snapshot”
+Audit date: 2026-07-29. This inventory describes the repository after typed
+connection event forwarding over the daemon transport. “Snapshot”
 means the name/field/value surface is protected by
 `tests/api/snapshots/public_api.json`; it does not prove runtime semantics.
 
@@ -23,14 +23,15 @@ means the name/field/value surface is protected by
 | `resize_terminal` | same | No | Not advertised: `terminal` | Unsupported contract | Yes | Dimensions schema only |
 | `replay_terminal` | same | No | Not advertised: `terminal.replay` | Both clients unsupported | Yes | Coherent schema-only method |
 | `respond_to_interaction` | same | No | Not advertised: `interactions` | Unsupported contract | Yes | Current dialogs are outside API |
-| `subscribe_events` | same | Partial | Bootstrap | Yes | Yes | Connection events in-process; daemon forwards none |
+| `subscribe_events` | same | Yes | `connections.events` | Both clients | Yes | Three typed connection events; local daemon continuity errors |
 | `close` | same | Yes | None | Yes | Yes | Idempotent; releases adapter subscriptions |
 
 ## Capabilities
 
 | Public element | Location | Implemented at runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
-| `connections.read` | `api/capabilities.py` | Yes | Yes | Behaviour + snapshot | Yes | Only advertised capability |
+| `connections.read` | `api/capabilities.py` | Yes | Yes | Behaviour + snapshot | Yes | Snapshot list/get |
+| `connections.events` | same | Yes | Yes | Behaviour + transport integration | Yes | Bounded live delivery; no replay |
 | `connections.write` | same | No | No | Unsupported + snapshot | Yes | Three methods are stubs |
 | `terminal` | same | No | No | Unsupported + snapshot | Yes | Existing GTK terminal path bypasses API |
 | `terminal.attach` | same | No | No | Unsupported + snapshot | Yes | Schema vocabulary only |
@@ -42,7 +43,8 @@ means the name/field/value surface is protected by
 | `secrets` | same | No | No | Snapshot only | Yes | No direct frontend secret API |
 
 No advertised capability lacks runtime operations or contract tests. The
-daemon filters its negotiated set to `connections.read`.
+daemon filters its negotiated set to `connections.read` and
+`connections.events`.
 
 ## Daemon transport
 
@@ -54,22 +56,22 @@ daemon filters its negotiated set to `connections.read`.
 | `system.get_capabilities` | Yes | Yes | Negotiated daemon result |
 | `connections.list` / `connections.get` | Yes | Shared parity | Delegates to `InProcessClient` |
 | Unix socket lifecycle/security | Yes | Yes | Owned 0700 directory, 0600 socket, safe stale cleanup |
-| Daemon runtime event forwarding | No | Envelope parsing only | No event-dependent capability advertised |
+| Daemon runtime event forwarding | Yes | Codec, multi-client, ordering, interleaving, backpressure, shutdown | Three connection events only; bounded queue disconnects on overflow |
 
 ## Events
 
 | Public element | Location | Implemented at runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
-| `connection.created` | `api/events.py`, `api/in_process_client.py` | Yes | `connections.read` | Behaviour + snapshot | Yes | Translated from `connection-added` |
-| `connection.updated` | same | Yes | `connections.read` | Behaviour + snapshot | Yes | Translated from `connection-updated` |
-| `connection.deleted` | same | Yes | `connections.read` | Behaviour + snapshot | Yes | Translated from `connection-removed` |
+| `connection.created` | `api/events.py`, `api/in_process_client.py`, daemon transport | Yes | `connections.events` | Both clients + codec | Yes | Translated from `connection-added` |
+| `connection.updated` | same | Yes | `connections.events` | Both clients + codec | Yes | Translated from `connection-updated` |
+| `connection.deleted` | same | Yes | `connections.events` | Both clients + codec | Yes | Translated from `connection-removed` |
 | `session.created` | `api/events.py` | No | Not advertised: `terminal` | Snapshot only | Yes | Payload intent not enforced by type |
 | `session.state_changed` | same | No | Not advertised: `terminal` | Snapshot only | Yes | Payload type not fixed |
 | `session.output` | same | No | Not advertised: `terminal` | Snapshot only | Yes | No queue/batching/replay |
 | `session.interaction_requested` | same | No | Not advertised: `interactions` | Snapshot only | Yes | No interaction broker |
 | `session.exited` | same | No | Not advertised: `terminal` | Snapshot only | Yes | Exit/close ordering undefined |
 | `session.closed` | same | No | Not advertised: `terminal` | Snapshot only | Yes | Payload type not fixed |
-| `error.occurred` | same | No | None fixed | Snapshot only | Yes | Payload type not fixed |
+| `error.occurred` | same | Local daemon-client continuity only | None fixed | Payload safety + transport tests | Yes | Safe structured error mapping |
 
 `EventPublisher` ordering, cleanup, idempotent subscription closure, and
 subscriber exception isolation are behaviour-tested. Current connection events
@@ -146,7 +148,7 @@ All field lists, defaults, types, and synthetic examples are documented in the
 
 | Public element | Location | Runtime | Capability/domain | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
-| `Capability` | `api/capabilities.py` | Yes | Discovery | Snapshot + capability tests | Yes | Ten stable values |
+| `Capability` | `api/capabilities.py` | Yes | Discovery | Snapshot + capability tests | Yes | Eleven stable values |
 | `EventType` | `api/events.py` | Partial | Events | Snapshot + event tests | Yes | Three of ten emitted |
 | `ErrorCode` | `api/errors.py` | Partial | Errors | Snapshot + envelope/transport tests | Yes | Client, domain, handshake, framing, and lifecycle codes |
 | `ConnectionHealth` | `models/connections.py` | Partial | `connections.read` | Snapshot | Yes | Only `unknown` produced |
@@ -165,15 +167,19 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | Public element | Location | Runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
 | `PROTOCOL_VERSION = "1.0"` | `api/version.py` | Yes | Discovery result | Snapshot/docs drift | Yes | Current contract family |
-| `API_IMPLEMENTATION_VERSION = "0.2"` | same | Yes | Discovery result | Snapshot | Yes | Daemon transport implementation |
+| `API_IMPLEMENTATION_VERSION = "0.3"` | same | Yes | Discovery result | Snapshot | Yes | Daemon connection-event forwarding |
 
 ## Migrated GTK path
 
 ```text
 WelcomePage._populate_recent_box
     -> MainWindow.client
-    -> InProcessClient.list_connections()
+    -> InProcessClient or GtkClientBridge + DaemonClient.list_connections()
     -> ConnectionSummary
+
+application-scoped client subscription
+    -> GLib main-context handoff
+    -> coalesced WelcomePage snapshot refresh
 ```
 
 Activation still resolves the nickname through `ConnectionManager` before

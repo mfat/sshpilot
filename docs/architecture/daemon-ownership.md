@@ -123,7 +123,8 @@ not the canonical domain contract.
 
 - Commands are synchronous for `InProcessClient`, with a frontend-neutral event
   subscription. Calling convention and wire protocol are separate decisions.
-- `connections.read` is the only advertised runtime capability in this phase.
+- `connections.read` and `connections.events` are the only advertised runtime
+  capabilities in the current phase.
 - Connection write, terminal, interaction, SFTP, forwarding, plugin, and secret
   models do not imply runtime support.
 - Unsupported methods raise `unsupported_capability`, never

@@ -39,7 +39,7 @@ implement the method only to raise `unsupported_capability`.
 <!-- api-method-contract: resize_terminal status=schema-only capability=terminal -->
 <!-- api-method-contract: respond_to_interaction status=schema-only capability=interactions -->
 <!-- api-method-contract: send_terminal_input status=schema-only capability=terminal -->
-<!-- api-method-contract: subscribe_events status=implemented capability=none -->
+<!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
 <!-- api-method-contract: update_connection status=schema-only capability=connections.write -->
 
 ## Daemon wire methods
@@ -337,23 +337,24 @@ client.respond_to_interaction(response)
 <!-- api-method: subscribe_events -->
 ## `subscribe_events`
 
-- **Status / introduced:** Implemented in-process; registration-only on
+- **Status / introduced:** Implemented across `InProcessClient` and
   `DaemonClient` / Protocol v1
-- **Capability / purpose:** No bootstrap capability; subscribe to events that
-  the provider can emit.
+- **Capability / purpose:** `connections.events` for the implemented
+  connection lifecycle stream; subscribe to events that the provider can emit.
 - **Parameters / return:** Callable accepting one `CoreEvent`; returns
   `Subscription`.
 - **Errors:** `invalid_request` after client close; a non-callable callback
   raises Python `TypeError`.
-- **Events:** `InProcessClient` emits the three connection events.
-  `DaemonClient` Phase 1 parses event envelopes separately from responses, but
-  the daemon forwards no runtime events.
+- **Events:** Both providers emit `connection.created`, `connection.updated`,
+  and `connection.deleted`. `DaemonClient` can additionally emit a safe local
+  `error.occurred` when transport/event continuity is lost.
 - **Cancellation / ordering:** `unsubscribe()`/`close()` is the cancellation
   mechanism and is idempotent. Callbacks run in registration order through a
   publisher-global serial FIFO.
-- **Threading:** Registration is thread-safe. The first active publisher drains
-  accepted events; a concurrent publisher waits, and its callbacks can run on
-  that dispatcher thread. Re-entrant events queue without recursion.
+- **Threading:** Registration is thread-safe. In-process publication uses the
+  active serial publisher thread. `DaemonClient` callbacks use one dedicated
+  serial event dispatcher, never the socket reader, so a slow subscriber cannot
+  block response processing. Re-entrant events queue without recursion.
 - **Side effects / security:** Retains the callback until unsubscribe or client
   close. Subscriber exceptions are logged and isolated from other subscribers.
 

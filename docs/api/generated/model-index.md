@@ -583,10 +583,11 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** An unsolicited public event frame.
+**Purpose:** An unsolicited typed public event frame.
 
-Runtime daemon event forwarding is not enabled in Phase 1. This envelope
-reserves a response-independent shape for later phases.
+Protocol v1 currently carries the three connection lifecycle events. Other
+public event identifiers remain schema-only until their runtime contracts
+define transport, ordering, and backpressure semantics.
 
 **Related methods:** None
 **Related events:** None

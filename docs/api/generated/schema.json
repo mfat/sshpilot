@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.2",
+  "api_implementation_version": "0.3",
   "client_method_contract": {
     "attach_session": {
       "capability": "terminal.attach",
@@ -58,7 +58,7 @@
       "status": "schema-only"
     },
     "subscribe_events": {
-      "capability": null,
+      "capability": "connections.events",
       "status": "implemented"
     },
     "update_connection": {
@@ -87,6 +87,7 @@
     ],
     "Capability": [
       "connections.read",
+      "connections.events",
       "connections.write",
       "terminal",
       "terminal.attach",

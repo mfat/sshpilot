@@ -6,15 +6,16 @@
 
 Protocol v1 defines the frontend-neutral contract used both in-process and over
 the local daemon transport. It covers Python calling semantics, deliberate
-DTOs, capabilities, events, structured errors, and the Phase 1 wire envelope.
+DTOs, capabilities, events, structured errors, and the local wire envelope.
 
 ## Scope
 
 `InProcessClient` implements connection reads and in-process connection events.
-`DaemonClient` implements equivalent connection reads over a secure per-user
-Unix-domain socket. Other methods and models establish vocabulary but are
-explicitly unsupported or schema-only. Named pipes, TCP, WebSocket, HTTP,
-remote access, and terminal/session transport do not exist.
+`DaemonClient` implements equivalent connection reads plus live connection
+events over a secure per-user Unix-domain socket. Other methods and models
+establish vocabulary but are explicitly unsupported or schema-only. Named
+pipes, TCP, WebSocket, HTTP, remote access, and terminal/session transport do
+not exist.
 
 See [methods](methods.md) and [capabilities](capabilities.md) for the precise
 runtime matrix.
@@ -38,7 +39,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.2` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.3` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -65,7 +66,7 @@ Every envelope has a strict `type` and rejects missing or extra fields:
 - event: `protocol_version`, `event`, `sequence`, `payload`.
 
 JSON is the control-plane encoding. Future terminal bytes require a separate
-binary frame type or channel and are not base64-encoded by Phase 1.
+binary frame type or channel and are not base64-encoded by this implementation.
 
 ## Handshake and correlation
 
@@ -124,7 +125,7 @@ refresh their connection list.
 - Sequences are non-negative integers. `CoreEvent.sequence` is global only to
   one `EventPublisher`; terminal sequences are schema-only and intended to be
   per session.
-- Phase 1 envelope and connection/capability DTO codecs reject unknown fields
+- Protocol v1 envelope and connection/capability DTO codecs reject unknown fields
   and enum values. Additive wire evolution therefore requires an explicit
   compatibility change or a new tolerant envelope/version policy.
 
@@ -153,9 +154,30 @@ implemented.
 - Re-entrant publication queues behind the current subscriber snapshot without
   recursively growing the callback stack.
 - The three connection events follow the order in which manager signals reach
-  the adapter. They are not persisted or replayed.
-- Session events, terminal output ordering, per-session replay, and cross-client
-  global ordering are schema-only and have no runtime guarantee.
+  the adapter.
+- The daemon assigns one sequence across all accepted connection events,
+  starting at zero per daemon instance. All handshaken clients receive the same
+  sequence for the same event. New clients receive no history, and daemon
+  restart may reset the sequence.
+- Per-peer event queues are bounded to 256. Overflow disconnects only the slow
+  peer so continuity cannot be silently lost. A fresh connection and
+  `connections.list` snapshot are required after a future explicit reconnect.
+- Session events, terminal output ordering, and per-session replay remain
+  schema-only and have no runtime guarantee.
+
+## Event/response multiplexing
+
+The server places complete framed responses and events onto the same ordered
+per-peer output deque and uses selector write readiness for partial writes.
+The core event callback performs no socket I/O.
+
+Each `DaemonClient` socket has one persistent reader thread. Request callers
+register an opaque ID and serialize writes; only the reader decodes frames.
+Responses complete the matching pending request, while connection events enter
+a separate bounded serial dispatch queue. Thus a slow subscriber does not block
+response correlation. Unknown or duplicate response IDs, malformed event
+payloads, and duplicate/regressing/gapped event sequences are protocol errors
+that close the transport and wake every pending caller.
 
 ## Cancellation and timeouts
 
@@ -185,5 +207,5 @@ semantics, cleanup, and whether completion can win over cancellation.
 ## Transport independence
 
 Public DTOs remain independent of in-process calls, Unix-domain sockets,
-Windows named pipes, WebSocket, Tauri, GTK, and HTTP. Phase 1's transport
+Windows named pipes, WebSocket, Tauri, GTK, and HTTP. The current transport
 implementation is Linux/Unix `AF_UNIX`; other transports remain future work.

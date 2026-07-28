@@ -1,7 +1,8 @@
 # Local daemon transport
 
-Phase 2 adds an explicitly opt-in GTK path for the Linux per-user connection
-read daemon. Production composition remains in-process by default.
+The current experimental path provides Linux per-user connection snapshots and
+unsolicited connection lifecycle events. Production composition remains
+in-process by default.
 
 Linux is the supported platform for this phase. Unix-socket primitives may be
 present elsewhere, but macOS lifecycle integration and Windows named pipes are
@@ -24,17 +25,21 @@ GObject manager owner-thread rules. One selector loop handles multiple client
 sockets without a thread per client, a thread per request, `asyncio.run()`, or a
 per-call event loop.
 
-`DaemonClient` is synchronous. One lock serializes calls over one blocking
-socket, and every call has a finite timeout (five seconds by default). A timeout
-closes the transport, making any late response unambiguous. Closing the client
-shuts down its socket resources.
+`DaemonClient` presents synchronous methods, but exactly one persistent reader
+thread owns socket receive. Callers register pending request IDs and serialize
+writes; responses and unsolicited events may arrive in either order. Events
+move through a separate bounded serial dispatcher, so a slow callback cannot
+stop response correlation. Every call has a finite timeout (five seconds by
+default); timeout closes the transport, making late responses unambiguous.
 
 GTK never invokes that blocking API on its main thread. One application-scoped
 `GtkClientBridge` owns a single worker. It serializes selection/startup and
-connection-list reads, then posts results through `GLib.idle_add`. Per-widget
-request tokens suppress stale delivery after refresh or destruction. Closing
-the application closes the selected client and shuts down the bridge; closing
-one window only invalidates that window's callbacks.
+connection-list reads, then posts results through `GLib.idle_add`. The
+application owns one event subscription and also marshals it through GLib.
+Welcome-page refreshes are coalesced: one pending/active snapshot plus at most
+one follow-up. Per-widget request tokens suppress stale delivery after refresh
+or destruction. Closing the application unsubscribes before it closes the
+selected client and bridge; closing one window only invalidates callbacks.
 
 ## Experimental GTK selection
 
@@ -61,7 +66,8 @@ When daemon mode is requested, selection runs off the GTK thread:
 
 1. validate the owned mode-0700 parent and any existing mode-0600 socket;
 2. attempt a real Protocol v1 handshake with a short bounded probe;
-3. require the negotiated `connections.read` capability;
+3. require negotiated `connections.read` and `connections.events`
+   capabilities;
 4. if and only if the endpoint is unavailable, launch
    `sys.executable -m sshpilot.daemon --socket <resolved endpoint>`;
 5. poll with a monotonic three-second deadline and repeated real handshakes;
@@ -132,14 +138,43 @@ cannot prove that no other clients need it. Tests terminate their own exact
 child and verify socket cleanup. An installed `sshpilotd` launcher and bounded
 idle exit remain packaging/lifecycle work.
 
+## Connection event forwarding
+
+The daemon subscribes once to the existing `InProcessClient` event publisher,
+which already maps manager signals into typed, secret-free
+`ConnectionSummary` payloads. The transport does not subscribe to persistence
+or duplicate DTO mapping.
+
+One daemon-global event sequence starts at zero. Assignment, encoding, and
+enqueue acceptance are serialized; every eligible peer gets the same immutable
+encoded frame and sequence. Restart resets the sequence because no replay or
+resume protocol exists. A newly handshaken client must read
+`connections.list` for its current snapshot.
+
+Each handshaken peer has a queue bounded to 256 event frames. Core callbacks
+never perform socket I/O: they enqueue and wake the selector. The selector adds
+write interest only while output exists, handles partial writes, and sends
+responses and events as complete non-interleaved frames in deque order.
+Handshake-incomplete peers receive no runtime events.
+
+If a queue fills, that peer's continuity is marked lost, its queue is cleared,
+and the selector disconnects it. No event is silently dropped while the peer
+continues. Other peers and the core remain unaffected. `DaemonClient` applies
+the same bounded-queue principle between its reader and callback dispatcher.
+Malformed payloads, gaps, duplicates, regressions, and local overflow close the
+transport and surface a safe local continuity error.
+
+There is no automatic reconnect. GTK stops trusting cached live state and shows
+the safe unavailable state. Restarting the application re-runs daemon
+selection; a future explicit reconnect must take a fresh list snapshot.
+
 ## Current boundary
 
-Only handshake, capability discovery, connection list, and connection get cross
-the daemon. Event envelopes are parsed independently from responses by
-`DaemonClient`, but the daemon forwards no runtime events and advertises no
-event-dependent capability. Terminal/session runtime, PTYs, secrets, prompts,
-SFTP, forwarding, plugins, and binary channels remain in-process and out of
-scope.
+Handshake, capability discovery, connection list/get, and
+`connection.created`/`connection.updated`/`connection.deleted` cross the
+daemon. The advertised feature set is exactly `connections.read` plus
+`connections.events`. Terminal/session runtime, PTYs, secrets, prompts, SFTP,
+forwarding, plugins, and binary channels remain in-process and out of scope.
 
 ## Packaging and lifecycle backlog
 
@@ -148,7 +183,7 @@ scope.
 - add launchd lifecycle integration for macOS;
 - add Windows named-pipe transport and ownership checks;
 - migrate saved connections to stable persisted UUIDs before freezing IDs;
-- define bounded event forwarding and reconnect/resume semantics;
+- define explicit reconnect/resume/replay semantics;
 - define a separate binary terminal channel, PTY ownership, and prompt routing;
 - keep daemon mode experimental until extended GTK lifecycle testing is
   complete; production-default selection is a separate decision.

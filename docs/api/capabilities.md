@@ -4,22 +4,24 @@ Capabilities report implemented runtime support. The existence of a method,
 event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
-`InProcessClient` and the negotiated Phase 1 daemon endpoint currently
-advertise exactly `connections.read`. `DaemonClient.get_capabilities()` returns
-the daemon response rather than a hard-coded local assumption.
+`InProcessClient` and the negotiated daemon endpoint currently advertise
+exactly `connections.read` and `connections.events`.
+`DaemonClient.get_capabilities()` returns the daemon response rather than a
+hard-coded local assumption.
 
-Experimental GTK daemon composition verifies `connections.read` after the real
-handshake and before injecting the client. A compatible daemon that omits it is
-not used for the welcome-page read. No additional capability is advertised by
-the launcher, factory, or GTK bridge.
+Experimental GTK daemon composition verifies both capabilities after the real
+handshake and before injecting the client. A snapshot-only older daemon is not
+used because GTK would otherwise have no truthful live-refresh guarantee.
 
 <!-- api-runtime-capability: connections.read -->
+<!-- api-runtime-capability: connections.events -->
 
 ## Inventory
 
 | Identifier | Meaning | Provider/status | Related methods | Related events | Dependencies | Introduced |
 | --- | --- | --- | --- | --- | --- | --- |
-| `connections.read` | Read saved connection DTOs | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | In-process `connection.*` events only | Existing `ConnectionManager` through `InProcessClient` | v1 |
+| `connections.read` | Read saved connection DTO snapshots | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | Existing `ConnectionManager` through `InProcessClient` | v1 |
+| `connections.events` | Subscribe to live connection lifecycle events | `InProcessClient` and daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
 | `connections.write` | Create, update, and delete saved connections | Unsupported | `create_connection`, `update_connection`, `delete_connection` | Intended `connection.*` | Persistence/validation service | v1 |
 | `terminal` | Open/close sessions and send input/resize | Unsupported | Session and terminal methods | Intended session lifecycle/output | Core session, PTY, process, SSH/auth services | v1 |
 | `terminal.attach` | Attach/detach clients and assign input ownership | Unsupported | `attach_session`, `detach_session` | No dedicated event currently defined | Runtime session service | v1 |
@@ -35,8 +37,17 @@ the launcher, factory, or GTK bridge.
 
 Implemented and contract-tested across both clients. The providers return
 equivalent secret-free connection summaries/details. `InProcessClient` also
-translates manager connection signals into frontend-neutral events; Phase 1
-does not forward those events over the daemon and does not claim otherwise.
+translates manager connection signals into frontend-neutral events.
+
+<!-- api-capability: connections.events -->
+## `connections.events`
+
+Implemented and contract-tested across both clients. It guarantees live
+delivery only from the point a subscription and daemon handshake are active;
+there is no history or replay. Daemon continuity loss closes the transport, so
+clients must obtain a fresh `connections.list` snapshot after a future explicit
+reconnect. This capability is separate from `connections.read` so older
+snapshot-only daemons cannot be mistaken for live providers.
 
 <!-- api-capability: connections.write -->
 ## `connections.write`

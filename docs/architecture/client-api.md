@@ -72,10 +72,13 @@ Do not:
 - block GTK waiting for futures;
 - make the Python calling convention mimic a not-yet-designed wire transport.
 
-`DaemonClient` uses one persistent blocking socket, one request lock, and a
-finite timeout. It creates no event loop or thread per call. In opt-in daemon
-mode, the application-scoped GTK bridge uses one bounded worker and returns
-results through `GLib.idle_add`. Request tokens suppress stale results after
+`DaemonClient` uses one persistent blocking socket, one request lock, one send
+lock, one persistent reader thread, and a finite timeout. Callers register
+pending request IDs and never read the socket. A separate bounded serial event
+handoff prevents slow subscribers from blocking response correlation. It
+creates no event loop or thread per call. In opt-in daemon mode, the
+application-scoped GTK bridge uses one bounded worker and returns snapshots
+through `GLib.idle_add`. Request tokens suppress stale results after
 refresh/window destruction. GLib remains outside `DaemonClient`, and
 `InProcessClient` stays on its construction/main thread.
 
@@ -189,6 +192,19 @@ delivery. Subscriber failure is isolated. `Subscription.unsubscribe()` and
 `close()` are idempotent. The client disconnects manager signal handlers during
 shutdown.
 
+The daemon forwards only those three connection events. It assigns a
+daemon-global sequence starting at zero, encodes only `ConnectionSummary`, and
+uses bounded per-peer queues. An overflowed peer is disconnected instead of
+continuing with a silent gap. `DaemonClient` checks sequence continuity and
+publishes decoded events through the same subscription API on its event
+dispatcher thread.
+
+GTK owns one application-scoped daemon subscription. It marshals event types to
+the main context and coalesces bursts into one asynchronous
+`list_connections()` refresh, with at most one follow-up if events arrive while
+a refresh is active. Transport/continuity failure replaces live cached state
+with the existing safe unavailable view; no automatic reconnect loop runs.
+
 Terminal output must not use this simple synchronous publisher. Before terminal
 runtime support, add bounded per-session queues, batching, per-session sequence
 ordering, replay bounds, truncation, and slow-client policy.
@@ -249,7 +265,7 @@ objects.
 The same models and contract are intended for:
 
 - the current in-process adapter;
-- the implemented Phase 1 Unix-domain socket;
+- the implemented local Unix-domain socket;
 - Windows named pipes;
 - a local WebSocket only if a later frontend requires it.
 

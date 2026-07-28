@@ -26,32 +26,61 @@ the outer dispatcher delivers it after the current callback stack unwinds.
 Events are not durable, acknowledged, replayed, batched, or coalesced. A
 subscriber that is absent or already closed does not receive prior events.
 
+## Daemon delivery
+
+<!-- api-daemon-event-semantics: global-sequence-bounded-v1 -->
+
+The daemon subscribes once to its `InProcessClient` publisher and accepts only
+the three typed connection events. It replaces the source publisher's
+process-local sequence with one daemon-global sequence that begins at `0`.
+Every healthy, handshaken peer receives the same sequence for the same accepted
+event, in daemon acceptance order. Sequence assignment and peer enqueueing are
+atomic. A daemon restart may reset the counter; Protocol v1 has no cross-restart
+continuity, resume token, acknowledgement, or replay.
+
+Each peer has a bounded queue of 256 event frames. The core callback encodes
+once, enqueues immutable frame references, wakes the selector, and never writes
+to a socket. Responses and events share the peer's ordered output stream;
+partial writes resume without byte interleaving. A slow peer cannot delay the
+core or another peer. If its queue is full, continuity is explicitly lost and
+only that peer is disconnected; events are never silently dropped while the
+connection remains usable.
+
+`DaemonClient` has exactly one persistent socket reader. It correlates responses
+through a pending-request table and sends events to a separate bounded serial
+event-dispatch thread, so slow subscribers cannot stop response reading. The
+first event after connection may have any daemon-global sequence because older
+events are not replayed; every later event must be exactly the previous
+sequence plus one. A duplicate, regression, gap, malformed payload, local event
+queue overflow, or transport closure fails the transport and emits one safe
+local `error.occurred` continuity notification where delivery remains possible.
+
 ## Inventory
 
 | Event | Runtime status | Capability | Trigger | Payload |
 | --- | --- | --- | --- | --- |
-| `connection.created` | Implemented | `connections.read` | Manager `connection-added` signal | `ConnectionSummary` |
-| `connection.updated` | Implemented | `connections.read` | Manager `connection-updated` signal | `ConnectionSummary` |
-| `connection.deleted` | Implemented | `connections.read` | Manager `connection-removed` signal | `ConnectionSummary` |
+| `connection.created` | Implemented in-process and daemon | `connections.events` | Manager `connection-added` signal | `ConnectionSummary` |
+| `connection.updated` | Implemented in-process and daemon | `connections.events` | Manager `connection-updated` signal | `ConnectionSummary` |
+| `connection.deleted` | Implemented in-process and daemon | `connections.events` | Manager `connection-removed` signal | `ConnectionSummary` |
 | `session.created` | Schema only | `terminal` | Future session creation | Intended `SessionSummary` |
 | `session.state_changed` | Schema only | `terminal` | Future state transition | `SessionSummary` |
 | `session.output` | Schema only | `terminal` | Future PTY output | Intended `TerminalOutput` |
 | `session.interaction_requested` | Schema only | `interactions` | Future core prompt | Intended `InteractionRequest` |
 | `session.exited` | Schema only | `terminal` | Future child exit | Intended `SessionExitInfo` |
 | `session.closed` | Schema only | `terminal` | Future session cleanup | `SessionSummary` |
-| `error.occurred` | Schema only | None fixed | Future asynchronous core failure | Safe structured error envelope dictionary |
+| `error.occurred` | Local runtime transport-continuity signal in `DaemonClient` | None fixed | Daemon transport/protocol continuity failure | Safe structured error envelope dictionary |
 
 <!-- api-event: connection.created -->
 ## `connection.created`
 
-- **Status / introduced:** Implemented / v1
+- **Status / introduced:** Implemented in-process and over daemon transport / v1
 - **Trigger / payload:** Existing `connection-added` GObject signal;
   `ConnectionSummary`.
 - **Related IDs:** `connection_id` is populated and equals payload `id`.
-- **Ordering / delivery:** Publisher-global serial FIFO sequence; synchronous
-  at-most-once delivery to the subscriber snapshot captured at publication.
-- **Coalescing / dropping:** Not coalesced. No buffering; absent subscribers
-  miss it.
+- **Ordering / delivery:** In-process publisher-global serial FIFO; over IPC,
+  daemon-global sequence and bounded at-most-once live delivery.
+- **Coalescing / dropping:** Not coalesced. Absent/new subscribers miss prior
+  events. Queue overflow disconnects the affected daemon peer.
 - **Loop behaviour:** The adapter can be tested headlessly with a fake manager.
   Production signal timing may depend on GLib scheduling in
   `ConnectionManager`.
@@ -131,16 +160,18 @@ subscriber that is absent or already closed does not receive prior events.
 <!-- api-event: error.occurred -->
 ## `error.occurred`
 
-- **Status / introduced:** Schema only / v1
-- **Capability / intended trigger:** No fixed capability; future asynchronous
-  safe failure.
+- **Status / introduced:** Safe schema plus local `DaemonClient` continuity
+  emission / v1
+- **Capability / trigger:** No fixed capability; transport closure, protocol
+  violation, sequence discontinuity, or client event-queue overflow.
 - **Payload / IDs:** A dictionary matching the `SshPilotError.to_dict()`
   envelope: required non-empty string `code` and `message`, plus optional
   `details`, `retryable`, and correlation IDs. Unknown envelope fields are
   rejected. Details use the same constrained policy as `SshPilotError.details`.
   The accepted mapping and nested lists/dictionaries are exposed read-only so
   one subscriber cannot mutate what later subscribers observe.
-- **Guarantees / security:** Runtime emission is absent. Raw exceptions, secret
+- **Guarantees / security:** This local event is not sent by the daemon and
+  does not claim a daemon-global sequence. Raw exceptions, secret
   key names, arbitrary objects, environments, commands, and stack traces are
   rejected by payload validation.
 
@@ -155,6 +186,12 @@ subscriber snapshot captured when it was accepted.
 publication/subscription, and deactivates subscription handles. An event
 already being delivered, plus events accepted into its FIFO, finish in order;
 callbacks are then released. Closing from inside a callback does not deadlock.
+
+`DaemonClient.close()` first rejects requests and event acceptance, closes the
+socket to wake the sole reader, wakes pending requests, stops the event handoff,
+and closes subscriptions. Close from a subscriber callback skips self-join and
+does not deadlock. The daemon stops core acceptance and unsubscribes before it
+closes peers and the core client.
 
 Callbacks must marshal to their frontend thread when the dispatcher thread is
 unsuitable. The API does not import GTK or implicitly call `GLib.idle_add`.
