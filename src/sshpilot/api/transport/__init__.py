@@ -1,10 +1,18 @@
 """Transport-neutral protocol envelopes and codecs for local IPC."""
 
 from .codec import (
+    create_connection_request_from_wire,
+    create_connection_request_to_wire,
     decode_envelope,
+    delete_connection_request_from_wire,
+    delete_connection_request_to_wire,
+    delete_connection_result_from_wire,
+    delete_connection_result_to_wire,
     encode_envelope,
     error_from_wire,
     error_to_wire,
+    update_connection_request_from_wire,
+    update_connection_request_to_wire,
 )
 from .envelopes import (
     ErrorData,
@@ -34,10 +42,18 @@ __all__ = [
     "HandshakeResult",
     "RequestEnvelope",
     "SuccessResponseEnvelope",
+    "create_connection_request_from_wire",
+    "create_connection_request_to_wire",
     "decode_envelope",
+    "delete_connection_request_from_wire",
+    "delete_connection_request_to_wire",
+    "delete_connection_result_from_wire",
+    "delete_connection_result_to_wire",
     "encode_envelope",
     "encode_frame",
     "error_from_wire",
     "error_to_wire",
     "receive_frame",
+    "update_connection_request_from_wire",
+    "update_connection_request_to_wire",
 ]

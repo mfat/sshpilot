@@ -21,7 +21,11 @@ from ..models.connections import (
     ConnectionDetails,
     ConnectionHealth,
     ConnectionSummary,
+    CreateConnectionRequest,
+    DeleteConnectionRequest,
+    DeleteConnectionResult,
     GroupReference,
+    UpdateConnectionRequest,
 )
 from .envelopes import (
     ErrorData,
@@ -548,6 +552,132 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
             "forwarding rule count",
         ),
         proxy_jump=proxy_jump,
+    )
+
+
+def create_connection_request_to_wire(
+    request: CreateConnectionRequest,
+) -> Dict[str, Any]:
+    if type(request) is not CreateConnectionRequest:
+        raise TypeError("create connection request is required")
+    return {
+        "nickname": request.nickname,
+        "hostname": request.hostname,
+        "username": request.username,
+        "port": request.port,
+        "protocol": request.protocol,
+    }
+
+
+def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
+    data = _strict_fields(
+        value,
+        required={"nickname", "hostname", "username", "port", "protocol"},
+        context="create connection request",
+    )
+    return CreateConnectionRequest(
+        nickname=_identifier(data["nickname"], "connection nickname"),
+        hostname=_identifier(data["hostname"], "connection hostname"),
+        username=_text(
+            data["username"],
+            "connection username",
+            allow_empty=True,
+        ),
+        port=_integer(data["port"], "connection port"),
+        protocol=_identifier(data["protocol"], "connection protocol"),
+    )
+
+
+def update_connection_request_to_wire(
+    request: UpdateConnectionRequest,
+) -> Dict[str, Any]:
+    if type(request) is not UpdateConnectionRequest:
+        raise TypeError("update connection request is required")
+    return {
+        "nickname": request.nickname,
+        "hostname": request.hostname,
+        "username": request.username,
+        "port": request.port,
+    }
+
+
+def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
+    data = _strict_fields(
+        value,
+        required={"nickname", "hostname", "username", "port"},
+        context="update connection request",
+    )
+    nickname = data["nickname"]
+    hostname = data["hostname"]
+    username = data["username"]
+    port = data["port"]
+    return UpdateConnectionRequest(
+        nickname=(
+            _identifier(nickname, "connection nickname")
+            if nickname is not None
+            else None
+        ),
+        hostname=(
+            _identifier(hostname, "connection hostname")
+            if hostname is not None
+            else None
+        ),
+        username=(
+            _text(username, "connection username", allow_empty=True)
+            if username is not None
+            else None
+        ),
+        port=(
+            _integer(port, "connection port")
+            if port is not None
+            else None
+        ),
+    )
+
+
+def delete_connection_request_to_wire(
+    request: DeleteConnectionRequest,
+) -> Dict[str, Any]:
+    if type(request) is not DeleteConnectionRequest:
+        raise TypeError("delete connection request is required")
+    return {"connection_id": request.connection_id}
+
+
+def delete_connection_request_from_wire(value: Any) -> DeleteConnectionRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id"},
+        context="delete connection request",
+    )
+    return DeleteConnectionRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        )
+    )
+
+
+def delete_connection_result_to_wire(
+    result: DeleteConnectionResult,
+) -> Dict[str, Any]:
+    if type(result) is not DeleteConnectionResult:
+        raise TypeError("delete connection result is required")
+    return {
+        "connection_id": result.connection_id,
+        "deleted": result.deleted,
+    }
+
+
+def delete_connection_result_from_wire(value: Any) -> DeleteConnectionResult:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "deleted"},
+        context="delete connection result",
+    )
+    return DeleteConnectionResult(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        deleted=_boolean(data["deleted"], "connection deleted result"),
     )
 
 

@@ -86,12 +86,16 @@ class CreateConnectionRequest:
     protocol: str = "ssh"
 
     def __post_init__(self) -> None:
-        if not self.nickname.strip():
+        if type(self.nickname) is not str or not self.nickname.strip():
             raise ValueError("connection nickname must not be empty")
-        if not self.hostname.strip():
+        if type(self.hostname) is not str or not self.hostname.strip():
             raise ValueError("connection hostname must not be empty")
-        if not 1 <= self.port <= 65535:
+        if type(self.username) is not str:
+            raise TypeError("connection username must be a string")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
             raise ValueError("connection port must be between 1 and 65535")
+        if type(self.protocol) is not str or not self.protocol.strip():
+            raise ValueError("connection protocol must not be empty")
 
 
 @dataclass(frozen=True)
@@ -102,11 +106,24 @@ class UpdateConnectionRequest:
     port: Optional[int] = None
 
     def __post_init__(self) -> None:
-        if self.nickname is not None and not self.nickname.strip():
+        if all(
+            value is None
+            for value in (self.nickname, self.hostname, self.username, self.port)
+        ):
+            raise ValueError("connection update must contain at least one field")
+        if self.nickname is not None and (
+            type(self.nickname) is not str or not self.nickname.strip()
+        ):
             raise ValueError("connection nickname must not be empty")
-        if self.hostname is not None and not self.hostname.strip():
+        if self.hostname is not None and (
+            type(self.hostname) is not str or not self.hostname.strip()
+        ):
             raise ValueError("connection hostname must not be empty")
-        if self.port is not None and not 1 <= self.port <= 65535:
+        if self.username is not None and type(self.username) is not str:
+            raise TypeError("connection username must be a string")
+        if self.port is not None and (
+            type(self.port) is not int or not 1 <= self.port <= 65535
+        ):
             raise ValueError("connection port must be between 1 and 65535")
 
 
@@ -122,6 +139,11 @@ class DeleteConnectionRequest:
 class DeleteConnectionResult:
     connection_id: ConnectionId
     deleted: bool
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        if type(self.deleted) is not bool:
+            raise TypeError("connection deleted result must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -139,4 +161,3 @@ class ConnectionValidationResult:
     def __post_init__(self) -> None:
         if self.valid and self.errors:
             raise ValueError("a valid result cannot contain validation errors")
-

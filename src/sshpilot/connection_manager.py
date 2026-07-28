@@ -2228,8 +2228,8 @@ class ConnectionManager(GObject.Object):
 
         # update_connection persists to the protocol's store (ssh_config for
         # SSH — including password keyring handling — or the non-SSH JSON
-        # store) and emits 'connection-updated'. Persist first; only list the
-        # connection once it's actually on disk.
+        # store) and retains this programmatic plugin path's established
+        # connection-updated notification before connection-added.
         if not self.update_connection(connection, dict(data)):
             raise RuntimeError("Failed to persist connection")
         if connection not in self.connections:
@@ -2239,7 +2239,13 @@ class ConnectionManager(GObject.Object):
         GLib.idle_add(self.emit, 'connection-added', connection)
         return connection
 
-    def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
+    def update_connection(
+        self,
+        connection: Connection,
+        new_data: Dict[str, Any],
+        *,
+        emit_signal: bool = True,
+    ) -> bool:
         """Update an existing connection"""
         try:
             flags = _UpdateFlags.pop_from(new_data)
@@ -2329,8 +2335,11 @@ class ConnectionManager(GObject.Object):
             except Exception:
                 logger.debug("Master invalidation skipped", exc_info=True)
 
-            # Emit signal with SAME connection object
-            self.emit('connection-updated', connection)
+            # Emit signal with SAME connection object. Creation paths suppress
+            # this update signal and emit connection-added exactly once after
+            # the persisted object has been registered.
+            if emit_signal:
+                self.emit('connection-updated', connection)
             
             logger.info(f"Connection updated: {connection}")
             return True
@@ -2720,7 +2729,11 @@ class ConnectionManager(GObject.Object):
 
         # Persist first; only list the connection once it's actually on disk,
         # so a failed write doesn't leave a phantom in-memory entry.
-        if not self.update_connection(connection, connection_data):
+        if not self.update_connection(
+            connection,
+            connection_data,
+            emit_signal=False,
+        ):
             return None
         if connection not in self.connections:
             self._register_connection(connection)
@@ -2738,4 +2751,5 @@ class ConnectionManager(GObject.Object):
                 logger.info("New connection '%s' has %d rules after write", connection.nickname, len(connection.forwarding_rules))
         except Exception:
             pass
+        self.emit('connection-added', connection)
         return connection

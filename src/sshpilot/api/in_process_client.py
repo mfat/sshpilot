@@ -51,21 +51,21 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_capabilities": None,
     "get_connection": Capability.CONNECTIONS_READ,
     "list_connections": Capability.CONNECTIONS_READ,
+    "create_connection": Capability.CONNECTIONS_WRITE,
+    "delete_connection": Capability.CONNECTIONS_WRITE,
     "subscribe_events": Capability.CONNECTIONS_EVENTS,
+    "update_connection": Capability.CONNECTIONS_WRITE,
 }
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.TERMINAL_ATTACH,
     "close_session": Capability.TERMINAL,
-    "create_connection": Capability.CONNECTIONS_WRITE,
-    "delete_connection": Capability.CONNECTIONS_WRITE,
     "detach_session": Capability.TERMINAL_ATTACH,
     "open_session": Capability.TERMINAL,
     "replay_terminal": Capability.TERMINAL_REPLAY,
     "resize_terminal": Capability.TERMINAL,
     "respond_to_interaction": Capability.INTERACTIONS,
     "send_terminal_input": Capability.TERMINAL,
-    "update_connection": Capability.CONNECTIONS_WRITE,
 }
 
 
@@ -95,6 +95,19 @@ class InProcessClient:
         self._publisher = EventPublisher()
         self._signal_handlers: List[int] = []
         self._closed = False
+        supported = {
+            Capability.CONNECTIONS_READ,
+            Capability.CONNECTIONS_EVENTS,
+        }
+        if all(
+            callable(getattr(connection_manager, method_name, None))
+            for method_name in (
+                "create_connection",
+                "update_connection",
+                "remove_connection",
+            )
+        ):
+            supported.add(Capability.CONNECTIONS_WRITE)
         self._capabilities = Capabilities(
             protocol_version=PROTOCOL_VERSION,
             api_implementation_version=API_IMPLEMENTATION_VERSION,
@@ -104,12 +117,7 @@ class InProcessClient:
                 version=sshpilot_version,
                 implementation="in-process",
             ),
-            supported=frozenset(
-                {
-                    Capability.CONNECTIONS_READ,
-                    Capability.CONNECTIONS_EVENTS,
-                }
-            ),
+            supported=frozenset(supported),
             compatibility=CompatibilityResult(
                 compatible=True,
                 protocol_version=PROTOCOL_VERSION,
@@ -136,20 +144,160 @@ class InProcessClient:
         return self._to_details(connection)
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
-        del request
-        raise self._unsupported("create_connection")
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if type(request) is not CreateConnectionRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A create connection request is required",
+            )
+        if request.protocol != "ssh":
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "The requested connection protocol is not supported",
+                details={"field": "protocol"},
+            )
+        if self._connection_with_nickname(request.nickname) is not None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_ALREADY_EXISTS,
+                "A connection with this nickname already exists",
+            )
+        creator = getattr(self._connection_manager, "create_connection", None)
+        if not callable(creator):
+            raise self._persistence_error()
+        data = {
+            "nickname": request.nickname,
+            "hostname": request.hostname,
+            "username": request.username,
+            "port": request.port,
+            "protocol": request.protocol,
+        }
+        try:
+            connection = creator(data)
+        except ValueError:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "The connection data is invalid",
+            ) from None
+        except SshPilotError:
+            raise
+        except Exception as error:
+            logger.error(
+                "Connection manager create failed (%s)",
+                type(error).__name__,
+            )
+            raise self._persistence_error() from None
+        if connection is None:
+            raise self._persistence_error()
+        return self._to_details(connection)
 
     def update_connection(
         self,
         connection_id: ConnectionId,
         request: UpdateConnectionRequest,
     ) -> ConnectionDetails:
-        del connection_id, request
-        raise self._unsupported("update_connection")
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if type(request) is not UpdateConnectionRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An update connection request is required",
+                connection_id=connection_id,
+            )
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=connection_id,
+            )
+        if getattr(connection, "protocol", "ssh") != "ssh":
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "The requested connection protocol is not supported",
+                connection_id=connection_id,
+            )
+        old_nickname = str(getattr(connection, "nickname", "") or "")
+        if (
+            request.nickname is not None
+            and request.nickname != old_nickname
+            and self._connection_with_nickname(request.nickname) is not None
+        ):
+            raise SshPilotError(
+                ErrorCode.CONNECTION_ALREADY_EXISTS,
+                "A connection with this nickname already exists",
+                connection_id=connection_id,
+            )
+
+        data = self._safe_internal_update_data(connection)
+        for name in ("nickname", "hostname", "username", "port"):
+            value = getattr(request, name)
+            if value is not None:
+                data[name] = value
+        updater = getattr(self._connection_manager, "update_connection", None)
+        if not callable(updater):
+            raise self._persistence_error(connection_id)
+        try:
+            updated = updater(connection, data, emit_signal=False)
+        except SshPilotError:
+            raise
+        except Exception as error:
+            logger.error(
+                "Connection manager update failed (%s)",
+                type(error).__name__,
+            )
+            raise self._persistence_error(connection_id) from None
+        if not updated:
+            raise self._persistence_error(connection_id)
+
+        new_nickname = str(getattr(connection, "nickname", "") or "")
+        if old_nickname != new_nickname and self._group_manager is not None:
+            rename = getattr(self._group_manager, "rename_connection", None)
+            if callable(rename):
+                try:
+                    rename(old_nickname, new_nickname)
+                except Exception as error:
+                    logger.error(
+                        "Connection group rename failed (%s)",
+                        type(error).__name__,
+                    )
+        self._emit_manager_event("connection-updated", connection)
+        return self._to_details(connection)
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
-        del request
-        raise self._unsupported("delete_connection")
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if type(request) is not DeleteConnectionRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A delete connection request is required",
+            )
+        connection = self._find_connection(request.connection_id)
+        if connection is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=request.connection_id,
+            )
+        remover = getattr(self._connection_manager, "remove_connection", None)
+        if not callable(remover):
+            raise self._persistence_error(request.connection_id)
+        try:
+            deleted = remover(connection)
+        except SshPilotError:
+            raise
+        except Exception as error:
+            logger.error(
+                "Connection manager delete failed (%s)",
+                type(error).__name__,
+            )
+            raise self._persistence_error(request.connection_id) from None
+        if not deleted:
+            raise self._persistence_error(request.connection_id)
+        return DeleteConnectionResult(
+            connection_id=request.connection_id,
+            deleted=True,
+        )
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
         del request
@@ -237,6 +385,10 @@ class InProcessClient:
                 "In-process client commands must run on their owner thread",
             )
 
+    def _require_capability(self, capability: Capability) -> None:
+        if not self._capabilities.supports(capability):
+            raise unsupported_capability(capability)
+
     @staticmethod
     def _unsupported(method_name: str) -> SshPilotError:
         return unsupported_capability(
@@ -267,6 +419,96 @@ class InProcessClient:
             if self.connection_id_for(connection) == connection_id:
                 return connection
         return None
+
+    def _connection_with_nickname(self, nickname: str) -> Optional[Any]:
+        finder = getattr(
+            self._connection_manager,
+            "find_connection_by_nickname",
+            None,
+        )
+        if callable(finder):
+            try:
+                found = finder(nickname)
+                if found is not None:
+                    return found
+            except Exception as error:
+                logger.error(
+                    "Connection manager nickname lookup failed (%s)",
+                    type(error).__name__,
+                )
+                raise SshPilotError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "Connections could not be checked",
+                    retryable=True,
+                ) from None
+        folded = nickname.casefold()
+        return next(
+            (
+                connection
+                for connection in self._manager_connections()
+                if str(getattr(connection, "nickname", "") or "").casefold()
+                == folded
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _safe_internal_update_data(connection: Any) -> dict:
+        """Copy persisted metadata without carrying secret/control values."""
+
+        current = getattr(connection, "data", None)
+        data = dict(current) if isinstance(current, dict) else {}
+        for key in tuple(data):
+            lowered = str(key).lower()
+            if (
+                str(key).startswith("__")
+                or "password" in lowered
+                or "passphrase" in lowered
+                or "secret" in lowered
+                or "token" in lowered
+                or "credential" in lowered
+                or "cookie" in lowered
+                or "private_key" in lowered
+                or callable(data[key])
+            ):
+                data.pop(key, None)
+        data.update(
+            {
+                "nickname": str(getattr(connection, "nickname", "") or ""),
+                "hostname": str(getattr(connection, "hostname", "") or ""),
+                "username": str(getattr(connection, "username", "") or ""),
+                "port": InProcessClient._port(connection),
+                "protocol": str(getattr(connection, "protocol", "ssh") or "ssh"),
+            }
+        )
+        return data
+
+    def _emit_manager_event(self, signal_name: str, connection: Any) -> None:
+        emit = getattr(self._connection_manager, "emit", None)
+        if not callable(emit):
+            raise self._persistence_error(self.connection_id_for(connection))
+        try:
+            emit(signal_name, connection)
+        except Exception as error:
+            logger.error(
+                "Connection manager event emission failed (%s)",
+                type(error).__name__,
+            )
+            raise SshPilotError(
+                ErrorCode.INTERNAL_ERROR,
+                "The connection changed but its event could not be published",
+                connection_id=self.connection_id_for(connection),
+            ) from None
+
+    @staticmethod
+    def _persistence_error(
+        connection_id: Optional[ConnectionId] = None,
+    ) -> SshPilotError:
+        return SshPilotError(
+            ErrorCode.PERSISTENCE_FAILED,
+            "The connection change could not be saved",
+            connection_id=connection_id,
+        )
 
     def _group_references(self, connection: Any) -> Tuple[GroupReference, ...]:
         manager = self._group_manager
