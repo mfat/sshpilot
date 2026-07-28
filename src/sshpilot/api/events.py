@@ -327,7 +327,7 @@ class EventPublisher:
             self._drain()
         return event
 
-    def _publish_existing(self, event: CoreEvent[Any]) -> CoreEvent[Any]:
+    def publish_existing(self, event: CoreEvent[Any]) -> CoreEvent[Any]:
         """Deliver a validated event while preserving an external sequence."""
 
         if not isinstance(event, CoreEvent):

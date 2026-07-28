@@ -22,8 +22,12 @@ from sshpilot.api.transport.codec import (
     capabilities_to_wire,
     connection_details_to_wire,
     connection_summary_to_wire,
+    create_connection_request_from_wire,
+    delete_connection_request_from_wire,
+    delete_connection_result_to_wire,
     handshake_request_from_wire,
     handshake_result_to_wire,
+    update_connection_request_from_wire,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, RequestEnvelope
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
@@ -33,6 +37,9 @@ logger = logging.getLogger(__name__)
 DAEMON_METHOD_CAPABILITIES = {
     "connections.get": Capability.CONNECTIONS_READ,
     "connections.list": Capability.CONNECTIONS_READ,
+    "connections.create": Capability.CONNECTIONS_WRITE,
+    "connections.delete": Capability.CONNECTIONS_WRITE,
+    "connections.update": Capability.CONNECTIONS_WRITE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -50,7 +57,7 @@ class ClientProtocolState:
 
 
 class RequestDispatcher:
-    """Route only the four Protocol v1 request methods implemented by the daemon."""
+    """Route the explicit Protocol v1 request methods implemented by the daemon."""
 
     def __init__(self, core_client: SshPilotClient) -> None:
         self._core_client = core_client
@@ -61,6 +68,9 @@ class RequestDispatcher:
             "system.get_capabilities": self._handle_get_capabilities,
             "connections.list": self._handle_list_connections,
             "connections.get": self._handle_get_connection,
+            "connections.create": self._handle_create_connection,
+            "connections.update": self._handle_update_connection,
+            "connections.delete": self._handle_delete_connection,
         }
 
     def begin_shutdown(self) -> None:
@@ -198,6 +208,46 @@ class RequestDispatcher:
             self._core_client.get_connection(ConnectionId(connection_id))
         )
 
+    def _handle_create_connection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        mutation = create_connection_request_from_wire(request.params)
+        return connection_details_to_wire(
+            self._core_client.create_connection(mutation)
+        )
+
+    def _handle_update_connection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        if set(request.params) != {"connection_id", "update"}:
+            raise ValueError(
+                "connections.update requires connection_id and update"
+            )
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        mutation = update_connection_request_from_wire(request.params["update"])
+        return connection_details_to_wire(
+            self._core_client.update_connection(
+                ConnectionId(connection_id),
+                mutation,
+            )
+        )
+
+    def _handle_delete_connection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        mutation = delete_connection_request_from_wire(request.params)
+        return delete_connection_result_to_wire(
+            self._core_client.delete_connection(mutation)
+        )
+
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
         if metadata is None or state.client_id is None:
@@ -238,6 +288,7 @@ class RequestDispatcher:
             in {
                 Capability.CONNECTIONS_READ,
                 Capability.CONNECTIONS_EVENTS,
+                Capability.CONNECTIONS_WRITE,
             }
         )
 

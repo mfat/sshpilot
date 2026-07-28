@@ -187,6 +187,7 @@ class DaemonLauncher:
         required = {
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
+            Capability.CONNECTIONS_WRITE,
         }
         if not required <= capabilities.supported:
             client.close()

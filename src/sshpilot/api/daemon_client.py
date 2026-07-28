@@ -13,7 +13,7 @@ from typing import Dict, List, NoReturn, Optional, Union
 
 from sshpilot import __version__ as sshpilot_version
 
-from .capabilities import Capabilities
+from .capabilities import Capabilities, Capability
 from .errors import ErrorCode, SshPilotError, unsupported_capability
 from .events import (
     CoreEventCallback,
@@ -51,11 +51,15 @@ from .transport.codec import (
     connection_event_from_envelope,
     connection_details_from_wire,
     connection_summary_from_wire,
+    create_connection_request_to_wire,
     decode_envelope,
+    delete_connection_request_to_wire,
+    delete_connection_result_from_wire,
     encode_envelope,
     error_from_wire,
     handshake_request_to_wire,
     handshake_result_from_wire,
+    update_connection_request_to_wire,
 )
 from .transport.envelopes import (
     ErrorResponseEnvelope,
@@ -174,20 +178,47 @@ class DaemonClient:
             self._fail_protocol("The daemon returned invalid connection details")
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
-        del request
-        raise self._unsupported("create_connection")
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        result = self._request(
+            "connections.create",
+            create_connection_request_to_wire(request),
+            mutation_connection_id=None,
+        )
+        try:
+            return connection_details_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid connection details")
 
     def update_connection(
         self,
         connection_id: ConnectionId,
         request: UpdateConnectionRequest,
     ) -> ConnectionDetails:
-        del connection_id, request
-        raise self._unsupported("update_connection")
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        result = self._request(
+            "connections.update",
+            {
+                "connection_id": connection_id,
+                "update": update_connection_request_to_wire(request),
+            },
+            mutation_connection_id=connection_id,
+        )
+        try:
+            return connection_details_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid connection details")
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
-        del request
-        raise self._unsupported("delete_connection")
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        result = self._request(
+            "connections.delete",
+            delete_connection_request_to_wire(request),
+            mutation_connection_id=request.connection_id,
+        )
+        try:
+            return delete_connection_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid delete result")
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
         del request
@@ -304,6 +335,7 @@ class DaemonClient:
         params: dict,
         *,
         protocol_version: Optional[str] = None,
+        mutation_connection_id: Optional[ConnectionId] = None,
     ):
         with self._request_lock:
             with self._state_lock:
@@ -325,6 +357,7 @@ class DaemonClient:
                 client_id=self._client_id,
             )
             pending = _PendingRequest(completed=threading.Event())
+            mutation_may_have_been_sent = False
             with self._state_lock:
                 if self._closed or self._socket is not transport:
                     raise self._closed_error()
@@ -332,6 +365,10 @@ class DaemonClient:
             try:
                 frame = encode_frame(encode_envelope(request))
                 with self._send_lock:
+                    mutation_may_have_been_sent = (
+                        mutation_connection_id is not None
+                        or method == "connections.create"
+                    )
                     transport.sendall(frame)
             except (FramingError, TypeError, ValueError):
                 self._fail_transport(
@@ -368,6 +405,21 @@ class DaemonClient:
                     pending.completed.wait()
 
             if pending.error is not None:
+                if (
+                    mutation_may_have_been_sent
+                    and pending.error.code
+                    in {
+                        ErrorCode.TRANSPORT_CLOSED,
+                        ErrorCode.TRANSPORT_TIMEOUT,
+                    }
+                ):
+                    raise SshPilotError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "The connection change may have been saved",
+                        retryable=False,
+                        request_id=request_id,
+                        connection_id=mutation_connection_id,
+                    )
                 raise pending.error
             response = pending.response
             if response is None:
@@ -514,7 +566,7 @@ class DaemonClient:
                 self._publisher.close()
                 return
             try:
-                self._publisher._publish_existing(item)
+                self._publisher.publish_existing(item)
             except RuntimeError:
                 return
 
@@ -605,6 +657,10 @@ class DaemonClient:
                 retryable=True,
             )
         return SshPilotError(ErrorCode.INVALID_REQUEST, "The client is closed")
+
+    def _require_capability(self, capability: Capability) -> None:
+        if not self.get_capabilities().supports(capability):
+            raise unsupported_capability(capability)
 
     @staticmethod
     def _unsupported(method_name: str) -> SshPilotError:
