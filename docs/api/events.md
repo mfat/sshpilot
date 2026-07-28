@@ -46,6 +46,12 @@ core or another peer. If its queue is full, continuity is explicitly lost and
 only that peer is disconnected; events are never silently dropped while the
 connection remains usable.
 
+Responses and events also share a 4 MiB total remaining-byte bound per peer.
+Successful create/update/delete calls produce exactly one corresponding event
+from the manager signal path; handlers never publish a duplicate. Because the
+response and event use the same framed output deque, clients accept either
+valid response/event ordering and refresh from the resulting snapshot.
+
 `DaemonClient` has exactly one persistent socket reader. It correlates responses
 through a pending-request table and sends events to a separate bounded serial
 event-dispatch thread, so slow subscribers cannot stop response reading. The

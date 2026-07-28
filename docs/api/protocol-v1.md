@@ -39,7 +39,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.3` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.4` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -162,6 +162,12 @@ implemented.
 - Per-peer event queues are bounded to 256. Overflow disconnects only the slow
   peer so continuity cannot be silently lost. A fresh connection and
   `connections.list` snapshot are required after a future explicit reconnect.
+- The complete per-peer output deque, including responses and events, is also
+  bounded to 4 MiB of remaining frame bytes. Partial writes decrement that
+  accounting; exceeding the bound disconnects only the affected peer.
+- A successful create/update/delete emits exactly one matching connection
+  event. Response and event frames share one output stream, so frontends must
+  remain correct whether the response or event is delivered first.
 - Session events, terminal output ordering, and per-session replay remain
   schema-only and have no runtime guarantee.
 
@@ -183,7 +189,9 @@ that close the transport and wake every pending caller.
 
 Client calls are synchronous and expose no cancellation token. `DaemonClient`
 uses a finite constructor-configurable transport timeout; timeout closes the
-socket and returns `transport_timeout`. `close()` tears down resources and can
+socket and returns `transport_timeout` for reads. After a write frame may have
+been sent, timeout or closure returns non-retryable `mutation_ambiguous`;
+clients must refresh before an explicit retry. `close()` tears down resources and can
 interrupt a blocked socket call through socket shutdown.
 
 The `operation_cancelled` and `operation_timed_out` error codes are reserved

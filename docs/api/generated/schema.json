@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.3",
+  "api_implementation_version": "0.4",
   "client_method_contract": {
     "attach_session": {
       "capability": "terminal.attach",
@@ -15,11 +15,11 @@
     },
     "create_connection": {
       "capability": "connections.write",
-      "status": "schema-only"
+      "status": "implemented"
     },
     "delete_connection": {
       "capability": "connections.write",
-      "status": "schema-only"
+      "status": "implemented"
     },
     "detach_session": {
       "capability": "terminal.attach",
@@ -63,15 +63,24 @@
     },
     "update_connection": {
       "capability": "connections.write",
-      "status": "schema-only"
+      "status": "implemented"
     }
   },
   "daemon_method_contract": {
+    "connections.create": {
+      "capability": "connections.write"
+    },
+    "connections.delete": {
+      "capability": "connections.write"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
     "connections.list": {
       "capability": "connections.read"
+    },
+    "connections.update": {
+      "capability": "connections.write"
     },
     "system.get_capabilities": {
       "capability": null
@@ -108,7 +117,10 @@
       "unsupported_capability",
       "invalid_request",
       "validation_failed",
+      "connection_already_exists",
       "connection_not_found",
+      "persistence_failed",
+      "mutation_ambiguous",
       "session_not_found",
       "interaction_not_found",
       "interaction_already_answered",

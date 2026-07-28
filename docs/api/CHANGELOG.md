@@ -26,16 +26,22 @@ notes remain separate.
   application-scoped coalesced GTK refreshes.
 - Added the truthful `connections.events` capability; experimental GTK daemon
   selection now requires both snapshot reads and live connection events.
+- Added Protocol v1 `connections.create`, `connections.update`, and
+  `connections.delete`, the truthful `connections.write` capability, strict
+  secret-free mutation codecs, and shared write contracts across both clients.
+- Added non-retryable `mutation_ambiguous`, `connection_already_exists`, and
+  `persistence_failed` errors for deliberate mutation failure handling.
+- Added a 4 MiB total per-peer outbound bound covering responses and events.
 - Added the schema-only `replay_terminal` client operation and complete
   package-level convenience exports for all documented model types.
 - Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
 
 ### Changed
 
-- Increased `API_IMPLEMENTATION_VERSION` to `0.3`; `PROTOCOL_VERSION` remains
+- Increased `API_IMPLEMENTATION_VERSION` to `0.4`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon
-  response and remains limited to `connections.read`.
+  response and advertises only contract-tested runtime capabilities.
 - Defined publisher-global serial FIFO event delivery, including concurrent,
   re-entrant, unsubscription, and shutdown behaviour.
 - Marked nickname-derived connection IDs as explicitly transitional with a
@@ -48,6 +54,13 @@ notes remain separate.
 - Daemon event continuity is process-lifetime only. Queue overflow, malformed
   events, sequence gaps, or transport loss close the affected client; no replay
   or automatic reconnect is implied.
+- Experimental GTK daemon mode now requires read, event, and write
+  capabilities. Basic CRUD runs on the GTK client worker without optimistic
+  row changes; unsupported advanced, metadata, and secret edits are rejected
+  rather than discarded.
+- Renaming through `update_connection` returns and emits the new transitional
+  nickname-derived ID. Mutation requests are never automatically retried after
+  ambiguous transport failure.
 
 ### Deprecated
 

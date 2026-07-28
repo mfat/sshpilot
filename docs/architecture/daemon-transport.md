@@ -1,8 +1,8 @@
 # Local daemon transport
 
-The current experimental path provides Linux per-user connection snapshots and
-unsolicited connection lifecycle events. Production composition remains
-in-process by default.
+The current experimental path provides Linux per-user connection snapshots,
+basic metadata mutations, and unsolicited connection lifecycle events.
+Production composition remains in-process by default.
 
 Linux is the supported platform for this phase. Unix-socket primitives may be
 present elsewhere, but macOS lifecycle integration and Windows named pipes are
@@ -34,7 +34,7 @@ default); timeout closes the transport, making late responses unambiguous.
 
 GTK never invokes that blocking API on its main thread. One application-scoped
 `GtkClientBridge` owns a single worker. It serializes selection/startup and
-connection-list reads, then posts results through `GLib.idle_add`. The
+connection reads/writes, then posts results through `GLib.idle_add`. The
 application owns one event subscription and also marshals it through GLib.
 Welcome-page refreshes are coalesced: one pending/active snapshot plus at most
 one follow-up. Per-widget request tokens suppress stale delivery after refresh
@@ -66,7 +66,8 @@ When daemon mode is requested, selection runs off the GTK thread:
 
 1. validate the owned mode-0700 parent and any existing mode-0600 socket;
 2. attempt a real Protocol v1 handshake with a short bounded probe;
-3. require negotiated `connections.read` and `connections.events`
+3. require negotiated `connections.read`, `connections.events`, and
+   `connections.write`
    capabilities;
 4. if and only if the endpoint is unavailable, launch
    `sys.executable -m sshpilot.daemon --socket <resolved endpoint>`;
@@ -100,8 +101,9 @@ import those managers or PyGObject. Tests inject a headless manager through the
 same server factory and use a real Unix socket.
 
 Daemon handlers never read persistence directly. Connection ordering, DTO
-mapping, transitional identifiers, safe errors, and secret exclusion continue
-to come from `InProcessClient`.
+mapping, transitional identifiers, mutations, safe errors, and secret exclusion
+continue to come from `InProcessClient`, which delegates writes to the existing
+`ConnectionManager`.
 
 ## Socket security
 
@@ -157,6 +159,11 @@ write interest only while output exists, handles partial writes, and sends
 responses and events as complete non-interleaved frames in deque order.
 Handshake-incomplete peers receive no runtime events.
 
+The whole outbound deque is separately bounded to 4 MiB per peer. Responses
+and events both count, and accounting tracks remaining bytes after partial
+writes. Exceeding either bound disconnects only that peer without logging
+payload contents.
+
 If a queue fills, that peer's continuity is marked lost, its queue is cleared,
 and the selector disconnects it. No event is silently dropped while the peer
 continues. Other peers and the core remain unaffected. `DaemonClient` applies
@@ -170,10 +177,22 @@ selection; a future explicit reconnect must take a fresh list snapshot.
 
 ## Current boundary
 
-Handshake, capability discovery, connection list/get, and
+Handshake, capability discovery, connection list/get/create/update/delete, and
 `connection.created`/`connection.updated`/`connection.deleted` cross the
-daemon. The advertised feature set is exactly `connections.read` plus
-`connections.events`. Terminal/session runtime, PTYs, secrets, prompts, SFTP,
+daemon. The advertised feature set is exactly `connections.read`,
+`connections.events`, and `connections.write`.
+
+The write contract intentionally contains only nickname, hostname, username,
+port, and SSH protocol creation. Existing advanced SSH settings are preserved
+internally during basic updates, but advanced/group/tag/Wake-on-LAN edits and
+secret changes are rejected by experimental GTK daemon mode rather than
+discarded. GTK waits for the mutation response and subsequent coalesced
+snapshot refresh; it never removes or changes rows optimistically.
+
+Write requests are not automatically retried. If the transport closes after a
+request may have reached the daemon, `mutation_ambiguous` requires a fresh
+snapshot before explicit user action. There is no exactly-once/idempotency-key
+contract yet. Terminal/session runtime, PTYs, secrets, prompts, SFTP,
 forwarding, plugins, and binary channels remain in-process and out of scope.
 
 ## Packaging and lifecycle backlog

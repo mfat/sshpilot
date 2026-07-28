@@ -5,16 +5,17 @@ event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
 `InProcessClient` and the negotiated daemon endpoint currently advertise
-exactly `connections.read` and `connections.events`.
+exactly `connections.read`, `connections.events`, and `connections.write`.
 `DaemonClient.get_capabilities()` returns the daemon response rather than a
 hard-coded local assumption.
 
-Experimental GTK daemon composition verifies both capabilities after the real
+Experimental GTK daemon composition verifies all three capabilities after the real
 handshake and before injecting the client. A snapshot-only older daemon is not
 used because GTK would otherwise have no truthful live-refresh guarantee.
 
 <!-- api-runtime-capability: connections.read -->
 <!-- api-runtime-capability: connections.events -->
+<!-- api-runtime-capability: connections.write -->
 
 ## Inventory
 
@@ -22,7 +23,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | --- | --- | --- | --- | --- | --- | --- |
 | `connections.read` | Read saved connection DTO snapshots | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | Existing `ConnectionManager` through `InProcessClient` | v1 |
 | `connections.events` | Subscribe to live connection lifecycle events | `InProcessClient` and daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
-| `connections.write` | Create, update, and delete saved connections | Unsupported | `create_connection`, `update_connection`, `delete_connection` | Intended `connection.*` | Persistence/validation service | v1 |
+| `connections.write` | Create, update, and delete basic saved connection metadata | `InProcessClient` and daemon: Implemented | `create_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | Existing `ConnectionManager` through `InProcessClient` | v1 |
 | `terminal` | Open/close sessions and send input/resize | Unsupported | Session and terminal methods | Intended session lifecycle/output | Core session, PTY, process, SSH/auth services | v1 |
 | `terminal.attach` | Attach/detach clients and assign input ownership | Unsupported | `attach_session`, `detach_session` | No dedicated event currently defined | Runtime session service | v1 |
 | `terminal.replay` | Replay retained terminal bytes | Unsupported schema-only method | `replay_terminal` with `ReplayRequest`/`ReplayResult` | `session.output` is schema only | Bounded per-session replay buffer | v1 |
@@ -52,12 +53,12 @@ snapshot-only daemons cannot be mistaken for live providers.
 <!-- api-capability: connections.write -->
 ## `connections.write`
 
-Unsupported. All three write methods return:
-
-```text
-code = unsupported_capability
-details.capability = connections.write
-```
+Implemented and contract-tested across both clients for nickname, hostname,
+username, port, and SSH protocol creation. Passwords, passphrases, key paths,
+advanced SSH settings, group edits, tags, and Wake-on-LAN metadata are outside
+the write DTO and are never silently discarded. Experimental GTK daemon mode
+requires this capability together with `connections.read` and
+`connections.events`; otherwise it falls back fully to in-process mode.
 
 <!-- api-capability: terminal -->
 ## `terminal`

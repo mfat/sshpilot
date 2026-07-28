@@ -13,7 +13,7 @@
     "SshPilotError",
     "Subscription"
   ],
-  "api_implementation_version": "0.3",
+  "api_implementation_version": "0.4",
   "capabilities": [
     "connections.events",
     "connections.read",
@@ -42,11 +42,11 @@
     },
     "create_connection": {
       "capability": "connections.write",
-      "status": "schema-only"
+      "status": "implemented"
     },
     "delete_connection": {
       "capability": "connections.write",
-      "status": "schema-only"
+      "status": "implemented"
     },
     "detach_session": {
       "capability": "terminal.attach",
@@ -90,7 +90,7 @@
     },
     "update_connection": {
       "capability": "connections.write",
-      "status": "schema-only"
+      "status": "implemented"
     }
   },
   "client_methods": [
@@ -261,11 +261,20 @@
     }
   },
   "daemon_method_contract": {
+    "connections.create": {
+      "capability": "connections.write"
+    },
+    "connections.delete": {
+      "capability": "connections.write"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
     "connections.list": {
       "capability": "connections.read"
+    },
+    "connections.update": {
+      "capability": "connections.write"
     },
     "system.get_capabilities": {
       "capability": null
@@ -275,6 +284,7 @@
     }
   },
   "error_codes": [
+    "connection_already_exists",
     "connection_not_found",
     "daemon_shutting_down",
     "daemon_unavailable",
@@ -286,9 +296,11 @@
     "internal_error",
     "invalid_frame",
     "invalid_request",
+    "mutation_ambiguous",
     "operation_cancelled",
     "operation_timed_out",
     "permission_denied",
+    "persistence_failed",
     "protocol_error",
     "protocol_version_unsupported",
     "session_not_found",
@@ -713,7 +725,10 @@
       "unsupported_capability",
       "invalid_request",
       "validation_failed",
+      "connection_already_exists",
       "connection_not_found",
+      "persistence_failed",
+      "mutation_ambiguous",
       "session_not_found",
       "interaction_not_found",
       "interaction_already_answered",
@@ -813,11 +828,19 @@
     "MAX_FRAME_SIZE",
     "RequestEnvelope",
     "SuccessResponseEnvelope",
+    "create_connection_request_from_wire",
+    "create_connection_request_to_wire",
     "decode_envelope",
+    "delete_connection_request_from_wire",
+    "delete_connection_request_to_wire",
+    "delete_connection_result_from_wire",
+    "delete_connection_result_to_wire",
     "encode_envelope",
     "encode_frame",
     "error_from_wire",
     "error_to_wire",
-    "receive_frame"
+    "receive_frame",
+    "update_connection_request_from_wire",
+    "update_connection_request_to_wire"
   ]
 }

@@ -12,9 +12,9 @@ means the name/field/value surface is protected by
 | `get_capabilities` | `api/client.py`, both client adapters | Yes | Bootstrap | Both clients | Yes | Daemon result is negotiated; cached after close |
 | `list_connections` | same | Yes | `connections.read` | Both clients | Yes | Preserves manager order |
 | `get_connection` | same | Yes | `connections.read` | Both clients | Yes | Safe DTO or `connection_not_found` |
-| `create_connection` | same | No | Not advertised: `connections.write` | Unsupported contract | Yes | Stable unsupported error |
-| `update_connection` | same | No | Not advertised: `connections.write` | Unsupported contract | Yes | Stable unsupported error |
-| `delete_connection` | same | No | Not advertised: `connections.write` | Both clients unsupported | Yes | Takes `DeleteConnectionRequest` |
+| `create_connection` | same | Yes | `connections.write` | Shared mutation contract | Yes | Basic secret-free SSH metadata |
+| `update_connection` | same | Yes | `connections.write` | Shared mutation contract | Yes | Partial basic update; preserves advanced data internally |
+| `delete_connection` | same | Yes | `connections.write` | Shared mutation contract | Yes | Takes `DeleteConnectionRequest` |
 | `open_session` | same | No | Not advertised: `terminal` | Unsupported contract | Yes | No runtime session ownership |
 | `attach_session` | same | No | Not advertised: `terminal.attach` | Unsupported contract | Yes | No attachment service |
 | `detach_session` | same | No | Not advertised: `terminal.attach` | Unsupported contract | Yes | No attachment service |
@@ -32,7 +32,7 @@ means the name/field/value surface is protected by
 | --- | --- | ---: | --- | ---: | ---: | --- |
 | `connections.read` | `api/capabilities.py` | Yes | Yes | Behaviour + snapshot | Yes | Snapshot list/get |
 | `connections.events` | same | Yes | Yes | Behaviour + transport integration | Yes | Bounded live delivery; no replay |
-| `connections.write` | same | No | No | Unsupported + snapshot | Yes | Three methods are stubs |
+| `connections.write` | same | Yes | Yes | Shared API/daemon mutation contracts | Yes | All three methods implemented |
 | `terminal` | same | No | No | Unsupported + snapshot | Yes | Existing GTK terminal path bypasses API |
 | `terminal.attach` | same | No | No | Unsupported + snapshot | Yes | Schema vocabulary only |
 | `terminal.replay` | same | No | No | Unsupported + snapshot | Yes | Schema-only client method exists |
@@ -108,10 +108,10 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | `GroupReference` | `models/connections.py` | Yes | `connections.read` | Behaviour + snapshot | Yes | Safe group projection |
 | `ConnectionSummary` | same | Yes | `connections.read` | Behaviour + snapshot | Yes | Secret-free |
 | `ConnectionDetails` | same | Yes | `connections.read` | Behaviour + snapshot | Yes | Safe booleans instead of paths |
-| `CreateConnectionRequest` | same | No | `connections.write` | Validation + snapshot | Yes | Minimal fields only |
-| `UpdateConnectionRequest` | same | No | `connections.write` | Validation + snapshot | Yes | Null/absence wire meaning undefined |
-| `DeleteConnectionRequest` | same | No | `connections.write` | Validation + snapshot | Yes | Duplicates current method's direct ID |
-| `DeleteConnectionResult` | same | No | `connections.write` | Snapshot only | Yes | Does not validate its ID |
+| `CreateConnectionRequest` | same | Yes | `connections.write` | Validation, codec, shared contract | Yes | Minimal fields only; no secrets |
+| `UpdateConnectionRequest` | same | Yes | `connections.write` | Validation, codec, shared contract | Yes | Null means unchanged |
+| `DeleteConnectionRequest` | same | Yes | `connections.write` | Validation, codec, shared contract | Yes | Deliberate request wrapper |
+| `DeleteConnectionResult` | same | Yes | `connections.write` | Validation, codec, shared contract | Yes | Validates ID and boolean |
 | `ConnectionValidationError` | same | No | `connections.write` | Snapshot only | Yes | Safe field/code/message intended |
 | `ConnectionValidationResult` | same | No | `connections.write` | Validation + snapshot | Yes | Valid result cannot contain errors |
 | `OpenSessionRequest` | `models/sessions.py` | No | `terminal` | Validation + snapshot | Yes | Schema only |
@@ -167,7 +167,7 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | Public element | Location | Runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
 | `PROTOCOL_VERSION = "1.0"` | `api/version.py` | Yes | Discovery result | Snapshot/docs drift | Yes | Current contract family |
-| `API_IMPLEMENTATION_VERSION = "0.3"` | same | Yes | Discovery result | Snapshot | Yes | Daemon connection-event forwarding |
+| `API_IMPLEMENTATION_VERSION = "0.4"` | same | Yes | Discovery result | Snapshot | Yes | Daemon connection mutations |
 
 ## Migrated GTK path
 

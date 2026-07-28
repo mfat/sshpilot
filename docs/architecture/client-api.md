@@ -3,6 +3,8 @@
 `SshPilotClient` is the stable frontend/core seam for sshPilot. GTK uses
 `InProcessClient` by default and can explicitly opt into `DaemonClient` for
 connection-read development through `SSHPILOT_CLIENT_MODE=daemon`.
+The experimental daemon slice now covers basic secret-free connection CRUD as
+well as snapshots and live connection events.
 
 ## Package layout
 
@@ -39,12 +41,17 @@ backend is selected, how native SSH arguments are built, which process owns a
 PTY, or how a future daemon is reached. Core code should not know how a dialog,
 tab, toast or terminal renderer is presented.
 
-This phase proves the boundary with one narrow path:
+The boundary is exercised by connection reads and basic mutations:
 
 ```text
 WelcomePage._populate_recent_box
     -> client.list_connections()
     -> secret-free ConnectionSummary DTOs
+
+Connection editor/delete actions in daemon mode
+    -> GtkClientBridge
+    -> client.create/update/delete_connection()
+    -> existing ConnectionManager through the daemon
 ```
 
 When a Recent row is clicked, GTK temporarily resolves the nickname to the
@@ -78,7 +85,7 @@ pending request IDs and never read the socket. A separate bounded serial event
 handoff prevents slow subscribers from blocking response correlation. It
 creates no event loop or thread per call. In opt-in daemon mode, the
 application-scoped GTK bridge uses one bounded worker and returns snapshots
-through `GLib.idle_add`. Request tokens suppress stale results after
+and mutation results through `GLib.idle_add`. Request tokens suppress stale results after
 refresh/window destruction. GLib remains outside `DaemonClient`, and
 `InProcessClient` stays on its construction/main thread.
 
@@ -98,15 +105,22 @@ Capability identifiers are stable strings. A capability is advertised only
 when its operations are reachable through the client and pass reusable contract
 tests.
 
-The current `InProcessClient` advertises only:
+Both current client implementations advertise:
 
 ```text
 connections.read
+connections.events
+connections.write
 ```
 
-It does not advertise connection writes, terminal, attach, replay,
+They do not advertise terminal, attach, replay,
 interactions, SFTP, forwarding, plugins or secrets. Those schemas exist to
 stabilize vocabulary, not to claim a runtime.
+
+The write DTO intentionally contains only basic connection metadata. Daemon
+GTK mode rejects secret, key/certificate, advanced SSH, group/tag, and
+Wake-on-LAN edits rather than silently losing them. It waits for success before
+refreshing and never retries an ambiguous mutation automatically.
 
 Unsupported methods raise:
 

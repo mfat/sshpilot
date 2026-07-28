@@ -1,7 +1,7 @@
 # Client methods
 
 `SshPilotClient` is synchronous. Both `InProcessClient` and `DaemonClient`
-implement the connection-read contract. “Unsupported” means both clients
+implement the connection read/write contract. “Unsupported” means both clients
 implement the method only to raise `unsupported_capability`.
 
 ## Runtime summary
@@ -11,9 +11,9 @@ implement the method only to raise `unsupported_capability`.
 | `get_capabilities` | Implemented | Bootstrap; none |
 | `list_connections` | Implemented | `connections.read` |
 | `get_connection` | Implemented | `connections.read` |
-| `create_connection` | Unsupported | `connections.write` |
-| `update_connection` | Unsupported | `connections.write` |
-| `delete_connection` | Unsupported | `connections.write` |
+| `create_connection` | Implemented | `connections.write` |
+| `update_connection` | Implemented | `connections.write` |
+| `delete_connection` | Implemented | `connections.write` |
 | `open_session` | Unsupported | `terminal` |
 | `attach_session` | Unsupported | `terminal.attach` |
 | `detach_session` | Unsupported | `terminal.attach` |
@@ -28,8 +28,8 @@ implement the method only to raise `unsupported_capability`.
 <!-- api-method-contract: attach_session status=schema-only capability=terminal.attach -->
 <!-- api-method-contract: close status=implemented capability=none -->
 <!-- api-method-contract: close_session status=schema-only capability=terminal -->
-<!-- api-method-contract: create_connection status=schema-only capability=connections.write -->
-<!-- api-method-contract: delete_connection status=schema-only capability=connections.write -->
+<!-- api-method-contract: create_connection status=implemented capability=connections.write -->
+<!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: detach_session status=schema-only capability=terminal.attach -->
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
@@ -40,7 +40,7 @@ implement the method only to raise `unsupported_capability`.
 <!-- api-method-contract: respond_to_interaction status=schema-only capability=interactions -->
 <!-- api-method-contract: send_terminal_input status=schema-only capability=terminal -->
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
-<!-- api-method-contract: update_connection status=schema-only capability=connections.write -->
+<!-- api-method-contract: update_connection status=implemented capability=connections.write -->
 
 ## Daemon wire methods
 
@@ -52,9 +52,15 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `system.get_capabilities` | None | Implemented after handshake |
 | `connections.list` | `connections.read` | Implemented |
 | `connections.get` | `connections.read` | Implemented |
+| `connections.create` | `connections.write` | Implemented |
+| `connections.update` | `connections.write` | Implemented |
+| `connections.delete` | `connections.write` | Implemented |
 
+<!-- api-daemon-method: connections.create capability=connections.write -->
+<!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
+<!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
 
@@ -135,41 +141,42 @@ details = client.get_connection(summary.id)
 <!-- api-method: create_connection -->
 ## `create_connection`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `connections.write`; intended to create a saved
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.write`; create a saved SSH
   connection from `CreateConnectionRequest`.
-- **Parameters / return:** Request model; intended return is
+- **Parameters / return:** Request model; returns
   `ConnectionDetails`.
-- **Errors:** Always `unsupported_capability` with
-  `details.capability == "connections.write"`.
-- **Events:** Intended `connection.created`; none emitted now.
-- **Cancellation / ordering / threading:** Immediate unsupported failure; no
-  cancellation or owner-thread requirement is currently reached.
-- **Side effects / security:** None now. Future implementation must use the
-  existing persistence and single SSH/auth path and must not accept secrets in
-  this request.
+- **Errors:** `connection_already_exists`, `validation_failed`,
+  `persistence_failed`, and daemon transport/protocol errors. A transport
+  failure after send becomes `mutation_ambiguous`.
+- **Events:** Exactly one `connection.created` after a successful persistence
+  change. Response and event may be observed in either order.
+- **Cancellation / ordering / threading:** In-process calls use the owner
+  thread. Daemon requests are serialized and are never automatically retried.
+- **Side effects / security:** Persists only the request's basic metadata
+  through `ConnectionManager`. The request has no secret or path fields.
 
 ```python
-try:
-    client.create_connection(
-        CreateConnectionRequest(nickname="example", hostname="example.invalid")
-    )
-except SshPilotError as error:
-    assert error.code is ErrorCode.UNSUPPORTED_CAPABILITY
+created = client.create_connection(
+    CreateConnectionRequest(nickname="example", hostname="example.invalid")
+)
 ```
 
 <!-- api-method: update_connection -->
 ## `update_connection`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `connections.write`; intended partial update.
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.write`; partial basic-metadata update.
 - **Parameters / return:** `connection_id` and `UpdateConnectionRequest`;
-  intended return is `ConnectionDetails`.
-- **Errors:** Always `unsupported_capability` for `connections.write`.
-- **Events:** Intended `connection.updated`; none emitted by this call now.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** None. Optional fields do not currently imply
-  patch/clear wire semantics because there is no transport.
+  returns `ConnectionDetails`.
+- **Errors:** `connection_not_found`, `connection_already_exists`,
+  `validation_failed`, `persistence_failed`, and transport/protocol errors.
+- **Events:** Exactly one `connection.updated` on success; none on failure.
+- **Cancellation / ordering / threading:** No automatic retry after timeout or
+  closure. Response/event interleaving is intentionally unordered.
+- **Side effects / security:** `None` means unchanged. The adapter preserves
+  existing advanced settings internally without exposing them on the wire.
+  Renaming changes the transitional ID; the result and event carry the new ID.
 
 ```python
 client.update_connection(
@@ -181,16 +188,18 @@ client.update_connection(
 <!-- api-method: delete_connection -->
 ## `delete_connection`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `connections.write`; intended saved-connection
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.write`; saved-connection
   deletion.
-- **Parameters / return:** `DeleteConnectionRequest`; intended return is
+- **Parameters / return:** `DeleteConnectionRequest`; returns
   `DeleteConnectionResult`.
-- **Errors:** Always `unsupported_capability` for `connections.write`.
-- **Events:** Intended `connection.deleted`; none emitted by this call now.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** None now. Future deletion must define credential
-  cleanup separately and must not silently delete secrets in unrelated stores.
+- **Errors:** `connection_not_found`, `persistence_failed`, and
+  transport/protocol errors.
+- **Events:** Exactly one `connection.deleted` on success; none on failure.
+- **Cancellation / ordering / threading:** No automatic retry. An ambiguous
+  transport failure requires a fresh snapshot before explicit user action.
+- **Side effects / security:** Delegates to the existing manager deletion
+  policy; no secret value crosses the request or result.
 
 ```python
 client.delete_connection(DeleteConnectionRequest(connection_id))

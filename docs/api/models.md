@@ -51,7 +51,7 @@ must be non-negative. Timestamps default to aware UTC values.
 | `GroupReference` | Safe group ID/name projection | Implemented | Embedded in connection DTOs |
 | `ConnectionSummary` | Secret-free list/event view | Implemented | `list_connections`, `connection.*` |
 | `ConnectionDetails` | Expanded safe connection metadata | Implemented | `get_connection`; future writes |
-| `CreateConnectionRequest` | Minimal create input | Schema only | Unsupported `create_connection` |
+| `CreateConnectionRequest` | Minimal secret-free create input | Implemented | `create_connection` |
 | `UpdateConnectionRequest` | Optional update fields | Schema only | Unsupported `update_connection` |
 | `DeleteConnectionRequest` | Request-form deletion ID | Schema only | Unsupported `delete_connection` |
 | `DeleteConnectionResult` | Deletion acknowledgement | Schema only | Unsupported `delete_connection` |
@@ -151,7 +151,7 @@ handling is not defined until a transport codec exists.
 
 | Enum | Values | Runtime support |
 | --- | --- | --- |
-| `Capability` | `connections.read`, `connections.write`, `terminal`, `terminal.attach`, `terminal.replay`, `interactions`, `sftp`, `port_forwarding`, `plugins`, `secrets` | Only `connections.read` advertised |
+| `Capability` | Connection, terminal, interaction, transfer, plugin, and secret feature groups | `connections.read`, `connections.events`, and `connections.write` advertised |
 | `EventType` | `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `error.occurred` | First three emitted |
 | `ErrorCode` | `unsupported_capability`, `invalid_request`, `validation_failed`, `connection_not_found`, `session_not_found`, `interaction_not_found`, `interaction_already_answered`, `permission_denied`, `operation_cancelled`, `operation_timed_out`, `internal_error` | See [errors](errors.md) |
 | `ConnectionHealth` | `unknown`, `checking`, `reachable`, `unreachable` | DTO runtime always reports `unknown` |

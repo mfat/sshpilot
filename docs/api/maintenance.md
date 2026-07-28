@@ -94,6 +94,11 @@ contracts, daemon-global sequence and multi-client assertions, response
 interleaving, bounded overflow isolation, transport-failure wakeups, and GTK
 coalescing/responsiveness coverage. Do not infer replay from a sequence field.
 
+Connection mutation changes additionally require the same create/update/delete
+contract against both clients, strict request/result codecs, exactly one event
+on success and none on failure, ambiguity/no-auto-retry tests, secret-exclusion
+checks, and total outbound-byte backpressure coverage.
+
 ## Example: connection health monitoring
 
 Ownership and flow should be:

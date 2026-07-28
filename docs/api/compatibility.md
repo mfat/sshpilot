@@ -83,15 +83,16 @@ tests pass. A schema alone is not support. Clients:
 The reusable connection contract suite runs against both `DaemonClient` and
 `InProcessClient`. It compares:
 
-- connection methods, capabilities, not-found errors, and DTO values;
+- connection reads and writes, capabilities, mutation/not-found errors, and DTO values;
 - secret exclusion and transitional connection-ID behavior;
 - unsupported schema-only method errors;
 - close/disconnect behavior.
 
 Daemon-only handshake, framing, correlation, timeout, socket security,
-lifecycle, event multiplexing, bounded backpressure, and multi-client sequence
-rules have focused transport tests. Connection event parity is covered under
-`connections.events`. Terminal-byte, replay, prompt, and cancellation parity
+lifecycle, event multiplexing, bounded event/byte backpressure, mutation
+ambiguity, and multi-client sequence rules have focused transport tests.
+Connection event parity is covered under `connections.events`. Terminal-byte,
+replay, prompt, and cancellation parity
 remain out of scope because the daemon does not advertise those capabilities.
 The [public API snapshot](../../tests/api/snapshots/public_api.json) is a review
 aid for structural changes, not proof of semantic compatibility.
