@@ -167,7 +167,7 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | Public element | Location | Runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
 | `PROTOCOL_VERSION = "1.0"` | `api/version.py` | Yes | Discovery result | Snapshot/docs drift | Yes | Current contract family |
-| `API_IMPLEMENTATION_VERSION = "0.4"` | same | Yes | Discovery result | Snapshot | Yes | Daemon connection mutations |
+| `API_IMPLEMENTATION_VERSION = "0.5"` | same | Yes | Discovery result | Snapshot | Yes | Stable persisted connection identity |
 
 ## Migrated GTK path
 
@@ -190,10 +190,10 @@ API, but terminal execution and most of the core remain GTK/GObject-coupled.
 
 1. `sftp`, `port_forwarding`, `plugins`, and `secrets` have capability names
    but no client methods; some have models and none has API events.
-2. Daemon event envelopes are validated and separated from responses, but no
-   runtime events are forwarded and reconnect/resume semantics are undefined.
-3. Connection IDs change on rename and are not persisted UUIDs. They are
-   explicitly transitional and have a documented UUID/alias migration backlog.
+2. Daemon connection events are live but reconnect/resume semantics remain
+   undefined.
+3. Connection IDs are stable persisted UUID-backed values. Deprecated
+   nickname-hash lookup aliases remain for the bounded Protocol v1 window.
 4. Some schema records do not validate their opaque IDs consistently.
 5. Behavioural contract coverage is intentionally thin for schema-only models,
     proposed errors, and state transitions. The snapshot protects shape, not

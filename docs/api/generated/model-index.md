@@ -62,7 +62,7 @@ Synthetic representation:
     "capabilities": {
       "supported": []
     },
-    "connection_id": "connection:v1:example",
+    "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
     "created_at": "<UTC timestamp at creation>",
     "exit_info": null,
     "id": "id:example",
@@ -466,7 +466,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:v1:example"
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -489,7 +489,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:v1:example",
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "deleted": false
 }
 ```
@@ -883,7 +883,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:v1:example",
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "path": "/remote/example"
 }
 ```
@@ -908,7 +908,7 @@ Synthetic representation:
 ```json
 {
   "client_id": "client:example",
-  "connection_id": "connection:v1:example"
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -1250,7 +1250,7 @@ Synthetic representation:
   "capabilities": {
     "supported": []
   },
-  "connection_id": "connection:v1:example",
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "created_at": "<UTC timestamp at creation>",
   "exit_info": null,
   "id": "id:example",
@@ -1416,7 +1416,7 @@ Synthetic representation:
 ```json
 {
   "bytes_transferred": 0,
-  "connection_id": "connection:v1:example",
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "created_at": "<UTC timestamp at creation>",
   "direction": "upload",
   "id": "id:example",

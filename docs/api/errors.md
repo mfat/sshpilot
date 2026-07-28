@@ -30,7 +30,7 @@ the validated internal envelope.
 | `invalid_request` | Implemented | Usually no | Closed client, wrong owner thread, invalid subscription state | Fix caller lifecycle/threading; do not blindly retry |
 | `validation_failed` | Implemented | No until input changes | Connection writes and future operations | Show field-safe validation feedback |
 | `connection_already_exists` | Implemented | No until nickname changes | `create_connection`, `update_connection` | Keep the editor open and request another nickname |
-| `connection_not_found` | Implemented | No without refreshed ID | Connection get/update/delete | Refresh connection list; handle transitional rename IDs |
+| `connection_not_found` | Implemented | No without refreshed ID | Connection get/update/delete | Refresh the snapshot; transitional aliases may expire after rename |
 | `persistence_failed` | Implemented | No automatic retry | Connection writes | Keep current UI state and let the user retry explicitly |
 | `mutation_ambiguous` | Implemented locally | No automatic retry | Daemon connection writes | Refresh snapshot before any explicit retry |
 | `session_not_found` | Schema only | No without refreshed state | Future session/terminal operations | Remove stale session UI |
@@ -75,7 +75,8 @@ identify public field names and validation codes, never submitted values.
 <!-- api-error: connection_already_exists -->
 ## `connection_already_exists`
 
-A create or rename would collide with an existing transitional identity. The
+A create or rename would collide with an existing saved nickname. Stable UUID
+identity does not remove the persistence rule that nicknames are unique. The
 error never includes the submitted nickname.
 
 <!-- api-error: connection_not_found -->

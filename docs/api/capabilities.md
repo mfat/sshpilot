@@ -9,6 +9,10 @@ exactly `connections.read`, `connections.events`, and `connections.write`.
 `DaemonClient.get_capabilities()` returns the daemon response rather than a
 hard-coded local assumption.
 
+Stable IDs do not add a capability: `ConnectionId` was already opaque, all
+current providers emit the stable form, and clients must not branch on its
+syntax.
+
 Experimental GTK daemon composition verifies all three capabilities after the real
 handshake and before injecting the client. A snapshot-only older daemon is not
 used because GTK would otherwise have no truthful live-refresh guarantee.

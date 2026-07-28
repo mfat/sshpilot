@@ -95,7 +95,7 @@ def test_structured_method_status_markers_match_runtime_metadata():
     assert documented == generator.client_method_contract()
 
 
-def test_event_and_transitional_id_semantics_have_stable_markers():
+def test_event_and_stable_id_semantics_have_stable_markers():
     events = _read("events.md")
     assert "<!-- api-event-semantics: serial-fifo-v1 -->" in events
     assert (
@@ -103,7 +103,7 @@ def test_event_and_transitional_id_semantics_have_stable_markers():
         in events
     )
     assert (
-        "<!-- api-connection-id: transitional-nickname-hash -->"
+        "<!-- api-connection-id: persisted-uuid-v1 -->"
         in _read("protocol-v1.md")
     )
 

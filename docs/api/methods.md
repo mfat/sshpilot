@@ -176,7 +176,8 @@ created = client.create_connection(
   closure. Response/event interleaving is intentionally unordered.
 - **Side effects / security:** `None` means unchanged. The adapter preserves
   existing advanced settings internally without exposing them on the wire.
-  Renaming changes the transitional ID; the result and event carry the new ID.
+  Renaming and host/user/port changes preserve the stable connection ID; the
+  result and event carry that same ID.
 
 ```python
 client.update_connection(

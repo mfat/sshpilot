@@ -20,7 +20,7 @@ documented model surface.
 
 | Type | Purpose | Required form | Runtime status |
 | --- | --- | --- | --- |
-| `ConnectionId` | Saved connection identity | Non-empty opaque string | Implemented; transitional hash ID |
+| `ConnectionId` | Saved connection identity | Non-empty opaque string | Implemented; stable UUID-backed ID |
 | `SessionId` | Runtime session identity | Non-empty opaque string | Schema only |
 | `RequestId` | Request correlation | Non-empty opaque string | Schema only |
 | `InteractionId` | Interaction identity | Non-empty opaque string | Schema only |
@@ -29,7 +29,10 @@ documented model surface.
 | `AttachmentId` | Session attachment identity | Non-empty opaque string | Schema only |
 
 The aliases are `typing.NewType` wrappers over `str`; they add static intent,
-not runtime serialization. Never parse their contents.
+not runtime serialization. Consumers must not parse their contents.
+`ConnectionId` is currently rendered as `connection:<canonical UUID>`, remains
+stable across rename and reload, and is validated by centralized internal
+helpers.
 
 ## Discovery and event envelopes
 
@@ -52,9 +55,9 @@ must be non-negative. Timestamps default to aware UTC values.
 | `ConnectionSummary` | Secret-free list/event view | Implemented | `list_connections`, `connection.*` |
 | `ConnectionDetails` | Expanded safe connection metadata | Implemented | `get_connection`; future writes |
 | `CreateConnectionRequest` | Minimal secret-free create input | Implemented | `create_connection` |
-| `UpdateConnectionRequest` | Optional update fields | Schema only | Unsupported `update_connection` |
-| `DeleteConnectionRequest` | Request-form deletion ID | Schema only | Unsupported `delete_connection` |
-| `DeleteConnectionResult` | Deletion acknowledgement | Schema only | Unsupported `delete_connection` |
+| `UpdateConnectionRequest` | Optional basic-metadata update fields | Implemented | `update_connection` |
+| `DeleteConnectionRequest` | Request-form deletion ID | Implemented | `delete_connection` |
+| `DeleteConnectionResult` | Deletion acknowledgement | Implemented | `delete_connection` |
 | `ConnectionValidationError` | Field/code/message validation item | Schema only | Future writes |
 | `ConnectionValidationResult` | Valid flag plus validation items | Schema only | Future validation |
 

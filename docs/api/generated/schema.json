@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.4",
+  "api_implementation_version": "0.5",
   "client_method_contract": {
     "attach_session": {
       "capability": "terminal.attach",

@@ -13,7 +13,7 @@
     "SshPilotError",
     "Subscription"
   ],
-  "api_implementation_version": "0.4",
+  "api_implementation_version": "0.5",
   "capabilities": [
     "connections.events",
     "connections.read",

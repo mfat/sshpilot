@@ -39,7 +39,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.4` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.5` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -89,7 +89,7 @@ current snapshot but must not parse them.
 
 | Type | Intended identity | Current stability |
 | --- | --- | --- |
-| `ConnectionId` | Saved connection | Current adapter hashes `protocol + NUL + nickname`; stable across reload while both stay unchanged, changes on rename |
+| `ConnectionId` | Saved connection | Stable opaque `connection:<uuid>` backed by an immutable persisted UUID |
 | `SessionId` | Runtime terminal session | Schema only; no allocation or persistence guarantee |
 | `RequestId` | Operation/request correlation | Random UUID hex per daemon request; never reused on a connection |
 | `InteractionId` | One frontend interaction | Schema only; no allocator |
@@ -97,17 +97,19 @@ current snapshot but must not parse them.
 | `ClientId` | One frontend client | Random per `DaemonClient`; enforced after handshake |
 | `AttachmentId` | One client/session attachment | Schema only; no allocator |
 
-Current connection IDs are transitional and are not persistence UUIDs. A future
-immutable-ID migration is potentially breaking unless aliases preserve lookup.
+All new responses and events emit UUID-backed IDs. Rename and mutable metadata
+changes retain identity; reload and daemon restart reproduce the same ID.
+Parsing is strict and centralized, although consumers must treat the value as
+opaque.
 
-<!-- api-connection-id: transitional-nickname-hash -->
+<!-- api-connection-id: persisted-uuid-v1 -->
 
-Clients must not persist current `ConnectionId` values as long-lived external
-references. Before freezing a daemon wire protocol, persistence must assign an
-immutable UUID to every connection. Migration will retain the current
-`protocol + NUL + nickname` hash as a temporary lookup alias, accept both forms
-for a documented compatibility window, and emit UUID-backed IDs after clients
-refresh their connection list.
+Former `connection:v1:<hash>` IDs are deprecated input-only lookup aliases
+during Protocol v1. They resolve only when the hash matches the connection's
+current protocol and nickname, may stop resolving after rename, and are never
+emitted. Transitional lookup is removed in Protocol v2 after one complete v1
+release window. See
+[stable connection identity](../architecture/connection-identity.md).
 
 ## Data conventions
 

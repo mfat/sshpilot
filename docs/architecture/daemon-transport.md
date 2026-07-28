@@ -101,9 +101,17 @@ import those managers or PyGObject. Tests inject a headless manager through the
 same server factory and use a real Unix socket.
 
 Daemon handlers never read persistence directly. Connection ordering, DTO
-mapping, transitional identifiers, mutations, safe errors, and secret exclusion
+mapping, stable identifiers, mutations, safe errors, and secret exclusion
 continue to come from `InProcessClient`, which delegates writes to the existing
 `ConnectionManager`.
+
+The server binds and secures its socket before constructing the authoritative
+core manager. Core construction migrates persisted connection identities while
+holding the per-config migration lock, and readiness is not reported until that
+migration succeeds. Experimental daemon-mode GTK disables migration in its
+local compatibility manager until selection completes, so only the selected
+authoritative process migrates. See
+[stable connection identity](connection-identity.md).
 
 ## Socket security
 
@@ -201,7 +209,7 @@ forwarding, plugins, and binary channels remain in-process and out of scope.
 - define systemd user activation without making it a runtime dependency;
 - add launchd lifecycle integration for macOS;
 - add Windows named-pipe transport and ownership checks;
-- migrate saved connections to stable persisted UUIDs before freezing IDs;
+- remove deprecated transitional-ID lookup in Protocol v2;
 - define explicit reconnect/resume/replay semantics;
 - define a separate binary terminal channel, PTY ownership, and prompt routing;
 - keep daemon mode experimental until extended GTK lifecycle testing is

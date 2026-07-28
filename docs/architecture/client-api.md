@@ -144,17 +144,18 @@ Ordinary responses never contain:
 - environment variables;
 - subprocess, PTY, provider, GTK or VTE objects.
 
-sshPilot persistence currently has no immutable connection UUID. Protocol v1
-therefore computes an opaque ID from protocol plus nickname. It is stable across
-reloads while those values are unchanged, but changes on rename. Clients must
-not persist it as a long-lived external reference or treat its current format as
-a wire guarantee.
+Every persisted connection now has an immutable UUID. Protocol v1 emits the
+opaque form `connection:<uuid>` in all connection DTOs, mutation results, and
+events. Rename and host/user/port/protocol updates preserve it. The UUID is not
+separately exposed and ordinary create/update requests cannot supply or replace
+it.
 
-Before the daemon protocol is frozen, persistence must gain an immutable UUID.
-The migration should assign a UUID to each existing record, retain the
-transitional hash as a temporary lookup alias, accept both during one
-compatibility window, and emit only UUID-backed IDs for newly refreshed DTOs.
-Removing transitional aliases requires a later compatibility/changelog entry.
+For one bounded Protocol v1 compatibility window, get/update/delete also accept
+the former `connection:v1:<hash>` value when it matches the connection's
+current nickname and protocol. Transitional values are deprecated input aliases
+only, are never emitted, and may stop resolving after rename. They are removed
+in Protocol v2. See
+[stable connection identity](connection-identity.md).
 
 `ConnectionHealth` is separate from `SessionState`. The current
 terminal-derived `ConnectionState` is not converted into reachability;

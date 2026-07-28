@@ -1,7 +1,8 @@
 # Daemon and frontend ownership
 
-This document defines the intended ownership boundary. It does not claim that a
-daemon or daemon transport exists.
+This document defines the intended ownership boundary. The local daemon
+currently owns connection CRUD and connection-event forwarding; terminal and
+session ownership remain future work.
 
 The concrete current client contract is maintained in the
 [API reference](../api/README.md). This document describes intended ownership;
@@ -12,9 +13,9 @@ it does not advertise runtime capabilities.
 ```text
 GTK / Tauri / CLI
        -> SshPilotClient
-       -> InProcessClient today
-       -> DaemonClient later
-       -> sshpilotd later
+       -> InProcessClient by default
+       -> DaemonClient in experimental opt-in mode
+       -> sshpilotd for connection CRUD/events
 ```
 
 Protocol models are independent from the in-process adapter and any future Unix
@@ -123,23 +124,20 @@ not the canonical domain contract.
 
 - Commands are synchronous for `InProcessClient`, with a frontend-neutral event
   subscription. Calling convention and wire protocol are separate decisions.
-- `connections.read` and `connections.events` are the only advertised runtime
-  capabilities in the current phase.
-- Connection write, terminal, interaction, SFTP, forwarding, plugin, and secret
-  models do not imply runtime support.
+- `connections.read`, `connections.events`, and `connections.write` are the
+  only advertised runtime capabilities.
+- Terminal, interaction, SFTP, forwarding, plugin, and secret models do not
+  imply runtime support.
 - Unsupported methods raise `unsupported_capability`, never
   `NotImplementedError` or a missing method.
 - Public DTO fields are mapped explicitly. `__dict__`, GObject properties,
   internal data dictionaries and manager instances are never serialized.
 - Connection DTOs omit passwords, passphrases, private keys, provider tokens,
   environment variables and internal source paths.
-- Current connection IDs are transitional opaque hashes of protocol and
-  nickname. They change on rename because persistence has no immutable UUID.
-- **Pre-wire backlog:** add a persisted immutable connection UUID before the
-  daemon protocol freezes. Migrate existing records by assigning UUIDs, keep
-  the nickname-hash ID as a temporary lookup alias, and remove aliases only
-  after a documented compatibility window. Clients must not persist the
-  transitional IDs as long-lived references.
+- Connection IDs are stable opaque `connection:<uuid>` values backed by an
+  immutable persisted UUID. Rename and host metadata changes retain identity.
+- Former nickname hashes are deprecated lookup-only aliases during Protocol
+  v1 and are removed in Protocol v2. New DTOs and events never emit them.
 - Expected failures use stable `ErrorCode` values. Unexpected exceptions are
   logged internally and become safe `internal_error` responses.
 

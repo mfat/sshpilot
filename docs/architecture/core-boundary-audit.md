@@ -214,12 +214,12 @@ terminal-derived `ConnectionState` into a false reachability claim.
 
 ## Key conflicts and blockers
 
-- Current connection identity is nickname-based. Nicknames survive reloads but
-  may change on rename. Protocol v1 uses an opaque hash of protocol and nickname;
-  persisted immutable UUIDs require a later compatible migration.
+- Connection identity is now backed by an immutable persisted UUID and
+  Protocol v1 emits stable opaque UUID-derived IDs. Deprecated nickname hashes
+  remain input-only aliases until Protocol v2.
 - Active terminals, sidebar rows, and several maps depend on `Connection`
-  object identity. Reload code deliberately reuses objects. DTO migration must
-  not replace these maps in one pass.
+  object identity. Reload deliberately reuses objects by UUID, preserving those
+  maps without prematurely moving terminal ownership.
 - `TerminalManager` combines session policy with tabs, colors, dialogs, vault
   prompts, plugin events, and reconnect presentation.
 - `TerminalWidget` owns renderer, PTY/process mechanics, connection evidence,

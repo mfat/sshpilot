@@ -99,6 +99,13 @@ contract against both clients, strict request/result codecs, exactly one event
 on success and none on failure, ambiguity/no-auto-retry tests, secret-exclusion
 checks, and total outbound-byte backpressure coverage.
 
+Connection identity changes additionally require real-file migration and
+rollback tests, duplicate/malformed UUID repair, reload and daemon-restart
+stability, transitional-input compatibility, group/reference migration, and
+rename tests proving response/event/GTK identity remains unchanged. Migration
+tests must use isolated temporary configuration roots and never a developer's
+real SSH configuration.
+
 ## Example: connection health monitoring
 
 Ownership and flow should be:

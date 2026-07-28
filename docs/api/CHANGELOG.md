@@ -32,20 +32,26 @@ notes remain separate.
 - Added non-retryable `mutation_ambiguous`, `connection_already_exists`, and
   `persistence_failed` errors for deliberate mutation failure handling.
 - Added a 4 MiB total per-peer outbound bound covering responses and events.
+- Added immutable UUIDv4 identity to every persisted connection, secure
+  idempotent upgrade migration, duplicate/malformed identity repair, and
+  UUID-based group, metadata, and saved-layout references.
+- Added stable `connection:<uuid>` public IDs plus deprecated Protocol v1
+  lookup compatibility for the former nickname-derived ID form.
 - Added the schema-only `replay_terminal` client operation and complete
   package-level convenience exports for all documented model types.
 - Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
 
 ### Changed
 
-- Increased `API_IMPLEMENTATION_VERSION` to `0.4`; `PROTOCOL_VERSION` remains
+- Increased `API_IMPLEMENTATION_VERSION` to `0.5`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon
   response and advertises only contract-tested runtime capabilities.
 - Defined publisher-global serial FIFO event delivery, including concurrent,
   re-entrant, unsubscription, and shutdown behaviour.
-- Marked nickname-derived connection IDs as explicitly transitional with a
-  UUID-and-alias migration plan required before wire-protocol freeze.
+- Connection DTOs, mutation results, and events now always emit stable
+  UUID-backed IDs. Rename and host metadata changes retain identity across
+  reload and daemon restart.
 - The GTK welcome page now keeps a non-blocking safe fallback visible when a
   structured connection-read error occurs.
 - Daemon-backed GTK connection reads now run off the GTK main thread and use
@@ -58,11 +64,15 @@ notes remain separate.
   capabilities. Basic CRUD runs on the GTK client worker without optimistic
   row changes; unsupported advanced, metadata, and secret edits are rejected
   rather than discarded.
-- Renaming through `update_connection` returns and emits the new transitional
-  nickname-derived ID. Mutation requests are never automatically retried after
-  ambiguous transport failure.
+- Renaming through `update_connection` returns and emits the same stable ID.
+  Mutation requests are never automatically retried after ambiguous transport
+  failure.
 
 ### Deprecated
+
+- Nickname-derived `connection:v1:<hash>` values are accepted only as current
+  lookup aliases during the remaining Protocol v1 compatibility window. They
+  are never emitted and are scheduled for removal in Protocol v2.
 
 ### Removed
 
@@ -70,6 +80,9 @@ notes remain separate.
 
 ### Security
 
+- UUID migration uses mode-0600 same-directory temporary files, atomic replace,
+  one-shot backups, symlink refusal for JSON state, and safe rollback without
+  logging raw connection records.
 - Restricted daemon endpoints to owned mode-0700 directories and mode-0600
   sockets; stale cleanup verifies type and inode and refuses symlinks or
   non-socket paths.

@@ -27,6 +27,13 @@ Subject to review, these can remain Protocol v1:
   unknown values safely.
 - Tighten documentation without changing tested behaviour.
 
+The UUID-backed connection-ID migration remains Protocol v1 compatible because
+`ConnectionId` was documented and modeled as opaque. Existing wire fields and
+method shapes are unchanged. New responses always contain the stable form;
+deprecated nickname-hash IDs remain accepted as lookup aliases during the
+bounded v1 window. A capability is unnecessary because correct clients do not
+branch on ID syntax.
+
 Additive does not automatically mean safe. For example, adding an event can
 break clients that treat unknown events as fatal; that behaviour must be fixed
 and contract-tested before relying on additive compatibility.
@@ -84,7 +91,7 @@ The reusable connection contract suite runs against both `DaemonClient` and
 `InProcessClient`. It compares:
 
 - connection reads and writes, capabilities, mutation/not-found errors, and DTO values;
-- secret exclusion and transitional connection-ID behavior;
+- secret exclusion, stable UUID identity, and deprecated transitional lookup;
 - unsupported schema-only method errors;
 - close/disconnect behavior.
 

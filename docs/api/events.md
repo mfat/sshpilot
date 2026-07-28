@@ -51,6 +51,8 @@ Successful create/update/delete calls produce exactly one corresponding event
 from the manager signal path; handlers never publish a duplicate. Because the
 response and event use the same framed output deque, clients accept either
 valid response/event ordering and refresh from the resulting snapshot.
+Connection event payload IDs are UUID-backed and remain stable across rename.
+Startup identity migration is schema maintenance and emits no lifecycle event.
 
 `DaemonClient` has exactly one persistent socket reader. It correlates responses
 through a pending-request table and sends events to a separate bounded serial
