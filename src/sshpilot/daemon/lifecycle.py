@@ -70,6 +70,29 @@ def ensure_secure_socket_directory(path: Path) -> None:
         raise SocketSecurityError("The daemon socket directory must use mode 0700")
 
 
+def validate_client_socket_path(path: Path) -> bool:
+    """Validate a client endpoint without unlinking it.
+
+    Returns ``True`` when an owned private Unix socket exists and ``False`` when
+    the secure parent exists but the endpoint does not.  This check deliberately
+    gives the GTK launcher no authority to recover stale sockets; that remains
+    the daemon's bind-time responsibility.
+    """
+
+    ensure_secure_socket_directory(path)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISSOCK(info.st_mode):
+        raise SocketSecurityError("The daemon endpoint must be a real Unix socket")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise SocketSecurityError("The daemon socket has the wrong owner")
+    if stat.S_IMODE(info.st_mode) & 0o177:
+        raise SocketSecurityError("The daemon socket must not be group/world accessible")
+    return True
+
+
 def prepare_socket_path(path: Path, *, probe_timeout: float = 0.2) -> None:
     """Refuse unsafe targets and unlink only a verified stale socket."""
 
