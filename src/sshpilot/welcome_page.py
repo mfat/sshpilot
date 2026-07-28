@@ -39,6 +39,8 @@ class WelcomePage(Gtk.Overlay):
         )
         self._recent_request = None
         self._recent_generation = 0
+        self._event_refresh_source = None
+        self._event_refresh_follow_up = False
         self._closed = False
         self.config = window.config
         self.set_hexpand(True)
@@ -360,6 +362,9 @@ class WelcomePage(Gtk.Overlay):
             return
         self._recent_request = None
         WelcomePage._render_recent_connections(self, connections, False)
+        if getattr(self, '_event_refresh_follow_up', False):
+            self._event_refresh_follow_up = False
+            self.schedule_connection_refresh()
 
     def _fail_recent_read(self, generation, error):
         if (
@@ -368,6 +373,7 @@ class WelcomePage(Gtk.Overlay):
         ):
             return
         self._recent_request = None
+        self._event_refresh_follow_up = False
         if isinstance(error, SshPilotError):
             logger.warning(
                 "Welcome daemon connection listing failed with API error code=%s",
@@ -448,12 +454,64 @@ class WelcomePage(Gtk.Overlay):
         self._client_selection_pending = False
         self.refresh_recent()
 
+    def schedule_connection_refresh(self):
+        """Coalesce connection events into bounded asynchronous snapshots."""
+
+        if getattr(self, '_closed', False):
+            return
+        if getattr(self, '_recent_request', None) is not None:
+            self._event_refresh_follow_up = True
+            return
+        if getattr(self, '_event_refresh_source', None) is not None:
+            return
+        self._event_refresh_source = GLib.idle_add(
+            self._run_scheduled_connection_refresh
+        )
+
+    def _run_scheduled_connection_refresh(self):
+        self._event_refresh_source = None
+        if getattr(self, '_closed', False):
+            return False
+        if getattr(self, '_recent_request', None) is not None:
+            self._event_refresh_follow_up = True
+            return False
+        self._populate_recent_box()
+        return False
+
+    def mark_connection_data_unavailable(self):
+        """Stop trusting daemon-backed data after continuity is lost."""
+
+        if getattr(self, '_closed', False):
+            return
+        source = getattr(self, '_event_refresh_source', None)
+        self._event_refresh_source = None
+        if source is not None:
+            try:
+                GLib.source_remove(source)
+            except Exception:
+                pass
+        request = getattr(self, '_recent_request', None)
+        self._recent_request = None
+        if request is not None:
+            request.cancel()
+        self._recent_generation += 1
+        self._event_refresh_follow_up = False
+        WelcomePage._render_recent_connections(self, [], True)
+
     def close(self):
         """Suppress late worker delivery after the containing window closes."""
 
         self._closed = True
         self._recent_generation += 1
-        request = self._recent_request
+        source = getattr(self, "_event_refresh_source", None)
+        self._event_refresh_source = None
+        if source is not None:
+            try:
+                GLib.source_remove(source)
+            except Exception:
+                pass
+        self._event_refresh_follow_up = False
+        request = getattr(self, "_recent_request", None)
         self._recent_request = None
         if request is not None:
             request.cancel()

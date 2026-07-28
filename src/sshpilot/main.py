@@ -487,6 +487,53 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
 
+    def install_api_event_subscription(self, client) -> None:
+        """Subscribe once for the application-scoped daemon client."""
+
+        self.clear_api_event_subscription()
+
+        def _on_event(event):
+            from .api.events import EventType
+
+            if event.type in {
+                EventType.CONNECTION_CREATED,
+                EventType.CONNECTION_UPDATED,
+                EventType.CONNECTION_DELETED,
+                EventType.ERROR_OCCURRED,
+            }:
+                GLib.idle_add(self._handle_api_client_event, event.type)
+
+        try:
+            self._api_event_subscription = client.subscribe_events(_on_event)
+        except Exception as error:
+            self._api_event_subscription = None
+            logger.warning(
+                "Application API event subscription failed type=%s",
+                type(error).__name__,
+            )
+
+    def clear_api_event_subscription(self) -> None:
+        subscription = getattr(self, '_api_event_subscription', None)
+        self._api_event_subscription = None
+        if subscription is not None:
+            try:
+                subscription.unsubscribe()
+            except Exception:
+                logger.warning("Application API event unsubscription failed")
+
+    def _handle_api_client_event(self, event_type) -> bool:
+        from .api.events import EventType
+
+        window = self.window
+        welcome = getattr(window, 'welcome_view', None) if window else None
+        if welcome is None or getattr(window, '_is_quitting', False):
+            return False
+        if event_type is EventType.ERROR_OCCURRED:
+            welcome.mark_connection_data_unavailable()
+        else:
+            welcome.schedule_connection_refresh()
+        return False
+
     def do_command_line(self, command_line):
         """Handle argv for first launch and single-instance handoff.
 
@@ -669,6 +716,7 @@ class SshPilotApplication(Adw.Application):
         # The frontend-neutral client and its GTK command bridge are
         # application-scoped. Closing a window only suppresses that window's
         # callbacks; final application shutdown owns transport teardown.
+        self.clear_api_event_subscription()
         selection = getattr(self, '_api_client_selection', None)
         client = getattr(selection, 'client', None)
         if client is None and self.window is not None:

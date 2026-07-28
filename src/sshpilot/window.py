@@ -462,10 +462,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         app = self.get_application()
         if app is not None:
             app._api_client_selection = selection
+            if selection.mode.value == 'daemon' and hasattr(
+                app,
+                'install_api_event_subscription',
+            ):
+                app.install_api_event_subscription(self.client)
         if selection.mode.value != 'daemon':
             bridge = self.client_bridge
             self.client_bridge = None
             if app is not None:
+                if hasattr(app, 'clear_api_event_subscription'):
+                    app.clear_api_event_subscription()
                 app._api_client_bridge = None
             if bridge is not None:
                 bridge.shutdown()
@@ -499,6 +506,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.client_bridge = None
         app = self.get_application()
         if app is not None:
+            if hasattr(app, 'clear_api_event_subscription'):
+                app.clear_api_event_subscription()
             app._api_client_bridge = None
             app._api_client_selection = in_process_selection(
                 self.connection_manager,
