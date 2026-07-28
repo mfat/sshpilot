@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
-import collections
 import os
+import queue
 import socket
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, List, NoReturn, Optional
+from typing import Dict, List, NoReturn, Optional, Union
 
 from sshpilot import __version__ as sshpilot_version
 
 from .capabilities import Capabilities
 from .errors import ErrorCode, SshPilotError, unsupported_capability
-from .events import CoreEventCallback, EventPublisher, Subscription
+from .events import (
+    CoreEventCallback,
+    EventPublisher,
+    EventType,
+    Subscription,
+)
 from .in_process_client import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 from .models.common import ClientId, ConnectionId, RequestId
 from .models.connections import (
@@ -42,6 +48,7 @@ from .models.terminal import (
 )
 from .transport.codec import (
     capabilities_from_wire,
+    connection_event_from_envelope,
     connection_details_from_wire,
     connection_summary_from_wire,
     decode_envelope,
@@ -61,17 +68,24 @@ from .transport.framing import FramingError, encode_frame, receive_frame
 from .version import PROTOCOL_VERSION
 
 DEFAULT_REQUEST_TIMEOUT = 5.0
+DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
+_EVENT_STOP = object()
+
+
+@dataclass
+class _PendingRequest:
+    completed: threading.Event
+    response: Optional[Union[SuccessResponseEnvelope, ErrorResponseEnvelope]] = None
+    error: Optional[SshPilotError] = None
+
+
+@dataclass(frozen=True)
+class _TransportFailureNotice:
+    error: SshPilotError
 
 
 class DaemonClient:
-    """One-at-a-time synchronous RPC client over one persistent Unix socket.
-
-    A lock serialises request/response pairs. Calls have a finite timeout; a
-    timeout or protocol failure closes the transport so late responses cannot
-    be mistaken for later requests. Phase 1 receives and validates unsolicited
-    event envelopes while awaiting responses, but the daemon does not emit
-    runtime events yet.
-    """
+    """Synchronous requests with one persistent socket reader and event handoff."""
 
     def __init__(
         self,
@@ -82,9 +96,12 @@ class DaemonClient:
         client_version: str = sshpilot_version,
         client_id: Optional[str] = None,
         frontend_type: Optional[str] = None,
+        event_dispatch_limit: int = DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT,
     ) -> None:
         if type(timeout) not in (int, float) or timeout <= 0:
             raise ValueError("daemon request timeout must be positive")
+        if type(event_dispatch_limit) is not int or event_dispatch_limit < 1:
+            raise ValueError("event dispatch limit must be positive")
         self._timeout = float(timeout)
         self._socket_path = (
             Path(socket_path) if socket_path is not None else self.default_socket_path()
@@ -94,21 +111,25 @@ class DaemonClient:
         self._client_version = client_version
         self._frontend_type = frontend_type
         self._request_lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._state_lock = threading.RLock()
         self._publisher = EventPublisher()
-        self._pending_event_envelopes: Deque[EventEnvelope] = collections.deque(maxlen=100)
+        self._pending_requests: Dict[RequestId, _PendingRequest] = {}
+        self._event_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
         self._last_event_sequence: Optional[int] = None
         self._closed = False
+        self._close_complete = False
         self._transport_failed = False
         self._socket: Optional[socket.socket] = None
+        self._reader_thread: Optional[threading.Thread] = None
+        self._event_thread: Optional[threading.Thread] = None
         self._capabilities: Optional[Capabilities] = None
         self._selected_protocol_version: Optional[str] = None
         self._server_instance_id: Optional[str] = None
         try:
             self._connect_and_handshake()
         except BaseException:
-            self._closed = True
-            self._close_socket()
-            self._publisher.close()
+            self.close()
             raise
 
     @staticmethod
@@ -201,20 +222,37 @@ class DaemonClient:
         raise self._unsupported("respond_to_interaction")
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
-        if self._closed:
-            raise self._closed_error()
+        with self._state_lock:
+            if self._closed:
+                raise self._closed_error()
         try:
             return self._publisher.subscribe(callback)
         except RuntimeError:
             raise self._closed_error() from None
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._close_socket()
+        with self._state_lock:
+            if self._close_complete:
+                return
+            self._closed = True
+            transport = self._socket
+            self._socket = None
+            pending = tuple(self._pending_requests.items())
+            self._pending_requests.clear()
+        self._close_transport(transport)
+        for request_id, request in pending:
+            request.error = SshPilotError(
+                ErrorCode.TRANSPORT_CLOSED,
+                "The daemon client was closed",
+                request_id=request_id,
+            )
+            request.completed.set()
+        self._stop_event_dispatch()
         self._publisher.close()
-        self._pending_event_envelopes.clear()
+        self._join_thread(self._reader_thread)
+        self._join_thread(self._event_thread)
+        with self._state_lock:
+            self._close_complete = True
 
     def _connect_and_handshake(self) -> None:
         transport = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -228,7 +266,9 @@ class DaemonClient:
                 "The local sshPilot daemon is unavailable",
                 retryable=True,
             ) from None
+        transport.settimeout(None)
         self._socket = transport
+        self._start_background_threads()
         request = HandshakeRequest(
             client_name=self._client_name,
             client_version=self._client_version,
@@ -265,15 +305,14 @@ class DaemonClient:
         *,
         protocol_version: Optional[str] = None,
     ):
-        if self._closed:
-            raise self._closed_error()
         with self._request_lock:
-            if self._closed:
-                raise self._closed_error()
-            transport = self._socket
-            if transport is None:
-                raise self._closed_error()
-            request_id = RequestId(uuid.uuid4().hex)
+            with self._state_lock:
+                if self._closed:
+                    raise self._closed_error()
+                transport = self._socket
+                if transport is None:
+                    raise self._closed_error()
+                request_id = RequestId(uuid.uuid4().hex)
             request = RequestEnvelope(
                 protocol_version=(
                     protocol_version
@@ -285,97 +324,277 @@ class DaemonClient:
                 params=params,
                 client_id=self._client_id,
             )
+            pending = _PendingRequest(completed=threading.Event())
+            with self._state_lock:
+                if self._closed or self._socket is not transport:
+                    raise self._closed_error()
+                self._pending_requests[request_id] = pending
             try:
-                transport.sendall(encode_frame(encode_envelope(request)))
-                while True:
-                    response = decode_envelope(receive_frame(transport))
-                    if isinstance(response, EventEnvelope):
-                        self._accept_event_envelope(response)
-                        continue
-                    if not isinstance(
-                        response,
-                        (SuccessResponseEnvelope, ErrorResponseEnvelope),
-                    ):
-                        self._fail_protocol(
-                            "The daemon sent an unexpected envelope type"
-                        )
-                    expected_version = (
-                        self._selected_protocol_version or PROTOCOL_VERSION
+                frame = encode_frame(encode_envelope(request))
+                with self._send_lock:
+                    transport.sendall(frame)
+            except (FramingError, TypeError, ValueError):
+                self._fail_transport(
+                    SshPilotError(
+                        ErrorCode.PROTOCOL_ERROR,
+                        "The daemon request could not be encoded",
+                        request_id=request_id,
                     )
-                    if response.protocol_version != expected_version:
-                        self._fail_protocol(
-                            "The daemon response uses an unexpected protocol"
+                )
+            except OSError:
+                self._fail_transport(
+                    SshPilotError(
+                        ErrorCode.TRANSPORT_CLOSED,
+                        "The daemon transport failed",
+                        retryable=True,
+                        request_id=request_id,
+                    )
+                )
+
+            if not pending.completed.wait(self._timeout):
+                with self._state_lock:
+                    response_arrived = (
+                        pending.response is not None or pending.error is not None
+                    )
+                if not response_arrived:
+                    self._fail_transport(
+                        SshPilotError(
+                            ErrorCode.TRANSPORT_TIMEOUT,
+                            "The daemon request timed out",
+                            retryable=True,
+                            request_id=request_id,
                         )
-                    if response.request_id != request_id:
-                        self._fail_protocol(
-                            "The daemon response has an unknown request ID"
-                        )
-                    if isinstance(response, ErrorResponseEnvelope):
-                        raise error_from_wire(response.error)
-                    return response.result
-            except SshPilotError:
-                raise
-            except socket.timeout:
-                self._transport_failed = True
-                self._close_socket()
-                raise SshPilotError(
-                    ErrorCode.TRANSPORT_TIMEOUT,
-                    "The daemon request timed out",
-                    retryable=True,
-                    request_id=request_id,
-                ) from None
-            except EOFError:
-                self._transport_failed = True
-                self._close_socket()
+                    )
+                    pending.completed.wait()
+
+            if pending.error is not None:
+                raise pending.error
+            response = pending.response
+            if response is None:
                 raise SshPilotError(
                     ErrorCode.TRANSPORT_CLOSED,
                     "The daemon transport closed unexpectedly",
                     retryable=True,
                     request_id=request_id,
-                ) from None
-            except FramingError:
-                self._transport_failed = True
-                self._close_socket()
-                raise SshPilotError(
-                    ErrorCode.PROTOCOL_ERROR,
-                    "The daemon sent an invalid transport frame",
-                    request_id=request_id,
-                ) from None
-            except (TypeError, ValueError):
-                self._transport_failed = True
-                self._close_socket()
-                raise SshPilotError(
-                    ErrorCode.PROTOCOL_ERROR,
-                    "The daemon sent an invalid protocol envelope",
-                    request_id=request_id,
-                ) from None
-            except OSError:
-                self._transport_failed = True
-                self._close_socket()
-                raise SshPilotError(
-                    ErrorCode.TRANSPORT_CLOSED,
-                    "The daemon transport failed",
-                    retryable=True,
-                    request_id=request_id,
-                ) from None
+                )
+            if isinstance(response, ErrorResponseEnvelope):
+                raise error_from_wire(response.error)
+            return response.result
 
-    def _accept_event_envelope(self, event: EventEnvelope) -> None:
-        if (
-            event.protocol_version
-            != (self._selected_protocol_version or PROTOCOL_VERSION)
-        ):
-            self._fail_protocol("The daemon event uses an unexpected protocol")
-        if (
-            self._last_event_sequence is not None
-            and event.sequence <= self._last_event_sequence
-        ):
-            self._fail_protocol("The daemon event sequence is not monotonic")
-        self._last_event_sequence = event.sequence
-        self._pending_event_envelopes.append(event)
+    def _reader_main(self) -> None:
+        while True:
+            with self._state_lock:
+                if self._closed:
+                    return
+                transport = self._socket
+            if transport is None:
+                return
+            try:
+                envelope = decode_envelope(receive_frame(transport))
+            except EOFError:
+                with self._state_lock:
+                    closing = self._closed and not self._transport_failed
+                if not closing:
+                    self._fail_transport(
+                        SshPilotError(
+                            ErrorCode.TRANSPORT_CLOSED,
+                            "The daemon transport closed unexpectedly",
+                            retryable=True,
+                        )
+                    )
+                return
+            except FramingError:
+                self._fail_transport(
+                    SshPilotError(
+                        ErrorCode.PROTOCOL_ERROR,
+                        "The daemon sent an invalid transport frame",
+                    )
+                )
+                return
+            except (TypeError, ValueError):
+                self._fail_transport(
+                    SshPilotError(
+                        ErrorCode.PROTOCOL_ERROR,
+                        "The daemon sent an invalid protocol envelope",
+                    )
+                )
+                return
+            except OSError:
+                with self._state_lock:
+                    closing = self._closed and not self._transport_failed
+                if not closing:
+                    self._fail_transport(
+                        SshPilotError(
+                            ErrorCode.TRANSPORT_CLOSED,
+                            "The daemon transport failed",
+                            retryable=True,
+                        )
+                    )
+                return
+
+            if isinstance(envelope, EventEnvelope):
+                if not self._receive_event(envelope):
+                    return
+                continue
+            if not isinstance(
+                envelope,
+                (SuccessResponseEnvelope, ErrorResponseEnvelope),
+            ):
+                self._fail_protocol_from_reader(
+                    "The daemon sent an unexpected envelope type"
+                )
+                return
+            expected_version = self._selected_protocol_version or PROTOCOL_VERSION
+            if envelope.protocol_version != expected_version:
+                self._fail_protocol_from_reader(
+                    "The daemon response uses an unexpected protocol"
+                )
+                return
+            with self._state_lock:
+                pending = self._pending_requests.pop(
+                    envelope.request_id,
+                    None,
+                )
+            if pending is None:
+                self._fail_protocol_from_reader(
+                    "The daemon response has an unknown request ID"
+                )
+                return
+            pending.response = envelope
+            pending.completed.set()
+
+    def _receive_event(self, envelope: EventEnvelope) -> bool:
+        expected_version = self._selected_protocol_version or PROTOCOL_VERSION
+        if envelope.protocol_version != expected_version:
+            self._fail_protocol_from_reader(
+                "The daemon event uses an unexpected protocol"
+            )
+            return False
+        try:
+            event = connection_event_from_envelope(envelope)
+        except (TypeError, ValueError):
+            self._fail_protocol_from_reader(
+                "The daemon sent an invalid connection event"
+            )
+            return False
+        with self._state_lock:
+            previous = self._last_event_sequence
+            if previous is not None and event.sequence != previous + 1:
+                invalid_sequence = True
+            else:
+                invalid_sequence = False
+                self._last_event_sequence = event.sequence
+        if invalid_sequence:
+            self._fail_protocol_from_reader(
+                "The daemon event sequence lost continuity"
+            )
+            return False
+        try:
+            self._event_queue.put_nowait(event)
+        except queue.Full:
+            self._fail_protocol_from_reader(
+                "The daemon client event queue lost continuity"
+            )
+            return False
+        return True
+
+    def _event_dispatch_main(self) -> None:
+        while True:
+            item = self._event_queue.get()
+            if item is _EVENT_STOP:
+                return
+            if isinstance(item, _TransportFailureNotice):
+                try:
+                    self._publisher.publish(
+                        EventType.ERROR_OCCURRED,
+                        item.error.to_dict(),
+                    )
+                except RuntimeError:
+                    pass
+                self._publisher.close()
+                return
+            try:
+                self._publisher._publish_existing(item)
+            except RuntimeError:
+                return
+
+    def _fail_protocol_from_reader(self, message: str) -> None:
+        self._fail_transport(SshPilotError(ErrorCode.PROTOCOL_ERROR, message))
+
+    def _fail_transport(self, error: SshPilotError) -> None:
+        with self._state_lock:
+            if self._transport_failed or self._close_complete:
+                return
+            self._transport_failed = True
+            self._closed = True
+            transport = self._socket
+            self._socket = None
+            pending = tuple(self._pending_requests.items())
+            self._pending_requests.clear()
+        self._close_transport(transport)
+        for request_id, request in pending:
+            request.error = SshPilotError(
+                error.code,
+                error.message,
+                details=error.details,
+                retryable=error.retryable,
+                request_id=request_id,
+            )
+            request.completed.set()
+        self._replace_event_queue_with_failure(error)
+
+    def _replace_event_queue_with_failure(self, error: SshPilotError) -> None:
+        while True:
+            try:
+                self._event_queue.get_nowait()
+            except queue.Empty:
+                break
+        try:
+            self._event_queue.put_nowait(_TransportFailureNotice(error))
+        except queue.Full:
+            pass
+
+    def _start_background_threads(self) -> None:
+        self._event_thread = threading.Thread(
+            target=self._event_dispatch_main,
+            name="sshpilot-daemon-events",
+            daemon=True,
+        )
+        self._reader_thread = threading.Thread(
+            target=self._reader_main,
+            name="sshpilot-daemon-reader",
+            daemon=True,
+        )
+        self._event_thread.start()
+        self._reader_thread.start()
+
+    def _stop_event_dispatch(self) -> None:
+        while True:
+            try:
+                self._event_queue.get_nowait()
+            except queue.Empty:
+                break
+        try:
+            self._event_queue.put_nowait(_EVENT_STOP)
+        except queue.Full:
+            pass
+
+    @staticmethod
+    def _join_thread(thread: Optional[threading.Thread]) -> None:
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+
+    @staticmethod
+    def _close_transport(transport: Optional[socket.socket]) -> None:
+        if transport is not None:
+            try:
+                transport.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            transport.close()
 
     def _fail_protocol(self, message: str) -> NoReturn:
-        self._transport_failed = True
-        self._close_socket()
+        self._fail_transport(SshPilotError(ErrorCode.PROTOCOL_ERROR, message))
         raise SshPilotError(ErrorCode.PROTOCOL_ERROR, message)
 
     def _closed_error(self) -> SshPilotError:
@@ -386,16 +605,6 @@ class DaemonClient:
                 retryable=True,
             )
         return SshPilotError(ErrorCode.INVALID_REQUEST, "The client is closed")
-
-    def _close_socket(self) -> None:
-        transport = self._socket
-        self._socket = None
-        if transport is not None:
-            try:
-                transport.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            transport.close()
 
     @staticmethod
     def _unsupported(method_name: str) -> SshPilotError:

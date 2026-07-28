@@ -308,7 +308,6 @@ class EventPublisher:
         session_id: Optional[SessionId] = None,
     ) -> CoreEvent[Any]:
         safe_payload = validate_event_payload(event_type, payload)
-        publisher_thread_id = threading.get_ident()
         with self._condition:
             if self._closed:
                 raise RuntimeError("event publisher is closed")
@@ -322,28 +321,51 @@ class EventPublisher:
                 connection_id=connection_id,
                 session_id=session_id,
             )
-            delivery = _QueuedDelivery(
-                event=event,
-                callbacks=tuple(
-                    callback
-                    for callback, _subscription in self._subscribers.values()
-                ),
-            )
-            self._pending.append(delivery)
+            should_drain = self._enqueue_locked(event)
 
-            if not self._dispatching:
-                self._dispatching = True
-                self._dispatcher_thread_id = publisher_thread_id
-            elif self._dispatcher_thread_id == publisher_thread_id:
-                # Re-entrant publication is queued behind the current event.
-                return event
-            else:
-                while not delivery.completed:
-                    self._condition.wait()
-                return event
-
-        self._drain()
+        if should_drain:
+            self._drain()
         return event
+
+    def _publish_existing(self, event: CoreEvent[Any]) -> CoreEvent[Any]:
+        """Deliver a validated event while preserving an external sequence."""
+
+        if not isinstance(event, CoreEvent):
+            raise TypeError("existing event must be a CoreEvent")
+        with self._condition:
+            if self._closed:
+                raise RuntimeError("event publisher is closed")
+            if event.sequence < self._next_sequence:
+                raise ValueError("existing event sequence is not monotonic")
+            self._next_sequence = event.sequence + 1
+            should_drain = self._enqueue_locked(event)
+
+        if should_drain:
+            self._drain()
+        return event
+
+    def _enqueue_locked(self, event: CoreEvent[Any]) -> bool:
+        publisher_thread_id = threading.get_ident()
+        delivery = _QueuedDelivery(
+            event=event,
+            callbacks=tuple(
+                callback
+                for callback, _subscription in self._subscribers.values()
+            ),
+        )
+        self._pending.append(delivery)
+
+        if not self._dispatching:
+            self._dispatching = True
+            self._dispatcher_thread_id = publisher_thread_id
+            return True
+        elif self._dispatcher_thread_id == publisher_thread_id:
+            # Re-entrant publication is queued behind the current event.
+            return False
+        else:
+            while not delivery.completed:
+                self._condition.wait()
+            return False
 
     def _drain(self) -> None:
         while True:
