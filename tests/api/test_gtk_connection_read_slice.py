@@ -20,6 +20,33 @@ class _Box:
         self.items.append(item)
 
 
+class _Request:
+    def __init__(self):
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class _Bridge:
+    def submit(self, operation, *, on_success, on_error, on_discard=None):
+        self.operation = operation
+        self.on_success = on_success
+        self.on_error = on_error
+        self.on_discard = on_discard
+        self.request = _Request()
+        return self.request
+
+
+class _AsyncPage:
+    _finish_recent_read = WelcomePage._finish_recent_read
+    _fail_recent_read = WelcomePage._fail_recent_read
+    _empty_recent_message = WelcomePage._empty_recent_message
+    _recent_read_error_message = WelcomePage._recent_read_error_message
+    _render_recent_connections = WelcomePage._render_recent_connections
+    close = WelcomePage.close
+
+
 def test_recent_listing_reads_dtos_from_client_not_manager():
     summary = ConnectionSummary(
         id=ConnectionId("connection:v1:test"),
@@ -141,3 +168,97 @@ def test_unexpected_client_exception_remains_diagnosable():
 
     with pytest.raises(RuntimeError, match="unexpected implementation bug"):
         WelcomePage._populate_recent_box(page)
+
+
+def test_daemon_backed_recent_read_is_submitted_without_blocking(monkeypatch):
+    class _Label:
+        def __init__(self, *, label):
+            self.label = label
+
+        def add_css_class(self, _name):
+            pass
+
+        def set_wrap(self, _value):
+            pass
+
+        def set_justify(self, _value):
+            pass
+
+        def set_halign(self, _value):
+            pass
+
+        def set_hexpand(self, _value):
+            pass
+
+        def set_margin_top(self, _value):
+            pass
+
+    summary = ConnectionSummary(
+        id=ConnectionId("connection:v1:async"),
+        nickname="async",
+        host="async",
+        hostname="async.example",
+        username="alice",
+        port=22,
+    )
+    calls = []
+    bridge = _Bridge()
+    monkeypatch.setattr(welcome_page.Gtk, "Label", _Label)
+    page = _AsyncPage()
+    page._recent_box = _Box()
+    page.client = SimpleNamespace(
+        list_connections=lambda: calls.append(True) or [summary]
+    )
+    page.client_bridge = bridge
+    page._client_selection_pending = False
+    page._recent_request = None
+    page._recent_generation = 0
+    page._closed = False
+    page.config = SimpleNamespace(
+        get_connection_meta=lambda _nickname: {"last_used": 1}
+    )
+    page._min_row = lambda title, subtitle, callback: (title, subtitle, callback)
+    page._min_section = lambda title, rows: (title, rows)
+    page._connect_connection_summary = lambda _summary: None
+
+    WelcomePage._populate_recent_box(page)
+
+    assert calls == []
+    assert page._recent_box.items[0].label == "Loading recent connections…"
+
+    bridge.on_success(bridge.operation())
+
+    assert calls == [True]
+    title, rows = page._recent_box.items[-1]
+    assert title == "Recent"
+    assert rows[0][:2] == ("async", "alice@async.example")
+
+
+def test_destroyed_welcome_page_ignores_late_daemon_result(monkeypatch):
+    class _Label:
+        def __init__(self, *, label):
+            self.label = label
+
+        def __getattr__(self, _name):
+            return lambda *_args, **_kwargs: None
+
+    bridge = _Bridge()
+    monkeypatch.setattr(welcome_page.Gtk, "Label", _Label)
+    page = _AsyncPage()
+    page._recent_box = _Box()
+    page.client = SimpleNamespace(list_connections=list)
+    page.client_bridge = bridge
+    page._client_selection_pending = False
+    page._recent_request = None
+    page._recent_generation = 0
+    page._closed = False
+    page.config = SimpleNamespace(get_connection_meta=lambda _nickname: {})
+
+    WelcomePage._populate_recent_box(page)
+    page.close()
+    bridge.on_success([])
+
+    assert bridge.request.cancelled is True
+    assert [item.label for item in page._recent_box.items] == [
+        "Loading recent connections…"
+    ]

@@ -33,6 +33,13 @@ class WelcomePage(Gtk.Overlay):
         self.window = window
         self.connection_manager = window.connection_manager
         self.client = window.client
+        self.client_bridge = getattr(window, 'client_bridge', None)
+        self._client_selection_pending = bool(
+            getattr(window, '_api_client_selection_pending', False)
+        )
+        self._recent_request = None
+        self._recent_generation = 0
+        self._closed = False
         self.config = window.config
         self.set_hexpand(True)
         self.set_vexpand(True)
@@ -297,11 +304,37 @@ class WelcomePage(Gtk.Overlay):
         box = getattr(self, '_recent_box', None)
         if box is None:
             return
-        child = box.get_first_child()
-        while child:
-            nxt = child.get_next_sibling()
-            box.remove(child)
-            child = nxt
+        WelcomePage._clear_box(box)
+
+        previous = getattr(self, '_recent_request', None)
+        if previous is not None:
+            previous.cancel()
+            self._recent_request = None
+
+        if getattr(self, '_client_selection_pending', False):
+            WelcomePage._append_recent_message(
+                box,
+                _('Loading recent connections…'),
+            )
+            return
+
+        bridge = getattr(self, 'client_bridge', None)
+        if bridge is not None:
+            self._recent_generation = getattr(self, '_recent_generation', 0) + 1
+            generation = self._recent_generation
+            WelcomePage._append_recent_message(
+                box,
+                _('Loading recent connections…'),
+            )
+            self._recent_request = bridge.submit(
+                self.client.list_connections,
+                on_success=lambda connections: self._finish_recent_read(
+                    generation,
+                    connections,
+                ),
+                on_error=lambda error: self._fail_recent_read(generation, error),
+            )
+            return
 
         # Read presentation data through the frontend-neutral client boundary.
         # Activation remains on the existing terminal path in this milestone.
@@ -317,6 +350,62 @@ class WelcomePage(Gtk.Overlay):
             )
             connections = []
             read_error = True
+        WelcomePage._render_recent_connections(self, connections, read_error)
+
+    def _finish_recent_read(self, generation, connections):
+        if (
+            getattr(self, '_closed', False)
+            or generation != getattr(self, '_recent_generation', 0)
+        ):
+            return
+        self._recent_request = None
+        WelcomePage._render_recent_connections(self, connections, False)
+
+    def _fail_recent_read(self, generation, error):
+        if (
+            getattr(self, '_closed', False)
+            or generation != getattr(self, '_recent_generation', 0)
+        ):
+            return
+        self._recent_request = None
+        if isinstance(error, SshPilotError):
+            logger.warning(
+                "Welcome daemon connection listing failed with API error code=%s",
+                error.code.value,
+            )
+        else:
+            logger.error(
+                "Welcome daemon connection listing failed unexpectedly type=%s",
+                type(error).__name__,
+            )
+        WelcomePage._render_recent_connections(self, [], True)
+
+    @staticmethod
+    def _clear_box(box):
+        child = box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
+
+    @staticmethod
+    def _append_recent_message(box, message, *, warning=False):
+        empty = Gtk.Label(label=message)
+        empty.add_css_class('dim-label')
+        if warning:
+            empty.add_css_class('warning')
+        empty.set_wrap(True)
+        empty.set_justify(Gtk.Justification.CENTER)
+        empty.set_halign(Gtk.Align.CENTER)
+        empty.set_hexpand(True)
+        empty.set_margin_top(8)
+        box.append(empty)
+
+    def _render_recent_connections(self, connections, read_error):
+        box = getattr(self, '_recent_box', None)
+        if box is None or getattr(self, '_closed', False):
+            return
+        WelcomePage._clear_box(box)
 
         def _last_used(conn):
             try:
@@ -336,16 +425,11 @@ class WelcomePage(Gtk.Overlay):
                 if read_error
                 else self._empty_recent_message(bool(connections))
             )
-            empty = Gtk.Label(label=message)
-            empty.add_css_class('dim-label')
-            if read_error:
-                empty.add_css_class('warning')
-            empty.set_wrap(True)
-            empty.set_justify(Gtk.Justification.CENTER)
-            empty.set_halign(Gtk.Align.CENTER)
-            empty.set_hexpand(True)
-            empty.set_margin_top(8)
-            box.append(empty)
+            WelcomePage._append_recent_message(
+                box,
+                message,
+                warning=read_error,
+            )
             return
 
         rows = [
@@ -355,6 +439,24 @@ class WelcomePage(Gtk.Overlay):
             for conn in recent
         ]
         box.append(self._min_section(_('Recent'), rows))
+
+    def set_client(self, client, *, bridge=None):
+        """Install the selected application client and refresh through it."""
+
+        self.client = client
+        self.client_bridge = bridge
+        self._client_selection_pending = False
+        self.refresh_recent()
+
+    def close(self):
+        """Suppress late worker delivery after the containing window closes."""
+
+        self._closed = True
+        self._recent_generation += 1
+        request = self._recent_request
+        self._recent_request = None
+        if request is not None:
+            request.cancel()
 
     def _connect_connection_summary(self, summary):
         """Resolve a clicked DTO only when entering the legacy terminal path."""

@@ -665,6 +665,30 @@ class SshPilotApplication(Adw.Application):
                 logger.debug(f"Error accessing file manager registry: {exc}")
         except Exception as exc:
             logger.error(f"Error closing file manager windows: {exc}", exc_info=True)
+
+        # The frontend-neutral client and its GTK command bridge are
+        # application-scoped. Closing a window only suppresses that window's
+        # callbacks; final application shutdown owns transport teardown.
+        selection = getattr(self, '_api_client_selection', None)
+        client = getattr(selection, 'client', None)
+        if client is None and self.window is not None:
+            client = getattr(self.window, 'client', None)
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                logger.warning(
+                    "Application API client cleanup failed type=%s",
+                    type(client).__name__,
+                )
+        bridge = getattr(self, '_api_client_bridge', None)
+        if bridge is not None:
+            try:
+                bridge.shutdown()
+            except Exception:
+                logger.warning("Application API bridge cleanup failed")
+        self._api_client_selection = None
+        self._api_client_bridge = None
         
         if self._config_handler is not None and self.config is not None:
             try:

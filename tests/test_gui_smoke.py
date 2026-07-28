@@ -1,5 +1,7 @@
 """Smoke test: the real app boots under the GUI harness and a window comes up."""
 
+import threading
+
 import pytest
 
 from tests._gui_harness import requires_gui  # the `gui` fixture comes from conftest
@@ -54,3 +56,89 @@ def test_real_window_composes_welcome_page_with_in_process_client(gui):
     assert welcome.client is client
     assert client_calls == [True]
     assert manager_calls == []
+
+
+@pytest.mark.parametrize("_repeat", range(3))
+def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
+    gui,
+    tmp_path,
+    _repeat,
+):
+    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.daemon import DaemonServer
+    from sshpilot.gtk_client_bridge import GtkClientBridge
+
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    class _DelayedManager:
+        def get_connections(self):
+            entered.set()
+            release.wait(2)
+            completed.set()
+            return []
+
+    socket_dir = tmp_path / "daemon-gui"
+    socket_dir.mkdir(mode=0o700)
+    server = DaemonServer(
+        lambda: InProcessClient(_DelayedManager(), client_name="gtk-test-daemon"),
+        socket_path=socket_dir / "sshpilotd.sock",
+    )
+    server.start_in_thread()
+
+    window = gui.window
+    welcome = window.welcome_view
+    app = gui.app
+    old_bridge = getattr(app, "_api_client_bridge", None)
+    bridge = GtkClientBridge()
+    daemon_client = DaemonClient(socket_path=server.socket_path, timeout=2)
+    calls = []
+    original_list = daemon_client.list_connections
+
+    def _recorded_list():
+        calls.append(True)
+        return original_list()
+
+    daemon_client.list_connections = _recorded_list
+    app._api_client_bridge = bridge
+    window.client_bridge = bridge
+    try:
+        window._apply_client_selection(
+            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+        )
+        assert entered.wait(1)
+
+        main_context_tick = []
+        gui.GLib.idle_add(lambda: main_context_tick.append(True) or False)
+        gui.pump(100)
+
+        assert main_context_tick == [True]
+        assert completed.is_set() is False
+        assert window.client is daemon_client
+        assert welcome.client is daemon_client
+        assert calls == [True]
+
+        release.set()
+        gui.pump(200)
+        assert completed.is_set()
+    finally:
+        release.set()
+        daemon_client.close()
+        bridge.shutdown()
+        replacement = InProcessClient(
+            window.connection_manager,
+            group_manager=window.group_manager,
+        )
+        window.client = replacement
+        window.client_bridge = None
+        welcome._closed = False
+        welcome.set_client(replacement)
+        app._api_client_selection = ClientSelection(
+            client=replacement,
+            mode=ClientMode.IN_PROCESS,
+        )
+        app._api_client_bridge = old_bridge
+        server.shutdown()
+        assert server.wait_stopped()

@@ -278,13 +278,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         self.session_manager = SessionManager(self.config)
-        # Frontend-neutral boundary. The current composition root still owns
-        # the legacy managers; GTK read paths consume DTOs through this adapter.
-        from .api import InProcessClient
-        self.client = InProcessClient(
-            self.connection_manager,
-            group_manager=self.group_manager,
-        )
+        self.client_bridge = None
+        self._api_client_selection_pending = False
+        self._api_client_selection_request = None
+        self._client_mode_warning = None
+        self._compose_api_client(app)
         
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -358,8 +356,175 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Schedule deferred startup behaviors
         self._schedule_startup_tasks()
+        if self._api_client_selection_pending:
+            self._begin_daemon_client_selection()
+        elif self._client_mode_warning:
+            GLib.idle_add(self._show_client_mode_warning)
 
         logger.info("Main window initialized")
+
+    def _compose_api_client(self, app) -> None:
+        """Create or reuse the application-scoped frontend-neutral client."""
+
+        from .api import InProcessClient
+        from .api.client_factory import (
+            ClientFallbackReason,
+            ClientMode,
+            in_process_selection,
+            requested_client_mode,
+        )
+
+        existing = getattr(app, '_api_client_selection', None) if app else None
+        if existing is not None:
+            self.client = existing.client
+            self.client_bridge = getattr(app, '_api_client_bridge', None)
+            return
+
+        fallback = InProcessClient(
+            self.connection_manager,
+            group_manager=self.group_manager,
+        )
+        self.client = fallback
+        try:
+            mode = requested_client_mode()
+        except ValueError:
+            selection = in_process_selection(
+                self.connection_manager,
+                group_manager=self.group_manager,
+                existing_client=fallback,
+                fallback_reason=ClientFallbackReason.INVALID_MODE,
+            )
+            self._client_mode_warning = selection.warning
+            if app is not None:
+                app._api_client_selection = selection
+            return
+
+        if mode is ClientMode.IN_PROCESS:
+            selection = in_process_selection(
+                self.connection_manager,
+                group_manager=self.group_manager,
+                existing_client=fallback,
+            )
+            if app is not None:
+                app._api_client_selection = selection
+            return
+
+        from .gtk_client_bridge import GtkClientBridge
+
+        bridge = (
+            getattr(app, '_api_client_bridge', None) if app is not None else None
+        )
+        if bridge is None:
+            bridge = GtkClientBridge()
+            if app is not None:
+                app._api_client_bridge = bridge
+        self.client_bridge = bridge
+        self._api_client_selection_pending = True
+
+    def _begin_daemon_client_selection(self) -> None:
+        """Select/start the daemon off the GTK thread, then atomically inject it."""
+
+        from .api.client_factory import ClientMode, select_client
+
+        app = self.get_application()
+        launcher = getattr(app, '_api_daemon_launcher', None) if app else None
+        fallback = self.client
+
+        def _select():
+            return select_client(
+                self.connection_manager,
+                group_manager=self.group_manager,
+                mode=ClientMode.DAEMON,
+                in_process_client=fallback,
+                launcher=launcher,
+            )
+
+        def _discard(selection):
+            if selection.client is not fallback:
+                selection.client.close()
+
+        self._api_client_selection_request = self.client_bridge.submit(
+            _select,
+            on_success=self._apply_client_selection,
+            on_error=self._handle_client_selection_error,
+            on_discard=_discard,
+        )
+
+    def _apply_client_selection(self, selection) -> None:
+        if self._is_quitting:
+            if selection.client is not self.client:
+                selection.client.close()
+            return
+        previous = self.client
+        self.client = selection.client
+        self._api_client_selection_pending = False
+        self._api_client_selection_request = None
+        app = self.get_application()
+        if app is not None:
+            app._api_client_selection = selection
+        if selection.mode.value != 'daemon':
+            bridge = self.client_bridge
+            self.client_bridge = None
+            if app is not None:
+                app._api_client_bridge = None
+            if bridge is not None:
+                bridge.shutdown()
+        if hasattr(self, 'welcome_view') and self.welcome_view is not None:
+            self.welcome_view.set_client(
+                self.client,
+                bridge=self.client_bridge,
+            )
+        if previous is not self.client:
+            previous.close()
+        if selection.warning:
+            self._client_mode_warning = selection.warning
+            self._show_client_mode_warning()
+
+    def _handle_client_selection_error(self, error) -> None:
+        """Defensive fallback for failures outside the factory's policy."""
+
+        logger.error(
+            "Client selection worker failed unexpectedly type=%s",
+            type(error).__name__,
+        )
+        from .api.client_factory import (
+            DAEMON_FALLBACK_MESSAGE,
+            ClientFallbackReason,
+            in_process_selection,
+        )
+
+        self._api_client_selection_pending = False
+        self._api_client_selection_request = None
+        bridge = self.client_bridge
+        self.client_bridge = None
+        app = self.get_application()
+        if app is not None:
+            app._api_client_bridge = None
+            app._api_client_selection = in_process_selection(
+                self.connection_manager,
+                group_manager=self.group_manager,
+                existing_client=self.client,
+                fallback_reason=ClientFallbackReason.UNEXPECTED_ERROR,
+            )
+        if bridge is not None:
+            bridge.shutdown()
+        if hasattr(self, 'welcome_view') and self.welcome_view is not None:
+            self.welcome_view.set_client(self.client)
+        self._client_mode_warning = DAEMON_FALLBACK_MESSAGE
+        self._show_client_mode_warning()
+
+    def _show_client_mode_warning(self) -> bool:
+        message = self._client_mode_warning
+        self._client_mode_warning = None
+        if not message or self._is_quitting:
+            return False
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(5)
+            self.toast_overlay.add_toast(toast)
+        except Exception:
+            logger.warning("Unable to show the safe daemon fallback notification")
+        return False
 
     @property
     def sshcopyid_runner(self):
@@ -4925,9 +5090,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:
             self._teardown_ssh_config_monitor()
-            client = getattr(self, 'client', None)
-            if client is not None:
-                client.close()
+            self._invalidate_api_window_callbacks()
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch
@@ -4975,10 +5138,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         
         # No active connections or all local terminals are idle, safe to close
         self._teardown_ssh_config_monitor()
-        client = getattr(self, 'client', None)
-        if client is not None:
-            client.close()
+        self._invalidate_api_window_callbacks()
         return False  # Allow close
+
+    def _invalidate_api_window_callbacks(self) -> None:
+        """Detach this window without closing the application-owned client."""
+
+        welcome = getattr(self, 'welcome_view', None)
+        if welcome is not None:
+            welcome.close()
+        request = getattr(self, '_api_client_selection_request', None)
+        self._api_client_selection_request = None
+        if request is not None:
+            request.cancel()
 
     def _askpass_dialog_parent(self):
         """Topmost app window to parent a routed askpass prompt on.
