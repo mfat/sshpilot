@@ -45,6 +45,7 @@ from .lifecycle import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
+DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
 _FORWARDED_EVENT_TYPES = frozenset(
     {
         EventType.CONNECTION_CREATED,
@@ -67,6 +68,7 @@ class _ClientConnection:
     output: Deque[_OutboundFrame] = field(default_factory=deque)
     output_offset: int = 0
     queued_event_count: int = 0
+    queued_outbound_bytes: int = 0
     protocol: ClientProtocolState = field(default_factory=ClientProtocolState)
     close_after_write: bool = False
     continuity_lost: bool = False
@@ -82,14 +84,21 @@ class DaemonServer:
         *,
         socket_path: Optional[os.PathLike] = None,
         client_event_queue_limit: int = DEFAULT_CLIENT_EVENT_QUEUE_LIMIT,
+        max_client_outbound_bytes: int = DEFAULT_MAX_CLIENT_OUTBOUND_BYTES,
     ) -> None:
         if (
             type(client_event_queue_limit) is not int
             or client_event_queue_limit < 1
         ):
             raise ValueError("client event queue limit must be positive")
+        if (
+            type(max_client_outbound_bytes) is not int
+            or max_client_outbound_bytes < 1
+        ):
+            raise ValueError("maximum client outbound bytes must be positive")
         self.socket_path = resolve_socket_path(socket_path)
         self.client_event_queue_limit = client_event_queue_limit
+        self.max_client_outbound_bytes = max_client_outbound_bytes
         self._core_factory = core_factory
         self._selector: Optional[selectors.BaseSelector] = None
         self._listener: Optional[socket.socket] = None
@@ -380,7 +389,11 @@ class DaemonServer:
         with self._event_lock:
             if state.closed or state.continuity_lost:
                 return
-            state.output.append(frame)
+            overflow = not self._enqueue_frame_locked(state, frame)
+        if overflow:
+            logger.warning("Disconnecting daemon peer after outbound queue overflow")
+            self._close_client(state)
+            return
         selector = self._selector
         if selector is not None and state.sock.fileno() >= 0:
             self._refresh_client_interest(state)
@@ -414,6 +427,10 @@ class DaemonServer:
             ):
                 return
             state.output_offset += sent
+            state.queued_outbound_bytes = max(
+                0,
+                state.queued_outbound_bytes - sent,
+            )
             if state.output_offset >= len(frame.data):
                 completed = state.output.popleft()
                 state.output_offset = 0
@@ -457,6 +474,7 @@ class DaemonServer:
             state.output.clear()
             state.output_offset = 0
             state.queued_event_count = 0
+            state.queued_outbound_bytes = 0
             self._clients.pop(file_descriptor, None)
         selector = self._selector
         if selector is not None and file_descriptor >= 0:
@@ -540,10 +558,37 @@ class DaemonServer:
                     state.output.clear()
                     state.output_offset = 0
                     state.queued_event_count = 0
+                    state.queued_outbound_bytes = 0
                     continue
-                state.output.append(_OutboundFrame(frame, is_event=True))
-                state.queued_event_count += 1
+                if not self._enqueue_frame_locked(
+                    state,
+                    _OutboundFrame(frame, is_event=True),
+                ):
+                    continue
         self._wake_selector()
+
+    def _enqueue_frame_locked(
+        self,
+        state: _ClientConnection,
+        frame: _OutboundFrame,
+    ) -> bool:
+        """Queue one complete frame while enforcing total per-peer memory."""
+
+        if (
+            state.queued_outbound_bytes + len(frame.data)
+            > self.max_client_outbound_bytes
+        ):
+            state.continuity_lost = True
+            state.output.clear()
+            state.output_offset = 0
+            state.queued_event_count = 0
+            state.queued_outbound_bytes = 0
+            return False
+        state.output.append(frame)
+        state.queued_outbound_bytes += len(frame.data)
+        if frame.is_event:
+            state.queued_event_count += 1
+        return True
 
     def _refresh_client_interest(self, state: _ClientConnection) -> None:
         selector = self._selector
