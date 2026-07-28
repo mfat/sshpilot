@@ -177,3 +177,25 @@ def test_internal_manager_failure_is_safe_on_wire_and_in_logs(
     assert "must-not-appear" not in repr(caught.value)
     assert "must-not-appear" not in caplog.text
     client.close()
+
+
+def test_core_close_failure_cannot_leak_socket_or_sensitive_log_data(
+    tmp_path,
+    caplog,
+):
+    class FailingCloseCore:
+        def close(self):
+            raise RuntimeError("password=must-not-appear")
+
+    from sshpilot.daemon import DaemonServer
+
+    socket_dir = tmp_path / "close-failure"
+    socket_dir.mkdir(mode=0o700)
+    socket_path = socket_dir / "sshpilotd.sock"
+    server = DaemonServer(FailingCloseCore, socket_path=socket_path)
+    server.start_in_thread()
+    server.shutdown()
+
+    assert server.wait_stopped()
+    assert not socket_path.exists()
+    assert "must-not-appear" not in caplog.text

@@ -404,8 +404,16 @@ class DaemonServer:
         self._listener = None
         self._wakeup_read = None
         self._wakeup_write = None
-        if self._core_client is not None:
-            self._core_client.close()
+        core_client = self._core_client
         self._core_client = None
-        unlink_owned_socket(self.socket_path, self._socket_identity)
-        self._socket_identity = None
+        try:
+            if core_client is not None:
+                core_client.close()
+        except Exception as error:
+            logger.error(
+                "Daemon core cleanup failed (%s)",
+                type(error).__name__,
+            )
+        finally:
+            unlink_owned_socket(self.socket_path, self._socket_identity)
+            self._socket_identity = None
