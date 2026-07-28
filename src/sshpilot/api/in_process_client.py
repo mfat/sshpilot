@@ -51,7 +51,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_capabilities": None,
     "get_connection": Capability.CONNECTIONS_READ,
     "list_connections": Capability.CONNECTIONS_READ,
-    "subscribe_events": None,
+    "subscribe_events": Capability.CONNECTIONS_EVENTS,
 }
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
@@ -104,7 +104,12 @@ class InProcessClient:
                 version=sshpilot_version,
                 implementation="in-process",
             ),
-            supported=frozenset({Capability.CONNECTIONS_READ}),
+            supported=frozenset(
+                {
+                    Capability.CONNECTIONS_READ,
+                    Capability.CONNECTIONS_EVENTS,
+                }
+            ),
             compatibility=CompatibilityResult(
                 compatible=True,
                 protocol_version=PROTOCOL_VERSION,

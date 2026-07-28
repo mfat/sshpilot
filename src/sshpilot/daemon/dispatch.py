@@ -50,7 +50,7 @@ class ClientProtocolState:
 
 
 class RequestDispatcher:
-    """Route only the four methods implemented by daemon Phase 1."""
+    """Route only the four Protocol v1 request methods implemented by the daemon."""
 
     def __init__(self, core_client: SshPilotClient) -> None:
         self._core_client = core_client
@@ -230,9 +230,15 @@ class RequestDispatcher:
     def _safe_capabilities(
         supported: FrozenSet[Capability],
     ) -> FrozenSet[Capability]:
-        # Phase 1 deliberately exposes only connection reads over IPC.
+        # Protocol v1 currently exposes snapshots plus typed connection events.
         return frozenset(
-            item for item in supported if item is Capability.CONNECTIONS_READ
+            item
+            for item in supported
+            if item
+            in {
+                Capability.CONNECTIONS_READ,
+                Capability.CONNECTIONS_EVENTS,
+            }
         )
 
     @staticmethod

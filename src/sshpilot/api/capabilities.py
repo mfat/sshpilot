@@ -11,6 +11,7 @@ class Capability(str, Enum):
     """Stable capability identifiers advertised by client implementations."""
 
     CONNECTIONS_READ = "connections.read"
+    CONNECTIONS_EVENTS = "connections.events"
     CONNECTIONS_WRITE = "connections.write"
     TERMINAL = "terminal"
     TERMINAL_ATTACH = "terminal.attach"
@@ -35,4 +36,3 @@ class Capabilities:
 
     def supports(self, capability: Capability) -> bool:
         return capability in self.supported
-

@@ -183,7 +183,12 @@ class DaemonLauncher:
             client_name="sshpilot-gtk",
             frontend_type="gtk",
         )
-        if not client.get_capabilities().supports(Capability.CONNECTIONS_READ):
+        capabilities = client.get_capabilities()
+        required = {
+            Capability.CONNECTIONS_READ,
+            Capability.CONNECTIONS_EVENTS,
+        }
+        if not required <= capabilities.supported:
             client.close()
             raise DaemonLaunchError(DaemonStartupFailure.MISSING_CAPABILITY)
         return client

@@ -9,13 +9,20 @@ import selectors
 import socket
 import stat
 import threading
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Deque, Dict, Optional, Tuple, Union
 
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.events import CoreEvent, EventType, Subscription
 from sshpilot.api.models.common import RequestId
-from sshpilot.api.transport.codec import decode_envelope, encode_envelope, error_to_wire
+from sshpilot.api.transport.codec import (
+    connection_event_to_envelope,
+    decode_envelope,
+    encode_envelope,
+    error_to_wire,
+)
 from sshpilot.api.transport.envelopes import (
     ErrorResponseEnvelope,
     RequestEnvelope,
@@ -37,14 +44,33 @@ from .lifecycle import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
+_FORWARDED_EVENT_TYPES = frozenset(
+    {
+        EventType.CONNECTION_CREATED,
+        EventType.CONNECTION_UPDATED,
+        EventType.CONNECTION_DELETED,
+    }
+)
+
+
+@dataclass(frozen=True)
+class _OutboundFrame:
+    data: bytes
+    is_event: bool = False
+
 
 @dataclass
 class _ClientConnection:
     sock: socket.socket
     decoder: FrameDecoder = field(default_factory=FrameDecoder)
-    output: bytearray = field(default_factory=bytearray)
+    output: Deque[_OutboundFrame] = field(default_factory=deque)
+    output_offset: int = 0
+    queued_event_count: int = 0
     protocol: ClientProtocolState = field(default_factory=ClientProtocolState)
     close_after_write: bool = False
+    continuity_lost: bool = False
+    closed: bool = False
 
 
 class DaemonServer:
@@ -55,8 +81,15 @@ class DaemonServer:
         core_factory: Callable[[], SshPilotClient],
         *,
         socket_path: Optional[os.PathLike] = None,
+        client_event_queue_limit: int = DEFAULT_CLIENT_EVENT_QUEUE_LIMIT,
     ) -> None:
+        if (
+            type(client_event_queue_limit) is not int
+            or client_event_queue_limit < 1
+        ):
+            raise ValueError("client event queue limit must be positive")
         self.socket_path = resolve_socket_path(socket_path)
+        self.client_event_queue_limit = client_event_queue_limit
         self._core_factory = core_factory
         self._selector: Optional[selectors.BaseSelector] = None
         self._listener: Optional[socket.socket] = None
@@ -71,6 +104,10 @@ class DaemonServer:
         self._stopped = threading.Event()
         self._startup_error: Optional[BaseException] = None
         self._thread: Optional[threading.Thread] = None
+        self._event_lock = threading.Lock()
+        self._accepting_core_events = False
+        self._core_subscription: Optional[Subscription] = None
+        self._next_event_sequence = 0
 
     @property
     def ready(self) -> bool:
@@ -130,6 +167,7 @@ class DaemonServer:
                         ):
                             self._write_client(state)
         finally:
+            self._stop_core_events()
             if self._dispatcher is not None:
                 self._dispatcher.begin_shutdown()
             self._cleanup()
@@ -140,6 +178,7 @@ class DaemonServer:
 
         if self._stopping.is_set():
             return
+        self._stop_core_events()
         if self._dispatcher is not None:
             self._dispatcher.begin_shutdown()
         self._stopping.set()
@@ -204,6 +243,11 @@ class DaemonServer:
         self._listener = listener
         self._wakeup_read = wakeup_read
         self._wakeup_write = wakeup_write
+        subscribe_events = getattr(self._core_client, "subscribe_events", None)
+        if callable(subscribe_events):
+            self._core_subscription = subscribe_events(self._on_core_event)
+        with self._event_lock:
+            self._accepting_core_events = True
 
     def _accept_client(self) -> None:
         listener = self._listener
@@ -216,7 +260,8 @@ class DaemonServer:
             return
         client_socket.setblocking(False)
         state = _ClientConnection(client_socket)
-        self._clients[client_socket.fileno()] = state
+        with self._event_lock:
+            self._clients[client_socket.fileno()] = state
         selector.register(client_socket, selectors.EVENT_READ, state)
 
     def _read_client(self, state: _ClientConnection) -> None:
@@ -324,56 +369,95 @@ class DaemonServer:
         response: Union[SuccessResponseEnvelope, ErrorResponseEnvelope],
     ) -> None:
         try:
-            state.output.extend(encode_frame(encode_envelope(response)))
+            frame = _OutboundFrame(
+                encode_frame(encode_envelope(response)),
+                is_event=False,
+            )
         except FramingError:
             logger.exception("Daemon generated an invalid response frame")
             self._close_client(state)
             return
+        with self._event_lock:
+            if state.closed or state.continuity_lost:
+                return
+            state.output.append(frame)
         selector = self._selector
         if selector is not None and state.sock.fileno() >= 0:
-            selector.modify(
-                state.sock,
-                selectors.EVENT_READ | selectors.EVENT_WRITE,
-                state,
-            )
+            self._refresh_client_interest(state)
 
     def _write_client(self, state: _ClientConnection) -> None:
-        if not state.output:
+        with self._event_lock:
+            if state.closed or state.continuity_lost:
+                return
+            if not state.output:
+                frame = None
+                offset = 0
+            else:
+                frame = state.output[0]
+                offset = state.output_offset
+        if frame is None:
             self._finish_write(state)
             return
         try:
-            sent = state.sock.send(state.output)
+            sent = state.sock.send(frame.data[offset:])
         except BlockingIOError:
             return
         except OSError:
             self._close_client(state)
             return
-        del state.output[:sent]
-        if not state.output:
+        with self._event_lock:
+            if (
+                state.closed
+                or state.continuity_lost
+                or not state.output
+                or state.output[0] is not frame
+            ):
+                return
+            state.output_offset += sent
+            if state.output_offset >= len(frame.data):
+                completed = state.output.popleft()
+                state.output_offset = 0
+                if completed.is_event:
+                    state.queued_event_count -= 1
+            empty = not state.output
+        if empty:
             self._finish_write(state)
 
     def _finish_write(self, state: _ClientConnection) -> None:
         if state.close_after_write:
             self._close_client(state)
             return
-        selector = self._selector
-        if selector is not None and state.sock.fileno() >= 0:
-            selector.modify(state.sock, selectors.EVENT_READ, state)
+        self._refresh_client_interest(state)
 
     def _drain_wakeup(self) -> None:
         wakeup = self._wakeup_read
-        if wakeup is None:
-            return
-        try:
-            while wakeup.recv(1024):
+        if wakeup is not None:
+            try:
+                while wakeup.recv(1024):
+                    pass
+            except BlockingIOError:
                 pass
-        except BlockingIOError:
-            pass
-        except OSError:
-            pass
+            except OSError:
+                pass
+        with self._event_lock:
+            states = tuple(self._clients.values())
+        for state in states:
+            if state.continuity_lost:
+                logger.warning("Disconnecting daemon peer after event queue overflow")
+                self._close_client(state)
+            else:
+                self._refresh_client_interest(state)
 
     def _close_client(self, state: _ClientConnection) -> None:
         file_descriptor = state.sock.fileno()
+        with self._event_lock:
+            if state.closed:
+                return
+            state.closed = True
+            state.output.clear()
+            state.output_offset = 0
+            state.queued_event_count = 0
+            self._clients.pop(file_descriptor, None)
         selector = self._selector
         if selector is not None and file_descriptor >= 0:
             try:
@@ -382,11 +466,14 @@ class DaemonServer:
                 pass
         try:
             state.sock.close()
-        finally:
-            self._clients.pop(file_descriptor, None)
+        except OSError:
+            pass
 
     def _cleanup(self) -> None:
-        for state in list(self._clients.values()):
+        self._stop_core_events()
+        with self._event_lock:
+            states = tuple(self._clients.values())
+        for state in states:
             self._close_client(state)
         selector = self._selector
         for sock in (self._listener, self._wakeup_read, self._wakeup_write):
@@ -417,3 +504,74 @@ class DaemonServer:
         finally:
             unlink_owned_socket(self.socket_path, self._socket_identity)
             self._socket_identity = None
+
+    def _on_core_event(self, event: CoreEvent) -> None:
+        """Encode once and enqueue without performing socket I/O."""
+
+        if event.type not in _FORWARDED_EVENT_TYPES:
+            return
+        with self._event_lock:
+            if not self._accepting_core_events or self._stopping.is_set():
+                return
+            sequence = self._next_event_sequence
+            try:
+                envelope = connection_event_to_envelope(
+                    event,
+                    sequence=sequence,
+                    protocol_version=PROTOCOL_VERSION,
+                )
+                frame = encode_frame(encode_envelope(envelope))
+            except (FramingError, TypeError, ValueError):
+                logger.error(
+                    "Daemon rejected invalid core event type=%s",
+                    event.type.value,
+                )
+                return
+            self._next_event_sequence += 1
+            for state in self._clients.values():
+                if (
+                    state.closed
+                    or state.continuity_lost
+                    or not state.protocol.handshake_completed
+                ):
+                    continue
+                if state.queued_event_count >= self.client_event_queue_limit:
+                    state.continuity_lost = True
+                    state.output.clear()
+                    state.output_offset = 0
+                    state.queued_event_count = 0
+                    continue
+                state.output.append(_OutboundFrame(frame, is_event=True))
+                state.queued_event_count += 1
+        self._wake_selector()
+
+    def _refresh_client_interest(self, state: _ClientConnection) -> None:
+        selector = self._selector
+        if selector is None or state.closed or state.sock.fileno() < 0:
+            return
+        with self._event_lock:
+            has_output = bool(state.output)
+        events = selectors.EVENT_READ
+        if has_output:
+            events |= selectors.EVENT_WRITE
+        try:
+            selector.modify(state.sock, events, state)
+        except (KeyError, ValueError, OSError):
+            self._close_client(state)
+
+    def _wake_selector(self) -> None:
+        wakeup = self._wakeup_write
+        if wakeup is None:
+            return
+        try:
+            wakeup.send(b"e")
+        except (BlockingIOError, OSError):
+            pass
+
+    def _stop_core_events(self) -> None:
+        with self._event_lock:
+            self._accepting_core_events = False
+            subscription = self._core_subscription
+            self._core_subscription = None
+        if subscription is not None:
+            subscription.unsubscribe()

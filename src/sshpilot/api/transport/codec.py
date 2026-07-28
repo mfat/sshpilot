@@ -7,6 +7,7 @@ from typing import AbstractSet, Any, Dict, Iterable, Union
 from .._safe_values import copy_safe_details
 from ..capabilities import Capabilities, Capability
 from ..errors import ErrorCode, SshPilotError
+from ..events import CoreEvent, EventType
 from ..models.common import (
     ClientId,
     ClientInfo,
@@ -249,13 +250,64 @@ def decode_envelope(value: Any) -> Envelope:
             required={"type", "protocol_version", "event", "sequence", "payload"},
             context="event envelope",
         )
-        return EventEnvelope(
+        envelope = EventEnvelope(
             protocol_version=data["protocol_version"],
             event=data["event"],
             sequence=data["sequence"],
             payload=data["payload"],
         )
+        connection_event_from_envelope(envelope)
+        return envelope
     raise ValueError("transport envelope type is unknown")
+
+
+_CONNECTION_EVENT_TYPES = frozenset(
+    {
+        EventType.CONNECTION_CREATED,
+        EventType.CONNECTION_UPDATED,
+        EventType.CONNECTION_DELETED,
+    }
+)
+
+
+def connection_event_to_envelope(
+    event: CoreEvent,
+    *,
+    sequence: int,
+    protocol_version: str,
+) -> EventEnvelope:
+    """Encode one approved public connection event for daemon transport."""
+
+    if not isinstance(event, CoreEvent) or event.type not in _CONNECTION_EVENT_TYPES:
+        raise TypeError("daemon transport supports connection events only")
+    if type(event.payload) is not ConnectionSummary:
+        raise TypeError("connection event payload must be ConnectionSummary")
+    return EventEnvelope(
+        protocol_version=protocol_version,
+        event=event.type.value,
+        sequence=sequence,
+        payload=connection_summary_to_wire(event.payload),
+    )
+
+
+def connection_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
+    """Decode one strict daemon connection event into the public event model."""
+
+    if not isinstance(envelope, EventEnvelope):
+        raise TypeError("connection event envelope is required")
+    try:
+        event_type = EventType(envelope.event)
+    except ValueError:
+        raise ValueError("daemon event name is unsupported") from None
+    if event_type not in _CONNECTION_EVENT_TYPES:
+        raise ValueError("daemon event name is unsupported")
+    summary = connection_summary_from_wire(dict(envelope.payload))
+    return CoreEvent(
+        type=event_type,
+        payload=summary,
+        sequence=envelope.sequence,
+        connection_id=summary.id,
+    )
 
 
 def handshake_request_to_wire(request: HandshakeRequest) -> Dict[str, Any]:
