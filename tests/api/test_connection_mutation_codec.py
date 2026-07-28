@@ -116,4 +116,3 @@ def test_mutation_codec_rejects_malformed_or_secret_bearing_payloads(
 ):
     with pytest.raises((TypeError, ValueError)):
         decoder(payload)
-

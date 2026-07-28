@@ -211,4 +211,3 @@ def test_daemon_delete_is_not_optimistic_and_disconnects_only_after_success():
     assert window.disconnected == [connection]
     assert window.connection_manager.reloads == 1
     assert window.rebuilds == 1
-
