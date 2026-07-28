@@ -232,3 +232,7 @@ stale-daemon recovery, and reusable contract tests against `DaemonClient`.
 See `core-boundary-audit.md` for the current concurrency/state evidence and
 `daemon-ownership.md` for ownership decisions and the next-phase backlog.
 
+The concrete, maintained contract is indexed in
+[`docs/api/README.md`](../api/README.md). Use the architecture documents for
+rationale and the API reference for exact methods, models, capabilities,
+events, errors, state semantics, and compatibility rules.

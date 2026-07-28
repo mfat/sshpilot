@@ -4,6 +4,10 @@ This audit records the pre-daemon architecture as observed on 2026-07-28. It is
 descriptive: production SSH, PTY, SFTP, secret, plugin, and terminal behaviour
 was not moved while producing it.
 
+For the exact implemented/schema-only contract inventory, see the maintained
+[API implementation audit](../api/implementation-audit.md) and
+[API reference](../api/README.md).
+
 ## Implementation map
 
 The first migration slice is:

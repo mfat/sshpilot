@@ -1,3 +1,5 @@
+import pytest
+
 from sshpilot.api import EventType
 from sshpilot.api.events import EventPublisher
 
@@ -35,19 +37,28 @@ def test_subscriber_failure_does_not_block_other_subscribers(caplog):
     assert "subscriber failed" in caplog.text
 
 
+@pytest.mark.parametrize(
+    "signal_name,event_type",
+    [
+        ("connection-added", EventType.CONNECTION_CREATED),
+        ("connection-updated", EventType.CONNECTION_UPDATED),
+        ("connection-removed", EventType.CONNECTION_DELETED),
+    ],
+)
 def test_in_process_connection_events_use_typed_dtos(
     fake_manager,
     fake_connection,
     client_factory,
+    signal_name,
+    event_type,
 ):
     client = client_factory(fake_manager)
     received = []
     subscription = client.subscribe_events(received.append)
 
-    fake_manager.emit("connection-updated", fake_connection)
+    fake_manager.emit(signal_name, fake_connection)
 
-    assert received[0].type is EventType.CONNECTION_UPDATED
+    assert received[0].type is event_type
     assert received[0].connection_id == client.list_connections()[0].id
     assert received[0].payload.nickname == "demo"
     subscription.close()
-

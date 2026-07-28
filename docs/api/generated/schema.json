@@ -1,0 +1,1528 @@
+{
+  "api_implementation_version": "0.1",
+  "enums": {
+    "AuthenticationMethod": [
+      "key",
+      "password"
+    ],
+    "Capability": [
+      "connections.read",
+      "connections.write",
+      "terminal",
+      "terminal.attach",
+      "terminal.replay",
+      "interactions",
+      "sftp",
+      "port_forwarding",
+      "plugins",
+      "secrets"
+    ],
+    "ConnectionHealth": [
+      "unknown",
+      "checking",
+      "reachable",
+      "unreachable"
+    ],
+    "ErrorCode": [
+      "unsupported_capability",
+      "invalid_request",
+      "validation_failed",
+      "connection_not_found",
+      "session_not_found",
+      "interaction_not_found",
+      "interaction_already_answered",
+      "permission_denied",
+      "operation_cancelled",
+      "operation_timed_out",
+      "internal_error"
+    ],
+    "EventType": [
+      "connection.created",
+      "connection.updated",
+      "connection.deleted",
+      "session.created",
+      "session.state_changed",
+      "session.output",
+      "session.interaction_requested",
+      "session.exited",
+      "session.closed",
+      "error.occurred"
+    ],
+    "FileEntryKind": [
+      "file",
+      "directory",
+      "symlink",
+      "other"
+    ],
+    "ForwardKind": [
+      "local",
+      "remote",
+      "dynamic"
+    ],
+    "ForwardState": [
+      "starting",
+      "active",
+      "failed",
+      "stopping",
+      "stopped"
+    ],
+    "InteractionKind": [
+      "password",
+      "key_passphrase",
+      "host_key_confirmation",
+      "keyboard_interactive",
+      "overwrite_confirmation",
+      "plugin_question"
+    ],
+    "InteractionStatus": [
+      "pending",
+      "answered",
+      "cancelled",
+      "timed_out",
+      "rejected"
+    ],
+    "SessionState": [
+      "creating",
+      "connecting",
+      "waiting_for_interaction",
+      "connected",
+      "reconnecting",
+      "disconnected",
+      "failed",
+      "closing",
+      "closed"
+    ],
+    "TransferDirection": [
+      "upload",
+      "download"
+    ],
+    "TransferState": [
+      "queued",
+      "running",
+      "paused",
+      "completed",
+      "failed",
+      "cancelled"
+    ]
+  },
+  "format": "sshpilot-api-schema-v1",
+  "identifiers": [
+    "AttachmentId",
+    "ClientId",
+    "ConnectionId",
+    "InteractionId",
+    "RequestId",
+    "SessionId",
+    "TransferId"
+  ],
+  "models": {
+    "AttachSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        },
+        {
+          "default": true,
+          "name": "request_input",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "AttachSessionResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionSummary"
+        },
+        {
+          "default": null,
+          "name": "attachment",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentInfo"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "AttachmentInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        },
+        {
+          "default": null,
+          "name": "input_owner",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "Capabilities": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "api_implementation_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "client",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientInfo"
+        },
+        {
+          "default": null,
+          "name": "core",
+          "required": true,
+          "sensitive": false,
+          "type": "CoreInfo"
+        },
+        {
+          "default": null,
+          "name": "supported",
+          "required": true,
+          "sensitive": false,
+          "type": "frozenset[Capability]"
+        },
+        {
+          "default": null,
+          "name": "compatibility",
+          "required": true,
+          "sensitive": false,
+          "type": "CompatibilityResult"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ClientInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CloseSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "CompatibilityResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "compatible",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "message",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionDetails": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "unknown",
+          "name": "health",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionHealth"
+        },
+        {
+          "default": [],
+          "name": "groups",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[GroupReference, ...]"
+        },
+        {
+          "default": [],
+          "name": "aliases",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "key",
+          "name": "authentication_method",
+          "required": false,
+          "sensitive": false,
+          "type": "AuthenticationMethod"
+        },
+        {
+          "default": false,
+          "name": "identity_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "certificate_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "x11_forwarding",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "forwarding_rule_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "proxy_jump",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "unknown",
+          "name": "health",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionHealth"
+        },
+        {
+          "default": [],
+          "name": "groups",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[GroupReference, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionValidationError": {
+      "fields": [
+        {
+          "default": null,
+          "name": "field",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionValidationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "valid",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "errors",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[ConnectionValidationError, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "CoreEvent": {
+      "fields": [
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "EventType"
+        },
+        {
+          "default": null,
+          "name": "payload",
+          "required": true,
+          "sensitive": false,
+          "type": "PayloadT"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "timestamp",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": false,
+          "sensitive": false,
+          "type": "RequestId | None"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionId | None"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionId | None"
+        }
+      ],
+      "status": "Partially implemented"
+    },
+    "CoreInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "implementation",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CreateConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 22,
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "DeleteConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "DeleteConnectionResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "deleted",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "DetachSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "GroupReference": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "InputOwner": {
+      "fields": [
+        {
+          "default": null,
+          "name": "client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionCancellation": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": "",
+          "name": "reason",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionRejection": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionKind"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "secret",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "allow_empty",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "choices",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionId | None"
+        },
+        {
+          "default": null,
+          "name": "originating_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId | None"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime | None"
+        },
+        {
+          "default": "pending",
+          "name": "status",
+          "required": false,
+          "sensitive": false,
+          "type": "InteractionStatus"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionResponse": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionStatus"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": false,
+          "sensitive": true,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "choice",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionTimeout": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "expired_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ListDirectoryRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "OpenSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PluginArgument": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "secret",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PluginOperationRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "operation",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "arguments",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[PluginArgument, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PluginOperationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "values",
+          "required": false,
+          "sensitive": true,
+          "type": "tuple[tuple[str, str], ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PortForwardSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardKind"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardState"
+        },
+        {
+          "default": null,
+          "name": "bind_host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "bind_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "target_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "target_port",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ReplayBounds": {
+      "fields": [
+        {
+          "default": null,
+          "name": "earliest_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "latest_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "retained_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ReplayRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "after_sequence",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": 1048576,
+          "name": "max_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ReplayResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "data",
+          "required": true,
+          "sensitive": true,
+          "type": "bytes"
+        },
+        {
+          "default": null,
+          "name": "first_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "next_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "bounds",
+          "required": true,
+          "sensitive": false,
+          "type": "ReplayBounds"
+        },
+        {
+          "default": false,
+          "name": "truncated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ResizeTerminalRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "dimensions",
+          "required": true,
+          "sensitive": false,
+          "type": "TerminalDimensions"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SessionCapabilities": {
+      "fields": [
+        {
+          "default": [],
+          "name": "supported",
+          "required": false,
+          "sensitive": false,
+          "type": "frozenset[str]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SessionExitInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "exit_code",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": null,
+          "name": "signal",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": "",
+          "name": "reason",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SessionSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionState"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "input_owner",
+          "required": false,
+          "sensitive": false,
+          "type": "InputOwner | None"
+        },
+        {
+          "default": {
+            "supported": []
+          },
+          "name": "capabilities",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionCapabilities"
+        },
+        {
+          "default": null,
+          "name": "exit_info",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionExitInfo | None"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpEntry": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "FileEntryKind"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "TerminalDimensions": {
+      "fields": [
+        {
+          "default": null,
+          "name": "rows",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "columns",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "TerminalInput": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "data",
+          "required": true,
+          "sensitive": true,
+          "type": "bytes"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "TerminalOutput": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "data",
+          "required": true,
+          "sensitive": true,
+          "type": "bytes"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "TransferSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "direction",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferDirection"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferState"
+        },
+        {
+          "default": 0,
+          "name": "bytes_transferred",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "total_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "UpdateConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "nickname",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        }
+      ],
+      "status": "Schema only"
+    }
+  },
+  "protocol_version": "1.0"
+}

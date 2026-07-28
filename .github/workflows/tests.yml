@@ -42,6 +42,9 @@ jobs:
             pytest-cov \
             jsonschema
 
+      - name: Check generated API documentation artifacts
+        run: python scripts/generate_api_artifacts.py --check
+
       # Unit suite only — the `integration` tests run the real tool binaries and
       # live in the containerized "Test environment" workflow.
       # pytest-cov is already installed above; emit a coverage summary so the

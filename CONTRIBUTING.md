@@ -100,6 +100,30 @@ module top, mark the module `pytest.mark.gui`, and use the `gui` fixture
 `respond`). See `tests/test_gui_tab_close.py` for examples. They are NOT for pixel-gesture,
 drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 
+## Frontend-neutral API changes
+
+Before changing `sshpilot.api`, the client/core ownership boundary, or behaviour
+that GTK and future clients must share, read:
+
+- [API reference](docs/api/README.md)
+- [API maintenance workflow](docs/api/maintenance.md)
+- [Compatibility policy](docs/api/compatibility.md)
+- [API changelog](docs/api/CHANGELOG.md)
+
+Public API changes require matching contract tests, documentation, changelog,
+and a deliberate review of the generated surface snapshot. Schema existence
+does not justify advertising a capability. After review, regenerate artifacts
+with:
+
+```bash
+python3 scripts/generate_api_artifacts.py
+python3 scripts/generate_api_artifacts.py --check
+pytest -q tests/api
+```
+
+Frontend-only changes may mark the API checklist in the pull-request template
+not applicable.
+
 ## Code style
 
 - Follow [PEP 8](https://peps.python.org/pep-0008/); use type hints where appropriate.

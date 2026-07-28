@@ -1,0 +1,512 @@
+#!/usr/bin/env python3
+"""Generate deterministic documentation artifacts for the public API surface."""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import enum
+import inspect
+import json
+import sys
+import types
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Tuple, TypeVar, Union
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from sshpilot.api import (  # noqa: E402
+    API_IMPLEMENTATION_VERSION,
+    PROTOCOL_VERSION,
+    Capability,
+    ErrorCode,
+    EventType,
+)
+from sshpilot.api import __all__ as API_EXPORTS  # noqa: E402
+from sshpilot.api.capabilities import Capabilities  # noqa: E402
+from sshpilot.api.client import SshPilotClient  # noqa: E402
+from sshpilot.api.events import CoreEvent  # noqa: E402
+from sshpilot.api.models import __all__ as MODEL_EXPORTS  # noqa: E402
+from sshpilot.api.models import common, connections, interactions, operations  # noqa: E402
+from sshpilot.api.models import sessions, terminal, transfers  # noqa: E402
+
+
+MODEL_MODULES = (
+    common,
+    connections,
+    sessions,
+    terminal,
+    interactions,
+    transfers,
+    operations,
+)
+EXTRA_MODELS = (Capabilities, CoreEvent)
+EXTRA_ENUMS = (Capability, EventType, ErrorCode)
+UNION_ORIGINS = (Union,)
+if hasattr(types, "UnionType"):
+    UNION_ORIGINS += (types.UnionType,)
+
+IMPLEMENTED_MODELS = {
+    "Capabilities",
+    "ClientInfo",
+    "CompatibilityResult",
+    "ConnectionDetails",
+    "ConnectionSummary",
+    "CoreInfo",
+    "GroupReference",
+}
+PARTIAL_MODELS = {"CoreEvent"}
+
+SENSITIVE_FIELDS = {
+    "InteractionResponse": {"value"},
+    "PluginArgument": {"value"},
+    "PluginOperationResult": {"values"},
+    "ReplayResult": {"data"},
+    "TerminalInput": {"data"},
+    "TerminalOutput": {"data"},
+}
+
+RELATED_METHODS = {
+    "Capabilities": ("get_capabilities",),
+    "CompatibilityResult": ("get_capabilities",),
+    "ConnectionDetails": (
+        "get_connection",
+        "create_connection",
+        "update_connection",
+    ),
+    "ConnectionSummary": ("list_connections",),
+    "CreateConnectionRequest": ("create_connection",),
+    "DeleteConnectionRequest": ("delete_connection",),
+    "DeleteConnectionResult": ("delete_connection",),
+    "UpdateConnectionRequest": ("update_connection",),
+    "OpenSessionRequest": ("open_session",),
+    "AttachSessionRequest": ("attach_session",),
+    "AttachSessionResult": ("attach_session",),
+    "DetachSessionRequest": ("detach_session",),
+    "CloseSessionRequest": ("close_session",),
+    "TerminalInput": ("send_terminal_input",),
+    "ResizeTerminalRequest": ("resize_terminal",),
+    "InteractionResponse": ("respond_to_interaction",),
+    "CoreEvent": ("subscribe_events",),
+}
+
+RELATED_EVENTS = {
+    "ConnectionSummary": (
+        "connection.created",
+        "connection.updated",
+        "connection.deleted",
+    ),
+    "CoreEvent": tuple(item.value for item in EventType),
+    "InteractionRequest": ("session.interaction_requested",),
+    "SessionExitInfo": ("session.exited",),
+    "SessionSummary": (
+        "session.created",
+        "session.state_changed",
+        "session.closed",
+    ),
+    "TerminalOutput": ("session.output",),
+}
+
+FIELD_EXAMPLES = {
+    "after_sequence": 0,
+    "attachment_id": "attachment:example",
+    "bind_host": "127.0.0.1",
+    "bind_port": 8022,
+    "client_id": "client:example",
+    "columns": 80,
+    "connection_id": "connection:v1:example",
+    "created_at": "2030-01-01T00:00:00Z",
+    "earliest_sequence": 0,
+    "expires_at": None,
+    "first_sequence": 0,
+    "hostname": "example.invalid",
+    "id": "id:example",
+    "interaction_id": "interaction:example",
+    "latest_sequence": 0,
+    "max_bytes": 1048576,
+    "message": "Example request",
+    "name": "example",
+    "next_sequence": 1,
+    "nickname": "example",
+    "operation": "status",
+    "path": "/remote/example",
+    "plugin_id": "example.plugin",
+    "port": 22,
+    "protocol": "ssh",
+    "reason": "example",
+    "request_id": "request:example",
+    "retained_bytes": 0,
+    "rows": 24,
+    "sequence": 0,
+    "session_id": "session:example",
+    "target_host": "example.invalid",
+    "target_port": 22,
+    "timestamp": "2030-01-01T00:00:00Z",
+    "transfer_id": "transfer:example",
+    "username": "user",
+    "version": "1.0",
+}
+
+
+def public_models() -> List[type]:
+    """Return all frontend-neutral dataclasses defined by the API modules."""
+
+    found = list(EXTRA_MODELS)
+    for module in MODEL_MODULES:
+        for name, value in vars(module).items():
+            if (
+                not name.startswith("_")
+                and inspect.isclass(value)
+                and value.__module__ == module.__name__
+                and dataclasses.is_dataclass(value)
+            ):
+                found.append(value)
+    return sorted(set(found), key=lambda item: item.__name__)
+
+
+def public_enums() -> List[type]:
+    """Return all stable string enums defined by the API modules."""
+
+    found = list(EXTRA_ENUMS)
+    for module in MODEL_MODULES:
+        for name, value in vars(module).items():
+            if (
+                not name.startswith("_")
+                and inspect.isclass(value)
+                and value.__module__ == module.__name__
+                and issubclass(value, enum.Enum)
+            ):
+                found.append(value)
+    return sorted(set(found), key=lambda item: item.__name__)
+
+
+def identifier_types() -> List[str]:
+    """Return the public opaque identifier aliases."""
+
+    return sorted(
+        name
+        for name, value in vars(common).items()
+        if not name.startswith("_")
+        and getattr(value, "__module__", None) == common.__name__
+        and hasattr(value, "__supertype__")
+    )
+
+
+def client_methods() -> List[str]:
+    """Return the public methods declared by ``SshPilotClient``."""
+
+    return sorted(
+        name
+        for name, value in vars(SshPilotClient).items()
+        if not name.startswith("_") and inspect.isfunction(value)
+    )
+
+
+def _type_name(annotation: Any) -> str:
+    if isinstance(annotation, TypeVar):
+        return annotation.__name__
+    if hasattr(annotation, "__supertype__"):
+        return annotation.__name__
+    if annotation is Any:
+        return "Any"
+    if annotation is None or annotation is type(None):
+        return "None"
+    origin = getattr(annotation, "__origin__", None)
+    args = getattr(annotation, "__args__", ())
+    if origin in UNION_ORIGINS:
+        return " | ".join(_type_name(arg) for arg in args)
+    if origin in (tuple, Tuple):
+        if len(args) == 2 and args[1] is Ellipsis:
+            return f"tuple[{_type_name(args[0])}, ...]"
+        return f"tuple[{', '.join(_type_name(arg) for arg in args)}]"
+    if origin in (frozenset,):
+        return f"frozenset[{_type_name(args[0])}]"
+    if origin is not None:
+        origin_name = getattr(origin, "__name__", str(origin).replace("typing.", ""))
+        return f"{origin_name}[{', '.join(_type_name(arg) for arg in args)}]"
+    return getattr(annotation, "__name__", str(annotation).replace("typing.", ""))
+
+
+def _normalize(value: Any) -> Any:
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, (tuple, list, frozenset, set)):
+        return [_normalize(item) for item in value]
+    if dataclasses.is_dataclass(value):
+        return {
+            item.name: _normalize(getattr(value, item.name))
+            for item in dataclasses.fields(value)
+        }
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    if isinstance(value, bytes):
+        return "<binary bytes>"
+    return value
+
+
+def _default(field: dataclasses.Field[Any]) -> Tuple[bool, Any]:
+    if field.default is not dataclasses.MISSING:
+        return True, _normalize(field.default)
+    if field.default_factory is not dataclasses.MISSING:
+        factory = field.default_factory
+        name = getattr(factory, "__name__", "factory")
+        if name == "utc_now":
+            return True, "<UTC timestamp at creation>"
+        try:
+            return True, _normalize(factory())
+        except Exception:
+            return True, f"<{name}()>"
+    return False, None
+
+
+def _example_for_type(annotation: Any, field_name: str, stack: Tuple[type, ...]) -> Any:
+    if field_name in FIELD_EXAMPLES:
+        return FIELD_EXAMPLES[field_name]
+    if hasattr(annotation, "__supertype__"):
+        return FIELD_EXAMPLES.get(annotation.__name__.replace("Id", "_id").lower(), "id:example")
+    if isinstance(annotation, TypeVar) or annotation is Any:
+        return {}
+    origin = getattr(annotation, "__origin__", None)
+    args = getattr(annotation, "__args__", ())
+    if origin in UNION_ORIGINS:
+        non_none = [arg for arg in args if arg is not type(None)]
+        return None if len(non_none) != len(args) else _example_for_type(non_none[0], field_name, stack)
+    if origin in (tuple, Tuple, list, List, frozenset, set):
+        return []
+    if inspect.isclass(annotation) and issubclass(annotation, enum.Enum):
+        return next(iter(annotation)).value
+    if inspect.isclass(annotation) and dataclasses.is_dataclass(annotation):
+        return _example_for_model(annotation, stack)
+    if annotation is str:
+        return "example"
+    if annotation is int:
+        return 0
+    if annotation is bool:
+        return False
+    if annotation is bytes:
+        return "<binary bytes>"
+    if annotation is datetime:
+        return "2030-01-01T00:00:00Z"
+    return {}
+
+
+def _example_for_model(model: type, stack: Tuple[type, ...] = ()) -> Dict[str, Any]:
+    if model in stack:
+        return {}
+    example: Dict[str, Any] = {}
+    sensitive = SENSITIVE_FIELDS.get(model.__name__, set())
+    for field in dataclasses.fields(model):
+        if field.name in sensitive:
+            example[field.name] = "<sensitive value omitted>"
+            continue
+        has_default, default = _default(field)
+        if has_default:
+            example[field.name] = default
+        else:
+            example[field.name] = _example_for_type(
+                field.type,
+                field.name,
+                stack + (model,),
+            )
+    return example
+
+
+def _model_status(name: str) -> str:
+    if name in IMPLEMENTED_MODELS:
+        return "Implemented"
+    if name in PARTIAL_MODELS:
+        return "Partially implemented"
+    return "Schema only"
+
+
+def build_surface() -> Dict[str, Any]:
+    """Build the stable review snapshot of the public API."""
+
+    return {
+        "api_exports": sorted(API_EXPORTS),
+        "api_implementation_version": API_IMPLEMENTATION_VERSION,
+        "capabilities": sorted(item.value for item in Capability),
+        "client_methods": client_methods(),
+        "error_codes": sorted(item.value for item in ErrorCode),
+        "event_types": sorted(item.value for item in EventType),
+        "identifier_types": identifier_types(),
+        "model_exports": sorted(MODEL_EXPORTS),
+        "models": {
+            model.__name__: [field.name for field in dataclasses.fields(model)]
+            for model in public_models()
+        },
+        "protocol_version": PROTOCOL_VERSION,
+        "public_enums": {
+            enum_type.__name__: [item.value for item in enum_type]
+            for enum_type in public_enums()
+        },
+    }
+
+
+def build_schema() -> Dict[str, Any]:
+    """Build a transport-neutral structural catalog, not an HTTP/OpenAPI schema."""
+
+    return {
+        "format": "sshpilot-api-schema-v1",
+        "protocol_version": PROTOCOL_VERSION,
+        "api_implementation_version": API_IMPLEMENTATION_VERSION,
+        "identifiers": identifier_types(),
+        "enums": {
+            enum_type.__name__: [item.value for item in enum_type]
+            for enum_type in public_enums()
+        },
+        "models": {
+            model.__name__: {
+                "status": _model_status(model.__name__),
+                "fields": [
+                    {
+                        "name": field.name,
+                        "type": _type_name(field.type),
+                        "required": not _default(field)[0],
+                        "default": _default(field)[1],
+                        "sensitive": field.name
+                        in SENSITIVE_FIELDS.get(model.__name__, set()),
+                    }
+                    for field in dataclasses.fields(model)
+                ],
+            }
+            for model in public_models()
+        },
+    }
+
+
+def _markdown_value(value: Any) -> str:
+    if value is None:
+        return "`null`"
+    if isinstance(value, str):
+        return f"`{value}`"
+    return f"`{json.dumps(value, sort_keys=True)}`"
+
+
+def build_model_index() -> str:
+    """Build the generated per-model structural reference."""
+
+    lines = [
+        "# Generated model index",
+        "",
+        "<!-- generated by scripts/generate_api_artifacts.py; do not edit by hand -->",
+        "",
+        "This is a deterministic structural reference derived from public dataclasses.",
+        "It is transport-neutral and is not an OpenAPI document. Runtime semantics live",
+        "in [../models.md](../models.md). Synthetic examples never read live objects or",
+        "stored connection data.",
+        "",
+    ]
+    for model in public_models():
+        name = model.__name__
+        purpose = inspect.getdoc(model) or f"Frontend-neutral `{name}` record."
+        lines.extend(
+            [
+                f"<!-- api-model: {name} -->",
+                f"## `{name}`",
+                "",
+                f"**Status:** {_model_status(name)}",
+                f"**Introduced:** Protocol v1",
+                f"**Purpose:** {purpose}",
+                "",
+            ]
+        )
+        methods = RELATED_METHODS.get(name, ())
+        events = RELATED_EVENTS.get(name, ())
+        lines.append(
+            "**Related methods:** "
+            + (", ".join(f"`{item}`" for item in methods) if methods else "None")
+        )
+        lines.append(
+            "**Related events:** "
+            + (", ".join(f"`{item}`" for item in events) if events else "None")
+        )
+        lines.extend(
+            [
+                "",
+                "| Field | Type | Required | Default | Sensitive |",
+                "| --- | --- | ---: | --- | ---: |",
+            ]
+        )
+        for field in dataclasses.fields(model):
+            has_default, default = _default(field)
+            lines.append(
+                f"| `{field.name}` | `{_type_name(field.type)}` | "
+                f"{'No' if has_default else 'Yes'} | "
+                f"{_markdown_value(default) if has_default else '—'} | "
+                f"{'Yes' if field.name in SENSITIVE_FIELDS.get(name, set()) else 'No'} |"
+            )
+        lines.extend(
+            [
+                "",
+                "Synthetic representation:",
+                "",
+                "```json",
+                json.dumps(_example_for_model(model), indent=2, sort_keys=True),
+                "```",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _json_text(value: Mapping[str, Any]) -> str:
+    return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def artifacts() -> Mapping[Path, str]:
+    return {
+        ROOT / "docs/api/generated/model-index.md": build_model_index(),
+        ROOT / "docs/api/generated/schema.json": _json_text(build_schema()),
+        ROOT / "tests/api/snapshots/public_api.json": _json_text(build_surface()),
+    }
+
+
+def check_artifacts(expected: Mapping[Path, str]) -> int:
+    stale = []
+    for path, content in expected.items():
+        if not path.exists() or path.read_text(encoding="utf-8") != content:
+            stale.append(path.relative_to(ROOT))
+    if not stale:
+        print("API artifacts are current.")
+        return 0
+    print("API artifacts are stale or missing:", file=sys.stderr)
+    for path in stale:
+        print(f"  - {path}", file=sys.stderr)
+    print(
+        "Review compatibility and docs/api/CHANGELOG.md, then run "
+        "`python3 scripts/generate_api_artifacts.py`.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def write_artifacts(expected: Mapping[Path, str]) -> None:
+    for path, content in expected.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        print(f"Wrote {path.relative_to(ROOT)}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Fail if committed API artifacts differ from the current code.",
+    )
+    args = parser.parse_args()
+    expected = artifacts()
+    if args.check:
+        return check_artifacts(expected)
+    write_artifacts(expected)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

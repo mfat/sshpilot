@@ -1,0 +1,484 @@
+{
+  "api_exports": [
+    "API_IMPLEMENTATION_VERSION",
+    "Capabilities",
+    "Capability",
+    "CoreEvent",
+    "ErrorCode",
+    "EventType",
+    "InProcessClient",
+    "PROTOCOL_VERSION",
+    "SshPilotClient",
+    "SshPilotError",
+    "Subscription"
+  ],
+  "api_implementation_version": "0.1",
+  "capabilities": [
+    "connections.read",
+    "connections.write",
+    "interactions",
+    "plugins",
+    "port_forwarding",
+    "secrets",
+    "sftp",
+    "terminal",
+    "terminal.attach",
+    "terminal.replay"
+  ],
+  "client_methods": [
+    "attach_session",
+    "close",
+    "close_session",
+    "create_connection",
+    "delete_connection",
+    "detach_session",
+    "get_capabilities",
+    "get_connection",
+    "list_connections",
+    "open_session",
+    "resize_terminal",
+    "respond_to_interaction",
+    "send_terminal_input",
+    "subscribe_events",
+    "update_connection"
+  ],
+  "error_codes": [
+    "connection_not_found",
+    "interaction_already_answered",
+    "interaction_not_found",
+    "internal_error",
+    "invalid_request",
+    "operation_cancelled",
+    "operation_timed_out",
+    "permission_denied",
+    "session_not_found",
+    "unsupported_capability",
+    "validation_failed"
+  ],
+  "event_types": [
+    "connection.created",
+    "connection.deleted",
+    "connection.updated",
+    "error.occurred",
+    "session.closed",
+    "session.created",
+    "session.exited",
+    "session.interaction_requested",
+    "session.output",
+    "session.state_changed"
+  ],
+  "identifier_types": [
+    "AttachmentId",
+    "ClientId",
+    "ConnectionId",
+    "InteractionId",
+    "RequestId",
+    "SessionId",
+    "TransferId"
+  ],
+  "model_exports": [
+    "AttachmentId",
+    "AuthenticationMethod",
+    "ClientId",
+    "ConnectionDetails",
+    "ConnectionHealth",
+    "ConnectionId",
+    "ConnectionSummary",
+    "ConnectionValidationError",
+    "ConnectionValidationResult",
+    "CreateConnectionRequest",
+    "DeleteConnectionRequest",
+    "DeleteConnectionResult",
+    "FileEntryKind",
+    "ForwardKind",
+    "ForwardState",
+    "GroupReference",
+    "InteractionId",
+    "InteractionKind",
+    "InteractionRequest",
+    "InteractionResponse",
+    "InteractionStatus",
+    "ListDirectoryRequest",
+    "PluginArgument",
+    "PluginOperationRequest",
+    "PluginOperationResult",
+    "PortForwardSummary",
+    "RequestId",
+    "SessionId",
+    "SessionState",
+    "SessionSummary",
+    "SftpEntry",
+    "TerminalDimensions",
+    "TerminalInput",
+    "TerminalOutput",
+    "TransferDirection",
+    "TransferId",
+    "TransferState",
+    "TransferSummary",
+    "UpdateConnectionRequest"
+  ],
+  "models": {
+    "AttachSessionRequest": [
+      "session_id",
+      "client_id",
+      "request_input"
+    ],
+    "AttachSessionResult": [
+      "session",
+      "attachment"
+    ],
+    "AttachmentInfo": [
+      "id",
+      "session_id",
+      "client_id",
+      "input_owner"
+    ],
+    "Capabilities": [
+      "protocol_version",
+      "api_implementation_version",
+      "client",
+      "core",
+      "supported",
+      "compatibility"
+    ],
+    "ClientInfo": [
+      "name",
+      "version",
+      "client_id"
+    ],
+    "CloseSessionRequest": [
+      "session_id"
+    ],
+    "CompatibilityResult": [
+      "compatible",
+      "protocol_version",
+      "message"
+    ],
+    "ConnectionDetails": [
+      "id",
+      "nickname",
+      "host",
+      "hostname",
+      "username",
+      "port",
+      "protocol",
+      "health",
+      "groups",
+      "aliases",
+      "authentication_method",
+      "identity_configured",
+      "certificate_configured",
+      "x11_forwarding",
+      "forwarding_rule_count",
+      "proxy_jump"
+    ],
+    "ConnectionSummary": [
+      "id",
+      "nickname",
+      "host",
+      "hostname",
+      "username",
+      "port",
+      "protocol",
+      "health",
+      "groups"
+    ],
+    "ConnectionValidationError": [
+      "field",
+      "code",
+      "message"
+    ],
+    "ConnectionValidationResult": [
+      "valid",
+      "errors"
+    ],
+    "CoreEvent": [
+      "type",
+      "payload",
+      "sequence",
+      "timestamp",
+      "request_id",
+      "connection_id",
+      "session_id"
+    ],
+    "CoreInfo": [
+      "name",
+      "version",
+      "implementation"
+    ],
+    "CreateConnectionRequest": [
+      "nickname",
+      "hostname",
+      "username",
+      "port",
+      "protocol"
+    ],
+    "DeleteConnectionRequest": [
+      "connection_id"
+    ],
+    "DeleteConnectionResult": [
+      "connection_id",
+      "deleted"
+    ],
+    "DetachSessionRequest": [
+      "session_id",
+      "attachment_id"
+    ],
+    "GroupReference": [
+      "id",
+      "name"
+    ],
+    "InputOwner": [
+      "client_id",
+      "attachment_id"
+    ],
+    "InteractionCancellation": [
+      "interaction_id",
+      "reason"
+    ],
+    "InteractionRejection": [
+      "interaction_id",
+      "reason"
+    ],
+    "InteractionRequest": [
+      "id",
+      "request_id",
+      "kind",
+      "message",
+      "secret",
+      "allow_empty",
+      "choices",
+      "session_id",
+      "originating_client_id",
+      "created_at",
+      "expires_at",
+      "status"
+    ],
+    "InteractionResponse": [
+      "interaction_id",
+      "status",
+      "value",
+      "choice"
+    ],
+    "InteractionTimeout": [
+      "interaction_id",
+      "expired_at"
+    ],
+    "ListDirectoryRequest": [
+      "connection_id",
+      "path"
+    ],
+    "OpenSessionRequest": [
+      "connection_id",
+      "client_id"
+    ],
+    "PluginArgument": [
+      "name",
+      "value",
+      "secret"
+    ],
+    "PluginOperationRequest": [
+      "request_id",
+      "plugin_id",
+      "operation",
+      "arguments"
+    ],
+    "PluginOperationResult": [
+      "request_id",
+      "plugin_id",
+      "values"
+    ],
+    "PortForwardSummary": [
+      "id",
+      "session_id",
+      "kind",
+      "state",
+      "bind_host",
+      "bind_port",
+      "target_host",
+      "target_port"
+    ],
+    "ReplayBounds": [
+      "earliest_sequence",
+      "latest_sequence",
+      "retained_bytes"
+    ],
+    "ReplayRequest": [
+      "session_id",
+      "after_sequence",
+      "max_bytes"
+    ],
+    "ReplayResult": [
+      "session_id",
+      "data",
+      "first_sequence",
+      "next_sequence",
+      "bounds",
+      "truncated"
+    ],
+    "ResizeTerminalRequest": [
+      "session_id",
+      "attachment_id",
+      "dimensions"
+    ],
+    "SessionCapabilities": [
+      "supported"
+    ],
+    "SessionExitInfo": [
+      "exit_code",
+      "signal",
+      "reason"
+    ],
+    "SessionSummary": [
+      "id",
+      "connection_id",
+      "state",
+      "created_at",
+      "input_owner",
+      "capabilities",
+      "exit_info"
+    ],
+    "SftpEntry": [
+      "name",
+      "path",
+      "kind",
+      "size"
+    ],
+    "TerminalDimensions": [
+      "rows",
+      "columns"
+    ],
+    "TerminalInput": [
+      "session_id",
+      "attachment_id",
+      "data"
+    ],
+    "TerminalOutput": [
+      "session_id",
+      "sequence",
+      "data",
+      "created_at"
+    ],
+    "TransferSummary": [
+      "id",
+      "connection_id",
+      "direction",
+      "state",
+      "bytes_transferred",
+      "total_bytes",
+      "created_at"
+    ],
+    "UpdateConnectionRequest": [
+      "nickname",
+      "hostname",
+      "username",
+      "port"
+    ]
+  },
+  "protocol_version": "1.0",
+  "public_enums": {
+    "AuthenticationMethod": [
+      "key",
+      "password"
+    ],
+    "Capability": [
+      "connections.read",
+      "connections.write",
+      "terminal",
+      "terminal.attach",
+      "terminal.replay",
+      "interactions",
+      "sftp",
+      "port_forwarding",
+      "plugins",
+      "secrets"
+    ],
+    "ConnectionHealth": [
+      "unknown",
+      "checking",
+      "reachable",
+      "unreachable"
+    ],
+    "ErrorCode": [
+      "unsupported_capability",
+      "invalid_request",
+      "validation_failed",
+      "connection_not_found",
+      "session_not_found",
+      "interaction_not_found",
+      "interaction_already_answered",
+      "permission_denied",
+      "operation_cancelled",
+      "operation_timed_out",
+      "internal_error"
+    ],
+    "EventType": [
+      "connection.created",
+      "connection.updated",
+      "connection.deleted",
+      "session.created",
+      "session.state_changed",
+      "session.output",
+      "session.interaction_requested",
+      "session.exited",
+      "session.closed",
+      "error.occurred"
+    ],
+    "FileEntryKind": [
+      "file",
+      "directory",
+      "symlink",
+      "other"
+    ],
+    "ForwardKind": [
+      "local",
+      "remote",
+      "dynamic"
+    ],
+    "ForwardState": [
+      "starting",
+      "active",
+      "failed",
+      "stopping",
+      "stopped"
+    ],
+    "InteractionKind": [
+      "password",
+      "key_passphrase",
+      "host_key_confirmation",
+      "keyboard_interactive",
+      "overwrite_confirmation",
+      "plugin_question"
+    ],
+    "InteractionStatus": [
+      "pending",
+      "answered",
+      "cancelled",
+      "timed_out",
+      "rejected"
+    ],
+    "SessionState": [
+      "creating",
+      "connecting",
+      "waiting_for_interaction",
+      "connected",
+      "reconnecting",
+      "disconnected",
+      "failed",
+      "closing",
+      "closed"
+    ],
+    "TransferDirection": [
+      "upload",
+      "download"
+    ],
+    "TransferState": [
+      "queued",
+      "running",
+      "paused",
+      "completed",
+      "failed",
+      "cancelled"
+    ]
+  }
+}

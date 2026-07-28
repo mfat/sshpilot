@@ -3,6 +3,10 @@
 This document defines the intended ownership boundary. It does not claim that a
 daemon or daemon transport exists.
 
+The concrete current client contract is maintained in the
+[API reference](../api/README.md). This document describes intended ownership;
+it does not advertise runtime capabilities.
+
 ## Architectural direction
 
 ```text
@@ -184,4 +188,3 @@ current behaviour.
     streaming are contract-tested.
 16. Design separately secured remote/mobile access only as a later, explicit
     project.
-
