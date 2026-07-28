@@ -3164,7 +3164,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
     
-    def _finish_rebuild(self, scroll_position) -> None:
+    def _finish_rebuild(
+        self,
+        scroll_position,
+        selected_connection_rows=(),
+    ) -> None:
         """Common tail for every rebuild_connection_list() exit path.
 
         Freshly-built rows always start expanded; re-collapse them when the
@@ -3178,6 +3182,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # omnisearch lands — re-enable by calling self._append_command_matches().
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
+        for connection_uuid, group_id in selected_connection_rows:
+            connection = self.connection_manager.get_connection_by_uuid(
+                connection_uuid
+            )
+            for row in self.connection_rows.get(connection, ()):
+                if getattr(row, '_group_id', None) == group_id:
+                    self.connection_list.select_row(row)
+                    break
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
@@ -3207,6 +3219,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 scroll_position = vadj.get_value()
+        selected_connection_rows = []
+        get_selected_rows = getattr(
+            self.connection_list,
+            'get_selected_rows',
+            None,
+        )
+        get_selected_row = getattr(
+            self.connection_list,
+            'get_selected_row',
+            None,
+        )
+        if callable(get_selected_rows):
+            selected_rows = list(get_selected_rows())
+        elif callable(get_selected_row):
+            selected = get_selected_row()
+            selected_rows = [selected] if selected is not None else []
+        else:
+            selected_rows = []
+        for row in selected_rows:
+            connection = getattr(row, 'connection', None)
+            connection_uuid = getattr(connection, 'uuid', None)
+            if connection_uuid:
+                selected_connection_rows.append(
+                    (connection_uuid, getattr(row, '_group_id', None))
+                )
         
         # Clear existing rows
         child = self.connection_list.get_first_child()
@@ -3250,7 +3287,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-            self._finish_rebuild(scroll_position)
+            self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
         if tag_filter:
@@ -3261,7 +3298,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-            self._finish_rebuild(scroll_position)
+            self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
         if search_text:
@@ -3304,7 +3341,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
                 displayed_connections.add(conn.uuid)
-            self._finish_rebuild(scroll_position)
+            self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
 
@@ -3346,7 +3383,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.add_connection_row(conn)
 
 
-        self._finish_rebuild(scroll_position)
+        self._finish_rebuild(scroll_position, selected_connection_rows)
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list.
 

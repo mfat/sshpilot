@@ -60,6 +60,48 @@ def test_real_window_composes_welcome_page_with_in_process_client(gui):
     assert manager_calls == []
 
 
+def test_connection_selection_survives_rename_rebuild(gui):
+    from sshpilot.connection_manager import Connection
+
+    window = gui.window
+    manager = window.connection_manager
+    previous_connections = manager.connections
+    previous_index = manager._connections_by_uuid
+    connection = Connection(
+        {
+            "nickname": "BeforeRename",
+            "hostname": "rename.example.test",
+            "protocol": "ssh",
+        }
+    )
+    manager.connections = [connection]
+    manager._connections_by_uuid = {connection.uuid: connection}
+    window.group_manager.bind_connections(manager.connections)
+    try:
+        window.rebuild_connection_list()
+        original_row = window.connection_rows[connection][0]
+        window.connection_list.select_row(original_row)
+
+        connection.update_data(
+            {
+                **connection.data,
+                "nickname": "AfterRename",
+            }
+        )
+        window.rebuild_connection_list()
+
+        selected = list(window.connection_list.get_selected_rows())
+        assert len(selected) == 1
+        assert selected[0].connection is connection
+        assert selected[0].connection.uuid == connection.uuid
+        assert selected[0].connection.nickname == "AfterRename"
+    finally:
+        manager.connections = previous_connections
+        manager._connections_by_uuid = previous_index
+        window.group_manager.bind_connections(previous_connections)
+        window.rebuild_connection_list()
+
+
 @pytest.mark.parametrize("_repeat", range(3))
 def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
     gui,
