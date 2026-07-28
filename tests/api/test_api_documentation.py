@@ -68,7 +68,10 @@ def test_runtime_capability_markers_match_the_provider(
     documented = _markers(_read("capabilities.md"), "runtime-capability")
     supported = {item.value for item in client.get_capabilities().supported}
 
-    assert documented == supported == {Capability.CONNECTIONS_READ.value}
+    assert documented == supported == {
+        Capability.CONNECTIONS_READ.value,
+        Capability.CONNECTIONS_EVENTS.value,
+    }
     assert client.list_connections()
     assert client.get_connection(client.list_connections()[0].id)
 
@@ -92,7 +95,12 @@ def test_structured_method_status_markers_match_runtime_metadata():
 
 
 def test_event_and_transitional_id_semantics_have_stable_markers():
-    assert "<!-- api-event-semantics: serial-fifo-v1 -->" in _read("events.md")
+    events = _read("events.md")
+    assert "<!-- api-event-semantics: serial-fifo-v1 -->" in events
+    assert (
+        "<!-- api-daemon-event-semantics: global-sequence-bounded-v1 -->"
+        in events
+    )
     assert (
         "<!-- api-connection-id: transitional-nickname-hash -->"
         in _read("protocol-v1.md")
@@ -126,12 +134,19 @@ def test_schema_only_capabilities_are_not_advertised(fake_manager, client_factor
     client = client_factory(fake_manager)
 
     assert client.get_capabilities().supported == frozenset(
-        {Capability.CONNECTIONS_READ}
+        {
+            Capability.CONNECTIONS_READ,
+            Capability.CONNECTIONS_EVENTS,
+        }
     )
     assert all(
         not client.get_capabilities().supports(capability)
         for capability in Capability
-        if capability is not Capability.CONNECTIONS_READ
+        if capability
+        not in {
+            Capability.CONNECTIONS_READ,
+            Capability.CONNECTIONS_EVENTS,
+        }
     )
 
 

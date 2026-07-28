@@ -142,8 +142,14 @@ def test_capabilities_advertise_only_contract_tested_runtime(fake_manager, clien
 
     capabilities = client.get_capabilities()
 
-    assert capabilities.supported == frozenset({Capability.CONNECTIONS_READ})
+    assert capabilities.supported == frozenset(
+        {
+            Capability.CONNECTIONS_READ,
+            Capability.CONNECTIONS_EVENTS,
+        }
+    )
     assert capabilities.supports(Capability.CONNECTIONS_READ)
+    assert capabilities.supports(Capability.CONNECTIONS_EVENTS)
     assert not capabilities.supports(Capability.CONNECTIONS_WRITE)
     assert not capabilities.supports(Capability.TERMINAL)
     assert capabilities.compatibility.compatible is True
@@ -151,6 +157,7 @@ def test_capabilities_advertise_only_contract_tested_runtime(fake_manager, clien
 
 def test_capability_identifiers_are_stable_strings():
     assert Capability.CONNECTIONS_READ.value == "connections.read"
+    assert Capability.CONNECTIONS_EVENTS.value == "connections.events"
     assert Capability.TERMINAL_REPLAY.value == "terminal.replay"
     assert Capability.PORT_FORWARDING.value == "port_forwarding"
 
@@ -185,7 +192,6 @@ def test_advertised_capabilities_have_implemented_operations(
         for capability in IMPLEMENTED_CLIENT_METHOD_CAPABILITIES.values()
         if capability is not None
     }
-
     assert client.get_capabilities().supported <= implemented_capabilities
 
 

@@ -77,7 +77,10 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
             "sshpilot.daemon",
         )
         assert result.client.get_capabilities().supported == frozenset(
-            {Capability.CONNECTIONS_READ}
+            {
+                Capability.CONNECTIONS_READ,
+                Capability.CONNECTIONS_EVENTS,
+            }
         )
         assert result.client.list_connections() == []
 
@@ -225,7 +228,18 @@ def test_existing_incompatible_or_malformed_daemon_is_not_restarted(
     assert launches == []
 
 
-def test_daemon_without_connections_read_is_rejected(tmp_path):
+@pytest.mark.parametrize(
+    "supported",
+    [
+        frozenset(),
+        frozenset({Capability.CONNECTIONS_READ}),
+        frozenset({Capability.CONNECTIONS_EVENTS}),
+    ],
+)
+def test_daemon_without_required_gtk_connection_capabilities_is_rejected(
+    tmp_path,
+    supported,
+):
     class _NoCapabilityCore:
         def __init__(self):
             manager = type(
@@ -238,7 +252,7 @@ def test_daemon_without_connections_read_is_rejected(tmp_path):
         def get_capabilities(self):
             return replace(
                 self._base.get_capabilities(),
-                supported=frozenset(),
+                supported=supported,
             )
 
         def close(self):

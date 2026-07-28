@@ -40,6 +40,29 @@ def test_event_delivery_is_ordered_and_subscriptions_cleanup():
     assert subscription.active is False
 
 
+def test_existing_daemon_sequence_is_preserved_and_advances_local_sequence():
+    publisher = EventPublisher()
+    received = []
+    publisher.subscribe(received.append)
+
+    publisher._publish_existing(
+        CoreEvent(
+            type=EventType.CONNECTION_CREATED,
+            payload=_connection("remote"),
+            sequence=41,
+        )
+    )
+    local = publisher.publish(
+        EventType.CONNECTION_UPDATED,
+        _connection("local"),
+    )
+
+    assert [event.sequence for event in received] == [41, 42]
+    assert local.sequence == 42
+    with pytest.raises(ValueError, match="not monotonic"):
+        publisher._publish_existing(received[0])
+
+
 def test_subscriber_failure_does_not_block_other_subscribers(caplog):
     publisher = EventPublisher()
     received = []
@@ -292,19 +315,26 @@ def test_event_envelope_rejects_internal_objects_outside_payload():
         ("connection-removed", EventType.CONNECTION_DELETED),
     ],
 )
-def test_in_process_connection_events_use_typed_dtos(
+def test_connection_events_use_typed_dtos_across_clients(
     fake_manager,
     fake_connection,
-    in_process_client_factory,
+    client_factory,
     signal_name,
     event_type,
 ):
-    client = in_process_client_factory(fake_manager)
+    client = client_factory(fake_manager)
     received = []
-    subscription = client.subscribe_events(received.append)
+    delivered = threading.Event()
+
+    def _receive(event):
+        received.append(event)
+        delivered.set()
+
+    subscription = client.subscribe_events(_receive)
 
     fake_manager.emit(signal_name, fake_connection)
 
+    assert delivered.wait(2)
     assert received[0].type is event_type
     assert received[0].connection_id == client.list_connections()[0].id
     assert received[0].payload.nickname == "demo"

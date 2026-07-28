@@ -1,6 +1,7 @@
 """Smoke test: the real app boots under the GUI harness and a window comes up."""
 
 import threading
+import time
 
 import pytest
 
@@ -125,6 +126,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
         assert completed.is_set()
     finally:
         release.set()
+        app.clear_api_event_subscription()
         daemon_client.close()
         bridge.shutdown()
         replacement = InProcessClient(
@@ -134,6 +136,144 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
         window.client = replacement
         window.client_bridge = None
         welcome._closed = False
+        welcome.set_client(replacement)
+        app._api_client_selection = ClientSelection(
+            client=replacement,
+            mode=ClientMode.IN_PROCESS,
+        )
+        app._api_client_bridge = old_bridge
+        server.shutdown()
+        assert server.wait_stopped()
+
+
+@pytest.mark.parametrize("_repeat", range(3))
+def test_real_window_refreshes_after_idle_daemon_connection_event(
+    gui,
+    tmp_path,
+    _repeat,
+):
+    from types import SimpleNamespace
+
+    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.daemon import DaemonServer
+    from sshpilot.gtk_client_bridge import GtkClientBridge
+
+    class _EventManager:
+        def __init__(self):
+            self.connections = []
+            self.handlers = {}
+            self.next_handler = 1
+
+        def get_connections(self):
+            return list(self.connections)
+
+        def connect(self, signal_name, callback):
+            handler_id = self.next_handler
+            self.next_handler += 1
+            self.handlers[handler_id] = (signal_name, callback)
+            return handler_id
+
+        def disconnect(self, handler_id):
+            self.handlers.pop(handler_id, None)
+
+        def emit(self, signal_name, connection):
+            for registered_name, callback in tuple(self.handlers.values()):
+                if registered_name == signal_name:
+                    callback(self, connection)
+
+    def _label_texts(widget):
+        texts = []
+        if isinstance(widget, gui.Gtk.Label):
+            texts.append(widget.get_text())
+        child = widget.get_first_child()
+        while child is not None:
+            texts.extend(_label_texts(child))
+            child = child.get_next_sibling()
+        return texts
+
+    def _wait_until(predicate, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            gui.pump(10)
+        return bool(predicate())
+
+    manager = _EventManager()
+    socket_dir = tmp_path / f"daemon-event-gui-{_repeat}"
+    socket_dir.mkdir(mode=0o700)
+    server = DaemonServer(
+        lambda: InProcessClient(manager, client_name="gtk-event-daemon"),
+        socket_path=socket_dir / "sshpilotd.sock",
+    )
+    server.start_in_thread()
+
+    window = gui.window
+    welcome = window.welcome_view
+    app = gui.app
+    old_bridge = getattr(app, "_api_client_bridge", None)
+    old_get_meta = welcome.config.get_connection_meta
+    bridge = GtkClientBridge()
+    daemon_client = DaemonClient(socket_path=server.socket_path, timeout=2)
+    calls = []
+    original_list = daemon_client.list_connections
+
+    def _recorded_list():
+        calls.append(True)
+        return original_list()
+
+    daemon_client.list_connections = _recorded_list
+    welcome.config.get_connection_meta = lambda _nickname: {"last_used": 1}
+    app._api_client_bridge = bridge
+    window.client_bridge = bridge
+    try:
+        window._apply_client_selection(
+            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+        )
+        assert _wait_until(lambda: len(calls) >= 1)
+
+        connection = SimpleNamespace(
+            nickname=f"EventDemo{_repeat}",
+            host=f"EventDemo{_repeat}",
+            hostname="event.example.test",
+            username="alice",
+            port=22,
+            protocol="ssh",
+            aliases=[],
+            auth_method=0,
+            keyfile="",
+            identity_files=[],
+            certificate="",
+            certificate_files=[],
+            x11_forwarding=False,
+            forwarding_rules=[],
+            proxy_jump=[],
+            password="must-not-cross-event",
+        )
+        manager.connections.append(connection)
+
+        ticked = []
+        manager.emit("connection-added", connection)
+        gui.GLib.idle_add(lambda: ticked.append(True) or False)
+
+        assert _wait_until(lambda: bool(ticked))
+        assert _wait_until(lambda: len(calls) >= 2)
+        assert _wait_until(
+            lambda: connection.nickname in _label_texts(welcome._recent_box)
+        )
+    finally:
+        app.clear_api_event_subscription()
+        daemon_client.close()
+        bridge.shutdown()
+        replacement = InProcessClient(
+            window.connection_manager,
+            group_manager=window.group_manager,
+        )
+        window.client = replacement
+        window.client_bridge = None
+        welcome._closed = False
+        welcome.config.get_connection_meta = old_get_meta
         welcome.set_client(replacement)
         app._api_client_selection = ClientSelection(
             client=replacement,

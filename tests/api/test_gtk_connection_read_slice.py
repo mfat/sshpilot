@@ -41,9 +41,13 @@ class _Bridge:
 class _AsyncPage:
     _finish_recent_read = WelcomePage._finish_recent_read
     _fail_recent_read = WelcomePage._fail_recent_read
-    _empty_recent_message = WelcomePage._empty_recent_message
-    _recent_read_error_message = WelcomePage._recent_read_error_message
+    _empty_recent_message = staticmethod(WelcomePage._empty_recent_message)
+    _recent_read_error_message = staticmethod(
+        WelcomePage._recent_read_error_message
+    )
     _render_recent_connections = WelcomePage._render_recent_connections
+    schedule_connection_refresh = WelcomePage.schedule_connection_refresh
+    _run_scheduled_connection_refresh = WelcomePage._run_scheduled_connection_refresh
     close = WelcomePage.close
 
 
@@ -262,3 +266,60 @@ def test_destroyed_welcome_page_ignores_late_daemon_result(monkeypatch):
     assert [item.label for item in page._recent_box.items] == [
         "Loading recent connections…"
     ]
+
+
+def test_connection_event_refreshes_are_coalesced_into_one_idle(monkeypatch):
+    callbacks = []
+    monkeypatch.setattr(
+        welcome_page.GLib,
+        "idle_add",
+        lambda callback: callbacks.append(callback) or 17,
+    )
+    page = _AsyncPage()
+    page._closed = False
+    page._recent_request = None
+    page._event_refresh_source = None
+    page._event_refresh_follow_up = False
+    page._populate_recent_box = lambda: callbacks.append("refresh")
+
+    page.schedule_connection_refresh()
+    page.schedule_connection_refresh()
+    page.schedule_connection_refresh()
+
+    assert callbacks == [page._run_scheduled_connection_refresh]
+    assert callbacks[0]() is False
+    assert callbacks[-1] == "refresh"
+    assert page._event_refresh_source is None
+
+
+def test_event_during_active_refresh_schedules_only_one_follow_up(monkeypatch):
+    callbacks = []
+    monkeypatch.setattr(
+        WelcomePage,
+        "_render_recent_connections",
+        lambda _self, _connections, _read_error: None,
+    )
+    monkeypatch.setattr(
+        welcome_page.GLib,
+        "idle_add",
+        lambda callback: callbacks.append(callback) or 18,
+    )
+    page = _AsyncPage()
+    page._closed = False
+    page._recent_request = _Request()
+    page._recent_generation = 3
+    page._event_refresh_source = None
+    page._event_refresh_follow_up = False
+    page._recent_box = _Box()
+    page.config = SimpleNamespace(get_connection_meta=lambda _nickname: {})
+
+    page.schedule_connection_refresh()
+    page.schedule_connection_refresh()
+
+    assert page._event_refresh_follow_up is True
+    assert callbacks == []
+
+    page._finish_recent_read(3, [])
+
+    assert page._event_refresh_follow_up is False
+    assert callbacks == [page._run_scheduled_connection_refresh]

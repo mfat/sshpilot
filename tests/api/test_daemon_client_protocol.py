@@ -1,9 +1,11 @@
 import socket
 import threading
+import time
 
 import pytest
 
-from sshpilot.api import DaemonClient, ErrorCode, SshPilotError
+from sshpilot.api import DaemonClient, ErrorCode, EventType, SshPilotError
+from sshpilot.api.models import ConnectionId, ConnectionSummary
 from sshpilot.api.transport import (
     EventEnvelope,
     SuccessResponseEnvelope,
@@ -12,6 +14,7 @@ from sshpilot.api.transport import (
     encode_frame,
     receive_frame,
 )
+from sshpilot.api.transport.codec import connection_summary_to_wire
 
 
 def _one_shot_server(socket_path, response_factory):
@@ -35,6 +38,91 @@ def _one_shot_server(socket_path, response_factory):
     thread.start()
     assert ready.wait(2)
     return thread
+
+
+def _connected_protocol_server(socket_path, action):
+    ready = threading.Event()
+    release = threading.Event()
+
+    def _send(peer, response):
+        peer.sendall(encode_frame(encode_envelope(response)))
+
+    def _serve():
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(socket_path))
+        listener.listen()
+        ready.set()
+        peer, _ = listener.accept()
+        try:
+            handshake = decode_envelope(receive_frame(peer))
+            _send(
+                peer,
+                SuccessResponseEnvelope(
+                    "1.0",
+                    handshake.request_id,
+                    {
+                        "daemon_version": "test",
+                        "core_version": "test",
+                        "selected_protocol_version": "1.0",
+                        "daemon_capabilities": [
+                            "connections.events",
+                            "connections.read",
+                        ],
+                        "compatibility_status": "compatible",
+                        "server_instance_id": "server-1",
+                    },
+                ),
+            )
+            capabilities = decode_envelope(receive_frame(peer))
+            _send(
+                peer,
+                SuccessResponseEnvelope(
+                    "1.0",
+                    capabilities.request_id,
+                    {
+                        "protocol_version": "1.0",
+                        "api_implementation_version": "0.3",
+                        "client": {
+                            "name": "daemon-client",
+                            "version": "test",
+                            "client_id": capabilities.client_id,
+                        },
+                        "core": {
+                            "name": "test-core",
+                            "version": "test",
+                            "implementation": "daemon",
+                        },
+                        "supported": [
+                            "connections.events",
+                            "connections.read",
+                        ],
+                        "compatibility": {
+                            "compatible": True,
+                            "protocol_version": "1.0",
+                            "message": "",
+                        },
+                    },
+                ),
+            )
+            assert release.wait(2)
+            action(peer)
+        finally:
+            peer.close()
+            listener.close()
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    assert ready.wait(2)
+    return thread, release
+
+
+def _wait_until(predicate, timeout=2):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        threading.Event().wait(0.005)
+    return bool(predicate())
 
 
 def test_daemon_client_rejects_unknown_response_id(tmp_path):
@@ -63,7 +151,20 @@ def test_daemon_client_accepts_event_envelopes_without_confusing_correlation(tmp
         ready.set()
         peer, _ = listener.accept()
         request = decode_envelope(receive_frame(peer))
-        event = EventEnvelope("1.0", "connection.updated", 0, {"id": "connection-1"})
+        summary = ConnectionSummary(
+            id=ConnectionId("connection:v1:demo"),
+            nickname="demo",
+            host="demo",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        )
+        event = EventEnvelope(
+            "1.0",
+            "connection.updated",
+            0,
+            connection_summary_to_wire(summary),
+        )
         response = SuccessResponseEnvelope(
             "1.0",
             request.request_id,
@@ -93,4 +194,83 @@ def test_daemon_client_accepts_event_envelopes_without_confusing_correlation(tmp
         DaemonClient(socket_path=socket_path)
 
     assert caught.value.code is ErrorCode.TRANSPORT_CLOSED
+    thread.join(2)
+
+
+def test_daemon_client_rejects_non_monotonic_event_sequence(tmp_path):
+    socket_path = tmp_path / "non-monotonic-event.sock"
+    first_delivered = threading.Event()
+    summary = ConnectionSummary(
+        id=ConnectionId("connection:v1:demo"),
+        nickname="demo",
+        host="demo",
+        hostname="example.test",
+        username="alice",
+        port=22,
+    )
+
+    def _action(peer):
+        event = encode_frame(
+            encode_envelope(
+                EventEnvelope(
+                    "1.0",
+                    "connection.updated",
+                    7,
+                    connection_summary_to_wire(summary),
+                )
+            )
+        )
+        peer.sendall(event)
+        assert first_delivered.wait(2)
+        peer.sendall(event)
+
+    thread, release = _connected_protocol_server(socket_path, _action)
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    received = []
+    def receive(event):
+        received.append(event)
+        if event.type is EventType.CONNECTION_UPDATED:
+            first_delivered.set()
+
+    subscription = client.subscribe_events(receive)
+    release.set()
+
+    assert _wait_until(
+        lambda: any(
+            event.type is EventType.ERROR_OCCURRED for event in received
+        )
+    )
+    assert received[0].sequence == 7
+    assert received[-1].payload["code"] == ErrorCode.PROTOCOL_ERROR.value
+    with pytest.raises(SshPilotError) as caught:
+        client.list_connections()
+    assert caught.value.code is ErrorCode.TRANSPORT_CLOSED
+    subscription.close()
+    client.close()
+    thread.join(2)
+
+
+def test_duplicate_response_closes_transport_after_first_correlation(tmp_path):
+    socket_path = tmp_path / "duplicate-response.sock"
+
+    def _action(peer):
+        request = decode_envelope(receive_frame(peer))
+        response = SuccessResponseEnvelope("1.0", request.request_id, [])
+        encoded = encode_frame(encode_envelope(response))
+        peer.sendall(encoded + encoded)
+        threading.Event().wait(0.05)
+
+    thread, release = _connected_protocol_server(socket_path, _action)
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    continuity = []
+    client.subscribe_events(continuity.append)
+    release.set()
+
+    assert client.list_connections() == []
+    assert _wait_until(lambda: bool(continuity))
+    assert continuity[-1].payload["code"] == ErrorCode.PROTOCOL_ERROR.value
+    with pytest.raises(SshPilotError) as caught:
+        client.list_connections()
+    assert caught.value.code is ErrorCode.TRANSPORT_CLOSED
+    client.close()
     thread.join(2)

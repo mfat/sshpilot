@@ -11,7 +11,10 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
     client = DaemonClient(socket_path=server.socket_path)
 
     assert client.get_capabilities().supported == frozenset(
-        {Capability.CONNECTIONS_READ}
+        {
+            Capability.CONNECTIONS_READ,
+            Capability.CONNECTIONS_EVENTS,
+        }
     )
     client.close()
     server.shutdown()
@@ -70,6 +73,40 @@ def test_stop_with_active_client_converts_later_call_to_transport_error(
 
     assert caught.value.code is ErrorCode.TRANSPORT_CLOSED
     assert caught.value.retryable is True
+    client.close()
+
+
+def test_shutdown_wakes_request_pending_in_client_reader(daemon_factory):
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path, timeout=2)
+    entered = threading.Event()
+    release = threading.Event()
+    failures = []
+
+    def blocked_connections():
+        entered.set()
+        assert release.wait(2)
+        return list(manager.connections)
+
+    manager.get_connections = blocked_connections
+
+    def request():
+        try:
+            client.list_connections()
+        except SshPilotError as error:
+            failures.append(error)
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    assert entered.wait(2)
+    server.shutdown()
+    release.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert failures
+    assert failures[0].code is ErrorCode.TRANSPORT_CLOSED
+    assert server.wait_stopped()
     client.close()
 
 

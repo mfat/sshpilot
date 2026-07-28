@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 
-from sshpilot.api import InProcessClient
+from sshpilot import main
+from sshpilot.api import EventType, InProcessClient
 from sshpilot.api.client_factory import (
     CLIENT_MODE_ENVIRONMENT,
     ClientMode,
 )
 from sshpilot.daemon.launcher import DaemonLaunchResult
+from sshpilot.main import SshPilotApplication
 from sshpilot.window import MainWindow
 
 
@@ -68,6 +70,24 @@ class _CompositionWindow:
         return False
 
 
+class _EventApplication:
+    install_api_event_subscription = (
+        SshPilotApplication.install_api_event_subscription
+    )
+    clear_api_event_subscription = SshPilotApplication.clear_api_event_subscription
+    _handle_api_client_event = SshPilotApplication._handle_api_client_event
+
+    def __init__(self):
+        self._api_event_subscription = None
+        self.window = SimpleNamespace(
+            _is_quitting=False,
+            welcome_view=SimpleNamespace(
+                schedule_connection_refresh=lambda: None,
+                mark_connection_data_unavailable=lambda: None,
+            ),
+        )
+
+
 def test_daemon_composition_is_deferred_then_injects_same_client(monkeypatch):
     monkeypatch.setenv(CLIENT_MODE_ENVIRONMENT, "daemon")
     daemon_client = SimpleNamespace(close=lambda: None)
@@ -115,3 +135,37 @@ def test_invalid_mode_composition_stays_in_process_and_warns(monkeypatch):
     assert app._api_client_selection.mode is ClientMode.IN_PROCESS
     assert "compatibility mode" in window._client_mode_warning
     assert not hasattr(app, "_api_client_bridge")
+
+
+def test_application_scoped_event_subscription_marshals_once_to_glib(monkeypatch):
+    callbacks = []
+    unsubscriptions = []
+    subscribed = []
+
+    class _Client:
+        def subscribe_events(self, callback):
+            subscribed.append(callback)
+            return SimpleNamespace(
+                unsubscribe=lambda: unsubscriptions.append(True)
+            )
+
+    monkeypatch.setattr(
+        main.GLib,
+        "idle_add",
+        lambda callback, event_type: callbacks.append(
+            (callback, event_type)
+        ) or 1,
+    )
+    app = _EventApplication()
+    client = _Client()
+
+    app.install_api_event_subscription(client)
+    subscribed[0](SimpleNamespace(type=EventType.CONNECTION_UPDATED))
+
+    assert len(subscribed) == 1
+    assert callbacks == [
+        (app._handle_api_client_event, EventType.CONNECTION_UPDATED)
+    ]
+
+    app.clear_api_event_subscription()
+    assert unsubscriptions == [True]

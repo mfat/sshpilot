@@ -62,7 +62,8 @@ def test_successful_protocol_v1_handshake(raw_peer):
     assert response.result["daemon_version"] == __version__
     assert response.result["core_version"] == __version__
     assert response.result["daemon_capabilities"] == [
-        Capability.CONNECTIONS_READ.value
+        Capability.CONNECTIONS_EVENTS.value,
+        Capability.CONNECTIONS_READ.value,
     ]
     assert response.result["server_instance_id"]
 

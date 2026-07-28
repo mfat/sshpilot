@@ -5,6 +5,8 @@ import struct
 import pytest
 
 from sshpilot.api import ErrorCode
+from sshpilot.api.models import ConnectionSummary
+from sshpilot.api.transport.codec import connection_summary_to_wire
 from sshpilot.api.transport import (
     MAX_FRAME_SIZE,
     ErrorData,
@@ -146,7 +148,21 @@ def test_all_envelope_types_have_distinct_shapes():
         "request-1",
         ErrorData(ErrorCode.INVALID_REQUEST, "Invalid request"),
     )
-    event = EventEnvelope("1.0", "connection.updated", 4, {"id": "connection-1"})
+    event = EventEnvelope(
+        "1.0",
+        "connection.updated",
+        4,
+        connection_summary_to_wire(
+            ConnectionSummary(
+                id="connection:v1:demo",
+                nickname="demo",
+                host="demo",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            )
+        ),
+    )
 
     assert decode_envelope(encode_envelope(success)) == success
     assert decode_envelope(encode_envelope(error)) == error
