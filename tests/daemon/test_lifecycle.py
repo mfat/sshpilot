@@ -14,6 +14,7 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
         {
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
+            Capability.CONNECTIONS_WRITE,
         }
     )
     client.close()

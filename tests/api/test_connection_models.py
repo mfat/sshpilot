@@ -13,6 +13,20 @@ def test_connection_request_validation_is_structured_at_model_boundary():
         CreateConnectionRequest(nickname="demo", hostname="host", port=0)
     with pytest.raises(ValueError, match="nickname"):
         UpdateConnectionRequest(nickname="")
+    with pytest.raises(ValueError, match="at least one"):
+        UpdateConnectionRequest()
+    with pytest.raises((TypeError, ValueError), match="port"):
+        CreateConnectionRequest(
+            nickname="demo",
+            hostname="host",
+            port=True,
+        )
+    with pytest.raises((TypeError, ValueError), match="protocol"):
+        CreateConnectionRequest(
+            nickname="demo",
+            hostname="host",
+            protocol="",
+        )
 
 
 def test_validation_result_cannot_be_valid_with_errors():
@@ -27,4 +41,3 @@ def test_validation_result_cannot_be_valid_with_errors():
 
     result = ConnectionValidationResult(valid=False, errors=(error,))
     assert result.errors == (error,)
-

@@ -1,8 +1,9 @@
 import inspect
+from types import SimpleNamespace
 
 import pytest
 
-from sshpilot.api import Capability, ErrorCode, SshPilotError
+from sshpilot.api import Capability, ErrorCode, InProcessClient, SshPilotError
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.in_process_client import (
     IMPLEMENTED_CLIENT_METHOD_CAPABILITIES,
@@ -10,12 +11,10 @@ from sshpilot.api.in_process_client import (
 )
 from sshpilot.api.models import (
     CreateConnectionRequest,
-    DeleteConnectionRequest,
     InteractionResponse,
     InteractionStatus,
     TerminalDimensions,
     TerminalInput,
-    UpdateConnectionRequest,
 )
 from sshpilot.api.models.common import (
     AttachmentId,
@@ -34,30 +33,6 @@ from sshpilot.api.models.terminal import ReplayRequest, ResizeTerminalRequest
 
 
 UNSUPPORTED_OPERATION_CASES = [
-    (
-        "create_connection",
-        lambda client: client.create_connection(
-            CreateConnectionRequest(nickname="new", hostname="new.example")
-        ),
-        Capability.CONNECTIONS_WRITE,
-    ),
-    (
-        "update_connection",
-        lambda client: client.update_connection(
-            ConnectionId("connection:v1:test"),
-            UpdateConnectionRequest(username="user"),
-        ),
-        Capability.CONNECTIONS_WRITE,
-    ),
-    (
-        "delete_connection",
-        lambda client: client.delete_connection(
-            DeleteConnectionRequest(
-                connection_id=ConnectionId("connection:v1:test")
-            )
-        ),
-        Capability.CONNECTIONS_WRITE,
-    ),
     (
         "open_session",
         lambda client: client.open_session(
@@ -146,11 +121,12 @@ def test_capabilities_advertise_only_contract_tested_runtime(fake_manager, clien
         {
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
+            Capability.CONNECTIONS_WRITE,
         }
     )
     assert capabilities.supports(Capability.CONNECTIONS_READ)
     assert capabilities.supports(Capability.CONNECTIONS_EVENTS)
-    assert not capabilities.supports(Capability.CONNECTIONS_WRITE)
+    assert capabilities.supports(Capability.CONNECTIONS_WRITE)
     assert not capabilities.supports(Capability.TERMINAL)
     assert capabilities.compatibility.compatible is True
 
@@ -195,15 +171,30 @@ def test_advertised_capabilities_have_implemented_operations(
     assert client.get_capabilities().supported <= implemented_capabilities
 
 
-def test_schema_existence_does_not_enable_write_capability(fake_manager, client_factory):
+def test_write_capability_is_backed_by_runtime_create(fake_manager, client_factory):
     client = client_factory(fake_manager)
     request = CreateConnectionRequest(nickname="new", hostname="new.example")
 
-    with pytest.raises(SshPilotError) as caught:
-        client.create_connection(request)
+    created = client.create_connection(request)
 
+    assert created.nickname == "new"
+
+
+def test_in_process_write_capability_requires_manager_mutation_methods():
+    client = InProcessClient(
+        SimpleNamespace(get_connections=list),
+    )
+
+    assert not client.get_capabilities().supports(Capability.CONNECTIONS_WRITE)
+    with pytest.raises(SshPilotError) as caught:
+        client.create_connection(
+            CreateConnectionRequest(
+                nickname="new",
+                hostname="new.example",
+            )
+        )
     assert caught.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
-    assert caught.value.details == {"capability": "connections.write"}
+    client.close()
 
 
 @pytest.mark.parametrize(

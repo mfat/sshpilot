@@ -45,7 +45,7 @@ def test_existing_daemon_sequence_is_preserved_and_advances_local_sequence():
     received = []
     publisher.subscribe(received.append)
 
-    publisher._publish_existing(
+    publisher.publish_existing(
         CoreEvent(
             type=EventType.CONNECTION_CREATED,
             payload=_connection("remote"),
@@ -60,7 +60,7 @@ def test_existing_daemon_sequence_is_preserved_and_advances_local_sequence():
     assert [event.sequence for event in received] == [41, 42]
     assert local.sequence == 42
     with pytest.raises(ValueError, match="not monotonic"):
-        publisher._publish_existing(received[0])
+        publisher.publish_existing(received[0])
 
 
 def test_subscriber_failure_does_not_block_other_subscribers(caplog):

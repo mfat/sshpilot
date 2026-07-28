@@ -242,3 +242,25 @@ def test_failed_create_leaves_no_phantom(tmp_path, monkeypatch):
     )
     assert result is None
     assert cm.connections == []
+
+
+def test_successful_dialog_create_emits_only_connection_added(tmp_path):
+    cm = make_cm(tmp_path)
+
+    result = cm.create_connection(
+        {
+            "nickname": "new",
+            "hostname": "example.net",
+            "username": "u",
+            "port": 22,
+            "protocol": "ssh",
+        }
+    )
+
+    assert result is not None
+    mutation_signals = [
+        signal
+        for signal in cm.emitted
+        if signal[0] in {"connection-added", "connection-updated"}
+    ]
+    assert mutation_signals == [("connection-added", result)]

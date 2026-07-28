@@ -80,6 +80,7 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
             {
                 Capability.CONNECTIONS_READ,
                 Capability.CONNECTIONS_EVENTS,
+                Capability.CONNECTIONS_WRITE,
             }
         )
         assert result.client.list_connections() == []
@@ -234,6 +235,12 @@ def test_existing_incompatible_or_malformed_daemon_is_not_restarted(
         frozenset(),
         frozenset({Capability.CONNECTIONS_READ}),
         frozenset({Capability.CONNECTIONS_EVENTS}),
+        frozenset(
+            {
+                Capability.CONNECTIONS_READ,
+                Capability.CONNECTIONS_EVENTS,
+            }
+        ),
     ],
 )
 def test_daemon_without_required_gtk_connection_capabilities_is_rejected(

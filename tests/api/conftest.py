@@ -30,14 +30,29 @@ class FakeConnection:
         self.x11_forwarding = False
         self.forwarding_rules = []
         self.proxy_jump = []
+        self.data = {
+            "nickname": nickname,
+            "hostname": hostname,
+            "username": username,
+            "port": port,
+            "protocol": protocol,
+        }
         # Deliberately present on the internal object. DTOs must omit them.
         self.password = "do-not-expose"
         self.key_passphrase = "do-not-expose-either"
+
+    def update_data(self, data):
+        self.data.update(data)
+        for key, value in data.items():
+            if not key.startswith("__"):
+                setattr(self, key, value)
+        self.host = self.nickname
 
 
 class FakeConnectionManager:
     def __init__(self, connections=None):
         self.connections = list(connections or [])
+        self.last_update = None
         self._handlers = {}
         self._next_handler = 1
 
@@ -57,6 +72,40 @@ class FakeConnectionManager:
         for registered_name, callback in tuple(self._handlers.values()):
             if registered_name == signal_name:
                 callback(self, connection)
+
+    def find_connection_by_nickname(self, nickname):
+        return next(
+            (
+                connection
+                for connection in self.connections
+                if connection.nickname == nickname
+            ),
+            None,
+        )
+
+    def create_connection(self, data):
+        connection = FakeConnection(
+            nickname=data["nickname"],
+            hostname=data["hostname"],
+            username=data["username"],
+            port=data["port"],
+            protocol=data["protocol"],
+        )
+        self.connections.append(connection)
+        self.emit("connection-added", connection)
+        return connection
+
+    def update_connection(self, connection, data, *, emit_signal=True):
+        self.last_update = dict(data)
+        connection.update_data(data)
+        if emit_signal:
+            self.emit("connection-updated", connection)
+        return True
+
+    def remove_connection(self, connection):
+        self.connections.remove(connection)
+        self.emit("connection-removed", connection)
+        return True
 
 
 @pytest.fixture

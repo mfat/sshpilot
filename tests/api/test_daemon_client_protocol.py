@@ -5,7 +5,11 @@ import time
 import pytest
 
 from sshpilot.api import DaemonClient, ErrorCode, EventType, SshPilotError
-from sshpilot.api.models import ConnectionId, ConnectionSummary
+from sshpilot.api.models import (
+    ConnectionId,
+    ConnectionSummary,
+    CreateConnectionRequest,
+)
 from sshpilot.api.transport import (
     EventEnvelope,
     SuccessResponseEnvelope,
@@ -67,6 +71,7 @@ def _connected_protocol_server(socket_path, action):
                         "daemon_capabilities": [
                             "connections.events",
                             "connections.read",
+                            "connections.write",
                         ],
                         "compatibility_status": "compatible",
                         "server_instance_id": "server-1",
@@ -81,7 +86,7 @@ def _connected_protocol_server(socket_path, action):
                     capabilities.request_id,
                     {
                         "protocol_version": "1.0",
-                        "api_implementation_version": "0.3",
+                        "api_implementation_version": "0.4",
                         "client": {
                             "name": "daemon-client",
                             "version": "test",
@@ -95,6 +100,7 @@ def _connected_protocol_server(socket_path, action):
                         "supported": [
                             "connections.events",
                             "connections.read",
+                            "connections.write",
                         ],
                         "compatibility": {
                             "compatible": True,
@@ -246,6 +252,36 @@ def test_daemon_client_rejects_non_monotonic_event_sequence(tmp_path):
         client.list_connections()
     assert caught.value.code is ErrorCode.TRANSPORT_CLOSED
     subscription.close()
+    client.close()
+    thread.join(2)
+
+
+def test_connection_write_is_not_retried_after_ambiguous_transport_close(
+    tmp_path,
+):
+    socket_path = tmp_path / "ambiguous-write.sock"
+    requests = []
+
+    def _action(peer):
+        requests.append(decode_envelope(receive_frame(peer)))
+        # The server may have committed here, but closes before its response.
+
+    thread, release = _connected_protocol_server(socket_path, _action)
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    release.set()
+
+    with pytest.raises(SshPilotError) as caught:
+        client.create_connection(
+            CreateConnectionRequest(
+                nickname="new",
+                hostname="new.example",
+            )
+        )
+
+    assert caught.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert caught.value.retryable is False
+    assert caught.value.request_id == requests[0].request_id
+    assert [request.method for request in requests] == ["connections.create"]
     client.close()
     thread.join(2)
 

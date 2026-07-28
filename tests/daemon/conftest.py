@@ -23,7 +23,21 @@ class TestConnection:
         self.x11_forwarding = False
         self.forwarding_rules = []
         self.proxy_jump = []
+        self.data = {
+            "nickname": nickname,
+            "hostname": hostname,
+            "username": username,
+            "port": 22,
+            "protocol": "ssh",
+        }
         self.password = "must-not-cross-wire"
+
+    def update_data(self, data):
+        self.data.update(data)
+        for key, value in data.items():
+            if not key.startswith("__"):
+                setattr(self, key, value)
+        self.host = self.nickname
 
 
 class TestConnectionManager:
@@ -49,6 +63,39 @@ class TestConnectionManager:
             if registered_name == signal_name:
                 callback(self, connection)
 
+    def find_connection_by_nickname(self, nickname):
+        return next(
+            (
+                connection
+                for connection in self.connections
+                if connection.nickname == nickname
+            ),
+            None,
+        )
+
+    def create_connection(self, data):
+        connection = TestConnection(
+            nickname=data["nickname"],
+            hostname=data["hostname"],
+            username=data["username"],
+        )
+        connection.port = data["port"]
+        connection.data["port"] = data["port"]
+        self.connections.append(connection)
+        self.emit("connection-added", connection)
+        return connection
+
+    def update_connection(self, connection, data, *, emit_signal=True):
+        connection.update_data(data)
+        if emit_signal:
+            self.emit("connection-updated", connection)
+        return True
+
+    def remove_connection(self, connection):
+        self.connections.remove(connection)
+        self.emit("connection-removed", connection)
+        return True
+
 
 @pytest.fixture
 def daemon_factory(tmp_path):
@@ -60,6 +107,7 @@ def daemon_factory(tmp_path):
         socket_path=None,
         start=True,
         client_event_queue_limit=256,
+        max_client_outbound_bytes=4 * 1024 * 1024,
     ):
         manager = manager or TestConnectionManager()
         path = Path(socket_path or tmp_path / f"daemon-{len(servers)}" / "sshpilotd.sock")
@@ -68,6 +116,7 @@ def daemon_factory(tmp_path):
             lambda: InProcessClient(manager, client_name="sshpilotd"),
             socket_path=path,
             client_event_queue_limit=client_event_queue_limit,
+            max_client_outbound_bytes=max_client_outbound_bytes,
         )
         servers.append(server)
         if start:

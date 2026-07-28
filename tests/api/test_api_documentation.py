@@ -71,6 +71,7 @@ def test_runtime_capability_markers_match_the_provider(
     assert documented == supported == {
         Capability.CONNECTIONS_READ.value,
         Capability.CONNECTIONS_EVENTS.value,
+        Capability.CONNECTIONS_WRITE.value,
     }
     assert client.list_connections()
     assert client.get_connection(client.list_connections()[0].id)
@@ -137,6 +138,7 @@ def test_schema_only_capabilities_are_not_advertised(fake_manager, client_factor
         {
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
+            Capability.CONNECTIONS_WRITE,
         }
     )
     assert all(
@@ -146,6 +148,7 @@ def test_schema_only_capabilities_are_not_advertised(fake_manager, client_factor
         not in {
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
+            Capability.CONNECTIONS_WRITE,
         }
     )
 
