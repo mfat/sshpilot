@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sshpilot.api import InProcessClient
+from sshpilot.api import DaemonClient, InProcessClient
+from sshpilot.daemon import DaemonServer
 
 
 class FakeConnection:
@@ -68,10 +69,53 @@ def fake_manager(fake_connection):
     return FakeConnectionManager([fake_connection])
 
 
-@pytest.fixture
-def client_factory():
-    """Reusable contract factory; add DaemonClient here in a later phase."""
+@pytest.fixture(params=("in-process", "daemon"))
+def client_backend(request):
+    """Run shared public contracts against both production client adapters."""
 
+    return request.param
+
+
+@pytest.fixture
+def client_factory(client_backend, tmp_path):
+    """Create either client over its real manager/transport boundary."""
+
+    clients = []
+    servers = []
+
+    def _factory(manager, **kwargs):
+        if client_backend == "in-process":
+            client = InProcessClient(manager, **kwargs)
+        else:
+            socket_dir = tmp_path / f"daemon-{len(servers)}"
+            socket_dir.mkdir(mode=0o700)
+            socket_path = socket_dir / "sshpilotd.sock"
+            group_manager = kwargs.pop("group_manager", None)
+
+            def _core_factory():
+                return InProcessClient(
+                    manager,
+                    group_manager=group_manager,
+                    client_name="sshpilotd",
+                )
+
+            server = DaemonServer(_core_factory, socket_path=socket_path)
+            server.start_in_thread()
+            servers.append(server)
+            client = DaemonClient(socket_path=socket_path, **kwargs)
+        clients.append(client)
+        return client
+
+    yield _factory
+    for client in clients:
+        client.close()
+    for server in servers:
+        server.shutdown()
+        assert server.wait_stopped()
+
+
+@pytest.fixture
+def in_process_client_factory():
     clients = []
 
     def _factory(manager, **kwargs):
@@ -90,4 +134,3 @@ def group_manager():
         groups={"group-1": {"name": "Production"}},
         get_connection_groups=lambda nickname: ["group-1"] if nickname == "demo" else [],
     )
-

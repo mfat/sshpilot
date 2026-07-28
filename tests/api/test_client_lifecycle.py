@@ -23,8 +23,11 @@ def test_closed_client_rejects_commands_and_new_subscriptions(
     assert client.get_capabilities() is capabilities
 
 
-def test_in_process_commands_reject_the_wrong_thread(fake_manager, client_factory):
-    client = client_factory(fake_manager)
+def test_in_process_commands_reject_the_wrong_thread(
+    fake_manager,
+    in_process_client_factory,
+):
+    client = in_process_client_factory(fake_manager)
     failures = []
 
     def invoke():

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sshpilot.api import Capability, ErrorCode, EventType, PROTOCOL_VERSION
 from sshpilot.api.client import SshPilotClient
+from sshpilot.daemon.dispatch import DAEMON_METHOD_CAPABILITIES
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,6 +96,29 @@ def test_event_and_transitional_id_semantics_have_stable_markers():
     assert (
         "<!-- api-connection-id: transitional-nickname-hash -->"
         in _read("protocol-v1.md")
+    )
+
+
+def test_wire_framing_handshake_and_method_registry_are_documented():
+    protocol = _read("protocol-v1.md")
+    methods = _read("methods.md")
+    marker_pattern = re.compile(
+        r"<!-- api-daemon-method: ([^ ]+) capability=([^ ]+) -->"
+    )
+    documented = {
+        name: None if capability == "none" else capability
+        for name, capability in marker_pattern.findall(methods)
+    }
+    expected = {
+        name: capability.value if capability is not None else None
+        for name, capability in DAEMON_METHOD_CAPABILITIES.items()
+    }
+
+    assert documented == expected
+    assert "<!-- api-wire-framing: length-prefixed-json-v1 -->" in protocol
+    assert (
+        "<!-- api-handshake: required-once-before-ordinary-methods -->"
+        in protocol
     )
 
 

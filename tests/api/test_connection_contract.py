@@ -2,7 +2,7 @@ from dataclasses import fields
 
 import pytest
 
-from sshpilot.api import ErrorCode, SshPilotError
+from sshpilot.api import ErrorCode, InProcessClient, SshPilotError
 from sshpilot.api.models import ConnectionDetails, ConnectionSummary
 from sshpilot.api.models.common import ConnectionId
 
@@ -30,7 +30,7 @@ def test_list_and_get_connections_preserve_order_and_identity(
     assert isinstance(details, ConnectionDetails)
     assert details.id == summaries[0].id
     assert details.groups[0].name == "Production"
-    assert client.connection_id_for(fake_connection) == summaries[0].id
+    assert InProcessClient.connection_id_for(fake_connection) == summaries[0].id
 
 
 def test_unknown_connection_has_structured_not_found_error(fake_manager, client_factory):

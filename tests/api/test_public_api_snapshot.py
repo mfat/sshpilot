@@ -58,7 +58,9 @@ def test_all_documented_model_types_are_convenience_exports():
         if enum_type not in generator.EXTRA_ENUMS
     }
 
-    assert module_model_names | module_enum_names <= model_exports
+    transport_exports = set(generator.TRANSPORT_EXPORTS)
+
+    assert module_model_names | module_enum_names <= model_exports | transport_exports
 
 
 def test_snapshot_records_pre_wire_client_signature_shapes():

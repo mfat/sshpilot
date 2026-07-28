@@ -295,11 +295,11 @@ def test_event_envelope_rejects_internal_objects_outside_payload():
 def test_in_process_connection_events_use_typed_dtos(
     fake_manager,
     fake_connection,
-    client_factory,
+    in_process_client_factory,
     signal_name,
     event_type,
 ):
-    client = client_factory(fake_manager)
+    client = in_process_client_factory(fake_manager)
     received = []
     subscription = client.subscribe_events(received.append)
 

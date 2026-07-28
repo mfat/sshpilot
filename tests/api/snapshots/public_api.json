@@ -4,6 +4,7 @@
     "Capabilities",
     "Capability",
     "CoreEvent",
+    "DaemonClient",
     "ErrorCode",
     "EventType",
     "InProcessClient",
@@ -12,7 +13,7 @@
     "SshPilotError",
     "Subscription"
   ],
-  "api_implementation_version": "0.1",
+  "api_implementation_version": "0.2",
   "capabilities": [
     "connections.read",
     "connections.write",
@@ -258,17 +259,42 @@
       "return": "ConnectionDetails"
     }
   },
+  "daemon_method_contract": {
+    "connections.get": {
+      "capability": "connections.read"
+    },
+    "connections.list": {
+      "capability": "connections.read"
+    },
+    "system.get_capabilities": {
+      "capability": null
+    },
+    "system.handshake": {
+      "capability": null
+    }
+  },
   "error_codes": [
     "connection_not_found",
+    "daemon_shutting_down",
+    "daemon_unavailable",
+    "frame_too_large",
+    "handshake_already_completed",
+    "handshake_required",
     "interaction_already_answered",
     "interaction_not_found",
     "internal_error",
+    "invalid_frame",
     "invalid_request",
     "operation_cancelled",
     "operation_timed_out",
     "permission_denied",
+    "protocol_error",
+    "protocol_version_unsupported",
     "session_not_found",
+    "transport_closed",
+    "transport_timeout",
     "unsupported_capability",
+    "unsupported_method",
     "validation_failed"
   ],
   "event_types": [
@@ -459,9 +485,44 @@
       "session_id",
       "attachment_id"
     ],
+    "ErrorData": [
+      "code",
+      "message",
+      "details",
+      "retryable",
+      "request_id",
+      "connection_id",
+      "session_id"
+    ],
+    "ErrorResponseEnvelope": [
+      "protocol_version",
+      "request_id",
+      "error"
+    ],
+    "EventEnvelope": [
+      "protocol_version",
+      "event",
+      "sequence",
+      "payload"
+    ],
     "GroupReference": [
       "id",
       "name"
+    ],
+    "HandshakeRequest": [
+      "client_name",
+      "client_version",
+      "supported_protocol_versions",
+      "client_capabilities",
+      "frontend_type"
+    ],
+    "HandshakeResult": [
+      "daemon_version",
+      "core_version",
+      "selected_protocol_version",
+      "daemon_capabilities",
+      "compatibility_status",
+      "server_instance_id"
     ],
     "InputOwner": [
       "client_id",
@@ -551,6 +612,13 @@
       "bounds",
       "truncated"
     ],
+    "RequestEnvelope": [
+      "protocol_version",
+      "request_id",
+      "method",
+      "params",
+      "client_id"
+    ],
     "ResizeTerminalRequest": [
       "session_id",
       "attachment_id",
@@ -578,6 +646,11 @@
       "path",
       "kind",
       "size"
+    ],
+    "SuccessResponseEnvelope": [
+      "protocol_version",
+      "request_id",
+      "result"
     ],
     "TerminalDimensions": [
       "rows",
@@ -645,7 +718,18 @@
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
-      "internal_error"
+      "internal_error",
+      "daemon_unavailable",
+      "transport_closed",
+      "transport_timeout",
+      "frame_too_large",
+      "invalid_frame",
+      "handshake_required",
+      "handshake_already_completed",
+      "protocol_version_unsupported",
+      "protocol_error",
+      "unsupported_method",
+      "daemon_shutting_down"
     ],
     "EventType": [
       "connection.created",
@@ -715,5 +799,23 @@
       "failed",
       "cancelled"
     ]
-  }
+  },
+  "transport_exports": [
+    "ErrorData",
+    "ErrorResponseEnvelope",
+    "EventEnvelope",
+    "FrameDecoder",
+    "FramingError",
+    "HandshakeRequest",
+    "HandshakeResult",
+    "MAX_FRAME_SIZE",
+    "RequestEnvelope",
+    "SuccessResponseEnvelope",
+    "decode_envelope",
+    "encode_envelope",
+    "encode_frame",
+    "error_from_wire",
+    "error_to_wire",
+    "receive_frame"
+  ]
 }
