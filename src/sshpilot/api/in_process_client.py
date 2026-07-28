@@ -246,8 +246,11 @@ class InProcessClient:
             return list(getattr(self._connection_manager, "connections", ()) or ())
         except SshPilotError:
             raise
-        except Exception:
-            logger.exception("Connection manager failed while listing connections")
+        except Exception as error:
+            logger.error(
+                "Connection manager failed while listing connections (%s)",
+                type(error).__name__,
+            )
             raise SshPilotError(
                 ErrorCode.INTERNAL_ERROR,
                 "Connections could not be loaded",
@@ -267,8 +270,12 @@ class InProcessClient:
         nickname = str(getattr(connection, "nickname", "") or "")
         try:
             group_ids = manager.get_connection_groups(nickname)
-        except Exception:
-            logger.debug("Failed to resolve groups for %s", nickname, exc_info=True)
+        except Exception as error:
+            logger.debug(
+                "Failed to resolve groups for %s (%s)",
+                nickname,
+                type(error).__name__,
+            )
             return ()
         references = []
         for group_id in group_ids or ():

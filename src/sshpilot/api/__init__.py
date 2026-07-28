@@ -2,6 +2,7 @@
 
 from .capabilities import Capabilities, Capability
 from .client import SshPilotClient
+from .daemon_client import DaemonClient
 from .errors import ErrorCode, SshPilotError
 from .events import CoreEvent, EventType, Subscription
 from .in_process_client import InProcessClient
@@ -13,6 +14,7 @@ __all__ = [
     "Capabilities",
     "Capability",
     "CoreEvent",
+    "DaemonClient",
     "ErrorCode",
     "EventType",
     "InProcessClient",
@@ -20,4 +22,3 @@ __all__ = [
     "SshPilotError",
     "Subscription",
 ]
-
