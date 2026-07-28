@@ -21,11 +21,15 @@ class _Client:
 
     def create_connection(self, request):
         self.created.append(request)
-        return SimpleNamespace(id="connection:v1:new")
+        return SimpleNamespace(
+            id="connection:11111111-1111-4111-8111-111111111111"
+        )
 
     def update_connection(self, connection_id, request):
         self.updated.append((connection_id, request))
-        return SimpleNamespace(id="connection:v1:updated")
+        return SimpleNamespace(
+            id="connection:11111111-1111-4111-8111-111111111111"
+        )
 
     def delete_connection(self, request):
         self.deleted.append(request)
@@ -193,6 +197,7 @@ def test_daemon_delete_is_not_optimistic_and_disconnects_only_after_success():
     connection = SimpleNamespace(
         nickname="demo",
         protocol="ssh",
+        uuid="11111111-1111-4111-8111-111111111111",
     )
 
     window._delete_connections_via_client(

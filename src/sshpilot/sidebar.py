@@ -3195,15 +3195,31 @@ def _listbox_reposition_row(listbox, row, insert_index: int) -> None:
     listbox.insert(row, insert_index)
 
 
+def _group_connection_key(window, reference):
+    """Return the group-storage identity with legacy-test compatibility."""
+    resolver = getattr(window.group_manager, "connection_key", None)
+    if callable(resolver):
+        return resolver(reference)
+    return getattr(reference, "uuid", None) or getattr(
+        reference,
+        "nickname",
+        reference,
+    )
+
+
 def _detach_connection_member_rows(window, nickname: str, *, except_group_id=None) -> None:
     """Remove ``nickname`` from every group's tracked member rows."""
+    target_key = _group_connection_key(window, nickname)
     for group_row in _iter_host_group_rows(window):
         if except_group_id is not None and group_row.group_id == except_group_id:
             continue
         members = getattr(group_row, "_member_rows", None) or []
         group_row._member_rows = [
             row for row in members
-            if getattr(getattr(row, "connection", None), "nickname", None) != nickname
+            if _group_connection_key(
+                window,
+                getattr(row, "connection", None),
+            ) != target_key
         ]
 
 
@@ -3369,13 +3385,18 @@ def _apply_root_group_order(window) -> bool:
 def _groups_needing_member_resync(window, nicknames: List[str]) -> set:
     """Return group ids whose member rows may be stale after a connection move."""
     needed = set()
-    nick_set = set(nicknames)
+    nick_set = {
+        window.group_manager.connection_key(reference)
+        for reference in nicknames
+    }
     for group_row in _iter_host_group_rows(window):
         group_id = group_row.group_id
         group = window.group_manager.groups.get(group_id, {})
         group_nicks = set(group.get("connections", []))
         member_nicks = {
-            getattr(getattr(row, "connection", None), "nickname", None)
+            window.group_manager.connection_key(
+                getattr(row, "connection", None)
+            )
             for row in (getattr(group_row, "_member_rows", None) or [])
         }
         if group_nicks & nick_set or member_nicks & nick_set:

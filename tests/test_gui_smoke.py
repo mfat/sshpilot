@@ -2,6 +2,7 @@
 
 import threading
 import time
+from uuid import uuid4
 
 import pytest
 
@@ -234,6 +235,7 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
         assert _wait_until(lambda: len(calls) >= 1)
 
         connection = SimpleNamespace(
+            uuid=str(uuid4()),
             nickname=f"EventDemo{_repeat}",
             host=f"EventDemo{_repeat}",
             hostname="event.example.test",

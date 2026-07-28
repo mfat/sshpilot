@@ -16,12 +16,45 @@ import logging
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
+from .connection_identity import connection_id_from_uuid, connection_uuid_from_id
 
 logger = logging.getLogger(__name__)
 
 
 class WindowSessionMixin:
     """Capture the open tabs to a dict and restore them later."""
+
+    @staticmethod
+    def _connection_session_reference(connection) -> dict:
+        reference = {'nickname': getattr(connection, 'nickname', '')}
+        try:
+            reference['connection_id'] = connection_id_from_uuid(connection.uuid)
+        except (AttributeError, ValueError):
+            pass
+        return reference
+
+    def _connection_from_session_reference(self, entry):
+        if not isinstance(entry, dict):
+            return None
+        connection_id = entry.get('connection_id')
+        if connection_id:
+            try:
+                connection_uuid = connection_uuid_from_id(connection_id)
+            except ValueError:
+                connection_uuid = None
+            if connection_uuid:
+                finder = getattr(
+                    self.connection_manager,
+                    'get_connection_by_uuid',
+                    None,
+                )
+                found = finder(connection_uuid) if callable(finder) else None
+                if found is not None:
+                    return found
+        nickname = entry.get('nickname')
+        if nickname:
+            return self.connection_manager.find_connection_by_nickname(nickname)
+        return None
 
     def capture_session(self) -> dict:
         """Capture the current set of open tabs as a serializable session dict.
@@ -63,7 +96,9 @@ class WindowSessionMixin:
                         conn = self.terminal_to_connection.get(term)
                         nickname = getattr(conn, 'nickname', None)
                         if nickname:
-                            pane_conns.append({'nickname': nickname})
+                            pane_conns.append(
+                                self._connection_session_reference(conn)
+                            )
                     # Preserve empty panes only if some pane has terminals
                     panes.append(pane_conns)
                 # Drop trailing empty panes so a freshly-restored split (which
@@ -95,7 +130,7 @@ class WindowSessionMixin:
                     continue
                 tabs.append({
                     'type': 'ssh',
-                    'nickname': nickname,
+                    **self._connection_session_reference(conn),
                     'custom_title': getattr(page, 'custom_tab_title', None),
                 })
                 continue
@@ -144,9 +179,7 @@ class WindowSessionMixin:
                 pane = svt.add_pane()
             for conn_entry in pane_conns or []:
                 nickname = conn_entry.get('nickname') if isinstance(conn_entry, dict) else None
-                if not nickname:
-                    continue
-                connection = self.connection_manager.find_connection_by_nickname(nickname)
+                connection = self._connection_from_session_reference(conn_entry)
                 if connection is None:
                     logger.warning(f"Session restore: split connection '{nickname}' not found; skipping")
                     continue
@@ -187,9 +220,7 @@ class WindowSessionMixin:
                     self._restore_split_tab(entry)
                 elif tab_type == 'ssh':
                     nickname = entry.get('nickname')
-                    if not nickname:
-                        continue
-                    connection = self.connection_manager.find_connection_by_nickname(nickname)
+                    connection = self._connection_from_session_reference(entry)
                     if connection is None:
                         logger.warning(f"Session restore: connection '{nickname}' not found; skipping")
                         continue

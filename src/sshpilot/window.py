@@ -233,7 +233,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._config_changed_handler = None
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
-        self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
+        daemon_requested = False
+        existing_selection = (
+            getattr(app, '_api_client_selection', None)
+            if app is not None
+            else None
+        )
+        if (
+            existing_selection is not None
+            and getattr(
+                getattr(existing_selection, 'mode', None),
+                'value',
+                None,
+            ) == 'daemon'
+        ):
+            daemon_requested = True
+        try:
+            from .api.client_factory import ClientMode, requested_client_mode
+            daemon_requested = (
+                daemon_requested
+                or requested_client_mode() is ClientMode.DAEMON
+            )
+        except ValueError:
+            pass
+        self.connection_manager = ConnectionManager(
+            self.config,
+            isolated_mode=effective_isolated,
+            identity_migration_enabled=not daemon_requested,
+        )
 
         # Lazy, cached, off-main-thread check of each connection against its
         # effective SSH config (shows a warning icon on mismatched rows).
@@ -276,8 +303,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.plugin_host = None
 
         self.key_manager = KeyManager(key_dir)
-        self.group_manager = GroupManager(self.config)
-        self.session_manager = SessionManager(self.config)
+        self.group_manager = GroupManager(
+            self.config,
+            connection_manager=self.connection_manager,
+        )
+        self.session_manager = SessionManager(
+            self.config,
+            connection_manager=self.connection_manager,
+        )
         self.client_bridge = None
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
@@ -457,17 +490,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         previous = self.client
         self.client = selection.client
+        daemon_active = selection.mode.value == 'daemon'
+        self.connection_manager.identity_migration_enabled = not daemon_active
+        try:
+            self.connection_manager.load_ssh_config()
+            if self.connection_manager.identity_migration_error is not None:
+                raise RuntimeError("connection identity load failed")
+            self.group_manager.bind_connections(
+                self.connection_manager.get_connections()
+            )
+            self.session_manager.migrate_connection_references(
+                self.connection_manager
+            )
+        except Exception:
+            logger.error(
+                "Local connection identity refresh failed after client selection"
+            )
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         app = self.get_application()
         if app is not None:
             app._api_client_selection = selection
-            if selection.mode.value == 'daemon' and hasattr(
+            if daemon_active and hasattr(
                 app,
                 'install_api_event_subscription',
             ):
                 app.install_api_event_subscription(self.client)
-        if selection.mode.value != 'daemon':
+        if not daemon_active:
             bridge = self.client_bridge
             self.client_bridge = None
             if app is not None:
@@ -1219,49 +1268,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _reload_ssh_config(self, create_missing=True):
         """Reload connections after any internal or external config save."""
         try:
-            old_connections = {
-                conn.nickname: conn
-                for conn in self.connection_manager.get_connections()
-            }
-            old_group_memberships = {}
-            for nickname in old_connections:
-                group_id = self.group_manager.get_connection_group(nickname)
-                if group_id:
-                    old_group_memberships[nickname] = group_id
-
             self.connection_manager.load_ssh_config(
                 create_missing=create_missing)
+            self.group_manager.bind_connections(
+                self.connection_manager.get_connections()
+            )
             checker = getattr(self, 'effective_config_checker', None)
             if checker is not None:
                 checker.invalidate()
-            new_connections = {
-                conn.nickname: conn
-                for conn in self.connection_manager.get_connections()
-            }
-
-            for old_nickname, old_conn in old_connections.items():
-                if old_nickname not in old_group_memberships:
-                    continue
-                group_id = old_group_memberships[old_nickname]
-                matching_new_nickname = None
-                for new_nickname, new_conn in new_connections.items():
-                    if (new_conn.hostname == old_conn.hostname and
-                            new_conn.username == old_conn.username and
-                            new_conn.port == old_conn.port):
-                        matching_new_nickname = new_nickname
-                        break
-                if (matching_new_nickname and
-                        matching_new_nickname != old_nickname):
-                    try:
-                        self.group_manager.rename_connection(
-                            old_nickname, matching_new_nickname)
-                        logger.info(
-                            "Preserved group membership: '%s' -> '%s' in group %s",
-                            old_nickname, matching_new_nickname, group_id)
-                    except Exception as e:
-                        logger.error(
-                            "Failed to preserve group membership for renamed "
-                            "connection: %s", e)
 
             self.rebuild_connection_list()
             if hasattr(self, '_ssh_config_monitors'):
@@ -3211,6 +3225,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 conn.tags = []
         connections_dict = {conn.nickname: conn for conn in connections}
+        connections_dict.update(
+            {
+                conn.uuid: conn
+                for conn in connections
+                if getattr(conn, 'uuid', None)
+            }
+        )
         search_text = ''
         if hasattr(self, 'search_entry') and self.search_entry:
             search_text = self.search_entry.get_text().strip().lower()
@@ -3273,16 +3294,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             indent_level=1,
                             display_group_id=group_info.get('id'),
                         )
-                        displayed_connections.add(conn_nickname)
+                        displayed_connections.add(conn.uuid)
 
             matches = [
                 c for c in connections
                 if connection_matches(c, search_text)
-                and c.nickname not in displayed_connections
+                and c.uuid not in displayed_connections
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-                displayed_connections.add(conn.nickname)
+                displayed_connections.add(conn.uuid)
             self._finish_rebuild(scroll_position)
             return
 
@@ -3296,8 +3317,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Add ungrouped connections at the end. A connection is only ungrouped
         # when it does not belong to any group (it may belong to several).
         ungrouped_nicks = [
-            conn.nickname for conn in connections
-            if not self.group_manager.get_connection_groups(conn.nickname)
+            conn.uuid for conn in connections
+            if not self.group_manager.get_connection_groups(conn.uuid)
         ]
 
         if ungrouped_nicks:
@@ -4917,9 +4938,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
-        self.group_manager.connections.setdefault(connection.nickname, None)
-        if connection.nickname not in self.group_manager.root_connections:
-            self.group_manager.root_connections.append(connection.nickname)
+        self.group_manager.bind_connections(self.connection_manager.connections)
+        self.group_manager.connections.setdefault(connection.uuid, None)
+        if connection.uuid not in self.group_manager.root_connections:
+            self.group_manager.root_connections.append(connection.uuid)
             self.group_manager._save_groups()
         self.rebuild_connection_list()
 
@@ -4941,13 +4963,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             del self.connection_rows[connection]
         
         # Remove from group manager, including any group it was copied into
-        self.group_manager.connections.pop(connection.nickname, None)
-        if connection.nickname in self.group_manager.root_connections:
-            self.group_manager.root_connections.remove(connection.nickname)
+        self.group_manager.connections.pop(connection.uuid, None)
+        if connection.uuid in self.group_manager.root_connections:
+            self.group_manager.root_connections.remove(connection.uuid)
         for group in self.group_manager.groups.values():
-            if connection.nickname in group.get('connections', []):
+            if connection.uuid in group.get('connections', []):
                 group['connections'] = [
-                    n for n in group['connections'] if n != connection.nickname
+                    n for n in group['connections'] if n != connection.uuid
                 ]
         if not getattr(self, '_deleting_connections_batch', False):
             self.group_manager._save_groups()
@@ -5000,6 +5022,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             conn.nickname: conn
             for conn in self.connection_manager.get_connections()
         }
+        connections_dict.update(
+            {
+                conn.uuid: conn
+                for conn in self.connection_manager.get_connections()
+                if getattr(conn, 'uuid', None)
+            }
+        )
         row = self.connection_list.get_first_child()
         while row:
             if isinstance(row, GroupRow):
