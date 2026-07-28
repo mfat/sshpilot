@@ -15,6 +15,10 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .ssh_config_document import HostBlock, _split_config_option, _split_keyword
+from .connection_identity import (
+    SSH_UUID_MARKER,
+    format_ssh_uuid_marker,
+)
 
 # Directives the app owns end-to-end: parsed into typed Connection fields and
 # re-emitted from data by format_ssh_config_entry. Anything else in a Host
@@ -53,6 +57,9 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     nickname = data.get('nickname') or host
     primary_token = _quote_token(nickname)
     lines = [f"Host {primary_token}"]
+    connection_uuid = data.get('uuid')
+    if connection_uuid:
+        lines.append(format_ssh_uuid_marker(nickname, connection_uuid))
 
     # Add basic connection info
     if host and host != nickname:
@@ -318,6 +325,11 @@ def merged_block_lines(old_block: Optional[HostBlock],
         if stripped.startswith('#'):
             if stripped.startswith('# sshpilot:PreCommand '):
                 _insert_managed()  # re-emitted from data
+            elif stripped.startswith(SSH_UUID_MARKER):
+                if new_data.get('uuid'):
+                    _insert_managed()  # re-emitted from durable identity
+                else:
+                    out_body.append(raw)  # legacy direct caller: never drop it
             else:
                 out_body.append(raw)
             continue

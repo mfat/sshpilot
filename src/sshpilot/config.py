@@ -6,11 +6,14 @@ Handles application settings, themes, and preferences
 import json
 import logging
 import os
+import shutil
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 
 from gi.repository import Gio, GLib, GObject
 from .platform_utils import get_config_dir
+from .connection_identity import canonical_connection_uuid, connection_uuid_from_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,8 @@ class Config(GObject.Object):
         # JSON config is used either as primary or as fallback store
         self.config_file = os.path.join(get_config_dir(), 'config.json')
         self.config_data = self.load_json_config()
+        self._connection_uuid_by_nickname: Dict[str, str] = {}
+        self._connection_nickname_by_uuid: Dict[str, str] = {}
         
         # Load built-in themes
         self.terminal_themes = self.load_builtin_themes()
@@ -96,19 +101,68 @@ class Config(GObject.Object):
             logger.error(f"Failed to load JSON config: {e}")
             return self.get_default_config()
 
-    def save_json_config(self, config_data: Optional[Dict[str, Any]] = None):
-        """Save configuration to JSON file"""
+    def save_json_config(
+        self,
+        config_data: Optional[Dict[str, Any]] = None,
+        *,
+        raise_on_error: bool = False,
+    ) -> bool:
+        """Atomically save configuration JSON with restrictive permissions."""
         try:
             if config_data is None:
                 config_data = self.config_data
 
-            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-            with open(self.config_file, 'w') as f:
-                json.dump(config_data, f, indent=2)
+            directory = os.path.dirname(self.config_file) or '.'
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            try:
+                os.chmod(directory, 0o700)
+            except OSError:
+                pass
+            if os.path.lexists(self.config_file) and os.path.islink(self.config_file):
+                raise OSError("refusing to replace a symlinked configuration file")
+
+            backup_file = f"{self.config_file}.bak"
+            if os.path.exists(self.config_file) and not os.path.exists(backup_file):
+                shutil.copy2(self.config_file, backup_file)
+                os.chmod(backup_file, 0o600)
+
+            fd, temporary = tempfile.mkstemp(
+                dir=directory,
+                prefix='.sshpilot-config-',
+                suffix='.tmp',
+            )
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                    json.dump(config_data, handle, indent=2)
+                    handle.write('\n')
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, self.config_file)
+            except Exception:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
+
+            os.chmod(self.config_file, 0o600)
+            try:
+                directory_fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                pass
 
             logger.debug("Configuration saved to JSON file")
+            return True
         except Exception as e:
             logger.error(f"Failed to save JSON config: {e}")
+            if raise_on_error:
+                raise
+            return False
 
     # Shortcut helpers (get_shortcut_overrides / get_shortcut_override /
     # set_shortcut_override) live further down — the canonical versions read
@@ -691,12 +745,52 @@ class Config(GObject.Object):
         return {name: theme['name'] for name, theme in self.terminal_themes.items()}
 
     # --- Per-connection metadata helpers ---
+    def bind_connection_identities(self, connections) -> None:
+        """Bind display nicknames to persisted UUID keys for metadata callers."""
+
+        by_nickname: Dict[str, str] = {}
+        by_uuid: Dict[str, str] = {}
+        ambiguous_nicknames = set()
+        for connection in connections or ():
+            try:
+                connection_uuid = canonical_connection_uuid(
+                    getattr(connection, 'uuid', None)
+                )
+            except ValueError:
+                continue
+            nickname = str(getattr(connection, 'nickname', '') or '')
+            if nickname:
+                by_uuid[connection_uuid] = nickname
+                if nickname in ambiguous_nicknames:
+                    continue
+                if nickname in by_nickname:
+                    by_nickname.pop(nickname, None)
+                    ambiguous_nicknames.add(nickname)
+                else:
+                    by_nickname[nickname] = connection_uuid
+        self._connection_uuid_by_nickname = by_nickname
+        self._connection_nickname_by_uuid = by_uuid
+
+    def _connection_meta_key(self, key: str) -> str:
+        text = str(key or '')
+        mapped = self._connection_uuid_by_nickname.get(text)
+        if mapped:
+            return mapped
+        try:
+            return canonical_connection_uuid(text)
+        except ValueError:
+            pass
+        try:
+            return connection_uuid_from_id(text)
+        except ValueError:
+            return text
+
     def get_connection_meta(self, key: str) -> Dict[str, Any]:
-        """Return stored metadata for a connection keyed by nickname (or unique key)."""
+        """Return metadata through a nickname-compatible UUID key adapter."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if isinstance(meta_all, dict):
-                value = meta_all.get(key, {})
+                value = meta_all.get(self._connection_meta_key(key), {})
                 return value if isinstance(value, dict) else {}
         except Exception:
             pass
@@ -708,7 +802,7 @@ class Config(GObject.Object):
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):
                 meta_all = {}
-            meta_all[key] = meta or {}
+            meta_all[self._connection_meta_key(key)] = meta or {}
             self.set_setting('connections_meta', meta_all)
         except Exception:
             logger.error(f"Failed to persist connection meta for {key}")
@@ -730,12 +824,16 @@ class Config(GObject.Object):
         return bool(self.get_connection_meta(nickname).get('pinned', False))
 
     def get_pinned_nicknames(self) -> list:
-        """Return a list of nicknames that are currently pinned."""
+        """Return pinned display nicknames for legacy GTK callers."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):
                 return []
-            return [k for k, v in meta_all.items() if isinstance(v, dict) and v.get('pinned')]
+            return [
+                self._connection_nickname_by_uuid.get(k, k)
+                for k, v in meta_all.items()
+                if isinstance(v, dict) and v.get('pinned')
+            ]
         except Exception:
             return []
 
@@ -767,8 +865,12 @@ class Config(GObject.Object):
         tag_map = {}
         meta_all = self.get_setting('connections_meta', {})
         if isinstance(meta_all, dict):
-            for nickname, meta in meta_all.items():
+            for connection_key, meta in meta_all.items():
                 if isinstance(meta, dict) and isinstance(meta.get('tags'), list):
+                    nickname = self._connection_nickname_by_uuid.get(
+                        connection_key,
+                        connection_key,
+                    )
                     tag_map[nickname] = meta['tags']
         return [(tag, len(nicks)) for tag, nicks in compute_tag_groups(tag_map)]
 

@@ -29,5 +29,7 @@ def test_certificatefile_persistence():
 
     # simulate reloading the SSH config
     parsed_reload = manager.parse_host_config(config)
+    # The real loader supplies the persisted marker identity before parsing.
+    parsed_reload['uuid'] = conn.uuid
     conn.update_data(parsed_reload)
     assert conn.certificate == expected

@@ -65,27 +65,32 @@ def loaded_cm(tmp_path, text=ROOT):
 
 def test_edit_preserves_everything_outside_the_block_span(tmp_path):
     cm = loaded_cm(tmp_path)
+    migrated = (tmp_path / "config").read_text()
+    suffix = migrated[migrated.index("Host db jump"):]
     conn = cm.find_connection_by_nickname("web")
     cm.update_ssh_config_file(
         conn, {"nickname": "web", "hostname": "example.com", "username": "bob"}, "web"
     )
     text = (tmp_path / "config").read_text()
     assert text.startswith("# Global header - do not touch\n")
-    assert text.endswith(SUFFIX)  # tabs, =, casing, Match block: all verbatim
+    assert text.endswith(suffix)  # migration markers + authored bytes survive
     assert "    User bob\n" in text
     assert "alice" not in text
 
 
 def test_remove_preserves_everything_outside_the_block_span(tmp_path):
     cm = loaded_cm(tmp_path)
+    migrated = (tmp_path / "config").read_text()
+    suffix = migrated[migrated.index("Host db jump"):]
     removed = cm.remove_ssh_config_entry("web")
     assert removed is True
     text = (tmp_path / "config").read_text()
-    assert text == "# Global header - do not touch\n" + SUFFIX
+    assert text == "# Global header - do not touch\n" + suffix
 
 
 def test_edit_last_block_preserves_leading_content(tmp_path):
     cm = loaded_cm(tmp_path)
+    migrated = (tmp_path / "config").read_text()
     conn = cm.find_connection_by_nickname("tail")
     cm.update_ssh_config_file(
         conn,
@@ -93,7 +98,7 @@ def test_edit_last_block_preserves_leading_content(tmp_path):
         "tail",
     )
     text = (tmp_path / "config").read_text()
-    prefix = ROOT[: ROOT.index("Host\ttail")]
+    prefix = migrated[: migrated.index("Host\ttail")]
     assert text.startswith(prefix)
     assert "    User eve\n" in text
 
@@ -109,7 +114,10 @@ def test_split_keeps_sibling_alias_block_body(tmp_path):
     )
     assert ok is True
     text = (tmp_path / "config").read_text()
-    assert "Host jump\n\tHostName db.internal\n    UnknownCamelCase FooBar\n" in text
+    assert "Host jump\n" in text
+    jump_block = text[text.index("Host jump\n"):text.index("\nMatch host")]
+    assert "# sshpilot:ConnectionUUID jump " in jump_block
+    assert "\tHostName db.internal\n    UnknownCamelCase FooBar\n" in jump_block
     assert text.rstrip().endswith("    User carol")  # new block appended last
     assert "# Global header - do not touch\n" in text
     assert "Match host *.internal\n    User matchuser\n" in text
@@ -117,6 +125,8 @@ def test_split_keeps_sibling_alias_block_body(tmp_path):
 
 def test_rename_replaces_only_the_target_block(tmp_path):
     cm = loaded_cm(tmp_path)
+    migrated = (tmp_path / "config").read_text()
+    suffix = migrated[migrated.index("Host db jump"):]
     conn = cm.find_connection_by_nickname("web")
     cm.update_ssh_config_file(
         conn,
@@ -126,7 +136,7 @@ def test_rename_replaces_only_the_target_block(tmp_path):
     text = (tmp_path / "config").read_text()
     assert "Host web2\n" in text
     assert "Host web\n" not in text
-    assert text.endswith(SUFFIX)
+    assert text.endswith(suffix)
 
 
 def test_repeated_blocks_for_same_host_collapse_on_edit(tmp_path):
@@ -148,6 +158,7 @@ def test_edit_included_host_leaves_root_untouched(tmp_path):
     frag.write_text("Host frag\n    HostName frag.example.com\n    User alice\n")
     root_text = "Include fragments/extra\n\nHost web\n    HostName example.com\n"
     cm = loaded_cm(tmp_path, root_text)
+    migrated_root = (tmp_path / "config").read_text()
     conn = cm.find_connection_by_nickname("frag")
     assert conn is not None and conn.source == str(frag)
     cm.update_ssh_config_file(
@@ -156,7 +167,7 @@ def test_edit_included_host_leaves_root_untouched(tmp_path):
          "source": str(frag)},
         "frag",
     )
-    assert (tmp_path / "config").read_text() == root_text
+    assert (tmp_path / "config").read_text() == migrated_root
     assert "    User bob\n" in frag.read_text()
 
 
@@ -170,12 +181,11 @@ def test_edit_last_block_without_trailing_newline_does_not_glue(tmp_path):
     payload = {"nickname": "web", "hostname": "new.example.com", "username": "bob"}
     cm.update_ssh_config_file(conn, payload, "web")
     once = (tmp_path / "config").read_text()
-    assert once == (
-        "Host web\n"
-        "    UnknownCamelCase foo   # why\n"
-        "    HostName new.example.com\n"
-        "    User bob\n"
-    )
+    assert once.startswith("Host web\n")
+    assert "# sshpilot:ConnectionUUID web " in once
+    assert "    UnknownCamelCase foo   # why\n" in once
+    assert "    HostName new.example.com\n" in once
+    assert "    User bob\n" in once
     # ...and the edit is idempotent (no duplicate HostName on a second save).
     cm.update_ssh_config_file(conn, payload, "web")
     assert (tmp_path / "config").read_text() == once
@@ -230,6 +240,8 @@ def test_crlf_config_fully_preserved_on_edit(tmp_path):
     (tmp_path / "config").write_bytes(text.encode())
     cm = make_cm(tmp_path)
     cm.load_ssh_config()
+    migrated = (tmp_path / "config").read_bytes().decode()
+    db_block = migrated[migrated.index("Host db\r\n"):]
     conn = cm.find_connection_by_nickname("web")
     assert conn is not None and conn.hostname == "example.com"
 
@@ -239,7 +251,7 @@ def test_crlf_config_fully_preserved_on_edit(tmp_path):
     raw = (tmp_path / "config").read_bytes().decode()
     assert "\n" not in raw.replace("\r\n", "")  # every line ending is CRLF
     assert "    User bob\r\n" in raw
-    assert "Host db\r\n    HostName db.internal\r\n" in raw
+    assert raw.endswith(db_block)
 
 
 def test_crlf_edit_preserving_comment_and_unknown_directive(tmp_path):
@@ -279,9 +291,10 @@ def test_crlf_remove_keeps_other_blocks_byte_identical(tmp_path):
     (tmp_path / "config").write_bytes(text.encode())
     cm = make_cm(tmp_path)
     cm.load_ssh_config()
+    migrated = (tmp_path / "config").read_bytes()
+    db_block = migrated[migrated.index(b"Host db\r\n"):]
     assert cm.remove_ssh_config_entry("web") is True
-    assert (tmp_path / "config").read_bytes() == \
-        b"Host db\r\n    HostName db.internal\r\n"
+    assert (tmp_path / "config").read_bytes() == db_block
 
 
 def test_missing_final_newline_preserved_when_other_block_edited(tmp_path):

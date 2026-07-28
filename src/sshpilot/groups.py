@@ -8,6 +8,10 @@ from typing import Dict, List, Optional
 import logging
 
 from .config import Config
+from .connection_identity import (
+    canonical_connection_uuid,
+    connection_uuid_from_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +19,124 @@ logger = logging.getLogger(__name__)
 class GroupManager:
     """Manages hierarchical groups for connections"""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, connection_manager=None):
         self.config = config
+        self.connection_manager = connection_manager
+        self._uuid_by_nickname = {}
+        self._nickname_by_uuid = {}
         self.groups = {}  # group_id -> GroupInfo
-        self.connections = {}  # connection_nickname -> group_id
-        self.root_connections: List[str] = []  # order of ungrouped connections
+        self.connections = {}  # connection UUID -> primary group_id
+        self.root_connections: List[str] = []  # ordered ungrouped UUIDs
         self._load_groups()
+        if connection_manager is not None:
+            self.bind_connections(connection_manager.get_connections())
+
+    def bind_connections(self, connections) -> None:
+        """Bind nickname-compatible calls to UUID-backed persisted references."""
+
+        uuid_by_nickname = {}
+        nickname_by_uuid = {}
+        ambiguous_nicknames = set()
+        for connection in connections or ():
+            try:
+                connection_uuid = canonical_connection_uuid(connection.uuid)
+            except (AttributeError, ValueError):
+                continue
+            nickname = str(getattr(connection, 'nickname', '') or '')
+            if nickname:
+                nickname_by_uuid[connection_uuid] = nickname
+                if nickname in ambiguous_nicknames:
+                    continue
+                if nickname in uuid_by_nickname:
+                    uuid_by_nickname.pop(nickname, None)
+                    ambiguous_nicknames.add(nickname)
+                else:
+                    uuid_by_nickname[nickname] = connection_uuid
+        self._uuid_by_nickname = uuid_by_nickname
+        self._nickname_by_uuid = nickname_by_uuid
+        if not uuid_by_nickname:
+            return
+
+        changed = False
+
+        def migrate(reference):
+            try:
+                return canonical_connection_uuid(reference)
+            except ValueError:
+                return uuid_by_nickname.get(str(reference))
+
+        for group in self.groups.values():
+            migrated = []
+            seen = set()
+            for reference in group.get('connections', []) or []:
+                connection_uuid = migrate(reference)
+                if connection_uuid and connection_uuid not in seen:
+                    migrated.append(connection_uuid)
+                    seen.add(connection_uuid)
+            if migrated != group.get('connections', []):
+                group['connections'] = migrated
+                changed = True
+
+        migrated_primary = {}
+        for reference, group_id in self.connections.items():
+            connection_uuid = migrate(reference)
+            if connection_uuid and connection_uuid not in migrated_primary:
+                migrated_primary[connection_uuid] = group_id
+        if migrated_primary != self.connections:
+            self.connections = migrated_primary
+            changed = True
+
+        migrated_root = []
+        seen_root = set()
+        for reference in self.root_connections:
+            connection_uuid = migrate(reference)
+            if connection_uuid and connection_uuid not in seen_root:
+                migrated_root.append(connection_uuid)
+                seen_root.add(connection_uuid)
+        if migrated_root != self.root_connections:
+            self.root_connections = migrated_root
+            changed = True
+        if changed:
+            self._save_groups()
+
+    def connection_key(self, reference) -> str:
+        """Return the UUID storage key, accepting legacy nickname callers."""
+
+        if hasattr(reference, 'uuid'):
+            return canonical_connection_uuid(reference.uuid)
+        text = str(reference or '')
+        mapped = self._uuid_by_nickname.get(text)
+        if mapped:
+            return mapped
+        if self.connection_manager is not None:
+            finder = getattr(
+                self.connection_manager,
+                'find_connection_by_nickname',
+                None,
+            )
+            connection = finder(text) if callable(finder) else None
+            if connection is not None:
+                try:
+                    connection_uuid = canonical_connection_uuid(connection.uuid)
+                    self._uuid_by_nickname[text] = connection_uuid
+                    self._nickname_by_uuid[connection_uuid] = text
+                    return connection_uuid
+                except (AttributeError, ValueError):
+                    pass
+        try:
+            return canonical_connection_uuid(text)
+        except ValueError:
+            pass
+        try:
+            return connection_uuid_from_id(text)
+        except ValueError:
+            # Standalone legacy tests/configs without a bound manager retain
+            # their historical text keys; production always binds UUIDs.
+            return text
+
+    def connection_nickname(self, reference) -> str:
+        key = self.connection_key(reference)
+        return self._nickname_by_uuid.get(key, str(reference or ''))
 
     def _load_groups(self):
         """Load groups from configuration"""
@@ -83,6 +199,7 @@ class GroupManager:
                 'groups': self.groups,
                 'connections': self.connections,
                 'root_connections': self.root_connections,
+                'identity_schema_version': 1,
             }
             self.config.set_setting('connection_groups', groups_data)
         except Exception as e:
@@ -186,6 +303,7 @@ class GroupManager:
 
     def move_connection(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a different group"""
+        connection_nickname = self.connection_key(connection_nickname)
         self.connections[connection_nickname] = target_group_id
 
         # Remove from old group and root list
@@ -212,6 +330,7 @@ class GroupManager:
         Unlike :meth:`move_connection`, this keeps existing memberships so the
         same connection can appear in several groups at once.
         """
+        connection_nickname = self.connection_key(connection_nickname)
         if not target_group_id or target_group_id not in self.groups:
             return
 
@@ -236,6 +355,7 @@ class GroupManager:
         The connection stays in any other groups it belongs to. If it ends up
         without any group it returns to the ungrouped/root list.
         """
+        connection_nickname = self.connection_key(connection_nickname)
         group = self.groups.get(group_id)
         if group and connection_nickname in group.get('connections', []):
             group['connections'] = [
@@ -255,9 +375,34 @@ class GroupManager:
 
         self._save_groups()
 
+    def forget_connection(self, reference) -> None:
+        """Remove every persisted group reference for a deleted connection."""
+
+        connection_key = self.connection_key(reference)
+        self.connections.pop(connection_key, None)
+        self.root_connections = [
+            item for item in self.root_connections
+            if item != connection_key
+        ]
+        for group in self.groups.values():
+            group['connections'] = [
+                item for item in group.get('connections', [])
+                if item != connection_key
+            ]
+        nickname = self._nickname_by_uuid.pop(connection_key, None)
+        if nickname:
+            self._uuid_by_nickname.pop(nickname, None)
+        self._save_groups()
+
     def rename_connection(self, old_nickname: str, new_nickname: str):
         """Rename a connection while preserving all of its group memberships."""
         if old_nickname == new_nickname:
+            return
+
+        stable_key = self._uuid_by_nickname.pop(old_nickname, None)
+        if stable_key:
+            self._uuid_by_nickname[new_nickname] = stable_key
+            self._nickname_by_uuid[stable_key] = new_nickname
             return
 
         primary_group = self.connections.pop(old_nickname, None)
@@ -316,6 +461,7 @@ class GroupManager:
         A connection may belong to several groups; this returns a single
         representative group for legacy callers (e.g. colour resolution).
         """
+        connection_nickname = self.connection_key(connection_nickname)
         primary = self.connections.get(connection_nickname)
         if primary and connection_nickname in self.groups.get(primary, {}).get('connections', []):
             return primary
@@ -333,6 +479,7 @@ class GroupManager:
         display context (``context_group_id``). Prefer that over the primary
         group so colours match the group the row is listed under.
         """
+        connection_nickname = self.connection_key(connection_nickname)
         if context_group_id:
             group = self.groups.get(context_group_id)
             if group and connection_nickname in group.get('connections', []):
@@ -341,6 +488,7 @@ class GroupManager:
 
     def get_connection_groups(self, connection_nickname: str) -> List[str]:
         """Return every group ID that contains the connection."""
+        connection_nickname = self.connection_key(connection_nickname)
         return [
             group_id
             for group_id, group in self.groups.items()
@@ -355,6 +503,8 @@ class GroupManager:
 
     def reorder_connection_in_group(self, connection_nickname: str, target_connection_nickname: str, position: str):
         """Reorder a connection within the same group relative to another connection"""
+        connection_nickname = self.connection_key(connection_nickname)
+        target_connection_nickname = self.connection_key(target_connection_nickname)
         # Get the group for both connections
         source_group_id = self.connections.get(connection_nickname)
         target_group_id = self.connections.get(target_connection_nickname)
@@ -492,4 +642,3 @@ class GroupManager:
         for i, group_id in enumerate(groups_list):
             if group_id in self.groups:
                 self.groups[group_id]['order'] = i
-
