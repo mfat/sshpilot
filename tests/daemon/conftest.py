@@ -3,12 +3,14 @@ from pathlib import Path
 import pytest
 
 from sshpilot.api import InProcessClient
+from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon import DaemonServer
 
 
 class TestConnection:
     def __init__(self, nickname="demo", hostname="example.test", username="alice"):
         self.nickname = nickname
+        self.uuid = new_connection_uuid()
         self.host = nickname
         self.hostname = hostname
         self.username = username
@@ -29,6 +31,7 @@ class TestConnection:
             "username": username,
             "port": 22,
             "protocol": "ssh",
+            "uuid": self.uuid,
         }
         self.password = "must-not-cross-wire"
 

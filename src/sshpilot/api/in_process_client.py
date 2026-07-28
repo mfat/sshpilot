@@ -1,6 +1,5 @@
 """In-process adapter from the public client contract to existing managers."""
 
-import hashlib
 import logging
 import threading
 from typing import Any, List, Optional, Tuple
@@ -43,6 +42,12 @@ from .models.terminal import (
     TerminalInput,
 )
 from .version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
+from sshpilot.connection_identity import (
+    connection_id_from_uuid,
+    connection_uuid_from_id,
+    is_transitional_connection_id,
+    transitional_connection_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -294,8 +299,18 @@ class InProcessClient:
             raise self._persistence_error(request.connection_id) from None
         if not deleted:
             raise self._persistence_error(request.connection_id)
+        if self._group_manager is not None:
+            forget = getattr(self._group_manager, "forget_connection", None)
+            if callable(forget):
+                try:
+                    forget(connection)
+                except Exception as error:
+                    logger.error(
+                        "Connection group cleanup failed (%s)",
+                        type(error).__name__,
+                    )
         return DeleteConnectionResult(
-            connection_id=request.connection_id,
+            connection_id=self.connection_id_for(connection),
             deleted=True,
         )
 
@@ -363,18 +378,15 @@ class InProcessClient:
 
     @staticmethod
     def connection_id_for(connection: Any) -> ConnectionId:
-        """Return the transitional opaque ID for an existing connection.
+        """Return the stable opaque ID derived from persisted identity."""
 
-        Persistence currently has no immutable connection UUID. Protocol v1
-        therefore hashes ``protocol + nickname``. The ID is stable across reloads
-        but changes on rename; the daemon phase should add persisted UUIDs with a
-        migration.
-        """
-
-        protocol = str(getattr(connection, "protocol", "ssh") or "ssh")
-        nickname = str(getattr(connection, "nickname", "") or "")
-        digest = hashlib.sha256(f"{protocol}\0{nickname}".encode()).hexdigest()
-        return ConnectionId(f"connection:v1:{digest[:32]}")
+        try:
+            return ConnectionId(connection_id_from_uuid(connection.uuid))
+        except (AttributeError, ValueError):
+            raise SshPilotError(
+                ErrorCode.INTERNAL_ERROR,
+                "A stored connection has no durable identity",
+            ) from None
 
     def _assert_command_thread(self) -> None:
         if self._closed:
@@ -415,9 +427,29 @@ class InProcessClient:
             ) from None
 
     def _find_connection(self, connection_id: ConnectionId) -> Optional[Any]:
-        for connection in self._manager_connections():
-            if self.connection_id_for(connection) == connection_id:
-                return connection
+        text = str(connection_id)
+        try:
+            connection_uuid = connection_uuid_from_id(text)
+        except ValueError:
+            connection_uuid = None
+        if connection_uuid is not None:
+            finder = getattr(self._connection_manager, "get_connection_by_uuid", None)
+            if callable(finder):
+                found = finder(connection_uuid)
+                if found is not None:
+                    return found
+            for connection in self._manager_connections():
+                if str(getattr(connection, "uuid", "")) == connection_uuid:
+                    return connection
+            return None
+
+        if is_transitional_connection_id(text):
+            for connection in self._manager_connections():
+                if transitional_connection_id(
+                    getattr(connection, "protocol", "ssh"),
+                    getattr(connection, "nickname", ""),
+                ) == text:
+                    return connection
         return None
 
     def _connection_with_nickname(self, nickname: str) -> Optional[Any]:

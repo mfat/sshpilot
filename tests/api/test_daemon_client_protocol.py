@@ -86,7 +86,7 @@ def _connected_protocol_server(socket_path, action):
                     capabilities.request_id,
                     {
                         "protocol_version": "1.0",
-                        "api_implementation_version": "0.4",
+                        "api_implementation_version": "0.5",
                         "client": {
                             "name": "daemon-client",
                             "version": "test",

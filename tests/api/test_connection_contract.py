@@ -5,6 +5,7 @@ import pytest
 from sshpilot.api import ErrorCode, InProcessClient, SshPilotError
 from sshpilot.api.models import ConnectionDetails, ConnectionSummary
 from sshpilot.api.models.common import ConnectionId
+from sshpilot.connection_identity import transitional_connection_id
 
 
 def test_list_and_get_connections_preserve_order_and_identity(
@@ -75,12 +76,14 @@ def test_existing_connection_id_is_stable_across_equivalent_reload(
         hostname="changed.example",
         username="different",
     )
+    replacement.uuid = fake_connection.uuid
+    replacement.data["uuid"] = fake_connection.uuid
     fake_manager.connections[:] = [replacement]
 
     assert client.list_connections()[0].id == first_id
 
 
-def test_transitional_connection_id_changes_when_nickname_changes(
+def test_stable_connection_id_does_not_change_when_nickname_changes(
     fake_manager,
     fake_connection,
     client_factory,
@@ -90,4 +93,21 @@ def test_transitional_connection_id_changes_when_nickname_changes(
 
     fake_connection.nickname = "renamed"
 
-    assert client.list_connections()[0].id != first_id
+    assert client.list_connections()[0].id == first_id
+
+
+def test_current_transitional_id_remains_an_input_alias(
+    fake_manager,
+    fake_connection,
+    client_factory,
+):
+    client = client_factory(fake_manager)
+    legacy_id = ConnectionId(
+        transitional_connection_id(
+            fake_connection.protocol,
+            fake_connection.nickname,
+        )
+    )
+
+    assert client.get_connection(legacy_id).id == client.list_connections()[0].id
+    assert client.get_connection(legacy_id).id != legacy_id

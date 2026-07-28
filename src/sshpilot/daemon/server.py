@@ -202,8 +202,6 @@ class DaemonServer:
         return self._stopped.wait(timeout)
 
     def _setup(self) -> None:
-        self._core_client = self._core_factory()
-        self._dispatcher = RequestDispatcher(self._core_client)
         prepare_socket_path(self.socket_path)
         selector = selectors.DefaultSelector()
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -239,6 +237,10 @@ class DaemonServer:
                 raise SocketSecurityError("The daemon socket changed during bind")
             listener.listen()
             listener.setblocking(False)
+            # Own the single-instance socket before loading/migrating the core.
+            # Readiness remains false until construction and migration finish.
+            self._core_client = self._core_factory()
+            self._dispatcher = RequestDispatcher(self._core_client)
             wakeup_read, wakeup_write = socket.socketpair()
             wakeup_read.setblocking(False)
             wakeup_write.setblocking(False)

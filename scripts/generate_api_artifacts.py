@@ -142,7 +142,7 @@ FIELD_EXAMPLES = {
     "bind_port": 8022,
     "client_id": "client:example",
     "columns": 80,
-    "connection_id": "connection:v1:example",
+    "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
     "created_at": "2030-01-01T00:00:00Z",
     "earliest_sequence": 0,
     "expires_at": None,

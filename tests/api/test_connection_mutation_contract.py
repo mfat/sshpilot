@@ -11,6 +11,7 @@ from sshpilot.api.models import (
     DeleteConnectionResult,
     UpdateConnectionRequest,
 )
+from sshpilot.connection_identity import transitional_connection_id
 
 
 def _wait_for(events, count=1):
@@ -53,7 +54,7 @@ def test_create_update_delete_have_shared_behaviour(fake_manager, client_factory
     )
     _wait_for(events, 2)
 
-    assert updated.id != old_id
+    assert updated.id == old_id
     assert updated.nickname == "renamed"
     assert events[1].type is EventType.CONNECTION_UPDATED
     assert events[1].payload.id == updated.id
@@ -114,6 +115,29 @@ def test_duplicate_and_not_found_errors_emit_no_events(fake_manager, client_fact
     assert delete_missing.value.code is ErrorCode.CONNECTION_NOT_FOUND
     assert events == []
     subscription.unsubscribe()
+
+
+def test_transitional_id_is_input_only_for_update(
+    fake_manager,
+    fake_connection,
+    client_factory,
+):
+    client = client_factory(fake_manager)
+    canonical_id = client.list_connections()[0].id
+    legacy_id = type(canonical_id)(
+        transitional_connection_id(
+            fake_connection.protocol,
+            fake_connection.nickname,
+        )
+    )
+
+    updated = client.update_connection(
+        legacy_id,
+        UpdateConnectionRequest(username="updated-user"),
+    )
+
+    assert updated.id == canonical_id
+    assert updated.id != legacy_id
 
 
 def test_failed_mutations_emit_no_events(fake_manager, client_factory, monkeypatch):

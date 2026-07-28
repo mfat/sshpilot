@@ -22,7 +22,12 @@ def _production_core_client() -> InProcessClient:
 
     config = Config()
     connection_manager = ConnectionManager(config)
-    group_manager = GroupManager(config)
+    if connection_manager.identity_migration_error is not None:
+        raise RuntimeError("connection identity migration failed")
+    group_manager = GroupManager(
+        config,
+        connection_manager=connection_manager,
+    )
     return InProcessClient(
         connection_manager,
         group_manager=group_manager,

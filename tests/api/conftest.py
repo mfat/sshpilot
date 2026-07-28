@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from sshpilot.api import DaemonClient, InProcessClient
+from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon import DaemonServer
 
 
@@ -16,6 +17,7 @@ class FakeConnection:
         protocol="ssh",
     ):
         self.nickname = nickname
+        self.uuid = new_connection_uuid()
         self.host = nickname
         self.hostname = hostname
         self.username = username
@@ -36,6 +38,7 @@ class FakeConnection:
             "username": username,
             "port": port,
             "protocol": protocol,
+            "uuid": self.uuid,
         }
         # Deliberately present on the internal object. DTOs must omit them.
         self.password = "do-not-expose"
