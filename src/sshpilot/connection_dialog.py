@@ -3169,6 +3169,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if self.is_editing and self.connection:
             connection_data['aliases'] = []
 
+        prepare_save = getattr(
+            getattr(self, 'parent_window', None),
+            'prepare_connection_save_for_client',
+            None,
+        )
+        if callable(prepare_save):
+            problem = prepare_save(self, connection_data)
+            if problem:
+                self._set_secret_save_busy(False)
+                self.show_error(problem)
+                return
 
         # Unlock first when needed, then persist all changed secrets in one worker. Secret
         # backends may invoke external tools (notably ``bw``), so none of this I/O may run
@@ -3391,4 +3402,3 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")
         dialog.present()
-

@@ -4786,6 +4786,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             if response not in {'delete', 'close_remove'}:
                 return
+            if self._daemon_mode_active():
+                self._delete_connections_via_client(
+                    connections,
+                    close_terminals=response == 'close_remove',
+                )
+                return
 
             pending = iter(connection for connection in connections if connection)
             self._deleting_connections_batch = True
@@ -4827,6 +4833,87 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             self._deleting_connections_batch = False
             logger.error(f"Failed to delete connections: {e}")
+
+    def _delete_connections_via_client(
+        self,
+        connections,
+        *,
+        close_terminals=False,
+    ) -> None:
+        """Delete daemon-owned connections serially without optimistic rows."""
+
+        from .api import SshPilotError
+        from .api.in_process_client import InProcessClient
+        from .api.models import DeleteConnectionRequest
+
+        bridge = self.client_bridge
+        if bridge is None:
+            return
+        pending = iter(connection for connection in connections if connection)
+        self._deleting_connections_batch = True
+
+        def _finish():
+            self._deleting_connections_batch = False
+            if self._is_quitting:
+                return
+            try:
+                self.connection_manager.load_ssh_config()
+                self.rebuild_connection_list()
+            except Exception as error:
+                logger.warning(
+                    "Post-delete connection refresh failed type=%s",
+                    type(error).__name__,
+                )
+
+        def _delete_next():
+            if self._is_quitting:
+                self._deleting_connections_batch = False
+                return
+            try:
+                connection = next(pending)
+            except StopIteration:
+                _finish()
+                return
+            request = DeleteConnectionRequest(
+                connection_id=InProcessClient.connection_id_for(connection)
+            )
+
+            def _success(_result):
+                if close_terminals:
+                    self._disconnect_connection_terminals(connection)
+                _delete_next()
+
+            def _failure(error):
+                self._deleting_connections_batch = False
+                if isinstance(error, SshPilotError):
+                    logger.warning(
+                        "Daemon connection delete failed code=%s",
+                        error.code.value,
+                    )
+                else:
+                    logger.error(
+                        "Daemon connection delete failed type=%s",
+                        type(error).__name__,
+                    )
+                if not self._is_quitting:
+                    self._error_dialog(
+                        _("Failed to delete connection"),
+                        _(
+                            "The connection could not be deleted. "
+                            "No list changes were applied."
+                        ),
+                    )
+
+            try:
+                bridge.submit(
+                    lambda: self.client.delete_connection(request),
+                    on_success=_success,
+                    on_error=_failure,
+                )
+            except RuntimeError:
+                _failure(RuntimeError("client bridge closed"))
+
+        _delete_next()
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
@@ -5965,6 +6052,223 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.error("Failed to save plugin connection")
                 _done(False)
 
+    def _daemon_mode_active(self) -> bool:
+        get_application = getattr(self, 'get_application', None)
+        app = get_application() if callable(get_application) else None
+        selection = (
+            getattr(app, '_api_client_selection', None)
+            if app is not None
+            else None
+        )
+        return (
+            selection is not None
+            and getattr(getattr(selection, 'mode', None), 'value', None)
+            == 'daemon'
+            and getattr(selection, 'client', None) is self.client
+        )
+
+    @staticmethod
+    def _normalise_daemon_editor_value(value):
+        if isinstance(value, (list, tuple)):
+            return tuple(
+                MainWindow._normalise_daemon_editor_value(item)
+                for item in value
+            )
+        if isinstance(value, dict):
+            return tuple(
+                sorted(
+                    (
+                        str(key),
+                        MainWindow._normalise_daemon_editor_value(item),
+                    )
+                    for key, item in value.items()
+                )
+            )
+        return value
+
+    def prepare_connection_save_for_client(self, dialog, connection_data):
+        """Reject daemon edits the v1 secret-free write DTO cannot represent."""
+
+        if not self._daemon_mode_active():
+            return None
+        if connection_data.get('protocol', 'ssh') != 'ssh':
+            return _(
+                "Experimental service mode does not support this connection type."
+            )
+
+        password_changed = bool(connection_data.get('password_changed'))
+        password = connection_data.get('password') or ''
+        editor = getattr(dialog, 'key_editor', None)
+        passphrase_changes = ()
+        if editor is not None:
+            try:
+                passphrase_changes = editor.pending_passphrase_operations() or ()
+            except Exception:
+                passphrase_changes = ()
+        if (
+            password_changed
+            or (not getattr(dialog, 'is_editing', False) and password)
+            or passphrase_changes
+        ):
+            return _(
+                "Passwords and key passphrases cannot be changed in "
+                "experimental service mode yet."
+            )
+        # An unchanged pre-filled password must never enter the mutation
+        # request or trigger local secret storage after a daemon write.
+        connection_data['password'] = ''
+
+        advanced_defaults = {
+            'auth_method': 0,
+            'keyfile': '',
+            'identity_files': (),
+            'certificate': '',
+            'certificate_files': (),
+            'key_select_mode': 0,
+            'identity_agent': '',
+            'add_keys_to_agent': '',
+            'pkcs11_provider': '',
+            'security_key_provider': '',
+            'x11_forwarding': False,
+            'pubkey_auth_no': False,
+            'proxy_jump': (),
+            'forward_agent': False,
+            'forwarding_rules': (),
+            'pre_command': '',
+            'local_command': '',
+            'remote_command': '',
+            'extra_ssh_config': '',
+            'aliases': (),
+        }
+        connection = getattr(dialog, 'connection', None)
+        current_data = getattr(connection, 'data', None)
+        current_data = current_data if isinstance(current_data, dict) else {}
+        for key, default in advanced_defaults.items():
+            submitted = connection_data.get(key, default)
+            if connection is None:
+                current = default
+            else:
+                current = getattr(
+                    connection,
+                    key,
+                    current_data.get(key, default),
+                )
+                if current is None:
+                    current = default
+            if self._normalise_daemon_editor_value(
+                submitted
+            ) != self._normalise_daemon_editor_value(current):
+                return _(
+                    "Experimental service mode currently supports only "
+                    "nickname, host, username, and port changes."
+                )
+
+        if connection_data.get('__split_from_group'):
+            return _(
+                "Splitting grouped SSH host entries is not supported in "
+                "experimental service mode yet."
+            )
+
+        pending_meta = connection_data.get('__meta') or {}
+        empty_meta = {
+            'wol_mac': '',
+            'wol_broadcast_ip': '',
+            'wol_port': 9,
+            'tags': [],
+        }
+        if connection is None:
+            current_meta = empty_meta
+        else:
+            try:
+                current_meta = self.config.get_connection_meta(
+                    connection.nickname
+                ) or {}
+            except Exception:
+                current_meta = {}
+        for key, default in empty_meta.items():
+            if self._normalise_daemon_editor_value(
+                pending_meta.get(key, default)
+            ) != self._normalise_daemon_editor_value(
+                current_meta.get(key, default)
+            ):
+                return _(
+                    "Groups, tags, and Wake-on-LAN metadata cannot be changed "
+                    "in experimental service mode yet."
+                )
+        return None
+
+    def _save_connection_via_client(
+        self,
+        dialog,
+        connection_data,
+        complete_save,
+    ) -> None:
+        from .api import SshPilotError
+        from .api.in_process_client import InProcessClient
+        from .api.models import CreateConnectionRequest, UpdateConnectionRequest
+
+        bridge = self.client_bridge
+        if bridge is None:
+            complete_save(False)
+            return
+        if dialog.is_editing:
+            connection_id = InProcessClient.connection_id_for(dialog.connection)
+            request = UpdateConnectionRequest(
+                nickname=connection_data.get('nickname'),
+                hostname=connection_data.get('hostname'),
+                username=connection_data.get('username'),
+                port=connection_data.get('port'),
+            )
+            operation = lambda: self.client.update_connection(
+                connection_id,
+                request,
+            )
+        else:
+            request = CreateConnectionRequest(
+                nickname=connection_data.get('nickname', ''),
+                hostname=connection_data.get('hostname', ''),
+                username=connection_data.get('username', ''),
+                port=connection_data.get('port', 22),
+                protocol='ssh',
+            )
+            operation = lambda: self.client.create_connection(request)
+
+        def _success(_details):
+            if self._is_quitting:
+                complete_save(False)
+                return
+            complete_save(True)
+            try:
+                self.connection_manager.load_ssh_config()
+                self.rebuild_connection_list()
+            except Exception as error:
+                logger.warning(
+                    "Post-mutation connection refresh failed type=%s",
+                    type(error).__name__,
+                )
+
+        def _failure(error):
+            if isinstance(error, SshPilotError):
+                logger.warning(
+                    "Daemon connection mutation failed code=%s",
+                    error.code.value,
+                )
+            else:
+                logger.error(
+                    "Daemon connection mutation failed type=%s",
+                    type(error).__name__,
+                )
+            complete_save(False)
+
+        try:
+            bridge.submit(
+                operation,
+                on_success=_success,
+                on_error=_failure,
+            )
+        except RuntimeError:
+            complete_save(False)
+
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
         save_completion = connection_data.pop('__save_completion', None)
@@ -5978,6 +6282,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if connection_data.get('protocol', 'ssh') != 'ssh':
                 self._on_plugin_connection_saved(
                     dialog, connection_data, _complete_save, pending_meta)
+                return
+            if self._daemon_mode_active():
+                self._save_connection_via_client(
+                    dialog,
+                    connection_data,
+                    _complete_save,
+                )
                 return
             if dialog.is_editing:
                 # Update existing connection
