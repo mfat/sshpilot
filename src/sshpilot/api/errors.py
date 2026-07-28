@@ -23,6 +23,17 @@ class ErrorCode(str, Enum):
     OPERATION_CANCELLED = "operation_cancelled"
     OPERATION_TIMED_OUT = "operation_timed_out"
     INTERNAL_ERROR = "internal_error"
+    DAEMON_UNAVAILABLE = "daemon_unavailable"
+    TRANSPORT_CLOSED = "transport_closed"
+    TRANSPORT_TIMEOUT = "transport_timeout"
+    FRAME_TOO_LARGE = "frame_too_large"
+    INVALID_FRAME = "invalid_frame"
+    HANDSHAKE_REQUIRED = "handshake_required"
+    HANDSHAKE_ALREADY_COMPLETED = "handshake_already_completed"
+    PROTOCOL_VERSION_UNSUPPORTED = "protocol_version_unsupported"
+    PROTOCOL_ERROR = "protocol_error"
+    UNSUPPORTED_METHOD = "unsupported_method"
+    DAEMON_SHUTTING_DOWN = "daemon_shutting_down"
 
 
 class SshPilotError(Exception):
