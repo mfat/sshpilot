@@ -9,10 +9,10 @@ SSH Pilot uses a deliberately simple policy:
 - Every public surface or semantic change is recorded in
   [CHANGELOG.md](CHANGELOG.md).
 
-The current `PROTOCOL_VERSION` string is `1.0`. Minor protocol numbers are not
-used for capability additions today; `1.0` identifies the v1 contract family.
-If a future wire handshake needs a negotiated minor number, that policy must be
-documented and tested before changing the constant.
+The current `PROTOCOL_VERSION` string is `1.0`. The daemon selects exact
+supported version `1.0` during handshake and rejects unsupported versions.
+Application versions are not compatibility signals. A later minor-negotiation
+policy must be documented and tested before changing this rule.
 
 ## Non-breaking changes within v1
 
@@ -75,21 +75,23 @@ tests pass. A schema alone is not support. Clients:
 - **New frontend, old core:** the frontend checks capabilities and hides or
   degrades unavailable functionality. Required missing features fail with
   `unsupported_capability`.
-- **Incompatible major versions:** a future transport handshake must reject the
-  pairing before stateful commands. No such handshake exists today.
+- **Incompatible protocol versions:** the daemon handshake rejects the pairing
+  before ordinary commands with `protocol_version_unsupported`.
 
-## Future `DaemonClient` compatibility
+## `DaemonClient` compatibility
 
-When `DaemonClient` exists, the same reusable contract suite must run against
-both it and `InProcessClient`. Tests must compare:
+The reusable connection contract suite runs against both `DaemonClient` and
+`InProcessClient`. It compares:
 
-- methods, capabilities, error envelopes, and DTO values;
-- event types, payloads, correlation, and specified ordering;
-- bytes preservation and replay bounds;
-- cancellation/timeout races;
-- close, disconnect, and subscriber cleanup.
+- connection methods, capabilities, not-found errors, and DTO values;
+- secret exclusion and transitional connection-ID behavior;
+- unsupported schema-only method errors;
+- close/disconnect behavior.
 
-Transport-only differences must not leak into the frontend-neutral contract.
+Daemon-only handshake, framing, correlation, timeout, socket security, and
+lifecycle rules have focused transport tests. Event, terminal-byte, replay,
+prompt, and cancellation parity remain out of scope because the daemon does not
+advertise or implement those capabilities.
 The [public API snapshot](../../tests/api/snapshots/public_api.json) is a review
 aid for structural changes, not proof of semantic compatibility.
 

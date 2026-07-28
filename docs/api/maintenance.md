@@ -15,7 +15,8 @@ implementations.
 6. Add structured error codes and safe details where needed.
 7. Implement core behaviour while preserving the single native SSH/auth path.
 8. Update `InProcessClient`.
-9. Update `DaemonClient` when it exists; until then record the transport backlog.
+9. Update both `InProcessClient` and `DaemonClient`, or keep the operation
+   schema-only and return `unsupported_capability` consistently.
 10. Add reusable contract tests, not implementation-only assertions.
 11. Update state-transition documentation and transition tests.
 12. Update the method/model/event/error/capability references.
@@ -53,6 +54,7 @@ python3 scripts/generate_api_artifacts.py
 python3 scripts/generate_api_artifacts.py --check
 pytest -q tests/api/test_api_documentation.py
 pytest -q tests/api/test_public_api_snapshot.py
+pytest -q tests/daemon
 ruff check src/ tests/ scripts/generate_api_artifacts.py
 pytest
 ```
@@ -68,6 +70,9 @@ OpenAPI and does not imply HTTP. Synthetic examples never read live objects or
 stored data and replace sensitive fields with an omission marker. The reviewed
 snapshot records method parameter/return shapes as well as names, so changing a
 schema-only operation signature also requires deliberate snapshot approval.
+Transport envelopes are included as a separate convenience-export surface, and
+the explicit daemon method/capability registry is included so drift cannot add
+an undocumented callable wire method.
 
 ## Example: connection health monitoring
 

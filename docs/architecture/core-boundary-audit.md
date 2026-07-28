@@ -185,12 +185,13 @@ frontend-neutral publisher.
 - Slow subscribers currently delay subsequent subscribers and events without
   changing order. This is acceptable for the small connection event foundation;
   subscribers must return quickly.
-  A daemon transport will need bounded outbound queues and explicit slow-client
-  policy.
+  Daemon event forwarding will need bounded outbound queues and explicit
+  slow-client policy.
 
-A future `DaemonClient` may own one long-lived I/O loop on a dedicated thread.
-GTK would submit non-blocking operations to that client and receive completions
-through a GLib frontend adapter. That runtime is not introduced in this phase.
+Phase 1 `DaemonClient` uses one persistent blocking socket, one request lock,
+and finite timeouts. GTK has not switched to it. A later GTK integration may
+add a GLib-facing non-blocking adapter without changing the synchronous public
+contract.
 
 ## Existing state models
 

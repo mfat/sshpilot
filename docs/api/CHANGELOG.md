@@ -7,12 +7,23 @@ notes remain separate.
 
 ### Added
 
+- Added `DaemonClient`, the `python -m sshpilot.daemon` development entry point,
+  secure per-user Unix-socket lifecycle, strict length-prefixed JSON envelopes,
+  Protocol v1 handshake, request correlation, and structured transport errors.
+- Added explicit daemon methods `system.handshake`,
+  `system.get_capabilities`, `connections.list`, and `connections.get`.
+- Added shared connection contracts across `InProcessClient` and
+  `DaemonClient`, plus framing, handshake, socket-security, and lifecycle tests.
 - Added the schema-only `replay_terminal` client operation and complete
   package-level convenience exports for all documented model types.
 - Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
 
 ### Changed
 
+- Increased `API_IMPLEMENTATION_VERSION` to `0.2`; `PROTOCOL_VERSION` remains
+  compatible `1.0`.
+- Capability discovery over `DaemonClient` now comes from the negotiated daemon
+  response and remains limited to `connections.read`.
 - Defined publisher-global serial FIFO event delivery, including concurrent,
   re-entrant, unsubscription, and shutdown behaviour.
 - Marked nickname-derived connection IDs as explicitly transitional with a
@@ -28,6 +39,12 @@ notes remain separate.
 
 ### Security
 
+- Restricted daemon endpoints to owned mode-0700 directories and mode-0600
+  sockets; stale cleanup verifies type and inode and refuses symlinks or
+  non-socket paths.
+- Wire serialization accepts only strict JSON envelopes and explicit public DTO
+  codecs with a 1 MiB frame limit; pickle, marshal, arbitrary objects, raw
+  exceptions, persistence records, and secret values cannot cross the boundary.
 - Excluded terminal output bytes, replay bytes, and plugin operation result
   values from dataclass `repr`; drift tests now enforce this for every field
   classified sensitive.
@@ -71,4 +88,5 @@ notes remain separate.
 - Core-owned runtime sessions, PTYs, terminal input/output, attach, or replay
 - Interaction broker
 - SFTP, forwarding, plugin, or secret client operations
-- `DaemonClient`, IPC transport, wire serialization, or remote access
+- Remote access, TCP/WebSocket transport, named pipes, and daemon event or
+  terminal/session transport

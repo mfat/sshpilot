@@ -37,6 +37,17 @@ the validated internal envelope.
 | `operation_cancelled` | Schema only | Caller-dependent | Future cancellable operations | Return UI to idle; retry only on explicit user action |
 | `operation_timed_out` | Schema only | Operation-dependent | Future bounded operations | Use `retryable`; preserve safe context |
 | `internal_error` | Implemented | Read `retryable` | Manager read translation and future adapters | Show generic failure and keep detailed diagnostics in logs |
+| `daemon_unavailable` | Implemented locally | Yes | Client connect | Offer daemon startup/retry without displaying socket paths |
+| `transport_closed` | Implemented locally | Yes | Any daemon call | Mark endpoint disconnected; reconnect with a new client |
+| `transport_timeout` | Implemented locally | Yes | Any daemon call | Offer retry through a new client; the timed-out socket is closed |
+| `frame_too_large` | Implemented | No for same payload | Frame decode/encode | Treat peer or payload as incompatible |
+| `invalid_frame` | Implemented | No | Frame decode | Disconnect; do not display raw bytes |
+| `handshake_required` | Implemented remotely | No | Pre-handshake ordinary method | Fix client protocol order |
+| `handshake_already_completed` | Implemented remotely | No | Second handshake | Reuse negotiated state or reconnect |
+| `protocol_version_unsupported` | Implemented remotely | No until upgrade | Handshake/version check | Report incompatibility and stop |
+| `protocol_error` | Implemented locally/remotely | No | Correlation/envelope/state violation | Disconnect and retain safe diagnostics |
+| `unsupported_method` | Implemented remotely | No | Unknown wire method | Update caller; do not infer a capability |
+| `daemon_shutting_down` | Implemented remotely | Yes | Request after shutdown begins | Reconnect after daemon restart |
 
 <!-- api-error: unsupported_capability -->
 ## `unsupported_capability`
@@ -105,6 +116,78 @@ exceptions and stack traces remain in developer logs. The current connection
 list adapter sets `retryable=True` when its manager fails to load connections;
 clients must use the instance flag rather than assuming all internal errors are
 retryable.
+
+<!-- api-error: daemon_unavailable -->
+## `daemon_unavailable`
+
+Local connection setup could not reach the Unix daemon endpoint. It is
+retryable, has no request ID, and never exposes the socket path or raw OS error
+to the frontend.
+
+<!-- api-error: transport_closed -->
+## `transport_closed`
+
+The persistent socket closed or failed. It is retryable and carries the current
+request ID when failure occurred during a request. `DaemonClient` rejects later
+calls with the same stable code until replaced.
+
+<!-- api-error: transport_timeout -->
+## `transport_timeout`
+
+A finite daemon request deadline expired. It is retryable and correlated to the
+request. The client closes the socket so a late response cannot be reused.
+
+<!-- api-error: frame_too_large -->
+## `frame_too_large`
+
+A payload exceeded 1,048,576 bytes. It may originate from local encoding or
+remote frame parsing. No payload bytes or size-derived content appear in the
+message.
+
+<!-- api-error: invalid_frame -->
+## `invalid_frame`
+
+The frame was empty, incomplete, non-UTF-8, invalid JSON, or not a JSON object.
+The server sends a safe error when possible and then closes that peer.
+
+<!-- api-error: handshake_required -->
+## `handshake_required`
+
+An ordinary wire method arrived before `system.handshake`. It is remote,
+non-retryable on the same protocol sequence, and correlated to the request.
+
+<!-- api-error: handshake_already_completed -->
+## `handshake_already_completed`
+
+One socket attempted a second handshake. Reconnection creates a new handshake
+scope.
+
+<!-- api-error: protocol_version_unsupported -->
+## `protocol_version_unsupported`
+
+No offered version matched Protocol `1.0`, or a later request used a version
+other than the selected version. Safe details may list daemon-supported
+versions, never application environment or client payloads.
+
+<!-- api-error: protocol_error -->
+## `protocol_error`
+
+The peer violated envelope type, request/client correlation, request-ID
+uniqueness, event sequence, or negotiated-version rules. It can originate
+locally or remotely and is not safe to retry on the same connection.
+
+<!-- api-error: unsupported_method -->
+## `unsupported_method`
+
+The wire method is not in the explicit dispatcher. No client-supplied method
+text is reflected in details. This is distinct from `unsupported_capability`,
+which describes a known public client operation whose feature is unavailable.
+
+<!-- api-error: daemon_shutting_down -->
+## `daemon_shutting_down`
+
+The server had begun shutdown and rejected new work. It is remotely originated,
+retryable after restart, and correlated to the rejected request.
 
 ## Handling example
 

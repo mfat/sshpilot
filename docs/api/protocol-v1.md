@@ -4,18 +4,17 @@
 
 ## Purpose
 
-Protocol v1 defines a common frontend-neutral contract through which GTK and
-future CLI, Tauri, daemon, or other clients can interact with SSH Pilot core
-services. It defines Python calling semantics, DTOs, capabilities, events, and
-structured errors independently of a wire transport.
+Protocol v1 defines the frontend-neutral contract used both in-process and over
+the local daemon transport. It covers Python calling semantics, deliberate
+DTOs, capabilities, events, structured errors, and the Phase 1 wire envelope.
 
 ## Scope
 
-The current runtime is `InProcessClient`. It implements capability discovery,
-connection reads, connection events, subscriptions, and shutdown. Other
-methods and models establish vocabulary but are explicitly unsupported or
-schema-only. No daemon, IPC handshake, Unix socket, named pipe, WebSocket,
-HTTP endpoint, remote access, or `DaemonClient` exists.
+`InProcessClient` implements connection reads and in-process connection events.
+`DaemonClient` implements equivalent connection reads over a secure per-user
+Unix-domain socket. Other methods and models establish vocabulary but are
+explicitly unsupported or schema-only. Named pipes, TCP, WebSocket, HTTP,
+remote access, and terminal/session transport do not exist.
 
 See [methods](methods.md) and [capabilities](capabilities.md) for the precise
 runtime matrix.
@@ -39,17 +38,48 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.1` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.2` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
-`CompatibilityResult`. In-process compatibility is currently constructed as
-compatible with Protocol `1.0`; it is not negotiated.
+`CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
+Protocol `1.0` from the client's supported list, and then fetches negotiated
+capabilities. Application versions are diagnostic identity only and never
+substitute for protocol negotiation.
 
-A future daemon handshake must exchange supported protocol versions before any
-stateful command, reject incompatible major versions with a structured error,
-and then return capabilities. Those semantics are future work, not present
-runtime behaviour. Protocol identity is therefore internal to the current
-process today.
+<!-- api-wire-framing: length-prefixed-json-v1 -->
+<!-- api-handshake: required-once-before-ordinary-methods -->
+
+## Wire framing and envelopes
+
+Each local IPC message is four unsigned big-endian bytes followed by that many
+UTF-8 JSON bytes. Payload length must be between 1 and 1,048,576 bytes. Frames
+may be fragmented or coalesced by the socket. Empty, oversized, incomplete,
+non-UTF-8, invalid-JSON, and non-object frames are rejected. Pickle, marshal,
+arbitrary class serialization, and object `repr` are never used.
+
+Every envelope has a strict `type` and rejects missing or extra fields:
+
+- request: `protocol_version`, `request_id`, `method`, `params`, `client_id`;
+- success: `protocol_version`, `request_id`, `result`;
+- error: `protocol_version`, `request_id`, structured `error`;
+- event: `protocol_version`, `event`, `sequence`, `payload`.
+
+JSON is the control-plane encoding. Future terminal bytes require a separate
+binary frame type or channel and are not base64-encoded by Phase 1.
+
+## Handshake and correlation
+
+The first request supplies client name/version, supported protocol versions,
+claimed client capabilities, and optional frontend type. The daemon returns its
+application/core versions, selected protocol, implemented daemon capabilities,
+compatibility status, and a random per-process server instance ID.
+
+Ordinary requests before handshake and a second handshake are errors. Client
+capability claims are diagnostic and are not authorization. Request IDs are
+random UUID hex strings, unique for the connection and never derived from
+request data. Duplicate requests, unknown response IDs, and response protocol
+mismatches are protocol errors. A timed-out `DaemonClient` closes its socket so
+a late response cannot be correlated with later work.
 
 ## Identifiers
 
@@ -60,10 +90,10 @@ current snapshot but must not parse them.
 | --- | --- | --- |
 | `ConnectionId` | Saved connection | Current adapter hashes `protocol + NUL + nickname`; stable across reload while both stay unchanged, changes on rename |
 | `SessionId` | Runtime terminal session | Schema only; no allocation or persistence guarantee |
-| `RequestId` | Operation/request correlation | Schema only; no allocator |
+| `RequestId` | Operation/request correlation | Random UUID hex per daemon request; never reused on a connection |
 | `InteractionId` | One frontend interaction | Schema only; no allocator |
 | `TransferId` | One transfer | Schema only; no allocator |
-| `ClientId` | One frontend client | Schema only; optional in `ClientInfo` |
+| `ClientId` | One frontend client | Random per `DaemonClient`; enforced after handshake |
 | `AttachmentId` | One client/session attachment | Schema only; no allocator |
 
 Current connection IDs are transitional and are not persistence UUIDs. A future
@@ -82,22 +112,21 @@ refresh their connection list.
 
 - Python dataclass fields without defaults are required; fields with defaults
   are optional at construction.
-- `Optional[T]` accepts `None`. Absence versus explicit null has no wire
-  semantics because no serializer or transport is implemented.
+- `Optional[T]` accepts `None`. Wire envelopes use explicit fields and nulls;
+  unknown or omitted required fields are rejected in v1.
 - Public enums are lowercase string enums. Exact values are listed in
   [models](models.md).
 - Timestamps are timezone-aware `datetime` values. When serialized by a future
   transport they must use RFC 3339/ISO 8601 UTC form, for example
   `2030-01-01T00:00:00Z`.
-- Tuple and frozen-set fields are immutable Python collections in-process. A
-  future text encoding may represent them as arrays without implying mutable
-  core state.
+- Tuple and frozen-set fields are immutable Python collections in-process and
+  encoded as JSON arrays without implying mutable core state.
 - Sequences are non-negative integers. `CoreEvent.sequence` is global only to
   one `EventPublisher`; terminal sequences are schema-only and intended to be
   per session.
-- Unknown fields and unknown enum values have no defined deserialization
-  behaviour yet because Protocol v1 has no wire codec. Future codecs must
-  define forward-compatible unknown-field handling before deployment.
+- Phase 1 envelope and connection/capability DTO codecs reject unknown fields
+  and enum values. Additive wire evolution therefore requires an explicit
+  compatibility change or a new tolerant envelope/version policy.
 
 The [generated structural catalog](generated/schema.json) records actual field
 types, defaults, required flags, and sensitive classifications.
@@ -130,9 +159,10 @@ implemented.
 
 ## Cancellation and timeouts
 
-Current client calls are synchronous and expose no cancellation token or
-timeout parameter. Unsupported methods fail immediately. `close()` tears down
-subscriptions but does not cancel an already executing manager call.
+Client calls are synchronous and expose no cancellation token. `DaemonClient`
+uses a finite constructor-configurable transport timeout; timeout closes the
+socket and returns `transport_timeout`. `close()` tears down resources and can
+interrupt a blocked socket call through socket shutdown.
 
 The `operation_cancelled` and `operation_timed_out` error codes are reserved
 schema vocabulary. Future cancellation must define request identity, race
@@ -149,11 +179,11 @@ semantics, cleanup, and whether completion can win over cancellation.
   access secret providers directly.
 - Internal persistence records, GTK/GObject objects, PTYs, subprocesses, and
   file descriptors are never public DTOs.
-- Protocol v1 currently supports only same-process access. Remote access is out
-  of scope.
+- Protocol v1 supports same-process access and same-user local Unix sockets.
+  Remote access is out of scope.
 
 ## Transport independence
 
-The contract is independent of in-process calls, Unix-domain sockets, Windows
-named pipes, WebSocket, Tauri, GTK, and HTTP. Mentioning a possible transport
-does not make it implemented or preferred.
+Public DTOs remain independent of in-process calls, Unix-domain sockets,
+Windows named pipes, WebSocket, Tauri, GTK, and HTTP. Phase 1's transport
+implementation is Linux/Unix `AF_UNIX`; other transports remain future work.

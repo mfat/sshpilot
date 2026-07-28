@@ -4,7 +4,9 @@ Capabilities report implemented runtime support. The existence of a method,
 event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
-`InProcessClient` currently advertises exactly `connections.read`.
+`InProcessClient` and the negotiated Phase 1 daemon endpoint currently
+advertise exactly `connections.read`. `DaemonClient.get_capabilities()` returns
+the daemon response rather than a hard-coded local assumption.
 
 <!-- api-runtime-capability: connections.read -->
 
@@ -12,7 +14,7 @@ capabilities and handle `unsupported_capability`.
 
 | Identifier | Meaning | Provider/status | Related methods | Related events | Dependencies | Introduced |
 | --- | --- | --- | --- | --- | --- | --- |
-| `connections.read` | Read saved connection DTOs | `InProcessClient`: Implemented | `list_connections`, `get_connection` | All `connection.*` events | Existing `ConnectionManager` | v1 |
+| `connections.read` | Read saved connection DTOs | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | In-process `connection.*` events only | Existing `ConnectionManager` through `InProcessClient` | v1 |
 | `connections.write` | Create, update, and delete saved connections | Unsupported | `create_connection`, `update_connection`, `delete_connection` | Intended `connection.*` | Persistence/validation service | v1 |
 | `terminal` | Open/close sessions and send input/resize | Unsupported | Session and terminal methods | Intended session lifecycle/output | Core session, PTY, process, SSH/auth services | v1 |
 | `terminal.attach` | Attach/detach clients and assign input ownership | Unsupported | `attach_session`, `detach_session` | No dedicated event currently defined | Runtime session service | v1 |
@@ -26,10 +28,10 @@ capabilities and handle `unsupported_capability`.
 <!-- api-capability: connections.read -->
 ## `connections.read`
 
-Implemented and contract-tested. The provider returns secret-free connection
-summaries/details. It also translates the existing manager's
-`connection-added`, `connection-updated`, and `connection-removed` GObject
-signals into frontend-neutral events.
+Implemented and contract-tested across both clients. The providers return
+equivalent secret-free connection summaries/details. `InProcessClient` also
+translates manager connection signals into frontend-neutral events; Phase 1
+does not forward those events over the daemon and does not claim otherwise.
 
 <!-- api-capability: connections.write -->
 ## `connections.write`

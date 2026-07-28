@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.1",
+  "api_implementation_version": "0.2",
   "client_method_contract": {
     "attach_session": {
       "capability": "terminal.attach",
@@ -66,6 +66,20 @@
       "status": "schema-only"
     }
   },
+  "daemon_method_contract": {
+    "connections.get": {
+      "capability": "connections.read"
+    },
+    "connections.list": {
+      "capability": "connections.read"
+    },
+    "system.get_capabilities": {
+      "capability": null
+    },
+    "system.handshake": {
+      "capability": null
+    }
+  },
   "enums": {
     "AuthenticationMethod": [
       "key",
@@ -100,7 +114,18 @@
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
-      "internal_error"
+      "internal_error",
+      "daemon_unavailable",
+      "transport_closed",
+      "transport_timeout",
+      "frame_too_large",
+      "invalid_frame",
+      "handshake_required",
+      "handshake_already_completed",
+      "protocol_version_unsupported",
+      "protocol_error",
+      "unsupported_method",
+      "daemon_shutting_down"
     ],
     "EventType": [
       "connection.created",
@@ -771,6 +796,119 @@
       ],
       "status": "Schema only"
     },
+    "ErrorData": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": {},
+          "name": "details",
+          "required": false,
+          "sensitive": true,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": false,
+          "name": "retryable",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[RequestId]"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ConnectionId]"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SessionId]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ErrorResponseEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "error",
+          "required": true,
+          "sensitive": true,
+          "type": "ErrorData"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "EventEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "event",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": {},
+          "name": "payload",
+          "required": false,
+          "sensitive": true,
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "GroupReference": {
       "fields": [
         {
@@ -784,6 +922,93 @@
           "default": "",
           "name": "name",
           "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "HandshakeRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "client_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "client_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "supported_protocol_versions",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "client_capabilities",
+          "required": false,
+          "sensitive": false,
+          "type": "FrozenSet[str]"
+        },
+        {
+          "default": null,
+          "name": "frontend_type",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "HandshakeResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "daemon_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "core_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "selected_protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "daemon_capabilities",
+          "required": true,
+          "sensitive": false,
+          "type": "FrozenSet[Capability]"
+        },
+        {
+          "default": null,
+          "name": "compatibility_status",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "server_instance_id",
+          "required": true,
           "sensitive": false,
           "type": "str"
         }
@@ -1271,6 +1496,46 @@
       ],
       "status": "Schema only"
     },
+    "RequestEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "method",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": {},
+          "name": "params",
+          "required": false,
+          "sensitive": true,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": "client:unknown",
+          "name": "client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ResizeTerminalRequest": {
       "fields": [
         {
@@ -1423,6 +1688,32 @@
         }
       ],
       "status": "Schema only"
+    },
+    "SuccessResponseEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "result",
+          "required": true,
+          "sensitive": true,
+          "type": "Any"
+        }
+      ],
+      "status": "Implemented"
     },
     "TerminalDimensions": {
       "fields": [

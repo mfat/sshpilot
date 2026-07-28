@@ -1,8 +1,8 @@
 # Client methods
 
-`SshPilotClient` is synchronous. Examples below use the repository's actual
-calling convention. “Unsupported” means `InProcessClient` implements the method
-only to raise the documented `unsupported_capability` error.
+`SshPilotClient` is synchronous. Both `InProcessClient` and `DaemonClient`
+implement the connection-read contract. “Unsupported” means both clients
+implement the method only to raise `unsupported_capability`.
 
 ## Runtime summary
 
@@ -42,6 +42,26 @@ only to raise the documented `unsupported_capability` error.
 <!-- api-method-contract: subscribe_events status=implemented capability=none -->
 <!-- api-method-contract: update_connection status=schema-only capability=connections.write -->
 
+## Daemon wire methods
+
+The dispatcher is an explicit allowlist; it never reflects over Python objects.
+
+| Wire method | Capability | Status |
+| --- | --- | --- |
+| `system.handshake` | None | Implemented; required exactly once |
+| `system.get_capabilities` | None | Implemented after handshake |
+| `connections.list` | `connections.read` | Implemented |
+| `connections.get` | `connections.read` | Implemented |
+
+<!-- api-daemon-method: connections.get capability=connections.read -->
+<!-- api-daemon-method: connections.list capability=connections.read -->
+<!-- api-daemon-method: system.get_capabilities capability=none -->
+<!-- api-daemon-method: system.handshake capability=none -->
+
+Unknown wire methods return `unsupported_method`. Public schema-only client
+methods fail locally with `unsupported_capability` and are not exposed as hidden
+daemon methods.
+
 <!-- api-method: get_capabilities -->
 ## `get_capabilities`
 
@@ -49,11 +69,13 @@ only to raise the documented `unsupported_capability` error.
 - **Purpose:** Discover versions, endpoint identity, compatibility, and
   supported feature groups.
 - **Parameters / return:** No parameters; returns `Capabilities`.
-- **Errors:** None from the current implementation.
+- **Errors:** In-process has no expected failure. Daemon construction performs
+  handshake and may return documented transport/protocol errors.
 - **Events:** None.
 - **Cancellation / ordering:** Immediate, not cancellable; returns the same
   immutable value object for the client's lifetime.
-- **Threading:** Synchronous and currently callable from any thread.
+- **Threading:** Synchronous and callable from any thread. Daemon requests are
+  serialized by one client lock.
 - **Side effects / security:** None; contains no secrets. It continues to
   return metadata after `close()`.
 
@@ -69,12 +91,13 @@ if capabilities.supports(Capability.CONNECTIONS_READ):
 - **Status / introduced:** Implemented / Protocol v1
 - **Capability / purpose:** `connections.read`; return secret-free summaries.
 - **Parameters / return:** No parameters; returns `list[ConnectionSummary]`.
-- **Errors:** `invalid_request` if closed or called off the owner thread;
-  `internal_error` when the wrapped manager cannot load records.
+- **Errors:** `invalid_request` if the in-process client is closed or off its
+  owner thread; `internal_error` for mapped manager failures; daemon calls may
+  also return documented transport/protocol lifecycle errors.
 - **Events:** None directly.
 - **Cancellation / ordering:** Not cancellable; preserves manager order.
-- **Threading:** Synchronous; must run on the thread that constructed
-  `InProcessClient`.
+- **Threading:** `InProcessClient` requires its owner thread. `DaemonClient`
+  serializes synchronous requests and uses a finite timeout.
 - **Side effects / security:** Reads current manager state. It returns DTOs, not
   persistence or GObject instances, and omits secrets and sensitive paths.
 
@@ -94,7 +117,8 @@ for connection in client.list_connections():
 - **Errors:** `connection_not_found`, `invalid_request`, or `internal_error`.
 - **Events:** None directly.
 - **Cancellation / ordering:** Not cancellable; one point-in-time result.
-- **Threading:** Synchronous on the client's owner thread.
+- **Threading:** In-process calls use the owner thread; daemon calls are
+  serialized over the persistent socket.
 - **Side effects / security:** Reads manager state. The identifier is opaque;
   returned authentication fields are booleans/enums and never secret values.
 
@@ -308,14 +332,17 @@ client.respond_to_interaction(response)
 <!-- api-method: subscribe_events -->
 ## `subscribe_events`
 
-- **Status / introduced:** Implemented / Protocol v1
+- **Status / introduced:** Implemented in-process; registration-only on
+  `DaemonClient` / Protocol v1
 - **Capability / purpose:** No bootstrap capability; subscribe to events that
   the provider can emit.
 - **Parameters / return:** Callable accepting one `CoreEvent`; returns
   `Subscription`.
 - **Errors:** `invalid_request` after client close; a non-callable callback
   raises Python `TypeError`.
-- **Events:** Current provider emits only the three connection events.
+- **Events:** `InProcessClient` emits the three connection events.
+  `DaemonClient` Phase 1 parses event envelopes separately from responses, but
+  the daemon forwards no runtime events.
 - **Cancellation / ordering:** `unsubscribe()`/`close()` is the cancellation
   mechanism and is idempotent. Callbacks run in registration order through a
   publisher-global serial FIFO.
@@ -337,15 +364,16 @@ finally:
 ## `close`
 
 - **Status / introduced:** Implemented / Protocol v1
-- **Capability / purpose:** None; release manager signal handlers and event
-  subscribers.
+- **Capability / purpose:** None; release manager signal handlers/event
+  subscribers or daemon socket resources.
 - **Parameters / return:** No parameters; returns `None`.
 - **Errors / events:** No documented error; emits no event.
 - **Cancellation / ordering:** Idempotent. Existing callbacks are removed.
 - **Threading:** No owner-thread assertion exists, although production callers
   should close from their composition/GTK owner thread.
-- **Side effects / security:** Disconnects registered manager signals. It does
-  not close the wrapped manager, saved connections, SSH processes, or secrets.
+- **Side effects / security:** In-process disconnects registered manager
+  signals. Daemon shutdown closes only that client's socket. Neither closes
+  saved connections, SSH processes, or secrets.
 
 ```python
 client.close()

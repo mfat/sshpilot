@@ -8,7 +8,7 @@ these documents describe the concrete contract.
 ## Reference
 
 - [Protocol v1](protocol-v1.md) — scope, identity, conventions, ordering, and
-  security rules
+  wire framing/security rules
 - [Methods](methods.md) — every `SshPilotClient` method and its runtime status
 - [Models](models.md) — DTO and enum semantics
 - [Generated model index](generated/model-index.md) — field-by-field structural
@@ -37,6 +37,15 @@ events, subscription cleanup, and client shutdown are implemented. Connection
 writes and all session, terminal, interaction, SFTP, forwarding, plugin, and
 secret operations are unsupported or schema-only.
 
+`DaemonClient` negotiates the same `connections.read` capability over a secure
+per-user Unix socket and passes the shared connection contract. The daemon
+supports handshake, capability discovery, connection list/get, structured
+errors, and clean lifecycle only. It does not forward events or own terminal,
+session, secret, prompt, SFTP, forwarding, or plugin runtime.
+
 The API package is GTK-free. The existing managers wrapped by
 `InProcessClient` are not yet GTK/GObject-free, so this is a frontend-neutral
 boundary rather than a completed headless core.
+
+See [the daemon transport architecture](../architecture/daemon-transport.md)
+for concurrency, socket security, lifecycle, and deferred platform work.

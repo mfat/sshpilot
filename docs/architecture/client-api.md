@@ -1,8 +1,8 @@
 # SshPilotClient API
 
-`SshPilotClient` is the stable frontend/core seam for sshPilot. GTK currently
-uses `InProcessClient`; a future `DaemonClient` will implement the same
-connection contract over local IPC.
+`SshPilotClient` is the stable frontend/core seam for sshPilot. GTK continues
+to use `InProcessClient`; `DaemonClient` now implements the same connection-read
+contract over local IPC for testing and the next integration phase.
 
 ## Package layout
 
@@ -14,6 +14,8 @@ sshpilot/api/
   events.py
   client.py
   in_process_client.py
+  daemon_client.py
+  transport/
   models/
     common.py
     connections.py
@@ -24,9 +26,10 @@ sshpilot/api/
     operations.py
 ```
 
-All files except `in_process_client.py` are implementation-neutral.
+All model, contract, and envelope files are implementation-neutral.
 `in_process_client.py` accepts existing managers by dependency injection and
-does not import GTK, GObject, VTE or a transport.
+does not import GTK, GObject, VTE or a transport. `daemon_client.py` depends on
+Unix sockets but not frontend or manager types.
 
 ## Why the boundary exists
 
@@ -68,8 +71,9 @@ Do not:
 - block GTK waiting for futures;
 - make the Python calling convention mimic a not-yet-designed wire transport.
 
-A future `DaemonClient` can have an async internal implementation while still
-offering a GTK-safe façade.
+`DaemonClient` uses one persistent blocking socket, one request lock, and a
+finite timeout. It creates no event loop or thread per call. GTK is not switched
+to it in this phase, so no frontend callback is invoked from transport code.
 
 ## Versioning and compatibility
 
@@ -236,22 +240,24 @@ Core/API modules must not import or return GTK, GObject, Adwaita, VTE, WebKit,
 frontend controllers, frontend callbacks, raw PTY descriptors or subprocess
 objects.
 
-## Future transports
+## Transports
 
 The same models and contract are intended for:
 
 - the current in-process adapter;
-- Unix-domain sockets;
+- the implemented Phase 1 Unix-domain socket;
 - Windows named pipes;
 - a local WebSocket only if a later frontend requires it.
 
-No transport is implemented here. A future transport needs a versioned message
-envelope, protocol negotiation, binary terminal frames, request cancellation,
-bounded event queues, authentication/permissions for the per-user endpoint,
-stale-daemon recovery, and reusable contract tests against `DaemonClient`.
+The local daemon implements versioned length-prefixed JSON envelopes, protocol
+negotiation, strict local-user socket permissions, stale-socket recovery, and
+reusable connection contracts. Future phases still need binary terminal frames,
+request cancellation, bounded event queues, reconnect/resume semantics, prompt
+routing, and non-Linux transports.
 
 See `core-boundary-audit.md` for the current concurrency/state evidence and
-`daemon-ownership.md` for ownership decisions and the next-phase backlog.
+`daemon-ownership.md` for ownership decisions. The implemented transport is
+described in [daemon-transport.md](daemon-transport.md).
 
 The concrete, maintained contract is indexed in
 [`docs/api/README.md`](../api/README.md). Use the architecture documents for

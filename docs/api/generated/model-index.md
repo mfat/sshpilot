@@ -518,6 +518,97 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ErrorData -->
+## `ErrorData`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Wire-safe representation of :class:`SshPilotError`.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `ErrorCode` | Yes | — | No |
+| `message` | `str` | Yes | — | No |
+| `details` | `Mapping[str, Any]` | No | `{}` | Yes |
+| `retryable` | `bool` | No | `false` | No |
+| `request_id` | `Optional[RequestId]` | No | `null` | No |
+| `connection_id` | `Optional[ConnectionId]` | No | `null` | No |
+| `session_id` | `Optional[SessionId]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "connection_id": null,
+  "details": "<sensitive value omitted>",
+  "message": "Example request",
+  "request_id": null,
+  "retryable": false,
+  "session_id": null
+}
+```
+
+<!-- api-model: ErrorResponseEnvelope -->
+## `ErrorResponseEnvelope`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A structured failed response correlated to one request.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `protocol_version` | `str` | Yes | — | No |
+| `request_id` | `RequestId` | Yes | — | No |
+| `error` | `ErrorData` | Yes | — | Yes |
+
+Synthetic representation:
+
+```json
+{
+  "error": "<sensitive value omitted>",
+  "protocol_version": {},
+  "request_id": "request:example"
+}
+```
+
+<!-- api-model: EventEnvelope -->
+## `EventEnvelope`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** An unsolicited public event frame.
+
+Runtime daemon event forwarding is not enabled in Phase 1. This envelope
+reserves a response-independent shape for later phases.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `protocol_version` | `str` | Yes | — | No |
+| `event` | `str` | Yes | — | No |
+| `sequence` | `int` | Yes | — | No |
+| `payload` | `Mapping[str, Any]` | No | `{}` | Yes |
+
+Synthetic representation:
+
+```json
+{
+  "event": {},
+  "payload": "<sensitive value omitted>",
+  "protocol_version": {},
+  "sequence": 0
+}
+```
+
 <!-- api-model: GroupReference -->
 ## `GroupReference`
 
@@ -539,6 +630,68 @@ Synthetic representation:
 {
   "id": "id:example",
   "name": ""
+}
+```
+
+<!-- api-model: HandshakeRequest -->
+## `HandshakeRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Validated client metadata supplied before ordinary RPC methods.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `client_name` | `str` | Yes | — | No |
+| `client_version` | `str` | Yes | — | No |
+| `supported_protocol_versions` | `Tuple[str, ...]` | Yes | — | No |
+| `client_capabilities` | `FrozenSet[str]` | No | `[]` | No |
+| `frontend_type` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "client_capabilities": [],
+  "client_name": {},
+  "client_version": {},
+  "frontend_type": null,
+  "supported_protocol_versions": {}
+}
+```
+
+<!-- api-model: HandshakeResult -->
+## `HandshakeResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Daemon identity and the selected Protocol v1 contract.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `daemon_version` | `str` | Yes | — | No |
+| `core_version` | `str` | Yes | — | No |
+| `selected_protocol_version` | `str` | Yes | — | No |
+| `daemon_capabilities` | `FrozenSet[Capability]` | Yes | — | No |
+| `compatibility_status` | `str` | Yes | — | No |
+| `server_instance_id` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "compatibility_status": {},
+  "core_version": {},
+  "daemon_capabilities": {},
+  "daemon_version": {},
+  "selected_protocol_version": {},
+  "server_instance_id": {}
 }
 ```
 
@@ -962,6 +1115,36 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: RequestEnvelope -->
+## `RequestEnvelope`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One explicitly named daemon method invocation.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `protocol_version` | `str` | Yes | — | No |
+| `request_id` | `RequestId` | Yes | — | No |
+| `method` | `str` | Yes | — | No |
+| `params` | `Mapping[str, Any]` | No | `{}` | Yes |
+| `client_id` | `ClientId` | No | `client:unknown` | No |
+
+Synthetic representation:
+
+```json
+{
+  "client_id": "client:unknown",
+  "method": {},
+  "params": "<sensitive value omitted>",
+  "protocol_version": {},
+  "request_id": "request:example"
+}
+```
+
 <!-- api-model: ResizeTerminalRequest -->
 ## `ResizeTerminalRequest`
 
@@ -1100,6 +1283,32 @@ Synthetic representation:
   "name": "example",
   "path": "/remote/example",
   "size": null
+}
+```
+
+<!-- api-model: SuccessResponseEnvelope -->
+## `SuccessResponseEnvelope`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A successful response correlated to exactly one request.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `protocol_version` | `str` | Yes | — | No |
+| `request_id` | `RequestId` | Yes | — | No |
+| `result` | `Any` | Yes | — | Yes |
+
+Synthetic representation:
+
+```json
+{
+  "protocol_version": {},
+  "request_id": "request:example",
+  "result": "<sensitive value omitted>"
 }
 ```
 

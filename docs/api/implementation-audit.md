@@ -1,7 +1,7 @@
 # API implementation audit
 
-Audit date: 2026-07-28. This inventory describes the repository after the
-initial client-boundary refactor and before any daemon transport. “Snapshot”
+Audit date: 2026-07-29. This inventory describes the repository after the
+Phase 1 connection-read daemon transport. “Snapshot”
 means the name/field/value surface is protected by
 `tests/api/snapshots/public_api.json`; it does not prove runtime semantics.
 
@@ -9,20 +9,21 @@ means the name/field/value surface is protected by
 
 | Public element | Location | Implemented at runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
-| `get_capabilities` | `api/client.py`, `api/in_process_client.py` | Yes | Bootstrap | Yes | Yes | Synchronous; still available after close |
-| `list_connections` | same | Yes | `connections.read` | Yes | Yes | Owner-thread only; preserves manager order |
-| `get_connection` | same | Yes | `connections.read` | Yes | Yes | Safe DTO or `connection_not_found` |
+| `get_capabilities` | `api/client.py`, both client adapters | Yes | Bootstrap | Both clients | Yes | Daemon result is negotiated; cached after close |
+| `list_connections` | same | Yes | `connections.read` | Both clients | Yes | Preserves manager order |
+| `get_connection` | same | Yes | `connections.read` | Both clients | Yes | Safe DTO or `connection_not_found` |
 | `create_connection` | same | No | Not advertised: `connections.write` | Unsupported contract | Yes | Stable unsupported error |
 | `update_connection` | same | No | Not advertised: `connections.write` | Unsupported contract | Yes | Stable unsupported error |
-| `delete_connection` | same | No | Not advertised: `connections.write` | Unsupported contract | Yes | Takes ID directly; request DTO also exists |
+| `delete_connection` | same | No | Not advertised: `connections.write` | Both clients unsupported | Yes | Takes `DeleteConnectionRequest` |
 | `open_session` | same | No | Not advertised: `terminal` | Unsupported contract | Yes | No runtime session ownership |
 | `attach_session` | same | No | Not advertised: `terminal.attach` | Unsupported contract | Yes | No attachment service |
 | `detach_session` | same | No | Not advertised: `terminal.attach` | Unsupported contract | Yes | No attachment service |
 | `close_session` | same | No | Not advertised: `terminal` | Unsupported contract | Yes | No process side effect |
 | `send_terminal_input` | same | No | Not advertised: `terminal` | Unsupported contract | Yes | Bytes schema only |
 | `resize_terminal` | same | No | Not advertised: `terminal` | Unsupported contract | Yes | Dimensions schema only |
+| `replay_terminal` | same | No | Not advertised: `terminal.replay` | Both clients unsupported | Yes | Coherent schema-only method |
 | `respond_to_interaction` | same | No | Not advertised: `interactions` | Unsupported contract | Yes | Current dialogs are outside API |
-| `subscribe_events` | same | Yes | Bootstrap | Yes | Yes | Connection events only |
+| `subscribe_events` | same | Partial | Bootstrap | Yes | Yes | Connection events in-process; daemon forwards none |
 | `close` | same | Yes | None | Yes | Yes | Idempotent; releases adapter subscriptions |
 
 ## Capabilities
@@ -33,15 +34,27 @@ means the name/field/value surface is protected by
 | `connections.write` | same | No | No | Unsupported + snapshot | Yes | Three methods are stubs |
 | `terminal` | same | No | No | Unsupported + snapshot | Yes | Existing GTK terminal path bypasses API |
 | `terminal.attach` | same | No | No | Unsupported + snapshot | Yes | Schema vocabulary only |
-| `terminal.replay` | same | No | No | Snapshot only | Yes | No `SshPilotClient` replay method |
+| `terminal.replay` | same | No | No | Unsupported + snapshot | Yes | Schema-only client method exists |
 | `interactions` | same | No | No | Unsupported + snapshot | Yes | Response method is a stub |
 | `sftp` | same | No | No | Snapshot only | Yes | No client methods/events |
 | `port_forwarding` | same | No | No | Snapshot only | Yes | No client methods/events |
 | `plugins` | same | No | No | Snapshot only | Yes | Separate legacy plugin API exists |
 | `secrets` | same | No | No | Snapshot only | Yes | No direct frontend secret API |
 
-No advertised capability lacks runtime operations or contract tests. Several
-unadvertised capabilities intentionally stabilize names before methods exist.
+No advertised capability lacks runtime operations or contract tests. The
+daemon filters its negotiated set to `connections.read`.
+
+## Daemon transport
+
+| Public element | Runtime | Contract-tested | Notes |
+| --- | ---: | ---: | --- |
+| Request/success/error/event envelopes | Yes | Yes | Strict fields and JSON-safe values |
+| Length-prefixed JSON framing | Yes | Yes | 4-byte big-endian length; 1 MiB maximum |
+| `system.handshake` | Yes | Yes | Required once; exact Protocol `1.0` selection |
+| `system.get_capabilities` | Yes | Yes | Negotiated daemon result |
+| `connections.list` / `connections.get` | Yes | Shared parity | Delegates to `InProcessClient` |
+| Unix socket lifecycle/security | Yes | Yes | Owned 0700 directory, 0600 socket, safe stale cleanup |
+| Daemon runtime event forwarding | No | Envelope parsing only | No event-dependent capability advertised |
 
 ## Events
 
@@ -135,7 +148,7 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | --- | --- | ---: | --- | ---: | ---: | --- |
 | `Capability` | `api/capabilities.py` | Yes | Discovery | Snapshot + capability tests | Yes | Ten stable values |
 | `EventType` | `api/events.py` | Partial | Events | Snapshot + event tests | Yes | Three of ten emitted |
-| `ErrorCode` | `api/errors.py` | Partial | Errors | Snapshot + envelope tests | Yes | Four codes emitted currently |
+| `ErrorCode` | `api/errors.py` | Partial | Errors | Snapshot + envelope/transport tests | Yes | Client, domain, handshake, framing, and lifecycle codes |
 | `ConnectionHealth` | `models/connections.py` | Partial | `connections.read` | Snapshot | Yes | Only `unknown` produced |
 | `AuthenticationMethod` | same | Yes | `connections.read` | Snapshot | Yes | Safe key/password projection |
 | `SessionState` | `models/sessions.py` | No | `terminal` | Values + snapshot | Yes | Separate from legacy state |
@@ -152,7 +165,7 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | Public element | Location | Runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
 | `PROTOCOL_VERSION = "1.0"` | `api/version.py` | Yes | Discovery result | Snapshot/docs drift | Yes | Current contract family |
-| `API_IMPLEMENTATION_VERSION = "0.1"` | same | Yes | Discovery result | Snapshot | Yes | Python implementation |
+| `API_IMPLEMENTATION_VERSION = "0.2"` | same | Yes | Discovery result | Snapshot | Yes | Daemon transport implementation |
 
 ## Migrated GTK path
 
@@ -171,8 +184,8 @@ API, but terminal execution and most of the core remain GTK/GObject-coupled.
 
 1. `sftp`, `port_forwarding`, `plugins`, and `secrets` have capability names
    but no client methods; some have models and none has API events.
-2. No wire serialization utility exists, so unknown-field, unknown-enum, null
-   versus absence, and timestamp encoding behaviour are not executable.
+2. Daemon event envelopes are validated and separated from responses, but no
+   runtime events are forwarded and reconnect/resume semantics are undefined.
 3. Connection IDs change on rename and are not persisted UUIDs. They are
    explicitly transitional and have a documented UUID/alias migration backlog.
 4. Some schema records do not validate their opaque IDs consistently.

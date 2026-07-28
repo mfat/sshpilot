@@ -38,6 +38,9 @@ from sshpilot.api.in_process_client import (  # noqa: E402
 from sshpilot.api.models import __all__ as MODEL_EXPORTS  # noqa: E402
 from sshpilot.api.models import common, connections, interactions, operations  # noqa: E402
 from sshpilot.api.models import sessions, terminal, transfers  # noqa: E402
+from sshpilot.api.transport import __all__ as TRANSPORT_EXPORTS  # noqa: E402
+from sshpilot.api.transport import envelopes  # noqa: E402
+from sshpilot.daemon.dispatch import DAEMON_METHOD_CAPABILITIES  # noqa: E402
 
 
 MODEL_MODULES = (
@@ -48,6 +51,7 @@ MODEL_MODULES = (
     interactions,
     transfers,
     operations,
+    envelopes,
 )
 EXTRA_MODELS = (Capabilities, CoreEvent)
 EXTRA_ENUMS = (Capability, EventType, ErrorCode)
@@ -63,15 +67,27 @@ IMPLEMENTED_MODELS = {
     "ConnectionSummary",
     "CoreInfo",
     "GroupReference",
+    "ErrorData",
+    "ErrorResponseEnvelope",
+    "EventEnvelope",
+    "HandshakeRequest",
+    "HandshakeResult",
+    "RequestEnvelope",
+    "SuccessResponseEnvelope",
 }
 PARTIAL_MODELS = {"CoreEvent"}
 
 SENSITIVE_FIELDS = {
     "CoreEvent": {"payload"},
+    "ErrorData": {"details"},
+    "ErrorResponseEnvelope": {"error"},
+    "EventEnvelope": {"payload"},
     "InteractionResponse": {"value"},
     "PluginArgument": {"value"},
     "PluginOperationResult": {"values"},
     "ReplayResult": {"data"},
+    "RequestEnvelope": {"params"},
+    "SuccessResponseEnvelope": {"result"},
     "TerminalInput": {"data"},
     "TerminalOutput": {"data"},
 }
@@ -231,6 +247,17 @@ def client_method_contract() -> Dict[str, Dict[str, Any]]:
     return dict(sorted(result.items()))
 
 
+def daemon_method_contract() -> Dict[str, Dict[str, Any]]:
+    """Return the explicit Phase 1 wire-method capability mapping."""
+
+    return {
+        name: {
+            "capability": capability.value if capability is not None else None,
+        }
+        for name, capability in sorted(DAEMON_METHOD_CAPABILITIES.items())
+    }
+
+
 def client_signatures() -> Dict[str, Dict[str, Any]]:
     """Return stable parameter and return-type shapes for client methods."""
 
@@ -387,6 +414,7 @@ def build_surface() -> Dict[str, Any]:
         "client_method_contract": client_method_contract(),
         "client_methods": client_methods(),
         "client_signatures": client_signatures(),
+        "daemon_method_contract": daemon_method_contract(),
         "error_codes": sorted(item.value for item in ErrorCode),
         "event_types": sorted(item.value for item in EventType),
         "identifier_types": identifier_types(),
@@ -396,6 +424,7 @@ def build_surface() -> Dict[str, Any]:
             for model in public_models()
         },
         "protocol_version": PROTOCOL_VERSION,
+        "transport_exports": sorted(TRANSPORT_EXPORTS),
         "public_enums": {
             enum_type.__name__: [item.value for item in enum_type]
             for enum_type in public_enums()
@@ -411,6 +440,7 @@ def build_schema() -> Dict[str, Any]:
         "protocol_version": PROTOCOL_VERSION,
         "api_implementation_version": API_IMPLEMENTATION_VERSION,
         "client_method_contract": client_method_contract(),
+        "daemon_method_contract": daemon_method_contract(),
         "identifiers": identifier_types(),
         "enums": {
             enum_type.__name__: [item.value for item in enum_type]
