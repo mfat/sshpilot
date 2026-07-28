@@ -1,8 +1,8 @@
 # SshPilotClient API
 
-`SshPilotClient` is the stable frontend/core seam for sshPilot. GTK continues
-to use `InProcessClient`; `DaemonClient` now implements the same connection-read
-contract over local IPC for testing and the next integration phase.
+`SshPilotClient` is the stable frontend/core seam for sshPilot. GTK uses
+`InProcessClient` by default and can explicitly opt into `DaemonClient` for
+connection-read development through `SSHPILOT_CLIENT_MODE=daemon`.
 
 ## Package layout
 
@@ -13,6 +13,7 @@ sshpilot/api/
   errors.py
   events.py
   client.py
+  client_factory.py
   in_process_client.py
   daemon_client.py
   transport/
@@ -72,8 +73,11 @@ Do not:
 - make the Python calling convention mimic a not-yet-designed wire transport.
 
 `DaemonClient` uses one persistent blocking socket, one request lock, and a
-finite timeout. It creates no event loop or thread per call. GTK is not switched
-to it in this phase, so no frontend callback is invoked from transport code.
+finite timeout. It creates no event loop or thread per call. In opt-in daemon
+mode, the application-scoped GTK bridge uses one bounded worker and returns
+results through `GLib.idle_add`. Request tokens suppress stale results after
+refresh/window destruction. GLib remains outside `DaemonClient`, and
+`InProcessClient` stays on its construction/main thread.
 
 ## Versioning and compatibility
 

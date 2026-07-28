@@ -8,6 +8,11 @@ capabilities and handle `unsupported_capability`.
 advertise exactly `connections.read`. `DaemonClient.get_capabilities()` returns
 the daemon response rather than a hard-coded local assumption.
 
+Experimental GTK daemon composition verifies `connections.read` after the real
+handshake and before injecting the client. A compatible daemon that omits it is
+not used for the welcome-page read. No additional capability is advertised by
+the launcher, factory, or GTK bridge.
+
 <!-- api-runtime-capability: connections.read -->
 
 ## Inventory

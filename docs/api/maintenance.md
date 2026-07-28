@@ -55,8 +55,22 @@ python3 scripts/generate_api_artifacts.py --check
 pytest -q tests/api/test_api_documentation.py
 pytest -q tests/api/test_public_api_snapshot.py
 pytest -q tests/daemon
+pytest -q tests/api/test_client_factory.py tests/daemon/test_launcher.py
+pytest -q tests/test_gtk_client_bridge.py
 ruff check src/ tests/ scripts/generate_api_artifacts.py
 pytest
+```
+
+For real-GTK daemon responsiveness coverage:
+
+```bash
+SSHPILOT_GUI_TESTS=1 DISPLAY=:1 pytest -q -m gui tests/test_gui_smoke.py
+```
+
+Daemon mode is a process-local development selection, not configuration state:
+
+```bash
+SSHPILOT_CLIENT_MODE=daemon python3 run.py
 ```
 
 The generator writes:

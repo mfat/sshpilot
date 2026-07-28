@@ -95,9 +95,14 @@ if capabilities.supports(Capability.CONNECTIONS_READ):
   owner thread; `internal_error` for mapped manager failures; daemon calls may
   also return documented transport/protocol lifecycle errors.
 - **Events:** None directly.
-- **Cancellation / ordering:** Not cancellable; preserves manager order.
+- **Cancellation / ordering:** Not cancellable; preserves manager order. The
+  GTK bridge cannot cancel a wire request already in progress, but its request
+  token suppresses stale or destroyed-widget delivery.
 - **Threading:** `InProcessClient` requires its owner thread. `DaemonClient`
-  serializes synchronous requests and uses a finite timeout.
+  serializes synchronous requests and uses a finite timeout. Experimental GTK
+  daemon mode invokes this method through one application-scoped worker and
+  posts presentation updates with `GLib.idle_add`; normal in-process GTK calls
+  remain on the owner/main thread.
 - **Side effects / security:** Reads current manager state. It returns DTOs, not
   persistence or GObject instances, and omits secrets and sensitive paths.
 

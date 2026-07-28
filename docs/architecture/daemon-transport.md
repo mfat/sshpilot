@@ -1,7 +1,7 @@
 # Local daemon transport
 
-Phase 1 adds a Linux per-user daemon boundary for connection reads without
-changing GTK's default composition.
+Phase 2 adds an explicitly opt-in GTK path for the Linux per-user connection
+read daemon. Production composition remains in-process by default.
 
 Linux is the supported platform for this phase. Unix-socket primitives may be
 present elsewhere, but macOS lifecycle integration and Windows named pipes are
@@ -27,8 +27,64 @@ per-call event loop.
 `DaemonClient` is synchronous. One lock serializes calls over one blocking
 socket, and every call has a finite timeout (five seconds by default). A timeout
 closes the transport, making any late response unambiguous. Closing the client
-shuts down its socket resources. GTK remains composed with `InProcessClient`;
-no GTK main-loop behavior changes in this phase.
+shuts down its socket resources.
+
+GTK never invokes that blocking API on its main thread. One application-scoped
+`GtkClientBridge` owns a single worker. It serializes selection/startup and
+connection-list reads, then posts results through `GLib.idle_add`. Per-widget
+request tokens suppress stale delivery after refresh or destruction. Closing
+the application closes the selected client and shuts down the bridge; closing
+one window only invalidates that window's callbacks.
+
+## Experimental GTK selection
+
+Normal startup still selects `InProcessClient`. Development daemon mode is
+enabled only for the current process:
+
+```bash
+SSHPILOT_CLIENT_MODE=daemon python3 run.py
+```
+
+The parser ignores surrounding whitespace and case. Missing or blank values
+mean `in_process`; invalid values retain in-process mode and produce the same
+safe compatibility warning as a failed daemon selection. The environment value
+is not persisted as an application preference.
+
+`api/client_factory.py` is the single selection policy. Widgets neither read
+the environment nor construct `DaemonClient`. The current application has one
+main window and one application-scoped client; future multi-window composition
+must continue sharing that client rather than opening one socket per widget.
+
+## On-demand startup and fallback
+
+When daemon mode is requested, selection runs off the GTK thread:
+
+1. validate the owned mode-0700 parent and any existing mode-0600 socket;
+2. attempt a real Protocol v1 handshake with a short bounded probe;
+3. require the negotiated `connections.read` capability;
+4. if and only if the endpoint is unavailable, launch
+   `sys.executable -m sshpilot.daemon --socket <resolved endpoint>`;
+5. poll with a monotonic three-second deadline and repeated real handshakes;
+6. use the daemon client, or fall back once to the existing in-process client.
+
+There is no restart loop. Protocol incompatibility, malformed framing,
+transport closure during handshake, missing capability, and unsafe filesystem
+state do not trigger a daemon launch or retry. They still fall back for this
+experimental application run so the established local core remains usable.
+Logs record only a stable local failure category. The UI shows:
+
+```text
+The local SSH Pilot service could not be used. SSH Pilot is running in
+compatibility mode.
+```
+
+Raw exceptions, socket paths, commands, environment values, and protocol data
+are never placed in that notification.
+
+The child is launched with an argument list and `shell=False`; standard streams
+are detached to `/dev/null`. Known session-secret environment variables are
+removed. A source-tree `src` import path is added so the documented module
+command works before installation.
 
 ## Core construction
 
@@ -68,6 +124,14 @@ active peers, closes the core client on its owner thread, and removes its socket
 The module entry point maps SIGINT and SIGTERM to this path. It does not install
 or supervise a service.
 
+An already-running daemon is unowned by GTK. An on-demand child is represented
+by the exact `Popen` object that created it; no PID lookup or process-name
+matching exists. Failed startup terminates only that exact child. A successfully
+started daemon is deliberately left running when GTK exits because Protocol v1
+cannot prove that no other clients need it. Tests terminate their own exact
+child and verify socket cleanup. An installed `sshpilotd` launcher and bounded
+idle exit remain packaging/lifecycle work.
+
 ## Current boundary
 
 Only handshake, capability discovery, connection list, and connection get cross
@@ -86,4 +150,5 @@ scope.
 - migrate saved connections to stable persisted UUIDs before freezing IDs;
 - define bounded event forwarding and reconnect/resume semantics;
 - define a separate binary terminal channel, PTY ownership, and prompt routing;
-- add an opt-in GTK integration phase before changing the production default.
+- keep daemon mode experimental until extended GTK lifecycle testing is
+  complete; production-default selection is a separate decision.

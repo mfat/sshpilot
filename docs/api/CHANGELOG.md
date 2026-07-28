@@ -14,6 +14,9 @@ notes remain separate.
   `system.get_capabilities`, `connections.list`, and `connections.get`.
 - Added shared connection contracts across `InProcessClient` and
   `DaemonClient`, plus framing, handshake, socket-security, and lifecycle tests.
+- Added the experimental `SSHPILOT_CLIENT_MODE=daemon` GTK composition path,
+  bounded on-demand daemon launcher, application-scoped GTK worker bridge, and
+  safe compatibility-mode fallback.
 - Added the schema-only `replay_terminal` client operation and complete
   package-level convenience exports for all documented model types.
 - Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
@@ -30,6 +33,9 @@ notes remain separate.
   UUID-and-alias migration plan required before wire-protocol freeze.
 - The GTK welcome page now keeps a non-blocking safe fallback visible when a
   structured connection-read error occurs.
+- Daemon-backed GTK connection reads now run off the GTK main thread and use
+  GLib delivery with refresh/destruction stale-result suppression. In-process
+  mode remains the default.
 
 ### Deprecated
 
@@ -42,6 +48,9 @@ notes remain separate.
 - Restricted daemon endpoints to owned mode-0700 directories and mode-0600
   sockets; stale cleanup verifies type and inode and refuses symlinks or
   non-socket paths.
+- The GTK launcher validates endpoint ownership/type/permissions before
+  connecting, uses an argv launch with `shell=False`, detaches child output,
+  and strips known session-secret environment variables.
 - Wire serialization accepts only strict JSON envelopes and explicit public DTO
   codecs with a 1 MiB frame limit; pickle, marshal, arbitrary objects, raw
   exceptions, persistence records, and secret values cannot cross the boundary.

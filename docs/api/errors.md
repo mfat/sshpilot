@@ -122,7 +122,12 @@ retryable.
 
 Local connection setup could not reach the Unix daemon endpoint. It is
 retryable, has no request ID, and never exposes the socket path or raw OS error
-to the frontend.
+to the frontend. Experimental GTK composition treats this as authority for one
+bounded on-demand launch attempt. Protocol incompatibility, malformed
+handshake, unsafe socket state, or a missing expected capability are distinct
+local launcher categories and do not trigger a restart. Any daemon-selection
+failure falls back once to in-process mode with a fixed safe notification;
+these composition categories do not change the Protocol v1 error-code surface.
 
 <!-- api-error: transport_closed -->
 ## `transport_closed`
