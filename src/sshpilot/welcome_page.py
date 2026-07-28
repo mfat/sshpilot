@@ -31,6 +31,7 @@ class WelcomePage(Gtk.Overlay):
         _ensure_css()
         self.window = window
         self.connection_manager = window.connection_manager
+        self.client = window.client
         self.config = window.config
         self.set_hexpand(True)
         self.set_vexpand(True)
@@ -301,7 +302,9 @@ class WelcomePage(Gtk.Overlay):
             box.remove(child)
             child = nxt
 
-        connections = list(getattr(self.connection_manager, 'connections', []) or [])
+        # Read presentation data through the frontend-neutral client boundary.
+        # Activation remains on the existing terminal path in this milestone.
+        connections = self.client.list_connections()
 
         def _last_used(conn):
             try:
@@ -328,11 +331,18 @@ class WelcomePage(Gtk.Overlay):
 
         rows = [
             self._min_row(
-                getattr(conn, 'nickname', ''), self._conn_target(conn),
-                lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
+                conn.nickname, conn.display_target,
+                lambda _b, c=conn: self._connect_connection_summary(c))
             for conn in recent
         ]
         box.append(self._min_section(_('Recent'), rows))
+
+    def _connect_connection_summary(self, summary):
+        """Resolve a clicked DTO only when entering the legacy terminal path."""
+
+        connection = self.connection_manager.find_connection_by_nickname(summary.nickname)
+        if connection is not None:
+            self.window.terminal_manager.connect_to_host(connection)
 
     @staticmethod
     def _empty_recent_message(has_connection_rows: bool) -> str:

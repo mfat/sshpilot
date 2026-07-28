@@ -278,6 +278,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         self.session_manager = SessionManager(self.config)
+        # Frontend-neutral boundary. The current composition root still owns
+        # the legacy managers; GTK read paths consume DTOs through this adapter.
+        from .api import InProcessClient
+        self.client = InProcessClient(
+            self.connection_manager,
+            group_manager=self.group_manager,
+        )
         
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -4918,6 +4925,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:
             self._teardown_ssh_config_monitor()
+            client = getattr(self, 'client', None)
+            if client is not None:
+                client.close()
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch
@@ -4965,6 +4975,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         
         # No active connections or all local terminals are idle, safe to close
         self._teardown_ssh_config_monitor()
+        client = getattr(self, 'client', None)
+        if client is not None:
+            client.close()
         return False  # Allow close
 
     def _askpass_dialog_parent(self):
