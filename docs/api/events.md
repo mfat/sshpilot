@@ -4,10 +4,24 @@ Events are immutable `CoreEvent` records containing `type`, `payload`,
 non-negative `sequence`, UTC `timestamp`, and optional request/connection/session
 IDs.
 
-Current `InProcessClient` delivery is synchronous, in registration order, on
-the thread that emitted the wrapped manager signal. One subscriber's exception
-is logged and does not prevent later subscribers. Subscriptions are thread-safe
-to create/remove and cleanup is idempotent.
+<!-- api-event-semantics: serial-fifo-v1 -->
+
+`InProcessClient` uses one publisher-global FIFO ordering point. Sequence
+allocation and queue insertion are atomic, and exactly one publishing thread
+drains the queue. Therefore every subscriber observes accepted events in
+strictly increasing sequence order, including when publishers run concurrently.
+The first active publisher is the dispatcher; a concurrent publisher waits
+until its event has been delivered and its callbacks can run on that active
+dispatcher thread rather than the concurrent caller's thread.
+
+Callbacks run in subscriber-registration order. One slow subscriber delays the
+remaining subscribers and later events but cannot reorder them. One
+subscriber's exception is logged and does not prevent later subscribers.
+
+Re-entrant publication appends to the same FIFO and does not recurse: event
+`N` reaches its complete subscriber snapshot before re-entrantly published
+event `N+1` begins. The re-entrant `publish()` call returns after enqueueing;
+the outer dispatcher delivers it after the current callback stack unwinds.
 
 Events are not durable, acknowledged, replayed, batched, or coalesced. A
 subscriber that is absent or already closed does not receive prior events.
@@ -20,12 +34,12 @@ subscriber that is absent or already closed does not receive prior events.
 | `connection.updated` | Implemented | `connections.read` | Manager `connection-updated` signal | `ConnectionSummary` |
 | `connection.deleted` | Implemented | `connections.read` | Manager `connection-removed` signal | `ConnectionSummary` |
 | `session.created` | Schema only | `terminal` | Future session creation | Intended `SessionSummary` |
-| `session.state_changed` | Schema only | `terminal` | Future state transition | Payload not fixed beyond `CoreEvent[Any]` |
+| `session.state_changed` | Schema only | `terminal` | Future state transition | `SessionSummary` |
 | `session.output` | Schema only | `terminal` | Future PTY output | Intended `TerminalOutput` |
 | `session.interaction_requested` | Schema only | `interactions` | Future core prompt | Intended `InteractionRequest` |
 | `session.exited` | Schema only | `terminal` | Future child exit | Intended `SessionExitInfo` |
-| `session.closed` | Schema only | `terminal` | Future session cleanup | Intended `SessionSummary` or ID; not fixed |
-| `error.occurred` | Schema only | None fixed | Future asynchronous core failure | Payload not fixed |
+| `session.closed` | Schema only | `terminal` | Future session cleanup | `SessionSummary` |
+| `error.occurred` | Schema only | None fixed | Future asynchronous core failure | Safe structured error envelope dictionary |
 
 <!-- api-event: connection.created -->
 ## `connection.created`
@@ -34,8 +48,8 @@ subscriber that is absent or already closed does not receive prior events.
 - **Trigger / payload:** Existing `connection-added` GObject signal;
   `ConnectionSummary`.
 - **Related IDs:** `connection_id` is populated and equals payload `id`.
-- **Ordering / delivery:** Publisher-global sequence; synchronous at-most-once
-  delivery to each currently registered callback.
+- **Ordering / delivery:** Publisher-global serial FIFO sequence; synchronous
+  at-most-once delivery to the subscriber snapshot captured at publication.
 - **Coalescing / dropping:** Not coalesced. No buffering; absent subscribers
   miss it.
 - **Loop behaviour:** The adapter can be tested headlessly with a fake manager.
@@ -75,7 +89,7 @@ subscriber that is absent or already closed does not receive prior events.
 
 - **Status / introduced:** Schema only / v1
 - **Capability / intended trigger:** `terminal`; a runtime session transition.
-- **Payload / IDs:** Payload shape is not yet fixed; session ID is intended.
+- **Payload / IDs:** `SessionSummary`; session ID is intended.
 - **Guarantees:** No transition, ordering, coalescing, or delivery semantics are
   implemented.
 
@@ -111,7 +125,7 @@ subscriber that is absent or already closed does not receive prior events.
 
 - **Status / introduced:** Schema only / v1
 - **Capability / intended trigger:** `terminal`; final session cleanup.
-- **Payload / IDs:** Session ID intended; payload type remains unfixed.
+- **Payload / IDs:** `SessionSummary`; session ID is intended.
 - **Guarantees:** None; no terminal-state delivery or replay promise.
 
 <!-- api-event: error.occurred -->
@@ -120,15 +134,27 @@ subscriber that is absent or already closed does not receive prior events.
 - **Status / introduced:** Schema only / v1
 - **Capability / intended trigger:** No fixed capability; future asynchronous
   safe failure.
-- **Payload / IDs:** Payload type is not fixed. It must use a safe structured
-  envelope and may use correlation IDs.
-- **Guarantees / security:** None. Raw exceptions and stack traces must not be
-  published.
+- **Payload / IDs:** A dictionary matching the `SshPilotError.to_dict()`
+  envelope: required non-empty string `code` and `message`, plus optional
+  `details`, `retryable`, and correlation IDs. Unknown envelope fields are
+  rejected. Details use the same constrained policy as `SshPilotError.details`.
+  The accepted mapping and nested lists/dictionaries are exposed read-only so
+  one subscriber cannot mutate what later subscribers observe.
+- **Guarantees / security:** Runtime emission is absent. Raw exceptions, secret
+  key names, arbitrary objects, environments, commands, and stack traces are
+  rejected by payload validation.
 
 ## Subscriber lifecycle
 
 Keep the returned `Subscription` and call `unsubscribe()` or `close()`.
-Context-manager use is supported. `InProcessClient.close()` disconnects its
-manager signal handlers and clears subscribers. A callback must marshal to its
-frontend thread when the source thread is unsuitable; the API does not
-implicitly call `GLib.idle_add`.
+Context-manager use is supported and cleanup is idempotent. Unsubscription
+during an event affects later events; the current event still reaches the
+subscriber snapshot captured when it was accepted.
+
+`InProcessClient.close()` disconnects its manager signal handlers, rejects new
+publication/subscription, and deactivates subscription handles. An event
+already being delivered, plus events accepted into its FIFO, finish in order;
+callbacks are then released. Closing from inside a callback does not deadlock.
+
+Callbacks must marshal to their frontend thread when the dispatcher thread is
+unsuitable. The API does not import GTK or implicitly call `GLib.idle_add`.

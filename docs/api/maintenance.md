@@ -65,7 +65,9 @@ The generator writes:
 
 It derives only from frontend-neutral API modules. The JSON catalog is not
 OpenAPI and does not imply HTTP. Synthetic examples never read live objects or
-stored data and replace sensitive fields with an omission marker.
+stored data and replace sensitive fields with an omission marker. The reviewed
+snapshot records method parameter/return shapes as well as names, so changing a
+schema-only operation signature also requires deliberate snapshot approval.
 
 ## Example: connection health monitoring
 

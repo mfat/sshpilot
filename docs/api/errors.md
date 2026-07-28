@@ -13,6 +13,15 @@
 | `connection_id` | Optional connection correlation |
 | `session_id` | Optional session correlation |
 
+`details` accepts only `None`, strings, booleans, integers, finite floats,
+lists, and dictionaries with non-empty string keys. Values are deep-copied.
+Exceptions, bytes, callables, arbitrary/custom objects, non-finite numbers,
+raw environments, command arguments, and keys conventionally associated with
+passwords, passphrases, tokens, credentials, cookies, or private keys are
+rejected. `repr(error)` never includes details or correlation identifiers.
+Reading `error.details` returns another detached copy, so callers cannot mutate
+the validated internal envelope.
+
 ## Error inventory
 
 | Code | Runtime status | Retryable | Related operations | Frontend guidance |

@@ -31,6 +31,10 @@ from sshpilot.api import __all__ as API_EXPORTS  # noqa: E402
 from sshpilot.api.capabilities import Capabilities  # noqa: E402
 from sshpilot.api.client import SshPilotClient  # noqa: E402
 from sshpilot.api.events import CoreEvent  # noqa: E402
+from sshpilot.api.in_process_client import (  # noqa: E402
+    IMPLEMENTED_CLIENT_METHOD_CAPABILITIES,
+    UNSUPPORTED_CLIENT_METHOD_CAPABILITIES,
+)
 from sshpilot.api.models import __all__ as MODEL_EXPORTS  # noqa: E402
 from sshpilot.api.models import common, connections, interactions, operations  # noqa: E402
 from sshpilot.api.models import sessions, terminal, transfers  # noqa: E402
@@ -63,6 +67,7 @@ IMPLEMENTED_MODELS = {
 PARTIAL_MODELS = {"CoreEvent"}
 
 SENSITIVE_FIELDS = {
+    "CoreEvent": {"payload"},
     "InteractionResponse": {"value"},
     "PluginArgument": {"value"},
     "PluginOperationResult": {"values"},
@@ -91,6 +96,8 @@ RELATED_METHODS = {
     "CloseSessionRequest": ("close_session",),
     "TerminalInput": ("send_terminal_input",),
     "ResizeTerminalRequest": ("resize_terminal",),
+    "ReplayRequest": ("replay_terminal",),
+    "ReplayResult": ("replay_terminal",),
     "InteractionResponse": ("respond_to_interaction",),
     "CoreEvent": ("subscribe_events",),
 }
@@ -205,6 +212,52 @@ def client_methods() -> List[str]:
         for name, value in vars(SshPilotClient).items()
         if not name.startswith("_") and inspect.isfunction(value)
     )
+
+
+def client_method_contract() -> Dict[str, Dict[str, Any]]:
+    """Return structured runtime status and capability metadata."""
+
+    result = {}
+    for name, capability in IMPLEMENTED_CLIENT_METHOD_CAPABILITIES.items():
+        result[name] = {
+            "status": "implemented",
+            "capability": capability.value if capability is not None else None,
+        }
+    for name, capability in UNSUPPORTED_CLIENT_METHOD_CAPABILITIES.items():
+        result[name] = {
+            "status": "schema-only",
+            "capability": capability.value,
+        }
+    return dict(sorted(result.items()))
+
+
+def client_signatures() -> Dict[str, Dict[str, Any]]:
+    """Return stable parameter and return-type shapes for client methods."""
+
+    result = {}
+    for name in client_methods():
+        signature = inspect.signature(getattr(SshPilotClient, name))
+        result[name] = {
+            "parameters": [
+                {
+                    "name": parameter.name,
+                    "kind": parameter.kind.name.lower(),
+                    "type": (
+                        "untyped"
+                        if parameter.annotation is inspect.Signature.empty
+                        else _type_name(parameter.annotation)
+                    ),
+                }
+                for parameter in signature.parameters.values()
+                if parameter.name != "self"
+            ],
+            "return": (
+                "untyped"
+                if signature.return_annotation is inspect.Signature.empty
+                else _type_name(signature.return_annotation)
+            ),
+        }
+    return result
 
 
 def _type_name(annotation: Any) -> str:
@@ -331,7 +384,9 @@ def build_surface() -> Dict[str, Any]:
         "api_exports": sorted(API_EXPORTS),
         "api_implementation_version": API_IMPLEMENTATION_VERSION,
         "capabilities": sorted(item.value for item in Capability),
+        "client_method_contract": client_method_contract(),
         "client_methods": client_methods(),
+        "client_signatures": client_signatures(),
         "error_codes": sorted(item.value for item in ErrorCode),
         "event_types": sorted(item.value for item in EventType),
         "identifier_types": identifier_types(),
@@ -355,6 +410,7 @@ def build_schema() -> Dict[str, Any]:
         "format": "sshpilot-api-schema-v1",
         "protocol_version": PROTOCOL_VERSION,
         "api_implementation_version": API_IMPLEMENTATION_VERSION,
+        "client_method_contract": client_method_contract(),
         "identifiers": identifier_types(),
         "enums": {
             enum_type.__name__: [item.value for item in enum_type]

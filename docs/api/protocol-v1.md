@@ -53,8 +53,8 @@ process today.
 
 ## Identifiers
 
-All public IDs are opaque, non-empty strings. Clients may compare and retain
-them but must not parse them.
+All public IDs are opaque, non-empty strings. Clients may compare them within a
+current snapshot but must not parse them.
 
 | Type | Intended identity | Current stability |
 | --- | --- | --- |
@@ -68,6 +68,15 @@ them but must not parse them.
 
 Current connection IDs are transitional and are not persistence UUIDs. A future
 immutable-ID migration is potentially breaking unless aliases preserve lookup.
+
+<!-- api-connection-id: transitional-nickname-hash -->
+
+Clients must not persist current `ConnectionId` values as long-lived external
+references. Before freezing a daemon wire protocol, persistence must assign an
+immutable UUID to every connection. Migration will retain the current
+`protocol + NUL + nickname` hash as a temporary lookup alias, accept both forms
+for a documented compatibility window, and emit UUID-backed IDs after clients
+refresh their connection list.
 
 ## Data conventions
 
@@ -110,8 +119,10 @@ implemented.
 - `get_connection()` returns one current snapshot.
 - In-process events use one monotonically increasing sequence per client,
   starting at zero.
-- Subscribers are invoked synchronously in registration order on the source
-  thread.
+- Events are accepted into one serial FIFO. The first active publisher drains
+  it; concurrent publishers wait, and all subscribers observe sequence order.
+- Re-entrant publication queues behind the current subscriber snapshot without
+  recursively growing the callback stack.
 - The three connection events follow the order in which manager signals reach
   the adapter. They are not persisted or replayed.
 - Session events, terminal output ordering, per-session replay, and cross-client

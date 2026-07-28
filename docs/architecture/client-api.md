@@ -57,7 +57,9 @@ threads and UI results return through GLib.
 `InProcessClient` command methods must run on the thread that constructed the
 client. In GTK that is the main thread. Cross-thread command attempts return a
 structured `invalid_request`. Event registration is thread-safe, while event
-delivery happens on the underlying signal's source thread.
+delivery runs through the first active publisher thread's serial FIFO
+dispatcher. Concurrent publisher threads wait for their accepted event; GTK
+subscribers must still marshal when the dispatcher is not the main thread.
 
 Do not:
 
@@ -119,9 +121,15 @@ Ordinary responses never contain:
 
 sshPilot persistence currently has no immutable connection UUID. Protocol v1
 therefore computes an opaque ID from protocol plus nickname. It is stable across
-reloads while those values are unchanged, but changes on rename. A later
-persistence migration should add immutable UUIDs and document alias resolution
-during transition.
+reloads while those values are unchanged, but changes on rename. Clients must
+not persist it as a long-lived external reference or treat its current format as
+a wire guarantee.
+
+Before the daemon protocol is frozen, persistence must gain an immutable UUID.
+The migration should assign a UUID to each existing record, retain the
+transitional hash as a temporary lookup alias, accept both during one
+compatibility window, and emit only UUID-backed IDs for newly refreshed DTOs.
+Removing transitional aliases requires a later compatibility/changelog entry.
 
 `ConnectionHealth` is separate from `SessionState`. The current
 terminal-derived `ConnectionState` is not converted into reachability;
@@ -140,7 +148,10 @@ terminal-derived `ConnectionState` is not converted into reachability;
 Frontends must switch on error codes, not parse exception strings. Raw
 tracebacks and internal exceptions stay in developer logs. Error details must
 not include passwords, tokens, key material, full environments, sensitive
-arguments or secret paths.
+arguments or secret paths. Runtime validation permits only finite
+JSON-compatible scalar/list/dictionary values with string keys and rejects
+secret-bearing key names, exceptions, arbitrary objects, environments and
+process command lines. Error `repr` excludes details and correlation IDs.
 
 When adding an error code:
 
@@ -163,9 +174,12 @@ Current runtime events:
 Schema-only event types include session creation/state/output/interaction/exit/
 close and core errors.
 
-Subscribers receive current in-process events in registration order. Subscriber
-failure is isolated. `Subscription.unsubscribe()` and `close()` are idempotent.
-The client disconnects manager signal handlers during shutdown.
+Subscribers receive accepted in-process events in publisher-global sequence
+order and subscriber-registration order. The first active publisher drains the
+FIFO; concurrent publishers wait and re-entrant events queue without recursive
+delivery. Subscriber failure is isolated. `Subscription.unsubscribe()` and
+`close()` are idempotent. The client disconnects manager signal handlers during
+shutdown.
 
 Terminal output must not use this simple synchronous publisher. Before terminal
 runtime support, add bounded per-session queues, batching, per-session sequence
@@ -204,6 +218,13 @@ ordering, replay bounds, truncation, and slow-client policy.
 
 GObject signals may feed an adapter, but they are not the cross-frontend
 contract.
+
+The in-process publisher provides one global serial FIFO. The first active
+publisher drains accepted events; concurrent publishers wait for delivery.
+Re-entrant publication queues behind the current event, so callbacks do not
+recursively grow the stack. Subscriber snapshots make unsubscription during
+delivery deterministic, and close rejects new events while accepted events
+finish.
 
 ## Frontend and core access rules
 

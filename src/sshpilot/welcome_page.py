@@ -10,6 +10,7 @@ from gi.repository import Gtk, Adw, Gdk, GLib
 
 from gettext import gettext as _
 
+from .api.errors import SshPilotError
 from .platform_utils import is_macos
 from . import icon_utils
 
@@ -304,7 +305,18 @@ class WelcomePage(Gtk.Overlay):
 
         # Read presentation data through the frontend-neutral client boundary.
         # Activation remains on the existing terminal path in this milestone.
-        connections = self.client.list_connections()
+        read_error = False
+        try:
+            connections = self.client.list_connections()
+        except SshPilotError as error:
+            # Do not render or log the public message/details here. The stable
+            # code is sufficient correlation without backend or connection data.
+            logger.warning(
+                "Welcome connection listing failed with API error code=%s",
+                error.code.value,
+            )
+            connections = []
+            read_error = True
 
         def _last_used(conn):
             try:
@@ -319,8 +331,15 @@ class WelcomePage(Gtk.Overlay):
         ][:4]
 
         if not recent:
-            empty = Gtk.Label(label=self._empty_recent_message(bool(connections)))
+            message = (
+                self._recent_read_error_message()
+                if read_error
+                else self._empty_recent_message(bool(connections))
+            )
+            empty = Gtk.Label(label=message)
             empty.add_css_class('dim-label')
+            if read_error:
+                empty.add_css_class('warning')
             empty.set_wrap(True)
             empty.set_justify(Gtk.Justification.CENTER)
             empty.set_halign(Gtk.Align.CENTER)
@@ -352,6 +371,12 @@ class WelcomePage(Gtk.Overlay):
                 'Double click a host to connect or press + to create a new connection'
             )
         return _('Press + to create a new connection')
+
+    @staticmethod
+    def _recent_read_error_message() -> str:
+        """Safe, non-blocking fallback when the API cannot load connections."""
+
+        return _('Recent connections are temporarily unavailable')
 
     def _populate_pinned_box(self):
         """Fill the Pinned section (rows, styled like Recent) below the list."""

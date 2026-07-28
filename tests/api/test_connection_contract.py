@@ -79,3 +79,15 @@ def test_existing_connection_id_is_stable_across_equivalent_reload(
 
     assert client.list_connections()[0].id == first_id
 
+
+def test_transitional_connection_id_changes_when_nickname_changes(
+    fake_manager,
+    fake_connection,
+    client_factory,
+):
+    client = client_factory(fake_manager)
+    first_id = client.list_connections()[0].id
+
+    fake_connection.nickname = "renamed"
+
+    assert client.list_connections()[0].id != first_id

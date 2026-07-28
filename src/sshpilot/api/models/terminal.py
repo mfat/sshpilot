@@ -40,7 +40,7 @@ class TerminalInput:
 class TerminalOutput:
     session_id: SessionId
     sequence: int
-    data: bytes
+    data: bytes = field(repr=False)
     created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
@@ -94,7 +94,7 @@ class ReplayBounds:
 @dataclass(frozen=True)
 class ReplayResult:
     session_id: SessionId
-    data: bytes
+    data: bytes = field(repr=False)
     first_sequence: int
     next_sequence: int
     bounds: ReplayBounds

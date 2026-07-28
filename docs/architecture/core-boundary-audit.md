@@ -170,16 +170,21 @@ frontend-neutral publisher.
   current GObject manager ownership and is enforced with a structured
   `invalid_request` error.
 - Connection-manager GObject signals are adapted into `CoreEvent` records.
-  Delivery runs on the source signal thread. Today, relevant manager signals
-  normally originate on or are marshalled to GTK's main thread.
+  Delivery uses a publisher-global serial FIFO. The first active publisher
+  becomes its dispatcher; concurrent publisher calls wait and may receive
+  callbacks on that dispatcher thread. Today, relevant manager signals normally
+  originate on or are marshalled to GTK's main thread.
 - Subscribers are invoked in registration order. One failing subscriber is
   logged and does not block later subscribers.
+- Re-entrant publication is queued behind the current subscriber snapshot and
+  does not recurse.
 - `Subscription.unsubscribe()` is idempotent and thread-safe.
 - `InProcessClient.close()` disconnects manager signal handlers and closes all
   subscriptions. The window calls it only when close is actually accepted.
 - There is no per-call event loop, `asyncio.run()`, or GTK wait on a future.
-- Slow subscribers currently block subsequent subscribers. This is acceptable
-  for the small connection event foundation; subscribers must return quickly.
+- Slow subscribers currently delay subsequent subscribers and events without
+  changing order. This is acceptable for the small connection event foundation;
+  subscribers must return quickly.
   A daemon transport will need bounded outbound queues and explicit slow-client
   policy.
 

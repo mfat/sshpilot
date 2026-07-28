@@ -1,5 +1,71 @@
 {
   "api_implementation_version": "0.1",
+  "client_method_contract": {
+    "attach_session": {
+      "capability": "terminal.attach",
+      "status": "schema-only"
+    },
+    "close": {
+      "capability": null,
+      "status": "implemented"
+    },
+    "close_session": {
+      "capability": "terminal",
+      "status": "schema-only"
+    },
+    "create_connection": {
+      "capability": "connections.write",
+      "status": "schema-only"
+    },
+    "delete_connection": {
+      "capability": "connections.write",
+      "status": "schema-only"
+    },
+    "detach_session": {
+      "capability": "terminal.attach",
+      "status": "schema-only"
+    },
+    "get_capabilities": {
+      "capability": null,
+      "status": "implemented"
+    },
+    "get_connection": {
+      "capability": "connections.read",
+      "status": "implemented"
+    },
+    "list_connections": {
+      "capability": "connections.read",
+      "status": "implemented"
+    },
+    "open_session": {
+      "capability": "terminal",
+      "status": "schema-only"
+    },
+    "replay_terminal": {
+      "capability": "terminal.replay",
+      "status": "schema-only"
+    },
+    "resize_terminal": {
+      "capability": "terminal",
+      "status": "schema-only"
+    },
+    "respond_to_interaction": {
+      "capability": "interactions",
+      "status": "schema-only"
+    },
+    "send_terminal_input": {
+      "capability": "terminal",
+      "status": "schema-only"
+    },
+    "subscribe_events": {
+      "capability": null,
+      "status": "implemented"
+    },
+    "update_connection": {
+      "capability": "connections.write",
+      "status": "schema-only"
+    }
+  },
   "enums": {
     "AuthenticationMethod": [
       "key",
@@ -548,7 +614,7 @@
           "default": null,
           "name": "payload",
           "required": true,
-          "sensitive": false,
+          "sensitive": true,
           "type": "PayloadT"
         },
         {

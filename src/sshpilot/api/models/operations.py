@@ -107,4 +107,4 @@ class PluginOperationRequest:
 class PluginOperationResult:
     request_id: RequestId
     plugin_id: str
-    values: Tuple[Tuple[str, str], ...] = ()
+    values: Tuple[Tuple[str, str], ...] = field(default=(), repr=False)

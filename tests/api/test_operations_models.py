@@ -8,6 +8,7 @@ from sshpilot.api.models.operations import (
     ListDirectoryRequest,
     PluginArgument,
     PluginOperationRequest,
+    PluginOperationResult,
     PortForwardSummary,
     SftpEntry,
 )
@@ -51,3 +52,13 @@ def test_plugin_operation_has_explicit_public_arguments():
 
     assert request.arguments[0].value == "true"
     assert "true" not in repr(request.arguments[0])
+
+
+def test_plugin_result_values_are_excluded_from_repr():
+    result = PluginOperationResult(
+        request_id=RequestId("request-1"),
+        plugin_id="example.plugin",
+        values=(("token", "potentially-sensitive-result"),),
+    )
+
+    assert "potentially-sensitive-result" not in repr(result)

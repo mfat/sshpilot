@@ -7,7 +7,18 @@ notes remain separate.
 
 ### Added
 
+- Added the schema-only `replay_terminal` client operation and complete
+  package-level convenience exports for all documented model types.
+- Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
+
 ### Changed
+
+- Defined publisher-global serial FIFO event delivery, including concurrent,
+  re-entrant, unsubscription, and shutdown behaviour.
+- Marked nickname-derived connection IDs as explicitly transitional with a
+  UUID-and-alias migration plan required before wire-protocol freeze.
+- The GTK welcome page now keeps a non-blocking safe fallback visible when a
+  structured connection-read error occurs.
 
 ### Deprecated
 
@@ -16,6 +27,13 @@ notes remain separate.
 ### Fixed
 
 ### Security
+
+- Excluded terminal output bytes, replay bytes, and plugin operation result
+  values from dataclass `repr`; drift tests now enforce this for every field
+  classified sensitive.
+- Event payloads are now bound to approved public payload types and excluded
+  from event `repr`; structured error details accept only validated safe values
+  and exclude details from error `repr`.
 
 ## Protocol v1 — Initial documented baseline
 

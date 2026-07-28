@@ -11,6 +11,11 @@ the same structural data.
 “Schema only” means the model can be constructed and validated but no current
 `SshPilotClient` runtime operation produces or consumes it.
 
+All documented DTOs, enums, and opaque ID aliases from the model submodules are
+convenience exports from `sshpilot.api.models`. Consumers may import specialised
+types from their defining module, but the package-level export is the complete
+documented model surface.
+
 ## Identifier types
 
 | Type | Purpose | Required form | Runtime status |
@@ -48,7 +53,7 @@ must be non-negative. Timestamps default to aware UTC values.
 | `ConnectionDetails` | Expanded safe connection metadata | Implemented | `get_connection`; future writes |
 | `CreateConnectionRequest` | Minimal create input | Schema only | Unsupported `create_connection` |
 | `UpdateConnectionRequest` | Optional update fields | Schema only | Unsupported `update_connection` |
-| `DeleteConnectionRequest` | Request-form deletion ID | Schema only and not used by current method signature | Current method takes `ConnectionId` directly |
+| `DeleteConnectionRequest` | Request-form deletion ID | Schema only | Unsupported `delete_connection` |
 | `DeleteConnectionResult` | Deletion acknowledgement | Schema only | Unsupported `delete_connection` |
 | `ConnectionValidationError` | Field/code/message validation item | Schema only | Future writes |
 | `ConnectionValidationResult` | Valid flag plus validation items | Schema only | Future validation |
@@ -95,9 +100,9 @@ runtime currently implements it.
 | `TerminalInput` | Attachment-scoped input bytes | Schema only |
 | `TerminalOutput` | Sequenced session output bytes | Schema only |
 | `ResizeTerminalRequest` | Attachment-scoped dimension update | Schema only |
-| `ReplayRequest` | Retained-byte query after a sequence | Schema only; no client method |
+| `ReplayRequest` | Retained-byte query after a sequence | Schema-only `replay_terminal` request |
 | `ReplayBounds` | Retained sequence/byte range | Schema only |
-| `ReplayResult` | Replay bytes and continuation metadata | Schema only |
+| `ReplayResult` | Replay bytes and continuation metadata | Schema-only `replay_terminal` result |
 
 Rows and columns must be 1–10,000. Input/output/replay data must be `bytes`.
 Sequences are non-negative; replay bounds are ordered; retained bytes are
@@ -135,8 +140,9 @@ logging, persistence, and event-history exposure.
 Transfer byte counts and optional totals are non-negative. SFTP names/paths are
 non-empty and sizes non-negative. Forward ports are 1–65535. Plugin IDs,
 operation names, request IDs, and argument names are non-empty.
-`PluginArgument.value` is excluded from `repr`; plugin result values are
-classified potentially sensitive because result semantics are plugin-defined.
+`PluginArgument.value` and `PluginOperationResult.values` are excluded from
+`repr`; plugin result values are classified potentially sensitive because
+result semantics are plugin-defined.
 
 ## Public enums
 

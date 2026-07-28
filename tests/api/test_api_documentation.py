@@ -1,3 +1,4 @@
+import importlib.util
 import re
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from sshpilot.api.client import SshPilotClient
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs" / "api"
+GENERATOR_PATH = ROOT / "scripts" / "generate_api_artifacts.py"
 
 
 def _read(name):
@@ -15,6 +17,14 @@ def _read(name):
 
 def _markers(text, kind):
     return set(re.findall(rf"<!-- api-{kind}: ([^ ]+)(?: [^>]*)? -->", text))
+
+
+def _load_generator():
+    spec = importlib.util.spec_from_file_location("generate_api_artifacts", GENERATOR_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_every_public_client_method_is_documented():
@@ -62,6 +72,32 @@ def test_runtime_capability_markers_match_the_provider(
     assert client.get_connection(client.list_connections()[0].id)
 
 
+def test_structured_method_status_markers_match_runtime_metadata():
+    generator = _load_generator()
+    text = _read("methods.md")
+    marker_pattern = re.compile(
+        r"<!-- api-method-contract: ([^ ]+) "
+        r"status=([^ ]+) capability=([^ ]+) -->"
+    )
+    documented = {
+        name: {
+            "status": status,
+            "capability": None if capability == "none" else capability,
+        }
+        for name, status, capability in marker_pattern.findall(text)
+    }
+
+    assert documented == generator.client_method_contract()
+
+
+def test_event_and_transitional_id_semantics_have_stable_markers():
+    assert "<!-- api-event-semantics: serial-fifo-v1 -->" in _read("events.md")
+    assert (
+        "<!-- api-connection-id: transitional-nickname-hash -->"
+        in _read("protocol-v1.md")
+    )
+
+
 def test_schema_only_capabilities_are_not_advertised(fake_manager, client_factory):
     client = client_factory(fake_manager)
 
@@ -103,6 +139,23 @@ def test_generated_examples_do_not_contain_live_or_test_secret_data():
     ):
         assert forbidden not in generated
     assert "<sensitive value omitted>" in generated
+
+
+def test_every_documented_sensitive_field_is_excluded_from_repr():
+    import dataclasses
+
+    generator = _load_generator()
+    models = {model.__name__: model for model in generator.public_models()}
+    schema = generator.build_schema()
+
+    for model_name, model_schema in schema["models"].items():
+        fields = {field.name: field for field in dataclasses.fields(models[model_name])}
+        for field_schema in model_schema["fields"]:
+            if field_schema["sensitive"]:
+                assert fields[field_schema["name"]].repr is False, (
+                    f"{model_name}.{field_schema['name']} is documented as sensitive "
+                    "but is included in repr"
+                )
 
 
 def test_api_relative_markdown_links_resolve():

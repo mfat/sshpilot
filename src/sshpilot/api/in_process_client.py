@@ -22,6 +22,7 @@ from .models.connections import (
     ConnectionHealth,
     ConnectionSummary,
     CreateConnectionRequest,
+    DeleteConnectionRequest,
     DeleteConnectionResult,
     GroupReference,
     UpdateConnectionRequest,
@@ -35,10 +36,37 @@ from .models.sessions import (
     OpenSessionRequest,
     SessionSummary,
 )
-from .models.terminal import ResizeTerminalRequest, TerminalInput
+from .models.terminal import (
+    ReplayRequest,
+    ReplayResult,
+    ResizeTerminalRequest,
+    TerminalInput,
+)
 from .version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 
 logger = logging.getLogger(__name__)
+
+IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
+    "close": None,
+    "get_capabilities": None,
+    "get_connection": Capability.CONNECTIONS_READ,
+    "list_connections": Capability.CONNECTIONS_READ,
+    "subscribe_events": None,
+}
+
+UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
+    "attach_session": Capability.TERMINAL_ATTACH,
+    "close_session": Capability.TERMINAL,
+    "create_connection": Capability.CONNECTIONS_WRITE,
+    "delete_connection": Capability.CONNECTIONS_WRITE,
+    "detach_session": Capability.TERMINAL_ATTACH,
+    "open_session": Capability.TERMINAL,
+    "replay_terminal": Capability.TERMINAL_REPLAY,
+    "resize_terminal": Capability.TERMINAL,
+    "respond_to_interaction": Capability.INTERACTIONS,
+    "send_terminal_input": Capability.TERMINAL,
+    "update_connection": Capability.CONNECTIONS_WRITE,
+}
 
 
 class InProcessClient:
@@ -46,8 +74,9 @@ class InProcessClient:
 
     Command methods must be invoked on the thread that constructed the adapter,
     matching the current GObject manager's GTK-main-thread ownership. Event
-    subscription itself is thread-safe; events are delivered synchronously on
-    the thread that emitted the underlying manager signal.
+    subscription itself is thread-safe. The first active publisher thread
+    serially drains concurrent/re-entrant events, so callbacks must marshal when
+    that dispatcher is unsuitable for their frontend.
     """
 
     def __init__(
@@ -103,7 +132,7 @@ class InProcessClient:
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
         del request
-        raise unsupported_capability(Capability.CONNECTIONS_WRITE)
+        raise self._unsupported("create_connection")
 
     def update_connection(
         self,
@@ -111,44 +140,55 @@ class InProcessClient:
         request: UpdateConnectionRequest,
     ) -> ConnectionDetails:
         del connection_id, request
-        raise unsupported_capability(Capability.CONNECTIONS_WRITE)
+        raise self._unsupported("update_connection")
 
-    def delete_connection(self, connection_id: ConnectionId) -> DeleteConnectionResult:
-        del connection_id
-        raise unsupported_capability(Capability.CONNECTIONS_WRITE)
+    def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
+        del request
+        raise self._unsupported("delete_connection")
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
         del request
-        raise unsupported_capability(Capability.TERMINAL)
+        raise self._unsupported("open_session")
 
     def attach_session(self, request: AttachSessionRequest) -> AttachSessionResult:
         del request
-        raise unsupported_capability(Capability.TERMINAL_ATTACH)
+        raise self._unsupported("attach_session")
 
     def detach_session(self, request: DetachSessionRequest) -> None:
         del request
-        raise unsupported_capability(Capability.TERMINAL_ATTACH)
+        raise self._unsupported("detach_session")
 
     def close_session(self, request: CloseSessionRequest) -> None:
         del request
-        raise unsupported_capability(Capability.TERMINAL)
+        raise self._unsupported("close_session")
 
     def send_terminal_input(self, request: TerminalInput) -> None:
         del request
-        raise unsupported_capability(Capability.TERMINAL)
+        raise self._unsupported("send_terminal_input")
 
     def resize_terminal(self, request: ResizeTerminalRequest) -> None:
         del request
-        raise unsupported_capability(Capability.TERMINAL)
+        raise self._unsupported("resize_terminal")
+
+    def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
+        del request
+        raise self._unsupported("replay_terminal")
 
     def respond_to_interaction(self, response: InteractionResponse) -> None:
         del response
-        raise unsupported_capability(Capability.INTERACTIONS)
+        raise self._unsupported("respond_to_interaction")
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         if self._closed:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "The client is closed")
-        return self._publisher.subscribe(callback)
+        try:
+            return self._publisher.subscribe(callback)
+        except RuntimeError:
+            # A concurrent close may win after the optimistic lifecycle check.
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "The client is closed",
+            ) from None
 
     def close(self) -> None:
         if self._closed:
@@ -191,6 +231,12 @@ class InProcessClient:
                 ErrorCode.INVALID_REQUEST,
                 "In-process client commands must run on their owner thread",
             )
+
+    @staticmethod
+    def _unsupported(method_name: str) -> SshPilotError:
+        return unsupported_capability(
+            UNSUPPORTED_CLIENT_METHOD_CAPABILITIES[method_name]
+        )
 
     def _manager_connections(self) -> List[Any]:
         getter = getattr(self._connection_manager, "get_connections", None)

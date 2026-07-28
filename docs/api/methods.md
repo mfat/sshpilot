@@ -20,9 +20,27 @@ only to raise the documented `unsupported_capability` error.
 | `close_session` | Unsupported | `terminal` |
 | `send_terminal_input` | Unsupported | `terminal` |
 | `resize_terminal` | Unsupported | `terminal` |
+| `replay_terminal` | Schema only / unsupported | `terminal.replay` |
 | `respond_to_interaction` | Unsupported | `interactions` |
 | `subscribe_events` | Implemented | Bootstrap; event availability follows capabilities |
 | `close` | Implemented | None |
+
+<!-- api-method-contract: attach_session status=schema-only capability=terminal.attach -->
+<!-- api-method-contract: close status=implemented capability=none -->
+<!-- api-method-contract: close_session status=schema-only capability=terminal -->
+<!-- api-method-contract: create_connection status=schema-only capability=connections.write -->
+<!-- api-method-contract: delete_connection status=schema-only capability=connections.write -->
+<!-- api-method-contract: detach_session status=schema-only capability=terminal.attach -->
+<!-- api-method-contract: get_capabilities status=implemented capability=none -->
+<!-- api-method-contract: get_connection status=implemented capability=connections.read -->
+<!-- api-method-contract: list_connections status=implemented capability=connections.read -->
+<!-- api-method-contract: open_session status=schema-only capability=terminal -->
+<!-- api-method-contract: replay_terminal status=schema-only capability=terminal.replay -->
+<!-- api-method-contract: resize_terminal status=schema-only capability=terminal -->
+<!-- api-method-contract: respond_to_interaction status=schema-only capability=interactions -->
+<!-- api-method-contract: send_terminal_input status=schema-only capability=terminal -->
+<!-- api-method-contract: subscribe_events status=implemented capability=none -->
+<!-- api-method-contract: update_connection status=schema-only capability=connections.write -->
 
 <!-- api-method: get_capabilities -->
 ## `get_capabilities`
@@ -137,7 +155,7 @@ client.update_connection(
 - **Status / introduced:** Unsupported / Protocol v1 schema
 - **Capability / purpose:** `connections.write`; intended saved-connection
   deletion.
-- **Parameters / return:** `connection_id`; intended return is
+- **Parameters / return:** `DeleteConnectionRequest`; intended return is
   `DeleteConnectionResult`.
 - **Errors:** Always `unsupported_capability` for `connections.write`.
 - **Events:** Intended `connection.deleted`; none emitted by this call now.
@@ -146,7 +164,7 @@ client.update_connection(
   cleanup separately and must not silently delete secrets in unrelated stores.
 
 ```python
-client.delete_connection(connection_id)
+client.delete_connection(DeleteConnectionRequest(connection_id))
 ```
 
 <!-- api-method: open_session -->
@@ -248,6 +266,24 @@ client.resize_terminal(
 )
 ```
 
+<!-- api-method: replay_terminal -->
+## `replay_terminal`
+
+- **Status / introduced:** Schema only and unsupported / Protocol v1 schema
+- **Capability / purpose:** `terminal.replay`; intended bounded replay of
+  retained terminal output after an optional sequence.
+- **Parameters / return:** `ReplayRequest`; intended return is `ReplayResult`.
+- **Errors:** Always `unsupported_capability` for `terminal.replay`.
+- **Events:** None. Replay does not substitute for live `session.output`.
+- **Cancellation / ordering / threading:** Immediate unsupported failure.
+- **Side effects / security:** No bytes are read. Future implementations must
+  preserve bytes, bounds, and truncation metadata and must never log replay
+  content.
+
+```python
+client.replay_terminal(ReplayRequest(session_id, after_sequence=42))
+```
+
 <!-- api-method: respond_to_interaction -->
 ## `respond_to_interaction`
 
@@ -281,9 +317,11 @@ client.respond_to_interaction(response)
   raises Python `TypeError`.
 - **Events:** Current provider emits only the three connection events.
 - **Cancellation / ordering:** `unsubscribe()`/`close()` is the cancellation
-  mechanism and is idempotent. Callbacks run in registration order.
-- **Threading:** Registration is thread-safe. Delivery is synchronous on the
-  underlying signal's source thread.
+  mechanism and is idempotent. Callbacks run in registration order through a
+  publisher-global serial FIFO.
+- **Threading:** Registration is thread-safe. The first active publisher drains
+  accepted events; a concurrent publisher waits, and its callbacks can run on
+  that dispatcher thread. Re-entrant events queue without recursion.
 - **Side effects / security:** Retains the callback until unsubscribe or client
   close. Subscriber exceptions are logged and isolated from other subscribers.
 

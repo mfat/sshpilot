@@ -16,7 +16,7 @@ capabilities and handle `unsupported_capability`.
 | `connections.write` | Create, update, and delete saved connections | Unsupported | `create_connection`, `update_connection`, `delete_connection` | Intended `connection.*` | Persistence/validation service | v1 |
 | `terminal` | Open/close sessions and send input/resize | Unsupported | Session and terminal methods | Intended session lifecycle/output | Core session, PTY, process, SSH/auth services | v1 |
 | `terminal.attach` | Attach/detach clients and assign input ownership | Unsupported | `attach_session`, `detach_session` | No dedicated event currently defined | Runtime session service | v1 |
-| `terminal.replay` | Replay retained terminal bytes | Schema only; no client method | None; `ReplayRequest`/`ReplayResult` exist | `session.output` is schema only | Bounded per-session replay buffer | v1 |
+| `terminal.replay` | Replay retained terminal bytes | Unsupported schema-only method | `replay_terminal` with `ReplayRequest`/`ReplayResult` | `session.output` is schema only | Bounded per-session replay buffer | v1 |
 | `interactions` | Present and answer core-requested user interactions | Unsupported | `respond_to_interaction` | `session.interaction_requested` | Interaction broker and secret-safe frontend bridge | v1 |
 | `sftp` | Frontend-neutral remote file operations | Schema only; no client method | None | None defined | Core OpenSSH SFTP service | v1 |
 | `port_forwarding` | Manage runtime forwards | Schema only; no client method | None | None defined | Session/forward lifecycle service | v1 |
@@ -57,9 +57,10 @@ session service owns them.
 <!-- api-capability: terminal.replay -->
 ## `terminal.replay`
 
-Schema only. Replay request/result models define bounds and byte preservation,
-but `SshPilotClient` currently declares no replay method. This missing method is
-recorded in the [implementation audit](implementation-audit.md).
+Schema-only and not advertised. `SshPilotClient.replay_terminal` accepts
+`ReplayRequest` and returns `ReplayResult` in the future wire contract; the
+current provider always returns `unsupported_capability` for
+`terminal.replay`.
 
 <!-- api-capability: interactions -->
 ## `interactions`

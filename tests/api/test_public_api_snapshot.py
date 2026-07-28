@@ -42,3 +42,43 @@ def test_generated_api_artifacts_are_current():
         + ". Review compatibility and docs/api/CHANGELOG.md, then run "
         "`python3 scripts/generate_api_artifacts.py`."
     )
+
+
+def test_all_documented_model_types_are_convenience_exports():
+    generator = _load_generator()
+    model_exports = set(generator.MODEL_EXPORTS)
+    module_model_names = {
+        model.__name__
+        for model in generator.public_models()
+        if model not in generator.EXTRA_MODELS
+    }
+    module_enum_names = {
+        enum_type.__name__
+        for enum_type in generator.public_enums()
+        if enum_type not in generator.EXTRA_ENUMS
+    }
+
+    assert module_model_names | module_enum_names <= model_exports
+
+
+def test_snapshot_records_pre_wire_client_signature_shapes():
+    generator = _load_generator()
+    signatures = generator.client_signatures()
+
+    assert signatures["delete_connection"]["parameters"] == [
+        {
+            "name": "request",
+            "kind": "positional_or_keyword",
+            "type": "DeleteConnectionRequest",
+        }
+    ]
+    assert signatures["replay_terminal"] == {
+        "parameters": [
+            {
+                "name": "request",
+                "kind": "positional_or_keyword",
+                "type": "ReplayRequest",
+            }
+        ],
+        "return": "ReplayResult",
+    }

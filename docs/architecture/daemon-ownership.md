@@ -134,6 +134,11 @@ not the canonical domain contract.
   environment variables and internal source paths.
 - Current connection IDs are transitional opaque hashes of protocol and
   nickname. They change on rename because persistence has no immutable UUID.
+- **Pre-wire backlog:** add a persisted immutable connection UUID before the
+  daemon protocol freezes. Migrate existing records by assigning UUIDs, keep
+  the nickname-hash ID as a temporary lookup alias, and remove aliases only
+  after a documented compatibility window. Clients must not persist the
+  transitional IDs as long-lived references.
 - Expected failures use stable `ErrorCode` values. Unexpected exceptions are
   logged internally and become safe `internal_error` responses.
 
@@ -142,10 +147,14 @@ not the canonical domain contract.
 - `InProcessClient` adapts existing `connection-added`,
   `connection-updated`, and `connection-removed` GObject signals.
 - Events have a process-local monotonically increasing sequence.
-- Delivery is synchronous, in subscriber-registration order, on the source
-  signal thread.
+- Delivery uses a publisher-global serial FIFO in sequence order. The first
+  active publisher drains the queue; concurrent publishers wait and their
+  callbacks may run on that dispatcher thread.
+- Re-entrant publication queues behind the current subscriber snapshot and
+  does not recurse.
 - Subscriber exceptions are isolated and logged.
-- Unsubscribe and close are idempotent; client close removes manager handlers.
+- Unsubscribe and close are idempotent; client close removes manager handlers,
+  rejects new events, and lets already accepted events finish.
 - Delivery is not durable and slow subscribers block later subscribers. This
   limitation must change before terminal streams or daemon delivery.
 

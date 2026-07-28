@@ -371,7 +371,7 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `type` | `EventType` | Yes | — | No |
-| `payload` | `PayloadT` | Yes | — | No |
+| `payload` | `PayloadT` | Yes | — | Yes |
 | `sequence` | `int` | Yes | — | No |
 | `timestamp` | `datetime` | No | `<UTC timestamp at creation>` | No |
 | `request_id` | `RequestId | None` | No | `null` | No |
@@ -383,7 +383,7 @@ Synthetic representation:
 ```json
 {
   "connection_id": null,
-  "payload": {},
+  "payload": "<sensitive value omitted>",
   "request_id": null,
   "sequence": 0,
   "session_id": null,
@@ -907,7 +907,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** ReplayRequest(session_id: sshpilot.api.models.common.SessionId, after_sequence: int | None = None, max_bytes: int = 1048576)
 
-**Related methods:** None
+**Related methods:** `replay_terminal`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -933,7 +933,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** ReplayResult(session_id: sshpilot.api.models.common.SessionId, data: bytes, first_sequence: int, next_sequence: int, bounds: sshpilot.api.models.terminal.ReplayBounds, truncated: bool = False)
 
-**Related methods:** None
+**Related methods:** `replay_terminal`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |

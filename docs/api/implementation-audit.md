@@ -111,11 +111,11 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | `CloseSessionRequest` | same | No | `terminal` | Snapshot only | Yes | Schema only |
 | `TerminalDimensions` | `models/terminal.py` | No | `terminal` | Validation + snapshot | Yes | 1–10,000 |
 | `TerminalInput` | same | No | `terminal` | Bytes/repr + snapshot | Yes | `data` excluded from repr |
-| `TerminalOutput` | same | No | `terminal` | Bytes + snapshot | Yes | `data` currently appears in repr |
+| `TerminalOutput` | same | No | `terminal` | Bytes/repr + snapshot | Yes | `data` excluded from repr |
 | `ResizeTerminalRequest` | same | No | `terminal` | Snapshot only | Yes | Schema only |
-| `ReplayRequest` | same | No | `terminal.replay` | Validation + snapshot | Yes | No client method |
+| `ReplayRequest` | same | No | `terminal.replay` | Validation + snapshot | Yes | Unsupported `replay_terminal` |
 | `ReplayBounds` | same | No | `terminal.replay` | Validation + snapshot | Yes | Bounds validation |
-| `ReplayResult` | same | No | `terminal.replay` | Snapshot only | Yes | Bytes currently appear in repr |
+| `ReplayResult` | same | No | `terminal.replay` | Repr + snapshot | Yes | Bytes excluded from repr |
 | `InteractionRequest` | `models/interactions.py` | No | `interactions` | Validation + snapshot | Yes | Requests must start pending |
 | `InteractionResponse` | same | No | `interactions` | Validation/repr + snapshot | Yes | Secret value excluded from repr |
 | `InteractionCancellation` | same | No | `interactions` | Snapshot only | Yes | ID not validated |
@@ -127,7 +127,7 @@ All field lists, defaults, types, and synthetic examples are documented in the
 | `PortForwardSummary` | same | No | `port_forwarding` | Validation + snapshot | Yes | ID is plain `str`, unlike other ID aliases |
 | `PluginArgument` | same | No | `plugins` | Repr + snapshot | Yes | Value excluded from repr |
 | `PluginOperationRequest` | same | No | `plugins` | Validation + snapshot | Yes | No client method |
-| `PluginOperationResult` | same | No | `plugins` | Snapshot only | Yes | Values may be sensitive and appear in repr |
+| `PluginOperationResult` | same | No | `plugins` | Repr + snapshot | Yes | Potentially sensitive values excluded from repr |
 
 ## Public enums and state models
 
@@ -169,30 +169,17 @@ API, but terminal execution and most of the core remain GTK/GObject-coupled.
 
 ## Objective inconsistencies and gaps
 
-1. `terminal.replay` and replay models exist, but `SshPilotClient` has no replay
-   method.
-2. `sftp`, `port_forwarding`, `plugins`, and `secrets` have capability names
+1. `sftp`, `port_forwarding`, `plugins`, and `secrets` have capability names
    but no client methods; some have models and none has API events.
-3. `DeleteConnectionRequest` exists while `delete_connection` takes a
-   `ConnectionId` directly.
-4. Several public submodule models are omitted from
-   `sshpilot.api.models.__all__`, including session request/results, replay
-   models, and interaction terminal records. They remain importable from their
-   defining modules but have inconsistent convenience exports.
-5. Schema-only event payload types are not statically coupled to `EventType`;
-   several payload shapes remain unspecified.
-6. No wire serialization utility exists, so unknown-field, unknown-enum, null
+2. No wire serialization utility exists, so unknown-field, unknown-enum, null
    versus absence, and timestamp encoding behaviour are not executable.
-7. Connection IDs change on rename and are not persisted UUIDs.
-8. `TerminalOutput.data`, `ReplayResult.data`, and
-   `PluginOperationResult.values` appear in dataclass `repr` despite potentially
-   sensitive content. Documentation classifies them as sensitive; runtime
-   hardening remains backlog.
-9. Some schema records do not validate their opaque IDs consistently.
-10. Behavioural contract coverage is intentionally thin for schema-only models,
+3. Connection IDs change on rename and are not persisted UUIDs. They are
+   explicitly transitional and have a documented UUID/alias migration backlog.
+4. Some schema records do not validate their opaque IDs consistently.
+5. Behavioural contract coverage is intentionally thin for schema-only models,
     proposed errors, and state transitions. The snapshot protects shape, not
     semantics.
-11. The API contract is GTK-free, but `InProcessClient` wraps
+6. The API contract is GTK-free, but `InProcessClient` wraps
     `ConnectionManager`, which is a GObject/GLib component. The core is not yet
     GTK-free.
 

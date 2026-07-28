@@ -8,6 +8,7 @@ from .models.connections import (
     ConnectionDetails,
     ConnectionSummary,
     CreateConnectionRequest,
+    DeleteConnectionRequest,
     DeleteConnectionResult,
     UpdateConnectionRequest,
 )
@@ -20,7 +21,12 @@ from .models.sessions import (
     OpenSessionRequest,
     SessionSummary,
 )
-from .models.terminal import ResizeTerminalRequest, TerminalInput
+from .models.terminal import (
+    ReplayRequest,
+    ReplayResult,
+    ResizeTerminalRequest,
+    TerminalInput,
+)
 from .models.common import ConnectionId
 
 
@@ -46,7 +52,7 @@ class SshPilotClient(Protocol):
     ) -> ConnectionDetails:
         ...
 
-    def delete_connection(self, connection_id: ConnectionId) -> DeleteConnectionResult:
+    def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
         ...
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
@@ -67,6 +73,9 @@ class SshPilotClient(Protocol):
     def resize_terminal(self, request: ResizeTerminalRequest) -> None:
         ...
 
+    def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
+        ...
+
     def respond_to_interaction(self, response: InteractionResponse) -> None:
         ...
 
@@ -75,4 +84,3 @@ class SshPilotClient(Protocol):
 
     def close(self) -> None:
         ...
-
