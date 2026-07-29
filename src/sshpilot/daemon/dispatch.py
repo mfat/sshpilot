@@ -11,6 +11,7 @@ from sshpilot import __version__ as sshpilot_version
 from sshpilot.api.capabilities import Capabilities, Capability
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.interaction_identity import interaction_uuid_from_id
 from sshpilot.api.models.common import (
     ClientId,
     ClientInfo,
@@ -18,6 +19,7 @@ from sshpilot.api.models.common import (
     ConnectionId,
     CoreInfo,
     SessionId,
+    InteractionId,
 )
 from sshpilot.api.transport.codec import (
     attach_session_request_from_wire,
@@ -32,6 +34,9 @@ from sshpilot.api.transport.codec import (
     detach_session_request_from_wire,
     handshake_request_from_wire,
     handshake_result_to_wire,
+    interaction_claim_to_wire,
+    interaction_decision_from_wire,
+    interaction_summary_to_wire,
     open_session_request_from_wire,
     replay_request_from_wire,
     replay_result_to_wire,
@@ -42,6 +47,7 @@ from sshpilot.api.transport.codec import (
 from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, RequestEnvelope
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
+from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.session_runtime import SessionRuntime
 from sshpilot.daemon.terminal_stream import ReplaySlice
 
@@ -53,6 +59,12 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.create": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
+    "interactions.cancel": Capability.INTERACTIONS_RESPOND,
+    "interactions.claim": Capability.INTERACTIONS_RESPOND,
+    "interactions.get": Capability.INTERACTIONS_READ,
+    "interactions.list": Capability.INTERACTIONS_READ,
+    "interactions.release": Capability.INTERACTIONS_RESPOND,
+    "interactions.respond": Capability.INTERACTIONS_RESPOND,
     "sessions.list": Capability.SESSIONS_READ,
     "sessions.get": Capability.SESSIONS_READ,
     "sessions.open": Capability.SESSIONS_WRITE,
@@ -117,9 +129,11 @@ class RequestDispatcher:
         self,
         core_client: SshPilotClient,
         session_runtime: Optional[SessionRuntime] = None,
+        interaction_broker: Optional[InteractionBroker] = None,
     ) -> None:
         self._core_client = core_client
         self._session_runtime = session_runtime or SessionRuntime(core_client)
+        self._interaction_broker = interaction_broker
         self.server_instance_id = uuid.uuid4().hex
         self._shutting_down = False
         self.HANDLERS: Dict[str, Callable[[RequestEnvelope, ClientProtocolState], Any]] = {
@@ -130,6 +144,12 @@ class RequestDispatcher:
             "connections.create": self._handle_create_connection,
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
+            "interactions.list": self._handle_list_interactions,
+            "interactions.get": self._handle_get_interaction,
+            "interactions.claim": self._handle_claim_interaction,
+            "interactions.release": self._handle_release_interaction,
+            "interactions.respond": self._handle_respond_to_interaction,
+            "interactions.cancel": self._handle_cancel_interaction,
             "sessions.list": self._handle_list_sessions,
             "sessions.get": self._handle_get_session,
             "sessions.open": self._handle_open_session,
@@ -249,7 +269,17 @@ class RequestDispatcher:
             daemon_version=sshpilot_version,
             core_version=core_capabilities.core.version,
             selected_protocol_version=PROTOCOL_VERSION,
-            daemon_capabilities=self._safe_capabilities(core_capabilities.supported),
+            daemon_capabilities=self._safe_capabilities(
+                core_capabilities.supported,
+                terminal_frames=(
+                    "binary-terminal-v1" in metadata.supported_frame_types
+                    and self._session_runtime.terminal_supported
+                ),
+                secret_frames=(
+                    self._interaction_broker is not None
+                    and "binary-secret-v1" in metadata.supported_frame_types
+                ),
+            ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
         )
@@ -350,6 +380,85 @@ class RequestDispatcher:
             session_summary_to_wire(item)
             for item in self._session_runtime.list_sessions()
         ]
+
+    def _handle_list_interactions(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> list:
+        self._require_empty_params(request)
+        broker = self._required_interaction_broker()
+        return [
+            interaction_summary_to_wire(item)
+            for item in broker.list(self._required_client_id(state))
+        ]
+
+    def _handle_get_interaction(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> dict:
+        interaction_id = self._interaction_id_param(request)
+        return interaction_summary_to_wire(
+            self._required_interaction_broker().get(
+                interaction_id,
+                self._required_client_id(state),
+            )
+        )
+
+    def _handle_claim_interaction(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> dict:
+        interaction_id = self._interaction_id_param(request)
+        if (
+            state.client_info is None
+            or "binary-secret-v1" not in state.client_info.supported_frame_types
+        ):
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Binary secret transport was not negotiated",
+            )
+        return interaction_claim_to_wire(
+            self._required_interaction_broker().claim(
+                interaction_id,
+                self._required_client_id(state),
+            )
+        )
+
+    def _handle_release_interaction(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        self._required_interaction_broker().release(
+            self._interaction_id_param(request),
+            self._required_client_id(state),
+        )
+        return None
+
+    def _handle_respond_to_interaction(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        self._required_interaction_broker().respond(
+            interaction_decision_from_wire(request.params),
+            self._required_client_id(state),
+        )
+        return None
+
+    def _handle_cancel_interaction(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        self._required_interaction_broker().cancel(
+            self._interaction_id_param(request),
+            client_id=self._required_client_id(state),
+        )
+        return None
 
     def _handle_get_session(
         self,
@@ -521,6 +630,10 @@ class RequestDispatcher:
                     "binary-terminal-v1" in metadata.supported_frame_types
                     and self._session_runtime.terminal_supported
                 ),
+                secret_frames=(
+                    self._interaction_broker is not None
+                    and "binary-secret-v1" in metadata.supported_frame_types
+                ),
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -533,6 +646,7 @@ class RequestDispatcher:
         supported: FrozenSet[Capability],
         *,
         terminal_frames: bool = False,
+        secret_frames: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -561,7 +675,37 @@ class RequestDispatcher:
                     Capability.TERMINAL_REPLAY,
                 }
             )
+        if secret_frames:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.INTERACTIONS_READ,
+                    Capability.INTERACTIONS_RESPOND,
+                    Capability.INTERACTIONS_EVENTS,
+                    Capability.INTERACTIONS_HOST_KEY,
+                    Capability.INTERACTIONS_PASSWORD,
+                    Capability.INTERACTIONS_PASSPHRASE,
+                }
+            )
         return daemon_capabilities
+
+    def _required_interaction_broker(self) -> InteractionBroker:
+        if self._interaction_broker is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Typed interactions are unavailable",
+            )
+        return self._interaction_broker
+
+    @staticmethod
+    def _interaction_id_param(request: RequestEnvelope) -> InteractionId:
+        if set(request.params) != {"interaction_id"}:
+            raise ValueError("interaction request requires only interaction_id")
+        value = request.params["interaction_id"]
+        if type(value) is not str:
+            raise ValueError("interaction ID must be a string")
+        interaction_id = InteractionId(value)
+        interaction_uuid_from_id(interaction_id)
+        return interaction_id
 
     @staticmethod
     def _require_empty_params(request: RequestEnvelope) -> None:

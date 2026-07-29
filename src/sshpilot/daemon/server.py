@@ -43,6 +43,7 @@ from sshpilot.api.transport.terminal_frames import (
     TerminalFrameKind,
     encode_terminal_payload,
 )
+from sshpilot.api.transport.secret_frames import SecretFrame
 from sshpilot.api.version import PROTOCOL_VERSION
 
 from .command_executor import (
@@ -71,6 +72,7 @@ from .lifecycle import (
     unlink_owned_socket,
     verify_bound_socket,
 )
+from .interaction_broker import InteractionBroker
 from .session_runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,8 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.SESSION_STATE_CHANGED,
         EventType.SESSION_EXITED,
         EventType.SESSION_CLOSED,
+        EventType.INTERACTION_CREATED,
+        EventType.INTERACTION_STATE_CHANGED,
     }
 )
 
@@ -158,6 +162,9 @@ class DaemonServer:
         ] = None,
         configuration_reload_debounce: float = 0.2,
         configuration_poll_interval: float = 1.0,
+        interaction_broker_factory: Optional[
+            Callable[[SessionRuntime], InteractionBroker]
+        ] = None,
     ) -> None:
         if (
             type(client_event_queue_limit) is not int
@@ -201,12 +208,14 @@ class DaemonServer:
             configuration_reload_debounce
         )
         self.configuration_poll_interval = float(configuration_poll_interval)
+        self._interaction_broker_factory = interaction_broker_factory
         self._selector: Optional[selectors.BaseSelector] = None
         self._listener: Optional[socket.socket] = None
         self._wakeup_read: Optional[socket.socket] = None
         self._wakeup_write: Optional[socket.socket] = None
         self._core_client: Optional[SshPilotClient] = None
         self._session_runtime: Optional[SessionRuntime] = None
+        self._interaction_broker: Optional[InteractionBroker] = None
         self._dispatcher: Optional[RequestDispatcher] = None
         self._session_executor: Optional[BoundedCommandExecutor] = None
         self._configuration_reload: Optional[
@@ -229,6 +238,7 @@ class DaemonServer:
         self._core_subscription: Optional[Subscription] = None
         self._session_subscription: Optional[Subscription] = None
         self._terminal_subscription: Optional[Subscription] = None
+        self._interaction_subscription: Optional[Subscription] = None
         self._terminal_queue: queue.Queue[TerminalOutput] = queue.Queue(maxsize=1024)
         self._terminal_publication_lost: Set[SessionId] = set()
         self._next_event_sequence = 0
@@ -383,7 +393,10 @@ class DaemonServer:
                     from .pty_runner import PtySessionProcessRunner
 
                     runner = PtySessionProcessRunner(
-                        lambda spec: launch_builder(spec.connection_id)
+                        lambda spec: self._prepare_session_launch(
+                            spec,
+                            launch_builder,
+                        )
                     )
                     self._session_runtime = SessionRuntime(
                         self._core_client,
@@ -395,9 +408,37 @@ class DaemonServer:
                 self._session_runtime = self._session_runtime_factory(
                     self._core_client
                 )
+            self._interaction_broker = (
+                self._interaction_broker_factory(self._session_runtime)
+                if self._interaction_broker_factory is not None
+                else InteractionBroker(
+                    client_is_eligible=self._session_runtime.client_can_interact,
+                    password_lookup=getattr(
+                        self._core_client,
+                        "lookup_daemon_password",
+                        None,
+                    ),
+                    password_store=getattr(
+                        self._core_client,
+                        "store_daemon_password",
+                        None,
+                    ),
+                    passphrase_lookup=getattr(
+                        self._core_client,
+                        "lookup_daemon_passphrase",
+                        None,
+                    ),
+                    passphrase_store=getattr(
+                        self._core_client,
+                        "store_daemon_passphrase",
+                        None,
+                    ),
+                )
+            )
             self._dispatcher = RequestDispatcher(
                 self._core_client,
                 self._session_runtime,
+                self._interaction_broker,
             )
             self._session_executor = BoundedCommandExecutor(
                 max_workers=self.session_command_workers,
@@ -422,6 +463,9 @@ class DaemonServer:
         self._session_subscription = self._session_runtime.subscribe_events(
             self._on_core_event
         )
+        self._interaction_subscription = self._interaction_broker.subscribe_events(
+            self._on_core_event
+        )
         self._terminal_subscription = self._session_runtime.subscribe_terminal(
             self._on_terminal_output
         )
@@ -441,6 +485,21 @@ class DaemonServer:
                 poll_interval=self.configuration_poll_interval,
             )
             self._configuration_reload.start()
+
+    def _prepare_session_launch(
+        self,
+        spec: Any,
+        launch_builder: Callable[..., tuple],
+    ) -> tuple:
+        broker = self._interaction_broker
+        if broker is None:
+            raise SshPilotError(
+                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
+                "Typed SSH interactions are unavailable",
+                connection_id=spec.connection_id,
+                session_id=spec.session_id,
+            )
+        return broker.prepare_launch(spec, launch_builder)
 
     def _accept_client(self) -> None:
         listener = self._listener
@@ -483,6 +542,8 @@ class DaemonServer:
         for message in messages:
             if isinstance(message, TerminalFrame):
                 self._handle_terminal_frame(state, message)
+            elif isinstance(message, SecretFrame):
+                self._handle_secret_frame(state, message)
             else:
                 if not isinstance(message, dict):
                     self._queue_protocol_error(
@@ -492,6 +553,42 @@ class DaemonServer:
                     )
                     continue
                 self._handle_message(state, message)
+
+    def _handle_secret_frame(
+        self,
+        state: _ClientConnection,
+        frame: SecretFrame,
+    ) -> None:
+        try:
+            protocol = state.protocol
+            if (
+                not protocol.handshake_completed
+                or protocol.client_id is None
+                or protocol.client_info is None
+                or "binary-secret-v1"
+                not in protocol.client_info.supported_frame_types
+            ):
+                raise SshPilotError(
+                    ErrorCode.UNSUPPORTED_CAPABILITY,
+                    "Binary secret transport was not negotiated",
+                )
+            broker = self._interaction_broker
+            if broker is None:
+                raise SshPilotError(
+                    ErrorCode.UNSUPPORTED_CAPABILITY,
+                    "Typed interactions are unavailable",
+                )
+            broker.submit_secret(frame, protocol.client_id)
+        except SshPilotError as error:
+            frame.clear()
+            self._queue_protocol_error(state, error.code, error.message)
+        except Exception:
+            frame.clear()
+            self._queue_protocol_error(
+                state,
+                ErrorCode.INTERNAL_ERROR,
+                "The daemon rejected the secret response",
+            )
 
     def _handle_terminal_frame(
         self,
@@ -907,6 +1004,9 @@ class DaemonServer:
         session_runtime = self._session_runtime
         if session_runtime is not None:
             session_runtime.detach_client(state.protocol.client_id)
+        broker = self._interaction_broker
+        if broker is not None and state.protocol.client_id is not None:
+            broker.disconnect_client(state.protocol.client_id)
 
     def _on_terminal_output(self, output: TerminalOutput) -> None:
         if self._stopping.is_set():
@@ -1147,6 +1247,10 @@ class DaemonServer:
 
     def _cleanup(self) -> None:
         self._stop_configuration_reload()
+        broker = self._interaction_broker
+        self._interaction_broker = None
+        if broker is not None:
+            broker.close(timeout=self.session_shutdown_timeout)
         self._shutdown_session_commands()
         self._stop_core_events()
         with self._event_lock:
@@ -1237,6 +1341,12 @@ class DaemonServer:
 
         if event.type not in _FORWARDED_EVENT_TYPES:
             return
+        if (
+            event.type in {EventType.SESSION_EXITED, EventType.SESSION_CLOSED}
+            and event.session_id is not None
+            and self._interaction_broker is not None
+        ):
+            self._interaction_broker.cancel_session(event.session_id)
         with self._event_lock:
             if not self._accepting_core_events or self._stopping.is_set():
                 return
@@ -1260,6 +1370,23 @@ class DaemonServer:
                     state.closed
                     or state.continuity_lost
                     or not state.protocol.handshake_completed
+                ):
+                    continue
+                if (
+                    event.type
+                    in {
+                        EventType.INTERACTION_CREATED,
+                        EventType.INTERACTION_STATE_CHANGED,
+                    }
+                    and event.session_id is not None
+                    and (
+                        state.protocol.client_id is None
+                        or self._session_runtime is None
+                        or not self._session_runtime.client_can_interact(
+                            event.session_id,
+                            state.protocol.client_id,
+                        )
+                    )
                 ):
                     continue
                 if state.queued_event_count >= self.client_event_queue_limit:
@@ -1347,9 +1474,13 @@ class DaemonServer:
             self._session_subscription = None
             terminal_subscription = self._terminal_subscription
             self._terminal_subscription = None
+            interaction_subscription = self._interaction_subscription
+            self._interaction_subscription = None
         if subscription is not None:
             subscription.unsubscribe()
         if session_subscription is not None:
             session_subscription.unsubscribe()
         if terminal_subscription is not None:
             terminal_subscription.unsubscribe()
+        if interaction_subscription is not None:
+            interaction_subscription.unsubscribe()

@@ -312,6 +312,7 @@ class _SessionRecord:
     pty_eof: bool = False
     input_owner_client_id: Optional[ClientId] = None
     output_clients: Set[ClientId] = field(default_factory=set)
+    originating_client_id: Optional[ClientId] = None
 
 
 _ALLOWED_TRANSITIONS = {
@@ -460,7 +461,6 @@ class SessionRuntime:
     ) -> SessionSummary:
         """Create one starting record without calling the process runner."""
 
-        del client_id
         if type(request) is not OpenSessionRequest:
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
@@ -488,6 +488,7 @@ class SessionRuntime:
             ),
             startup_scheduled=True,
             replay=TerminalReplayBuffer(self._replay_bytes),
+            originating_client_id=client_id,
         )
         with self._lock:
             self._require_accepting_commands_locked()
@@ -696,6 +697,23 @@ class SessionRuntime:
         with self._lock:
             record = self._records.get(session_id)
             return bool(record is not None and client_id in record.output_clients)
+
+    def client_can_interact(
+        self,
+        session_id: SessionId,
+        client_id: ClientId,
+    ) -> bool:
+        """Return whether a handshaken client is attached to this session."""
+
+        with self._lock:
+            record = self._records.get(session_id)
+            return bool(
+                record is not None
+                and (
+                    client_id == record.originating_client_id
+                    or client_id in record.attachments
+                )
+            )
 
     def send_terminal_input(
         self,
