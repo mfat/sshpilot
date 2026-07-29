@@ -5,6 +5,18 @@ notes remain separate.
 
 ## Unreleased
 
+### Phase 11: Daemon lifecycle and management (Added)
+
+- Added `DaemonLifecycleState` and management models (`DaemonStatus`,
+  `DaemonDiagnostics`, stop/restart requests/results).
+- Added wire methods `daemon.status`, `daemon.diagnostics`, `daemon.stop`,
+  and `daemon.restart` with `daemon.status` / `daemon.control` /
+  `daemon.events` capabilities.
+- Added idle shutdown policy, graceful drain, and runtime askpass cleanup.
+- Transfer `QUEUED` now means no worker assigned; `STARTING` means a worker is
+  validating; `RUNNING` means bytes are transferring.
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.11`.
+
 ### Phase 10.1: Production validation and ownership completion (Changed)
 
 - GTK extended-service routing no longer silently falls back to local

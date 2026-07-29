@@ -88,6 +88,10 @@ class ErrorCode(str, Enum):
     PROTOCOL_ERROR = "protocol_error"
     UNSUPPORTED_METHOD = "unsupported_method"
     DAEMON_SHUTTING_DOWN = "daemon_shutting_down"
+    DAEMON_ACTIVE_RESOURCES = "daemon_active_resources"
+    DAEMON_CONFIRMATION_REQUIRED = "daemon_confirmation_required"
+    DAEMON_INCOMPATIBLE = "daemon_incompatible"
+    DAEMON_RESTART_REQUIRED = "daemon_restart_required"
 
 
 class SshPilotError(Exception):

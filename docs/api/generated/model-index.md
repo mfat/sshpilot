@@ -490,7 +490,7 @@ Synthetic representation:
 **Purpose:** CoreEvent(type: sshpilot.api.events.EventType, payload: ~PayloadT, sequence: int, timestamp: datetime.datetime = <factory>, request_id: sshpilot.api.models.common.RequestId | None = None, connection_id: sshpilot.api.models.common.ConnectionId | None = None, session_id: sshpilot.api.models.common.SessionId | None = None)
 
 **Related methods:** `subscribe_events`
-**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `error.occurred`
+**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `daemon.state_changed`, `error.occurred`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
@@ -569,6 +569,194 @@ Synthetic representation:
   "port": 22,
   "protocol": "ssh",
   "username": ""
+}
+```
+
+<!-- api-model: DaemonDiagnostics -->
+## `DaemonDiagnostics`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** DaemonDiagnostics(status: 'DaemonStatus', uptime_seconds: 'float', executor_queue_depth: 'int' = 0, thread_counts_by_role: 'Mapping[str, int]' = <factory>, open_descriptor_count: 'Optional[int]' = None, rss_bytes: 'Optional[int]' = None, socket_bound: 'bool' = True, keep_alive_lease: 'bool' = False)
+
+**Related methods:** `get_daemon_diagnostics`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `status` | `DaemonStatus` | Yes | — | No |
+| `uptime_seconds` | `float` | Yes | — | No |
+| `executor_queue_depth` | `int` | No | `0` | No |
+| `thread_counts_by_role` | `Mapping[str, int]` | No | `{}` | No |
+| `open_descriptor_count` | `Optional[int]` | No | `null` | No |
+| `rss_bytes` | `Optional[int]` | No | `null` | No |
+| `socket_bound` | `bool` | No | `true` | No |
+| `keep_alive_lease` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "executor_queue_depth": 0,
+  "keep_alive_lease": false,
+  "open_descriptor_count": null,
+  "rss_bytes": null,
+  "socket_bound": true,
+  "status": {},
+  "thread_counts_by_role": {},
+  "uptime_seconds": {}
+}
+```
+
+<!-- api-model: DaemonIdleInfo -->
+## `DaemonIdleInfo`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** DaemonIdleInfo(idle_shutdown_enabled: 'bool', idle_shutdown_seconds: 'Optional[float]', idle_since: 'Optional[datetime]' = None, idle_deadline: 'Optional[datetime]' = None, idle_blockers: 'Tuple[str, ...]' = ())
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `idle_shutdown_enabled` | `bool` | Yes | — | No |
+| `idle_shutdown_seconds` | `Optional[float]` | Yes | — | No |
+| `idle_since` | `Optional[datetime]` | No | `null` | No |
+| `idle_deadline` | `Optional[datetime]` | No | `null` | No |
+| `idle_blockers` | `Tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "idle_blockers": [],
+  "idle_deadline": null,
+  "idle_shutdown_enabled": {},
+  "idle_shutdown_seconds": {},
+  "idle_since": null
+}
+```
+
+<!-- api-model: DaemonResourceCounts -->
+## `DaemonResourceCounts`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** DaemonResourceCounts(clients: 'int' = 0, sessions_active: 'int' = 0, sessions_retained: 'int' = 0, sftp_active: 'int' = 0, sftp_retained: 'int' = 0, transfers_queued: 'int' = 0, transfers_starting: 'int' = 0, transfers_running: 'int' = 0, transfers_retained: 'int' = 0, forwards_active: 'int' = 0, forwards_retained: 'int' = 0, interactions_pending: 'int' = 0)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `clients` | `int` | No | `0` | No |
+| `sessions_active` | `int` | No | `0` | No |
+| `sessions_retained` | `int` | No | `0` | No |
+| `sftp_active` | `int` | No | `0` | No |
+| `sftp_retained` | `int` | No | `0` | No |
+| `transfers_queued` | `int` | No | `0` | No |
+| `transfers_starting` | `int` | No | `0` | No |
+| `transfers_running` | `int` | No | `0` | No |
+| `transfers_retained` | `int` | No | `0` | No |
+| `forwards_active` | `int` | No | `0` | No |
+| `forwards_retained` | `int` | No | `0` | No |
+| `interactions_pending` | `int` | No | `0` | No |
+
+Synthetic representation:
+
+```json
+{
+  "clients": 0,
+  "forwards_active": 0,
+  "forwards_retained": 0,
+  "interactions_pending": 0,
+  "sessions_active": 0,
+  "sessions_retained": 0,
+  "sftp_active": 0,
+  "sftp_retained": 0,
+  "transfers_queued": 0,
+  "transfers_retained": 0,
+  "transfers_running": 0,
+  "transfers_starting": 0
+}
+```
+
+<!-- api-model: DaemonStatus -->
+## `DaemonStatus`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** DaemonStatus(state: 'DaemonLifecycleState', server_instance_id: 'str', started_at: 'datetime', protocol_version: 'str', api_implementation_version: 'str', daemon_version: 'str', development_revision: 'str', resources: 'DaemonResourceCounts', idle: 'DaemonIdleInfo', shutdown_deadline: 'Optional[datetime]' = None, disconnect_reason: 'Optional[str]' = None, restart_requested: 'bool' = False)
+
+**Related methods:** `get_daemon_status`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `state` | `DaemonLifecycleState` | Yes | — | No |
+| `server_instance_id` | `str` | Yes | — | No |
+| `started_at` | `datetime` | Yes | — | No |
+| `protocol_version` | `str` | Yes | — | No |
+| `api_implementation_version` | `str` | Yes | — | No |
+| `daemon_version` | `str` | Yes | — | No |
+| `development_revision` | `str` | Yes | — | No |
+| `resources` | `DaemonResourceCounts` | Yes | — | No |
+| `idle` | `DaemonIdleInfo` | Yes | — | No |
+| `shutdown_deadline` | `Optional[datetime]` | No | `null` | No |
+| `disconnect_reason` | `Optional[str]` | No | `null` | No |
+| `restart_requested` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "api_implementation_version": {},
+  "daemon_version": {},
+  "development_revision": {},
+  "disconnect_reason": null,
+  "idle": {},
+  "protocol_version": {},
+  "resources": {},
+  "restart_requested": false,
+  "server_instance_id": {},
+  "shutdown_deadline": null,
+  "started_at": {},
+  "state": {}
+}
+```
+
+<!-- api-model: DaemonStopResult -->
+## `DaemonStopResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** DaemonStopResult(accepted: 'bool', state: 'DaemonLifecycleState', resources: 'DaemonResourceCounts', will_lose: 'Tuple[str, ...]' = (), confirmation: 'Optional[str]' = None, message: 'str' = '', restart_requested: 'bool' = False)
+
+**Related methods:** `stop_daemon`, `restart_daemon`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `accepted` | `bool` | Yes | — | No |
+| `state` | `DaemonLifecycleState` | Yes | — | No |
+| `resources` | `DaemonResourceCounts` | Yes | — | No |
+| `will_lose` | `Tuple[str, ...]` | No | `[]` | No |
+| `confirmation` | `Optional[str]` | No | `null` | No |
+| `message` | `str` | No | `` | No |
+| `restart_requested` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "accepted": {},
+  "confirmation": null,
+  "message": "",
+  "resources": {},
+  "restart_requested": false,
+  "state": {},
+  "will_lose": []
 }
 ```
 
@@ -1702,6 +1890,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: RestartDaemonRequest -->
+## `RestartDaemonRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** RestartDaemonRequest(force: 'bool' = False, confirmation: 'Optional[str]' = None)
+
+**Related methods:** `restart_daemon`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `force` | `bool` | No | `false` | No |
+| `confirmation` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "confirmation": null,
+  "force": false
+}
+```
+
 <!-- api-model: ServiceFailure -->
 ## `ServiceFailure`
 
@@ -2041,6 +2253,30 @@ Synthetic representation:
   "recursive": false,
   "remote_path": {},
   "sftp_service_id": {}
+}
+```
+
+<!-- api-model: StopDaemonRequest -->
+## `StopDaemonRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** StopDaemonRequest(force: 'bool' = False, confirmation: 'Optional[str]' = None)
+
+**Related methods:** `stop_daemon`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `force` | `bool` | No | `false` | No |
+| `confirmation` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "confirmation": null,
+  "force": false
 }
 ```
 

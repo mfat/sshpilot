@@ -47,6 +47,16 @@ from ..models.connections import (
     GroupReference,
     UpdateConnectionRequest,
 )
+from ..models.daemon import (
+    DaemonDiagnostics,
+    DaemonIdleInfo,
+    DaemonLifecycleState,
+    DaemonResourceCounts,
+    DaemonStatus,
+    DaemonStopResult,
+    RestartDaemonRequest,
+    StopDaemonRequest,
+)
 from ..models.sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -443,6 +453,11 @@ _FORWARD_EVENT_TYPES = frozenset(
         EventType.FORWARD_FAILED,
     }
 )
+_DAEMON_EVENT_TYPES = frozenset(
+    {
+        EventType.DAEMON_STATE_CHANGED,
+    }
+)
 _FORWARDED_EVENT_TYPES = (
     _CONNECTION_EVENT_TYPES
     | _SESSION_EVENT_TYPES
@@ -450,6 +465,7 @@ _FORWARDED_EVENT_TYPES = (
     | _SFTP_EVENT_TYPES
     | _TRANSFER_EVENT_TYPES
     | _FORWARD_EVENT_TYPES
+    | _DAEMON_EVENT_TYPES
 )
 
 
@@ -492,6 +508,10 @@ def public_event_to_envelope(
         if type(event.payload) is not ForwardSummary:
             raise TypeError("forward event payload must be ForwardSummary")
         payload = forward_summary_to_wire(event.payload)
+    elif event.type in _DAEMON_EVENT_TYPES:
+        if type(event.payload) is not DaemonStatus:
+            raise TypeError("daemon event payload must be DaemonStatus")
+        payload = daemon_status_to_wire(event.payload)
     else:
         if type(event.payload) is not SessionSummary:
             raise TypeError("session event payload must be SessionSummary")
@@ -574,6 +594,13 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             sequence=envelope.sequence,
             connection_id=forward_summary.connection_id,
             session_id=SessionId(str(forward_summary.id)),
+        )
+    if event_type in _DAEMON_EVENT_TYPES:
+        status = daemon_status_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=status,
+            sequence=envelope.sequence,
         )
     summary = session_summary_from_wire(dict(envelope.payload))
     return CoreEvent(
@@ -2496,3 +2523,363 @@ def close_forward_request_from_wire(value: Any) -> CloseForwardRequest:
         context="close forward request",
     )
     return CloseForwardRequest(forward_id=_forward_id(data["forward_id"], "forward id"))
+
+
+def daemon_resource_counts_to_wire(counts: DaemonResourceCounts) -> Dict[str, Any]:
+    if type(counts) is not DaemonResourceCounts:
+        raise TypeError("daemon resource counts are required")
+    return {
+        "clients": counts.clients,
+        "sessions_active": counts.sessions_active,
+        "sessions_retained": counts.sessions_retained,
+        "sftp_active": counts.sftp_active,
+        "sftp_retained": counts.sftp_retained,
+        "transfers_queued": counts.transfers_queued,
+        "transfers_starting": counts.transfers_starting,
+        "transfers_running": counts.transfers_running,
+        "transfers_retained": counts.transfers_retained,
+        "forwards_active": counts.forwards_active,
+        "forwards_retained": counts.forwards_retained,
+        "interactions_pending": counts.interactions_pending,
+    }
+
+
+def daemon_resource_counts_from_wire(value: Any) -> DaemonResourceCounts:
+    data = _strict_fields(
+        value,
+        required={
+            "clients",
+            "sessions_active",
+            "sessions_retained",
+            "sftp_active",
+            "sftp_retained",
+            "transfers_queued",
+            "transfers_starting",
+            "transfers_running",
+            "transfers_retained",
+            "forwards_active",
+            "forwards_retained",
+            "interactions_pending",
+        },
+        context="daemon resource counts",
+    )
+    return DaemonResourceCounts(
+        clients=_integer(data["clients"], "clients"),
+        sessions_active=_integer(data["sessions_active"], "sessions_active"),
+        sessions_retained=_integer(data["sessions_retained"], "sessions_retained"),
+        sftp_active=_integer(data["sftp_active"], "sftp_active"),
+        sftp_retained=_integer(data["sftp_retained"], "sftp_retained"),
+        transfers_queued=_integer(data["transfers_queued"], "transfers_queued"),
+        transfers_starting=_integer(data["transfers_starting"], "transfers_starting"),
+        transfers_running=_integer(data["transfers_running"], "transfers_running"),
+        transfers_retained=_integer(data["transfers_retained"], "transfers_retained"),
+        forwards_active=_integer(data["forwards_active"], "forwards_active"),
+        forwards_retained=_integer(data["forwards_retained"], "forwards_retained"),
+        interactions_pending=_integer(
+            data["interactions_pending"], "interactions_pending"
+        ),
+    )
+
+
+def daemon_idle_info_to_wire(idle: DaemonIdleInfo) -> Dict[str, Any]:
+    if type(idle) is not DaemonIdleInfo:
+        raise TypeError("daemon idle info is required")
+    return {
+        "idle_shutdown_enabled": idle.idle_shutdown_enabled,
+        "idle_shutdown_seconds": idle.idle_shutdown_seconds,
+        "idle_since": (
+            _datetime_to_wire(idle.idle_since, "idle_since")
+            if idle.idle_since is not None
+            else None
+        ),
+        "idle_deadline": (
+            _datetime_to_wire(idle.idle_deadline, "idle_deadline")
+            if idle.idle_deadline is not None
+            else None
+        ),
+        "idle_blockers": list(idle.idle_blockers),
+    }
+
+
+def daemon_idle_info_from_wire(value: Any) -> DaemonIdleInfo:
+    data = _strict_fields(
+        value,
+        required={
+            "idle_shutdown_enabled",
+            "idle_shutdown_seconds",
+            "idle_since",
+            "idle_deadline",
+            "idle_blockers",
+        },
+        context="daemon idle info",
+    )
+    blockers = data["idle_blockers"]
+    if type(blockers) is not list:
+        raise ValueError("idle_blockers must be an array")
+    seconds = data["idle_shutdown_seconds"]
+    if seconds is not None and type(seconds) not in (int, float):
+        raise ValueError("idle_shutdown_seconds must be a number or null")
+    enabled = data["idle_shutdown_enabled"]
+    if type(enabled) is not bool:
+        raise ValueError("idle_shutdown_enabled must be a boolean")
+    return DaemonIdleInfo(
+        idle_shutdown_enabled=enabled,
+        idle_shutdown_seconds=None if seconds is None else float(seconds),
+        idle_since=(
+            _datetime_from_wire(data["idle_since"], "idle_since")
+            if data["idle_since"] is not None
+            else None
+        ),
+        idle_deadline=(
+            _datetime_from_wire(data["idle_deadline"], "idle_deadline")
+            if data["idle_deadline"] is not None
+            else None
+        ),
+        idle_blockers=tuple(_identifier(item, "idle blocker") for item in blockers),
+    )
+
+
+def daemon_status_to_wire(status: DaemonStatus) -> Dict[str, Any]:
+    if type(status) is not DaemonStatus:
+        raise TypeError("daemon status is required")
+    return {
+        "state": status.state.value,
+        "server_instance_id": status.server_instance_id,
+        "started_at": _datetime_to_wire(status.started_at, "daemon started_at"),
+        "protocol_version": status.protocol_version,
+        "api_implementation_version": status.api_implementation_version,
+        "daemon_version": status.daemon_version,
+        "development_revision": status.development_revision,
+        "resources": daemon_resource_counts_to_wire(status.resources),
+        "idle": daemon_idle_info_to_wire(status.idle),
+        "shutdown_deadline": (
+            _datetime_to_wire(status.shutdown_deadline, "shutdown_deadline")
+            if status.shutdown_deadline is not None
+            else None
+        ),
+        "disconnect_reason": status.disconnect_reason,
+        "restart_requested": status.restart_requested,
+    }
+
+
+def daemon_status_from_wire(value: Any) -> DaemonStatus:
+    data = _strict_fields(
+        value,
+        required={
+            "state",
+            "server_instance_id",
+            "started_at",
+            "protocol_version",
+            "api_implementation_version",
+            "daemon_version",
+            "development_revision",
+            "resources",
+            "idle",
+            "shutdown_deadline",
+            "disconnect_reason",
+            "restart_requested",
+        },
+        context="daemon status",
+    )
+    try:
+        state = DaemonLifecycleState(data["state"])
+    except (TypeError, ValueError):
+        raise ValueError("daemon status contains an unknown state") from None
+    revision = data["development_revision"]
+    if type(revision) is not str:
+        raise ValueError("development_revision must be a string")
+    reason = data["disconnect_reason"]
+    if reason is not None and (type(reason) is not str or not reason):
+        raise ValueError("disconnect_reason must be a non-empty string or null")
+    restart = data["restart_requested"]
+    if type(restart) is not bool:
+        raise ValueError("restart_requested must be a boolean")
+    return DaemonStatus(
+        state=state,
+        server_instance_id=_identifier(data["server_instance_id"], "server instance id"),
+        started_at=_datetime_from_wire(data["started_at"], "daemon started_at"),
+        protocol_version=_identifier(data["protocol_version"], "protocol version"),
+        api_implementation_version=_identifier(
+            data["api_implementation_version"],
+            "api implementation version",
+        ),
+        daemon_version=_identifier(data["daemon_version"], "daemon version"),
+        development_revision=revision,
+        resources=daemon_resource_counts_from_wire(data["resources"]),
+        idle=daemon_idle_info_from_wire(data["idle"]),
+        shutdown_deadline=(
+            _datetime_from_wire(data["shutdown_deadline"], "shutdown_deadline")
+            if data["shutdown_deadline"] is not None
+            else None
+        ),
+        disconnect_reason=reason,
+        restart_requested=restart,
+    )
+
+
+def daemon_diagnostics_to_wire(diagnostics: DaemonDiagnostics) -> Dict[str, Any]:
+    if type(diagnostics) is not DaemonDiagnostics:
+        raise TypeError("daemon diagnostics are required")
+    return {
+        "status": daemon_status_to_wire(diagnostics.status),
+        "uptime_seconds": float(diagnostics.uptime_seconds),
+        "executor_queue_depth": diagnostics.executor_queue_depth,
+        "thread_counts_by_role": dict(diagnostics.thread_counts_by_role),
+        "open_descriptor_count": diagnostics.open_descriptor_count,
+        "rss_bytes": diagnostics.rss_bytes,
+        "socket_bound": diagnostics.socket_bound,
+        "keep_alive_lease": diagnostics.keep_alive_lease,
+    }
+
+
+def daemon_diagnostics_from_wire(value: Any) -> DaemonDiagnostics:
+    data = _strict_fields(
+        value,
+        required={
+            "status",
+            "uptime_seconds",
+            "executor_queue_depth",
+            "thread_counts_by_role",
+            "open_descriptor_count",
+            "rss_bytes",
+            "socket_bound",
+            "keep_alive_lease",
+        },
+        context="daemon diagnostics",
+    )
+    roles = data["thread_counts_by_role"]
+    if type(roles) is not dict:
+        raise ValueError("thread_counts_by_role must be an object")
+    parsed_roles = {
+        _identifier(key, "thread role"): _integer(count, "thread count")
+        for key, count in roles.items()
+    }
+    uptime = data["uptime_seconds"]
+    if type(uptime) not in (int, float) or uptime < 0:
+        raise ValueError("uptime_seconds must be a non-negative number")
+    for name in ("open_descriptor_count", "rss_bytes"):
+        raw = data[name]
+        if raw is not None and (type(raw) is not int or raw < 0):
+            raise ValueError(f"{name} must be a non-negative int or null")
+    for flag_name in ("socket_bound", "keep_alive_lease"):
+        if type(data[flag_name]) is not bool:
+            raise ValueError(f"{flag_name} must be a boolean")
+    return DaemonDiagnostics(
+        status=daemon_status_from_wire(data["status"]),
+        uptime_seconds=float(uptime),
+        executor_queue_depth=_integer(
+            data["executor_queue_depth"], "executor_queue_depth"
+        ),
+        thread_counts_by_role=parsed_roles,
+        open_descriptor_count=data["open_descriptor_count"],
+        rss_bytes=data["rss_bytes"],
+        socket_bound=data["socket_bound"],
+        keep_alive_lease=data["keep_alive_lease"],
+    )
+
+
+def stop_daemon_request_to_wire(request: StopDaemonRequest) -> Dict[str, Any]:
+    if type(request) is not StopDaemonRequest:
+        raise TypeError("stop daemon request is required")
+    return {
+        "force": request.force,
+        "confirmation": request.confirmation,
+    }
+
+
+def stop_daemon_request_from_wire(value: Any) -> StopDaemonRequest:
+    data = _strict_fields(
+        value,
+        required=set(),
+        optional={"force", "confirmation"},
+        context="stop daemon request",
+    )
+    force = data.get("force", False)
+    if type(force) is not bool:
+        raise ValueError("force must be a boolean")
+    token = data.get("confirmation")
+    if token is not None and (type(token) is not str or not token.strip()):
+        raise ValueError("confirmation must be a non-empty string or null")
+    return StopDaemonRequest(force=force, confirmation=token)
+
+
+def restart_daemon_request_to_wire(request: RestartDaemonRequest) -> Dict[str, Any]:
+    if type(request) is not RestartDaemonRequest:
+        raise TypeError("restart daemon request is required")
+    return {
+        "force": request.force,
+        "confirmation": request.confirmation,
+    }
+
+
+def restart_daemon_request_from_wire(value: Any) -> RestartDaemonRequest:
+    data = _strict_fields(
+        value,
+        required=set(),
+        optional={"force", "confirmation"},
+        context="restart daemon request",
+    )
+    force = data.get("force", False)
+    if type(force) is not bool:
+        raise ValueError("force must be a boolean")
+    token = data.get("confirmation")
+    if token is not None and (type(token) is not str or not token.strip()):
+        raise ValueError("confirmation must be a non-empty string or null")
+    return RestartDaemonRequest(force=force, confirmation=token)
+
+
+def daemon_stop_result_to_wire(result: DaemonStopResult) -> Dict[str, Any]:
+    if type(result) is not DaemonStopResult:
+        raise TypeError("daemon stop result is required")
+    return {
+        "accepted": result.accepted,
+        "state": result.state.value,
+        "resources": daemon_resource_counts_to_wire(result.resources),
+        "will_lose": list(result.will_lose),
+        "confirmation": result.confirmation,
+        "message": result.message,
+        "restart_requested": result.restart_requested,
+    }
+
+
+def daemon_stop_result_from_wire(value: Any) -> DaemonStopResult:
+    data = _strict_fields(
+        value,
+        required={
+            "accepted",
+            "state",
+            "resources",
+            "will_lose",
+            "confirmation",
+            "message",
+            "restart_requested",
+        },
+        context="daemon stop result",
+    )
+    if type(data["accepted"]) is not bool:
+        raise ValueError("accepted must be a boolean")
+    try:
+        state = DaemonLifecycleState(data["state"])
+    except (TypeError, ValueError):
+        raise ValueError("daemon stop result contains an unknown state") from None
+    will_lose = data["will_lose"]
+    if type(will_lose) is not list:
+        raise ValueError("will_lose must be an array")
+    token = data["confirmation"]
+    if token is not None and (type(token) is not str or not token.strip()):
+        raise ValueError("confirmation must be a non-empty string or null")
+    message = data["message"]
+    if type(message) is not str:
+        raise ValueError("message must be a string")
+    restart = data["restart_requested"]
+    if type(restart) is not bool:
+        raise ValueError("restart_requested must be a boolean")
+    return DaemonStopResult(
+        accepted=data["accepted"],
+        state=state,
+        resources=daemon_resource_counts_from_wire(data["resources"]),
+        will_lose=tuple(_identifier(item, "will_lose entry") for item in will_lose),
+        confirmation=token,
+        message=message,
+        restart_requested=restart,
+    )

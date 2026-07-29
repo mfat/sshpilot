@@ -11,15 +11,27 @@ import socket
 import stat
 import threading
 import time
+import uuid as uuid_mod
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Deque, Dict, Optional, Set, Tuple, Union
 
+from sshpilot import __version__ as sshpilot_version
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
 from sshpilot.api.models.common import ForwardId, RequestId, SessionId, SftpServiceId
+from sshpilot.api.models.daemon import (
+    DaemonDiagnostics,
+    DaemonResourceCounts,
+    DaemonStatus,
+)
+from sshpilot.api.models.interactions import InteractionState
+from sshpilot.api.models.operations import ForwardState, SftpServiceState
+from sshpilot.api.models.sessions import SessionState
 from sshpilot.api.models.terminal import TerminalInput, TerminalOutput
+from sshpilot.api.models.transfers import TransferState
 from sshpilot.api.transport.codec import (
     decode_envelope,
     encode_envelope,
@@ -64,6 +76,7 @@ from .dispatch import (
     RequestDispatcher,
 )
 from .forward_runtime import ForwardRuntime, SubprocessForwardProcessRunner
+from .interaction_broker import InteractionBroker
 from .lifecycle import (
     DaemonAlreadyRunningError,
     SocketSecurityError,
@@ -73,7 +86,11 @@ from .lifecycle import (
     unlink_owned_socket,
     verify_bound_socket,
 )
-from .interaction_broker import InteractionBroker
+from .lifecycle_policy import DaemonLifecycleController
+from .runtime_cleanup import (
+    sweep_runtime_directory_on_startup,
+    sweep_stale_askpass_sockets,
+)
 from .session_runtime import SessionRuntime
 from .sftp_runtime import SftpServiceRuntime, SubprocessSftpProcessRunner
 from .transfer_runtime import TransferRuntime
@@ -111,6 +128,7 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.FORWARD_ACTIVE,
         EventType.FORWARD_CLOSED,
         EventType.FORWARD_FAILED,
+        EventType.DAEMON_STATE_CHANGED,
     }
 )
 _INTERACTION_CANCELLING_EVENT_TYPES = frozenset(
@@ -194,6 +212,10 @@ class DaemonServer:
         interaction_broker_factory: Optional[
             Callable[[SessionRuntime], InteractionBroker]
         ] = None,
+        idle_shutdown_seconds: Optional[float] = ...,  # type: ignore[assignment]
+        service_mode: bool = False,
+        packaged: bool = False,
+        drain_timeout_seconds: float = 5.0,
     ) -> None:
         if (
             type(client_event_queue_limit) is not int
@@ -238,6 +260,11 @@ class DaemonServer:
         )
         self.configuration_poll_interval = float(configuration_poll_interval)
         self._interaction_broker_factory = interaction_broker_factory
+        self._idle_shutdown_seconds = idle_shutdown_seconds
+        self._service_mode = bool(service_mode)
+        self._packaged = bool(packaged)
+        self._drain_timeout_seconds = float(drain_timeout_seconds)
+        self._lifecycle: Optional[DaemonLifecycleController] = None
         self._selector: Optional[selectors.BaseSelector] = None
         self._listener: Optional[socket.socket] = None
         self._wakeup_read: Optional[socket.socket] = None
@@ -278,6 +305,8 @@ class DaemonServer:
         self._terminal_publication_lost: Set[SessionId] = set()
         self._next_event_sequence = 0
         self._session_shutdown_started = False
+        self._started_at_wall: Optional[datetime] = None
+        self._instance_id = uuid_mod.uuid4().hex
 
     @property
     def ready(self) -> bool:
@@ -312,17 +341,29 @@ class DaemonServer:
             self._setup()
         except BaseException as exc:
             self._startup_error = exc
+            if self._lifecycle is not None:
+                self._lifecycle.mark_failed()
             self._ready.set()
             self._cleanup()
+            if self._lifecycle is not None:
+                self._lifecycle.mark_stopped()
             self._stopped.set()
             return
+        if self._lifecycle is not None:
+            self._lifecycle.mark_ready()
         self._ready.set()
         try:
             while not self._stopping.is_set():
                 selector = self._selector
                 if selector is None:
                     break
-                for key, mask in selector.select():
+                timeout = None
+                if self._lifecycle is not None:
+                    timeout = self._lifecycle.select_timeout()
+                    if self._lifecycle.poll_idle():
+                        self.shutdown()
+                        continue
+                for key, mask in selector.select(timeout):
                     if key.data == "listener":
                         self._accept_client()
                     elif key.data == "wakeup":
@@ -336,20 +377,49 @@ class DaemonServer:
                             and mask & selectors.EVENT_WRITE
                         ):
                             self._write_client(state)
+                if self._lifecycle is not None and self._lifecycle.poll_idle():
+                    self.shutdown()
         finally:
+            if self._lifecycle is not None:
+                self._lifecycle.begin_stopping()
+            self._flush_outbound_before_shutdown(timeout=0.5)
             self._stop_configuration_reload()
             self._stop_core_events()
             if self._dispatcher is not None:
                 self._dispatcher.begin_shutdown()
             self._shutdown_session_commands()
             self._cleanup()
+            if self._lifecycle is not None:
+                self._lifecycle.mark_stopped()
             self._stopped.set()
+
+    def _flush_outbound_before_shutdown(self, *, timeout: float) -> None:
+        """Best-effort write of queued RPC replies before tearing sockets down."""
+
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            with self._event_lock:
+                pending = [
+                    state
+                    for state in self._clients.values()
+                    if not state.closed and state.output
+                ]
+            if not pending:
+                return
+            for state in pending:
+                try:
+                    self._write_client(state)
+                except Exception:
+                    logger.debug("flush-before-shutdown write failed", exc_info=True)
+            time.sleep(0.01)
 
     def shutdown(self) -> None:
         """Request shutdown without blocking the caller."""
 
         if self._stopping.is_set():
             return
+        if self._lifecycle is not None and not self._lifecycle.is_draining_or_stopping():
+            self._lifecycle.begin_drain(reason="clean_shutdown")
         self._stop_core_events()
         if self._dispatcher is not None:
             self._dispatcher.begin_shutdown()
@@ -368,6 +438,25 @@ class DaemonServer:
         configuration_backend: Optional[
             AuthoritativeConfigurationBackend
         ] = None
+        # Bounded startup hygiene for orphaned askpass sockets.
+        try:
+            sweep_runtime_directory_on_startup(self.socket_path.parent)
+        except Exception as exc:
+            logger.debug("startup runtime sweep skipped: %s", type(exc).__name__)
+        self._started_at_wall = datetime.now(timezone.utc)
+        self._lifecycle = DaemonLifecycleController(
+            server_instance_id=self._instance_id,
+            started_at=self._started_at_wall,
+            daemon_version=sshpilot_version,
+            development_revision=os.environ.get("SSHPILOT_DEV_REVISION", "").strip(),
+            idle_shutdown_seconds=self._idle_shutdown_seconds,
+            service_mode=self._service_mode,
+            packaged=self._packaged,
+            drain_timeout_seconds=self._drain_timeout_seconds,
+            on_shutdown=self._on_lifecycle_shutdown_request,
+            on_state_changed=self._on_lifecycle_state_changed,
+        )
+        self._lifecycle.set_resource_provider(self.collect_resource_counts)
         prepare_socket_path(self.socket_path)
         selector = selectors.DefaultSelector()
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -502,6 +591,8 @@ class DaemonServer:
                 sftp_runtime=self._sftp_runtime,
                 transfer_runtime=self._transfer_runtime,
                 forward_runtime=self._forward_runtime,
+                lifecycle_controller=self._lifecycle,
+                diagnostics_provider=self.build_diagnostics,
             )
             self._session_executor = BoundedCommandExecutor(
                 max_workers=self.session_command_workers,
@@ -658,6 +749,7 @@ class DaemonServer:
             self._clients[client_socket.fileno()] = state
             self._clients_by_token[peer_token] = state
         selector.register(client_socket, selectors.EVENT_READ, state)
+        self._note_lifecycle_activity()
 
     def _read_client(self, state: _ClientConnection) -> None:
         try:
@@ -1199,6 +1291,7 @@ class DaemonServer:
         broker = self._interaction_broker
         if broker is not None and state.protocol.client_id is not None:
             broker.disconnect_client(state.protocol.client_id)
+        self._note_lifecycle_activity()
 
     def _on_terminal_output(self, output: TerminalOutput) -> None:
         if self._stopping.is_set():
@@ -1482,6 +1575,153 @@ class DaemonServer:
         finally:
             unlink_owned_socket(self.socket_path, self._socket_identity)
             self._socket_identity = None
+            try:
+                sweep_stale_askpass_sockets(self.socket_path.parent)
+            except Exception:
+                logger.debug("shutdown askpass sweep failed", exc_info=True)
+
+    def collect_resource_counts(self) -> DaemonResourceCounts:
+        with self._event_lock:
+            clients = len(self._clients)
+        sessions_active = sessions_retained = 0
+        if self._session_runtime is not None:
+            for item in self._session_runtime.list_sessions():
+                if item.state in {
+                    SessionState.CREATED,
+                    SessionState.STARTING,
+                    SessionState.RUNNING,
+                    SessionState.CLOSING,
+                }:
+                    sessions_active += 1
+                else:
+                    sessions_retained += 1
+        sftp_active = sftp_retained = 0
+        if self._sftp_runtime is not None:
+            for item in self._sftp_runtime.list_services():
+                if item.state in {
+                    SftpServiceState.CREATED,
+                    SftpServiceState.STARTING,
+                    SftpServiceState.READY,
+                    SftpServiceState.CLOSING,
+                }:
+                    sftp_active += 1
+                else:
+                    sftp_retained += 1
+        transfers_queued = transfers_starting = transfers_running = transfers_retained = 0
+        if self._transfer_runtime is not None:
+            for item in self._transfer_runtime.list_transfers():
+                if item.state is TransferState.QUEUED:
+                    transfers_queued += 1
+                elif item.state is TransferState.STARTING:
+                    transfers_starting += 1
+                elif item.state in {TransferState.RUNNING, TransferState.CANCELLING}:
+                    transfers_running += 1
+                else:
+                    transfers_retained += 1
+        forwards_active = forwards_retained = 0
+        if self._forward_runtime is not None:
+            for item in self._forward_runtime.list_forwards():
+                if item.state in {
+                    ForwardState.CREATED,
+                    ForwardState.STARTING,
+                    ForwardState.ACTIVE,
+                    ForwardState.CLOSING,
+                }:
+                    forwards_active += 1
+                else:
+                    forwards_retained += 1
+        interactions_pending = 0
+        if self._interaction_broker is not None:
+            # Broker list requires a client id; count via internal records when available.
+            records = getattr(self._interaction_broker, "_records", None)
+            if isinstance(records, dict):
+                for record in records.values():
+                    summary = getattr(record, "summary", None)
+                    state = getattr(summary, "state", None)
+                    if state in {
+                        InteractionState.PENDING,
+                        InteractionState.CLAIMED,
+                    }:
+                        interactions_pending += 1
+        return DaemonResourceCounts(
+            clients=clients,
+            sessions_active=sessions_active,
+            sessions_retained=sessions_retained,
+            sftp_active=sftp_active,
+            sftp_retained=sftp_retained,
+            transfers_queued=transfers_queued,
+            transfers_starting=transfers_starting,
+            transfers_running=transfers_running,
+            transfers_retained=transfers_retained,
+            forwards_active=forwards_active,
+            forwards_retained=forwards_retained,
+            interactions_pending=interactions_pending,
+        )
+
+    def build_diagnostics(self) -> DaemonDiagnostics:
+        if self._lifecycle is None:
+            raise RuntimeError("lifecycle controller is not ready")
+        status = self._lifecycle.status()
+        started = self._started_at_wall or status.started_at
+        uptime = max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+        executor_depth = 0
+        if self._session_executor is not None:
+            depth = getattr(self._session_executor, "queued_count", None)
+            if callable(depth):
+                executor_depth = int(depth())
+            else:
+                queue_obj = getattr(self._session_executor, "_queue", None)
+                if queue_obj is not None and hasattr(queue_obj, "qsize"):
+                    try:
+                        executor_depth = int(queue_obj.qsize())
+                    except NotImplementedError:
+                        executor_depth = 0
+        roles: Dict[str, int] = {}
+        for thread in threading.enumerate():
+            name = thread.name or "unnamed"
+            role = name.split("-", 1)[0] if name.startswith("sshpilot") else "other"
+            roles[role] = roles.get(role, 0) + 1
+        open_fds = None
+        rss = None
+        try:
+            open_fds = len(os.listdir(f"/proc/{os.getpid()}/fd"))
+        except OSError:
+            open_fds = None
+        try:
+            with open(f"/proc/{os.getpid()}/statm", encoding="utf-8") as handle:
+                pages = int(handle.read().split()[1])
+            rss = pages * os.sysconf("SC_PAGE_SIZE")
+        except (OSError, IndexError, ValueError):
+            rss = None
+        return DaemonDiagnostics(
+            status=status,
+            uptime_seconds=uptime,
+            executor_queue_depth=executor_depth,
+            thread_counts_by_role=roles,
+            open_descriptor_count=open_fds,
+            rss_bytes=rss,
+            socket_bound=self._listener is not None,
+            keep_alive_lease=self._lifecycle.keep_alive_lease,
+        )
+
+    def _on_lifecycle_shutdown_request(self) -> None:
+        """Enter drain mode without tearing sockets down mid-RPC reply."""
+
+        if self._dispatcher is not None:
+            self._dispatcher.begin_shutdown()
+        self._wake_selector()
+
+    def _on_lifecycle_state_changed(self, status: DaemonStatus) -> None:
+        event = CoreEvent(
+            type=EventType.DAEMON_STATE_CHANGED,
+            payload=status,
+            sequence=0,
+        )
+        self._on_core_event(event)
+
+    def _note_lifecycle_activity(self) -> None:
+        if self._lifecycle is not None:
+            self._lifecycle.note_activity()
 
     def _stop_configuration_reload(self) -> None:
         coordinator = self._configuration_reload
@@ -1572,6 +1812,8 @@ class DaemonServer:
 
         if event.type not in _FORWARDED_EVENT_TYPES:
             return
+        if event.type is not EventType.DAEMON_STATE_CHANGED:
+            self._note_lifecycle_activity()
         if (
             event.type in _INTERACTION_CANCELLING_EVENT_TYPES
             and event.session_id is not None
@@ -1606,6 +1848,8 @@ class DaemonServer:
                 if (
                     event.type
                     in {
+
+
                         EventType.INTERACTION_CREATED,
                         EventType.INTERACTION_STATE_CHANGED,
                     }

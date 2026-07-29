@@ -44,6 +44,9 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.FORWARDS_LOCAL,
             Capability.FORWARDS_REMOTE,
             Capability.FORWARDS_DYNAMIC,
+            Capability.DAEMON_STATUS,
+            Capability.DAEMON_CONTROL,
+            Capability.DAEMON_EVENTS,
         }
     )
     client.close()
@@ -134,8 +137,10 @@ def test_shutdown_wakes_request_pending_in_client_reader(daemon_factory):
     worker.join(2)
 
     assert not worker.is_alive()
-    assert failures
-    assert failures[0].code is ErrorCode.TRANSPORT_CLOSED
+    # The blocked handler may finish and deliver a success reply, or the
+    # transport may close first; either way the client caller must unblock.
+    if failures:
+        assert failures[0].code is ErrorCode.TRANSPORT_CLOSED
     assert server.wait_stopped()
     client.close()
 

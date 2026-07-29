@@ -40,7 +40,7 @@ from sshpilot.api.in_process_client import (  # noqa: E402
 )
 from sshpilot.api.models import __all__ as MODEL_EXPORTS  # noqa: E402
 from sshpilot.api.models import common, connections, interactions, operations  # noqa: E402
-from sshpilot.api.models import sessions, terminal, transfers  # noqa: E402
+from sshpilot.api.models import daemon, sessions, terminal, transfers  # noqa: E402
 from sshpilot.api.transport import __all__ as TRANSPORT_EXPORTS  # noqa: E402
 from sshpilot.api.transport import envelopes  # noqa: E402
 from sshpilot.daemon.dispatch import DAEMON_METHOD_CAPABILITIES  # noqa: E402
@@ -54,6 +54,7 @@ MODEL_MODULES = (
     interactions,
     transfers,
     operations,
+    daemon,
     envelopes,
 )
 EXTRA_MODELS = (Capabilities, CoreEvent)
@@ -105,6 +106,13 @@ IMPLEMENTED_MODELS = {
     "ForwardSummary",
     "OpenForwardRequest",
     "CloseForwardRequest",
+    "DaemonStatus",
+    "DaemonDiagnostics",
+    "DaemonResourceCounts",
+    "DaemonIdleInfo",
+    "DaemonStopResult",
+    "StopDaemonRequest",
+    "RestartDaemonRequest",
 }
 PARTIAL_MODELS = {"CoreEvent"}
 
@@ -183,6 +191,11 @@ RELATED_METHODS = {
     "ForwardSummary": ("list_forwards", "get_forward", "open_forward"),
     "OpenForwardRequest": ("open_forward",),
     "CloseForwardRequest": ("close_forward",),
+    "DaemonStatus": ("get_daemon_status",),
+    "DaemonDiagnostics": ("get_daemon_diagnostics",),
+    "DaemonStopResult": ("stop_daemon", "restart_daemon"),
+    "StopDaemonRequest": ("stop_daemon",),
+    "RestartDaemonRequest": ("restart_daemon",),
 }
 
 RELATED_EVENTS = {

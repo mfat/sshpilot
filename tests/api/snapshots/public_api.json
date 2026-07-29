@@ -14,11 +14,14 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.10",
+  "api_implementation_version": "0.11",
   "capabilities": [
     "connections.events",
     "connections.read",
     "connections.write",
+    "daemon.control",
+    "daemon.events",
+    "daemon.status",
     "forwards.dynamic",
     "forwards.events",
     "forwards.local",
@@ -845,6 +848,18 @@
     "connections.update": {
       "capability": "connections.write"
     },
+    "daemon.diagnostics": {
+      "capability": "daemon.status"
+    },
+    "daemon.restart": {
+      "capability": "daemon.control"
+    },
+    "daemon.status": {
+      "capability": "daemon.status"
+    },
+    "daemon.stop": {
+      "capability": "daemon.control"
+    },
     "forwards.close": {
       "capability": "forwards.write"
     },
@@ -980,6 +995,10 @@
     "authentication_attempts_exhausted",
     "connection_already_exists",
     "connection_not_found",
+    "daemon_active_resources",
+    "daemon_confirmation_required",
+    "daemon_incompatible",
+    "daemon_restart_required",
     "daemon_shutting_down",
     "daemon_unavailable",
     "forward_bind_failed",
@@ -1057,6 +1076,7 @@
     "connection.created",
     "connection.deleted",
     "connection.updated",
+    "daemon.state_changed",
     "error.occurred",
     "forward.active",
     "forward.closed",
@@ -1117,6 +1137,13 @@
     "ConnectionValidationResult",
     "CoreInfo",
     "CreateConnectionRequest",
+    "DaemonDiagnostics",
+    "DaemonDisconnectReason",
+    "DaemonIdleInfo",
+    "DaemonLifecycleState",
+    "DaemonResourceCounts",
+    "DaemonStatus",
+    "DaemonStopResult",
     "DeleteConnectionRequest",
     "DeleteConnectionResult",
     "DetachSessionRequest",
@@ -1165,6 +1192,7 @@
     "ReplayResult",
     "RequestId",
     "ResizeTerminalRequest",
+    "RestartDaemonRequest",
     "SecretDecision",
     "ServiceFailure",
     "SessionCapabilities",
@@ -1182,6 +1210,7 @@
     "SftpServiceSummary",
     "SftpSymlinkRequest",
     "StartTransferRequest",
+    "StopDaemonRequest",
     "TerminalDimensions",
     "TerminalInput",
     "TerminalOutput",
@@ -1191,7 +1220,9 @@
     "TransferLocalMode",
     "TransferState",
     "TransferSummary",
-    "UpdateConnectionRequest"
+    "UpdateConnectionRequest",
+    "default_idle_shutdown_seconds",
+    "is_valid_lifecycle_transition"
   ],
   "models": {
     "AttachSessionRequest": [
@@ -1309,6 +1340,60 @@
       "username",
       "port",
       "protocol"
+    ],
+    "DaemonDiagnostics": [
+      "status",
+      "uptime_seconds",
+      "executor_queue_depth",
+      "thread_counts_by_role",
+      "open_descriptor_count",
+      "rss_bytes",
+      "socket_bound",
+      "keep_alive_lease"
+    ],
+    "DaemonIdleInfo": [
+      "idle_shutdown_enabled",
+      "idle_shutdown_seconds",
+      "idle_since",
+      "idle_deadline",
+      "idle_blockers"
+    ],
+    "DaemonResourceCounts": [
+      "clients",
+      "sessions_active",
+      "sessions_retained",
+      "sftp_active",
+      "sftp_retained",
+      "transfers_queued",
+      "transfers_starting",
+      "transfers_running",
+      "transfers_retained",
+      "forwards_active",
+      "forwards_retained",
+      "interactions_pending"
+    ],
+    "DaemonStatus": [
+      "state",
+      "server_instance_id",
+      "started_at",
+      "protocol_version",
+      "api_implementation_version",
+      "daemon_version",
+      "development_revision",
+      "resources",
+      "idle",
+      "shutdown_deadline",
+      "disconnect_reason",
+      "restart_requested"
+    ],
+    "DaemonStopResult": [
+      "accepted",
+      "state",
+      "resources",
+      "will_lose",
+      "confirmation",
+      "message",
+      "restart_requested"
     ],
     "DeleteConnectionRequest": [
       "connection_id"
@@ -1563,6 +1648,10 @@
       "attachment_id",
       "dimensions"
     ],
+    "RestartDaemonRequest": [
+      "force",
+      "confirmation"
+    ],
     "ServiceFailure": [
       "code",
       "message"
@@ -1636,6 +1725,10 @@
       "conflict_policy",
       "recursive",
       "local_mode"
+    ],
+    "StopDaemonRequest": [
+      "force",
+      "confirmation"
     ],
     "SuccessResponseEnvelope": [
       "protocol_version",
@@ -1728,6 +1821,9 @@
       "forwards.local",
       "forwards.remote",
       "forwards.dynamic",
+      "daemon.status",
+      "daemon.control",
+      "daemon.events",
       "plugins",
       "secrets"
     ],
@@ -1736,6 +1832,25 @@
       "checking",
       "reachable",
       "unreachable"
+    ],
+    "DaemonDisconnectReason": [
+      "clean_shutdown",
+      "restart",
+      "crash",
+      "transport_loss",
+      "socket_replaced",
+      "incompatible",
+      "idle_shutdown",
+      "forced_stop"
+    ],
+    "DaemonLifecycleState": [
+      "starting",
+      "ready",
+      "idle",
+      "draining",
+      "stopping",
+      "stopped",
+      "failed"
     ],
     "ErrorCode": [
       "unsupported_capability",
@@ -1813,7 +1928,11 @@
       "protocol_version_unsupported",
       "protocol_error",
       "unsupported_method",
-      "daemon_shutting_down"
+      "daemon_shutting_down",
+      "daemon_active_resources",
+      "daemon_confirmation_required",
+      "daemon_incompatible",
+      "daemon_restart_required"
     ],
     "EventType": [
       "connection.created",
@@ -1843,6 +1962,7 @@
       "forward.active",
       "forward.closed",
       "forward.failed",
+      "daemon.state_changed",
       "error.occurred"
     ],
     "FileEntryKind": [

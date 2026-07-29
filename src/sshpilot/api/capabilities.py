@@ -47,6 +47,9 @@ class Capability(str, Enum):
     FORWARDS_LOCAL = "forwards.local"
     FORWARDS_REMOTE = "forwards.remote"
     FORWARDS_DYNAMIC = "forwards.dynamic"
+    DAEMON_STATUS = "daemon.status"
+    DAEMON_CONTROL = "daemon.control"
+    DAEMON_EVENTS = "daemon.events"
     PLUGINS = "plugins"
     SECRETS = "secrets"
 

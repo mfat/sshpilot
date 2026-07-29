@@ -17,6 +17,7 @@ from .models.interactions import InteractionRequest, InteractionSummary
 from .models.operations import ForwardSummary, SftpServiceSummary
 from .models.sessions import SessionExitInfo, SessionSummary
 from .models.terminal import TerminalOutput
+from .models.daemon import DaemonStatus
 from .models.transfers import TransferSummary
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class EventType(str, Enum):
     FORWARD_ACTIVE = "forward.active"
     FORWARD_CLOSED = "forward.closed"
     FORWARD_FAILED = "forward.failed"
+    DAEMON_STATE_CHANGED = "daemon.state_changed"
     ERROR_OCCURRED = "error.occurred"
 
 
@@ -121,6 +123,7 @@ _EVENT_PAYLOAD_TYPES = {
     EventType.FORWARD_ACTIVE: ForwardSummary,
     EventType.FORWARD_CLOSED: ForwardSummary,
     EventType.FORWARD_FAILED: ForwardSummary,
+    EventType.DAEMON_STATE_CHANGED: DaemonStatus,
     EventType.ERROR_OCCURRED: Mapping,
 }
 

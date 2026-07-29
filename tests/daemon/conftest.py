@@ -118,6 +118,10 @@ def daemon_factory(tmp_path):
         session_command_workers=4,
         session_command_queue_limit=64,
         session_shutdown_timeout=3.0,
+        idle_shutdown_seconds=0.0,
+        service_mode=False,
+        packaged=False,
+        drain_timeout_seconds=5.0,
     ):
         manager = manager or TestConnectionManager()
         path = Path(socket_path or tmp_path / f"daemon-{len(servers)}" / "sshpilotd.sock")
@@ -142,6 +146,10 @@ def daemon_factory(tmp_path):
             session_command_workers=session_command_workers,
             session_command_queue_limit=session_command_queue_limit,
             session_shutdown_timeout=session_shutdown_timeout,
+            idle_shutdown_seconds=idle_shutdown_seconds,
+            service_mode=service_mode,
+            packaged=packaged,
+            drain_timeout_seconds=drain_timeout_seconds,
         )
         servers.append(server)
         if start:

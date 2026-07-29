@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.10",
+  "api_implementation_version": "0.11",
   "client_method_contract": {
     "attach_session": {
       "capability": "sessions.write",
@@ -226,6 +226,18 @@
     "connections.update": {
       "capability": "connections.write"
     },
+    "daemon.diagnostics": {
+      "capability": "daemon.status"
+    },
+    "daemon.restart": {
+      "capability": "daemon.control"
+    },
+    "daemon.status": {
+      "capability": "daemon.status"
+    },
+    "daemon.stop": {
+      "capability": "daemon.control"
+    },
     "forwards.close": {
       "capability": "forwards.write"
     },
@@ -399,6 +411,9 @@
       "forwards.local",
       "forwards.remote",
       "forwards.dynamic",
+      "daemon.status",
+      "daemon.control",
+      "daemon.events",
       "plugins",
       "secrets"
     ],
@@ -407,6 +422,25 @@
       "checking",
       "reachable",
       "unreachable"
+    ],
+    "DaemonDisconnectReason": [
+      "clean_shutdown",
+      "restart",
+      "crash",
+      "transport_loss",
+      "socket_replaced",
+      "incompatible",
+      "idle_shutdown",
+      "forced_stop"
+    ],
+    "DaemonLifecycleState": [
+      "starting",
+      "ready",
+      "idle",
+      "draining",
+      "stopping",
+      "stopped",
+      "failed"
     ],
     "ErrorCode": [
       "unsupported_capability",
@@ -484,7 +518,11 @@
       "protocol_version_unsupported",
       "protocol_error",
       "unsupported_method",
-      "daemon_shutting_down"
+      "daemon_shutting_down",
+      "daemon_active_resources",
+      "daemon_confirmation_required",
+      "daemon_incompatible",
+      "daemon_restart_required"
     ],
     "EventType": [
       "connection.created",
@@ -514,6 +552,7 @@
       "forward.active",
       "forward.closed",
       "forward.failed",
+      "daemon.state_changed",
       "error.occurred"
     ],
     "FileEntryKind": [
@@ -1290,6 +1329,339 @@
         }
       ],
       "status": "Schema only"
+    },
+    "DaemonDiagnostics": {
+      "fields": [
+        {
+          "default": null,
+          "name": "status",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonStatus"
+        },
+        {
+          "default": null,
+          "name": "uptime_seconds",
+          "required": true,
+          "sensitive": false,
+          "type": "float"
+        },
+        {
+          "default": 0,
+          "name": "executor_queue_depth",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": {},
+          "name": "thread_counts_by_role",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, int]"
+        },
+        {
+          "default": null,
+          "name": "open_descriptor_count",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "rss_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": true,
+          "name": "socket_bound",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "keep_alive_lease",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonIdleInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "idle_shutdown_enabled",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "idle_shutdown_seconds",
+          "required": true,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "idle_since",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "idle_deadline",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": [],
+          "name": "idle_blockers",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonResourceCounts": {
+      "fields": [
+        {
+          "default": 0,
+          "name": "clients",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sessions_active",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sessions_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sftp_active",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sftp_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_queued",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_starting",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_running",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "forwards_active",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "forwards_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "interactions_pending",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonStatus": {
+      "fields": [
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonLifecycleState"
+        },
+        {
+          "default": null,
+          "name": "server_instance_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "api_implementation_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "daemon_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "development_revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "resources",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonResourceCounts"
+        },
+        {
+          "default": null,
+          "name": "idle",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonIdleInfo"
+        },
+        {
+          "default": null,
+          "name": "shutdown_deadline",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "disconnect_reason",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": false,
+          "name": "restart_requested",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonStopResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "accepted",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonLifecycleState"
+        },
+        {
+          "default": null,
+          "name": "resources",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonResourceCounts"
+        },
+        {
+          "default": [],
+          "name": "will_lose",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": null,
+          "name": "confirmation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": "",
+          "name": "message",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "restart_requested",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
     },
     "DeleteConnectionRequest": {
       "fields": [
@@ -2720,6 +3092,25 @@
       ],
       "status": "Schema only"
     },
+    "RestartDaemonRequest": {
+      "fields": [
+        {
+          "default": false,
+          "name": "force",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "confirmation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ServiceFailure": {
       "fields": [
         {
@@ -3128,6 +3519,25 @@
           "required": false,
           "sensitive": false,
           "type": "TransferLocalMode"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StopDaemonRequest": {
+      "fields": [
+        {
+          "default": false,
+          "name": "force",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "confirmation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
         }
       ],
       "status": "Implemented"

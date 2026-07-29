@@ -86,6 +86,10 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.create": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
+    "daemon.status": Capability.DAEMON_STATUS,
+    "daemon.diagnostics": Capability.DAEMON_STATUS,
+    "daemon.stop": Capability.DAEMON_CONTROL,
+    "daemon.restart": Capability.DAEMON_CONTROL,
     "interactions.cancel": Capability.INTERACTIONS_RESPOND,
     "interactions.claim": Capability.INTERACTIONS_RESPOND,
     "interactions.get": Capability.INTERACTIONS_READ,
@@ -130,6 +134,27 @@ DAEMON_METHOD_CAPABILITIES = {
     "system.get_capabilities": None,
     "system.handshake": None,
 }
+
+# Methods rejected while draining (new work). Close/cancel/status remain.
+DRAIN_REJECTED_METHODS = frozenset(
+    {
+        "connections.create",
+        "connections.update",
+        "connections.delete",
+        "sessions.open",
+        "sessions.attach",
+        "sftp.open",
+        "sftp.attach",
+        "sftp.mkdir",
+        "sftp.rmdir",
+        "sftp.rename",
+        "sftp.remove",
+        "sftp.chmod",
+        "sftp.symlink",
+        "transfers.start",
+        "forwards.open",
+    }
+)
 
 DEFERRED_DAEMON_METHODS = frozenset(
     {
@@ -213,6 +238,9 @@ class RequestDispatcher:
         sftp_runtime: Optional[SftpServiceRuntime] = None,
         transfer_runtime: Optional[TransferRuntime] = None,
         forward_runtime: Optional[ForwardRuntime] = None,
+        *,
+        lifecycle_controller: Any = None,
+        diagnostics_provider: Optional[Callable[[], Any]] = None,
     ) -> None:
         self._core_client = core_client
         self._session_runtime = session_runtime or SessionRuntime(core_client)
@@ -220,10 +248,29 @@ class RequestDispatcher:
         self._sftp_runtime = sftp_runtime
         self._transfer_runtime = transfer_runtime
         self._forward_runtime = forward_runtime
-        self.server_instance_id = uuid.uuid4().hex
+        self._lifecycle = lifecycle_controller
+        self._diagnostics_provider = diagnostics_provider
+        self.server_instance_id = (
+            lifecycle_controller.server_instance_id
+            if lifecycle_controller is not None
+            and hasattr(lifecycle_controller, "server_instance_id")
+            else uuid.uuid4().hex
+        )
+        if lifecycle_controller is not None and hasattr(
+            lifecycle_controller, "_server_instance_id"
+        ):
+            self.server_instance_id = lifecycle_controller._server_instance_id
         self._daemon_started_at = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
+        if lifecycle_controller is not None and hasattr(
+            lifecycle_controller, "_started_at"
+        ):
+            started = lifecycle_controller._started_at
+            if isinstance(started, datetime):
+                self._daemon_started_at = started.astimezone(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
         # Opaque development token only — never a filesystem or git path.
         self._development_revision = (
             os.environ.get("SSHPILOT_DEV_REVISION", "").strip()
@@ -232,6 +279,10 @@ class RequestDispatcher:
         self.HANDLERS: Dict[str, Callable[[RequestEnvelope, ClientProtocolState], Any]] = {
             "system.handshake": self._handle_handshake,
             "system.get_capabilities": self._handle_get_capabilities,
+            "daemon.status": self._handle_daemon_status,
+            "daemon.diagnostics": self._handle_daemon_diagnostics,
+            "daemon.stop": self._handle_daemon_stop,
+            "daemon.restart": self._handle_daemon_restart,
             "connections.list": self._handle_list_connections,
             "connections.get": self._handle_get_connection,
             "connections.create": self._handle_create_connection,
@@ -288,7 +339,14 @@ class RequestDispatcher:
         request: RequestEnvelope,
         state: ClientProtocolState,
     ) -> DispatchResult:
-        if self._shutting_down:
+        if self._shutting_down and request.method in DRAIN_REJECTED_METHODS:
+            raise SshPilotError(
+                ErrorCode.DAEMON_SHUTTING_DOWN,
+                "The daemon is shutting down",
+                retryable=True,
+                request_id=request.request_id,
+            )
+        if self._shutting_down and request.method == "system.handshake":
             raise SshPilotError(
                 ErrorCode.DAEMON_SHUTTING_DOWN,
                 "The daemon is shutting down",
@@ -418,6 +476,76 @@ class RequestDispatcher:
     ) -> dict:
         self._require_empty_params(request)
         return capabilities_to_wire(self._capabilities_for(state))
+
+    def _handle_daemon_status(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import daemon_status_to_wire
+
+        self._require_empty_params(request)
+        if self._lifecycle is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Daemon lifecycle status is unavailable",
+            )
+        return daemon_status_to_wire(self._lifecycle.status())
+
+    def _handle_daemon_diagnostics(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import daemon_diagnostics_to_wire
+
+        self._require_empty_params(request)
+        if self._diagnostics_provider is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Daemon diagnostics are unavailable",
+            )
+        return daemon_diagnostics_to_wire(self._diagnostics_provider())
+
+    def _handle_daemon_stop(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import (
+            daemon_stop_result_to_wire,
+            stop_daemon_request_from_wire,
+        )
+
+        if self._lifecycle is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Daemon control is unavailable",
+            )
+        result = self._lifecycle.request_stop(
+            stop_daemon_request_from_wire(dict(request.params))
+        )
+        return daemon_stop_result_to_wire(result)
+
+    def _handle_daemon_restart(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import (
+            daemon_stop_result_to_wire,
+            restart_daemon_request_from_wire,
+        )
+
+        if self._lifecycle is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Daemon control is unavailable",
+            )
+        result = self._lifecycle.request_restart(
+            restart_daemon_request_from_wire(dict(request.params))
+        )
+        return daemon_stop_result_to_wire(result)
 
     def _handle_list_connections(
         self,
@@ -1237,6 +1365,9 @@ class RequestDispatcher:
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,
+                Capability.DAEMON_STATUS,
+                Capability.DAEMON_CONTROL,
+                Capability.DAEMON_EVENTS,
             }
         )
         if terminal_frames:

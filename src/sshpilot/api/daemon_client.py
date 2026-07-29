@@ -41,6 +41,13 @@ from .models.connections import (
     DeleteConnectionResult,
     UpdateConnectionRequest,
 )
+from .models.daemon import (
+    DaemonDiagnostics,
+    DaemonStatus,
+    DaemonStopResult,
+    RestartDaemonRequest,
+    StopDaemonRequest,
+)
 from .models.interactions import (
     InteractionClaim,
     InteractionDecisionRequest,
@@ -105,6 +112,9 @@ from .transport.codec import (
     connection_details_from_wire,
     connection_summary_from_wire,
     create_connection_request_to_wire,
+    daemon_diagnostics_from_wire,
+    daemon_status_from_wire,
+    daemon_stop_result_from_wire,
     decode_envelope,
     delete_connection_request_to_wire,
     delete_connection_result_from_wire,
@@ -128,6 +138,7 @@ from .transport.codec import (
     replay_request_to_wire,
     replay_result_from_wire,
     resize_terminal_request_to_wire,
+    restart_daemon_request_to_wire,
     session_summary_from_wire,
     sftp_chmod_request_to_wire,
     sftp_path_request_to_wire,
@@ -135,6 +146,7 @@ from .transport.codec import (
     sftp_service_summary_from_wire,
     sftp_symlink_request_to_wire,
     start_transfer_request_to_wire,
+    stop_daemon_request_to_wire,
     transfer_summary_from_wire,
     update_connection_request_to_wire,
 )
@@ -176,6 +188,8 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
+    "get_daemon_diagnostics": Capability.DAEMON_STATUS,
+    "get_daemon_status": Capability.DAEMON_STATUS,
     "get_session": Capability.SESSIONS_READ,
     "get_interaction": Capability.INTERACTIONS_READ,
     "claim_interaction": Capability.INTERACTIONS_RESPOND,
@@ -184,7 +198,9 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
     "release_terminal_input": Capability.TERMINAL_INPUT,
+    "restart_daemon": Capability.DAEMON_CONTROL,
     "send_terminal_input": Capability.TERMINAL_INPUT,
+    "stop_daemon": Capability.DAEMON_CONTROL,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
     "resize_terminal": Capability.TERMINAL_RESIZE,
     "release_interaction": Capability.INTERACTIONS_RESPOND,
@@ -497,6 +513,46 @@ class DaemonClient:
             return [session_summary_from_wire(item) for item in result]
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid session list")
+
+    def get_daemon_status(self) -> DaemonStatus:
+        self._require_capability(Capability.DAEMON_STATUS)
+        result = self._request("daemon.status", {})
+        try:
+            return daemon_status_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid status snapshot")
+
+    def get_daemon_diagnostics(self) -> DaemonDiagnostics:
+        self._require_capability(Capability.DAEMON_STATUS)
+        result = self._request("daemon.diagnostics", {})
+        try:
+            return daemon_diagnostics_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid diagnostics")
+
+    def stop_daemon(
+        self,
+        request: Optional[StopDaemonRequest] = None,
+    ) -> DaemonStopResult:
+        self._require_capability(Capability.DAEMON_CONTROL)
+        payload = stop_daemon_request_to_wire(request or StopDaemonRequest())
+        result = self._request("daemon.stop", payload)
+        try:
+            return daemon_stop_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid stop result")
+
+    def restart_daemon(
+        self,
+        request: Optional[RestartDaemonRequest] = None,
+    ) -> DaemonStopResult:
+        self._require_capability(Capability.DAEMON_CONTROL)
+        payload = restart_daemon_request_to_wire(request or RestartDaemonRequest())
+        result = self._request("daemon.restart", payload)
+        try:
+            return daemon_stop_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid restart result")
 
     def get_session(self, session_id: SessionId) -> SessionSummary:
         self._require_capability(Capability.SESSIONS_READ)
