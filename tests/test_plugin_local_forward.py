@@ -1,7 +1,10 @@
-"""``ctx.ensure_local_forward`` rides the single SSH/auth path: the forward is
-added onto the shared ControlMaster with ``ssh -O forward`` when multiplexing
-is active, falls back to a background ``ssh -N`` otherwise, and reuses a live
-forward per (nickname, remote_port). Everything is monkeypatched — no SSH."""
+"""``ctx.ensure_local_forward`` ownership routes.
+
+Daemon mode opens daemon-owned forwards and refuses silent ControlMaster /
+``ssh -N`` fallback. The legacy local-process path (mux ``ssh -O forward`` or
+background ``ssh -N``) runs only when explicitly allowed — monkeypatched here
+with ``forwards.legacy_local_process`` and ``SSHPILOT_CLIENT_MODE=in_process``.
+"""
 
 import os
 import subprocess
@@ -12,6 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from sshpilot.extended_service_policy import LEGACY_LOCAL_FORWARD_SETTING
 from sshpilot.plugins import api as api_mod
 from sshpilot.plugins.api import PluginContext
 from sshpilot.plugins.registry import ProtocolRegistry
@@ -25,6 +29,15 @@ class FakeManager:
         return types.SimpleNamespace(nickname=nickname) if nickname == "web" else None
 
 
+class LegacyConfig:
+    """Minimal config that opts into legacy local forwards."""
+
+    def get_setting(self, key, default=None):
+        if key == LEGACY_LOCAL_FORWARD_SETTING:
+            return True
+        return default
+
+
 @pytest.fixture(autouse=True)
 def clean_forwards():
     api_mod._FORWARDS.clear()
@@ -34,13 +47,17 @@ def clean_forwards():
 
 @pytest.fixture
 def ctx(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "in_process")
     monkeypatch.setattr(port_utils, "find_available_port",
                         lambda preferred, *a, **k: LOCAL_PORT)
     monkeypatch.setattr(ssh_multiplex, "is_active", lambda nick: True)
     monkeypatch.setattr(ssh_multiplex, "control_path", lambda: "/tmp/ctl-sock")
-    return PluginContext(plugin_id="test", app_config=None,
-                         connection_manager=FakeManager(),
-                         protocol_registry=ProtocolRegistry())
+    return PluginContext(
+        plugin_id="test",
+        app_config=LegacyConfig(),
+        connection_manager=FakeManager(),
+        protocol_registry=ProtocolRegistry(),
+    )
 
 
 def _capture_builds(monkeypatch):
@@ -91,6 +108,20 @@ def test_fallback_spawns_background_ssh_n(ctx, monkeypatch):
     assert builds[-1] == ["-N", "-o", "ExitOnForwardFailure=yes",
                           "-L", f"{LOCAL_PORT}:localhost:8080"]
     assert spawned == [["ssh", "web"]]
+
+
+def test_daemon_mode_refuses_silent_local_fallback(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "daemon")
+    monkeypatch.setattr(port_utils, "find_available_port",
+                        lambda preferred, *a, **k: LOCAL_PORT)
+    ctx = PluginContext(
+        plugin_id="test",
+        app_config=None,
+        connection_manager=FakeManager(),
+        protocol_registry=ProtocolRegistry(),
+    )
+    with pytest.raises(RuntimeError, match="Refusing silent"):
+        ctx.ensure_local_forward("web", 8080)
 
 
 def test_unknown_connection_raises(ctx):
