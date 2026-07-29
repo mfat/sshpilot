@@ -8,38 +8,38 @@ Nothing in this package may import `gi`, Gtk, Gdk, Adw, Vte, GLib, or Gio.
 ```text
 src/sshpilot/core/
     errors.py
+    package_graph.py   # allowed dependency manifest
     settings/          # defaults, migration, JSON store, ssh_overrides
     validation/        # connection field validation
     forwards/          # forwarding rule validation
-    ssh/               # ProcessSpec (launch description)
+    ssh/               # ProcessSpec + SSHLaunchRequest builder
+    connections/       # ConnectionService domain store
+    interaction/       # askpass / prompt policy (no dialogs)
     keys/              # discovery / generation service
     known_hosts/       # parse, filter, atomic save
-    secrets/           # backend selection / unlock policy
+    secrets/           # backend selection / unlock policy + protocols
     plugins/           # headless plugin contracts
-    import_export/     # import payload validation
-    cli.py             # minimal headless proof consumer
+    import_export/     # schema, plan, merge, atomic write
+    transfers/         # transfer request/policy models
+    cli.py             # headless proof consumer
 ```
 
-## Adapters
+## Layer roles
 
 | Layer | Role |
 | --- | --- |
 | `sshpilot.core` | Pure domain models and services |
-| `sshpilot.platform.*` | OS-specific adapters (e.g. libsecret `gi` load) |
-| `sshpilot.gtk.*` | GTK contribution surfaces |
-| `sshpilot.config.Config` | GObject/GSettings shell over core settings |
-| `sshpilot.key_manager.KeyManager` | GObject shell over `KeyService` |
-| `sshpilot.plugins.api` | Compatibility re-exports of core plugin contracts |
+| `sshpilot.api` | Protocol / IPC models (GTK-free) |
+| `sshpilot.daemon` | Runtime ownership (sessions, transfers, broker) |
+| `sshpilot.platform.*` | OS adapters (libsecret `gi` load is isolated here) |
+| `sshpilot.gtk.*` | GTK contribution surfaces / interaction provider |
+| `sshpilot.connection_manager.ConnectionManager` | GObject adapter over `ConnectionService` |
+| `sshpilot.ssh_connection_builder` | Runtime askpass/env adapter over `core.ssh` |
+| `sshpilot.askpass_utils` | Process askpass helper; classifies via `core.interaction` |
 
-## Daemon / API relationship
+## Rules
 
-`sshpilot.api` and `sshpilot.daemon` remain stable packages. They may use core
-where useful; they must not import GTK. Transport and protocol models stay in
-`api/` — do not relocate them merely for naming consistency.
-
-## Migration path
-
-1. Extract pure logic into `core/`.
-2. Leave a thin shim or GObject adapter at the historical import path.
-3. GTK controllers map structured `CoreError` / `FieldError` to Adw dialogs/toasts.
-4. Prefer new headless/CLI code importing `sshpilot.core` directly.
+1. Core never displays dialogs or loads GI.
+2. GTK collects input, calls core/API, renders state, maps `CoreError` to Adw UI.
+3. Daemon consumes the same core request/policy models as GTK.
+4. Compatibility shims stay thin — see `core-compatibility-shims.md`.
