@@ -160,7 +160,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from .server import DaemonServer
 
         _configure_logging(args.verbose)
-        idle_shutdown_seconds = None
+        from .lifecycle_policy import _IDLE_SHUTDOWN_UNSET
+
+        # Unset means "use environment default" (dev 300s / packaged 120s).
+        # Explicit ``None`` from config would disable idle shutdown.
+        idle_shutdown_seconds: object = _IDLE_SHUTDOWN_UNSET
         service_mode = False
         packaged = False
         try:

@@ -81,3 +81,44 @@ def test_launcher_script_invokes_module():
     )
     assert result.returncode == 0
     assert "status" in result.stdout
+
+
+def test_cli_server_start_uses_environment_idle_default_when_unset(monkeypatch, tmp_path):
+    """Absent ``daemon.idle_shutdown_seconds`` must not disable idle shutdown."""
+
+    captured = {}
+
+    class _FakeConfig:
+        def get_setting(self, key, default=None):
+            return default
+
+    class _FakeServer:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            self._startup_error = None
+
+        def serve_forever(self):
+            return None
+
+        def shutdown(self):
+            return None
+
+    monkeypatch.setattr("sshpilot.config.Config", _FakeConfig)
+    monkeypatch.setattr("sshpilot.daemon.server.DaemonServer", _FakeServer)
+    monkeypatch.setattr(
+        "sshpilot.daemon.cli._production_core_client",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "sshpilot.daemon.cli.run_server",
+        lambda **kwargs: kwargs["serve_forever"]() or 0,
+    )
+
+    from sshpilot.daemon.lifecycle_policy import _IDLE_SHUTDOWN_UNSET
+
+    exit_code = main(["--socket", str(tmp_path / "sshpilotd.sock")])
+    assert exit_code == 0
+    assert captured["idle_shutdown_seconds"] is _IDLE_SHUTDOWN_UNSET
+
+    assert result.returncode == 0
+    assert "status" in result.stdout
