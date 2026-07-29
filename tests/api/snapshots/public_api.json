@@ -14,12 +14,18 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.8",
+  "api_implementation_version": "0.9",
   "capabilities": [
     "connections.events",
     "connections.read",
     "connections.write",
     "interactions",
+    "interactions.events",
+    "interactions.host_key",
+    "interactions.passphrase",
+    "interactions.password",
+    "interactions.read",
+    "interactions.respond",
     "plugins",
     "port_forwarding",
     "secrets",
@@ -37,6 +43,14 @@
   "client_method_contract": {
     "attach_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "cancel_interaction": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "claim_interaction": {
+      "capability": "interactions.respond",
       "status": "daemon-only"
     },
     "close": {
@@ -67,6 +81,10 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "get_interaction": {
+      "capability": "interactions.read",
+      "status": "daemon-only"
+    },
     "get_session": {
       "capability": "sessions.read",
       "status": "daemon-only"
@@ -75,12 +93,20 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "list_interactions": {
+      "capability": "interactions.read",
+      "status": "daemon-only"
+    },
     "list_sessions": {
       "capability": "sessions.read",
       "status": "daemon-only"
     },
     "open_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "release_interaction": {
+      "capability": "interactions.respond",
       "status": "daemon-only"
     },
     "replay_terminal": {
@@ -92,8 +118,12 @@
       "status": "daemon-only"
     },
     "respond_to_interaction": {
-      "capability": "interactions",
-      "status": "schema-only"
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "send_interaction_secret": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
     },
     "send_terminal_input": {
       "capability": "terminal.input",
@@ -114,6 +144,8 @@
   },
   "client_methods": [
     "attach_session",
+    "cancel_interaction",
+    "claim_interaction",
     "close",
     "close_session",
     "create_connection",
@@ -121,13 +153,17 @@
     "detach_session",
     "get_capabilities",
     "get_connection",
+    "get_interaction",
     "get_session",
     "list_connections",
+    "list_interactions",
     "list_sessions",
     "open_session",
+    "release_interaction",
     "replay_terminal",
     "resize_terminal",
     "respond_to_interaction",
+    "send_interaction_secret",
     "send_terminal_input",
     "subscribe_events",
     "subscribe_terminal",
@@ -143,6 +179,26 @@
         }
       ],
       "return": "AttachSessionResult"
+    },
+    "cancel_interaction": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "interaction_id",
+          "type": "InteractionId"
+        }
+      ],
+      "return": "None"
+    },
+    "claim_interaction": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "interaction_id",
+          "type": "InteractionId"
+        }
+      ],
+      "return": "InteractionClaim"
     },
     "close": {
       "parameters": [],
@@ -202,6 +258,16 @@
       ],
       "return": "ConnectionDetails"
     },
+    "get_interaction": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "interaction_id",
+          "type": "InteractionId"
+        }
+      ],
+      "return": "InteractionSummary"
+    },
     "get_session": {
       "parameters": [
         {
@@ -216,6 +282,10 @@
       "parameters": [],
       "return": "list[ConnectionSummary]"
     },
+    "list_interactions": {
+      "parameters": [],
+      "return": "list[InteractionSummary]"
+    },
     "list_sessions": {
       "parameters": [],
       "return": "list[SessionSummary]"
@@ -229,6 +299,16 @@
         }
       ],
       "return": "SessionSummary"
+    },
+    "release_interaction": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "interaction_id",
+          "type": "InteractionId"
+        }
+      ],
+      "return": "None"
     },
     "replay_terminal": {
       "parameters": [
@@ -255,7 +335,27 @@
         {
           "kind": "positional_or_keyword",
           "name": "response",
-          "type": "InteractionResponse"
+          "type": "InteractionDecisionRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "send_interaction_secret": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "interaction_id",
+          "type": "InteractionId"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "nonce",
+          "type": "str"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "secret",
+          "type": "bytearray"
         }
       ],
       "return": "None"
@@ -342,6 +442,24 @@
     "connections.update": {
       "capability": "connections.write"
     },
+    "interactions.cancel": {
+      "capability": "interactions.respond"
+    },
+    "interactions.claim": {
+      "capability": "interactions.respond"
+    },
+    "interactions.get": {
+      "capability": "interactions.read"
+    },
+    "interactions.list": {
+      "capability": "interactions.read"
+    },
+    "interactions.release": {
+      "capability": "interactions.respond"
+    },
+    "interactions.respond": {
+      "capability": "interactions.respond"
+    },
     "sessions.attach": {
       "capability": "sessions.write"
     },
@@ -374,6 +492,8 @@
     }
   },
   "error_codes": [
+    "askpass_helper_unavailable",
+    "authentication_attempts_exhausted",
     "connection_already_exists",
     "connection_not_found",
     "daemon_shutting_down",
@@ -381,8 +501,15 @@
     "frame_too_large",
     "handshake_already_completed",
     "handshake_required",
+    "host_key_persistence_failed",
     "interaction_already_answered",
+    "interaction_claim_conflict",
+    "interaction_expired",
     "interaction_not_found",
+    "interaction_responder_unauthorized",
+    "interaction_secret_duplicate",
+    "interaction_secret_expected",
+    "interaction_type_unsupported",
     "internal_error",
     "invalid_frame",
     "invalid_request",
@@ -391,9 +518,12 @@
     "operation_timed_out",
     "permission_denied",
     "persistence_failed",
+    "prompt_classification_failed",
     "protocol_error",
     "protocol_version_unsupported",
     "pty_allocation_failed",
+    "secret_backend_unavailable",
+    "secret_storage_failed",
     "server_busy",
     "session_already_closed",
     "session_invalid_state",
@@ -420,6 +550,8 @@
     "connection.deleted",
     "connection.updated",
     "error.occurred",
+    "interaction.created",
+    "interaction.state_changed",
     "session.closed",
     "session.created",
     "session.exited",
@@ -461,26 +593,39 @@
     "ForwardKind",
     "ForwardState",
     "GroupReference",
+    "HostKeyDecision",
+    "HostKeyPrompt",
+    "HostKeyStatus",
     "InputOwner",
     "InteractionCancellation",
+    "InteractionClaim",
+    "InteractionDecisionRequest",
     "InteractionId",
     "InteractionKind",
+    "InteractionPrompt",
     "InteractionRejection",
     "InteractionRequest",
     "InteractionResponse",
+    "InteractionState",
     "InteractionStatus",
+    "InteractionSummary",
     "InteractionTimeout",
+    "InteractionType",
     "ListDirectoryRequest",
     "OpenSessionRequest",
+    "PassphrasePrompt",
+    "PasswordPrompt",
     "PluginArgument",
     "PluginOperationRequest",
     "PluginOperationResult",
     "PortForwardSummary",
+    "RememberPolicy",
     "ReplayBounds",
     "ReplayRequest",
     "ReplayResult",
     "RequestId",
     "ResizeTerminalRequest",
+    "SecretDecision",
     "SessionCapabilities",
     "SessionExitInfo",
     "SessionFailure",
@@ -649,6 +794,13 @@
       "compatibility_status",
       "server_instance_id"
     ],
+    "HostKeyPrompt": [
+      "hostname",
+      "port",
+      "key_type",
+      "fingerprint",
+      "status"
+    ],
     "InputOwner": [
       "client_id",
       "attachment_id"
@@ -656,6 +808,18 @@
     "InteractionCancellation": [
       "interaction_id",
       "reason"
+    ],
+    "InteractionClaim": [
+      "interaction_id",
+      "responder_client_id",
+      "nonce",
+      "expires_at"
+    ],
+    "InteractionDecisionRequest": [
+      "interaction_id",
+      "host_key_decision",
+      "secret_decision",
+      "remember_policy"
     ],
     "InteractionRejection": [
       "interaction_id",
@@ -681,6 +845,18 @@
       "value",
       "choice"
     ],
+    "InteractionSummary": [
+      "id",
+      "session_id",
+      "connection_id",
+      "type",
+      "state",
+      "created_at",
+      "expires_at",
+      "attempt",
+      "prompt",
+      "responder_client_id"
+    ],
     "InteractionTimeout": [
       "interaction_id",
       "expired_at"
@@ -692,6 +868,21 @@
     "OpenSessionRequest": [
       "connection_id",
       "dimensions"
+    ],
+    "PassphrasePrompt": [
+      "key_display_name",
+      "key_fingerprint",
+      "attempt",
+      "can_remember",
+      "stored_secret_available"
+    ],
+    "PasswordPrompt": [
+      "username",
+      "hostname",
+      "port",
+      "attempt",
+      "can_remember",
+      "stored_secret_available"
     ],
     "PluginArgument": [
       "name",
@@ -838,6 +1029,12 @@
       "terminal.resize",
       "terminal.replay",
       "interactions",
+      "interactions.read",
+      "interactions.respond",
+      "interactions.events",
+      "interactions.host_key",
+      "interactions.password",
+      "interactions.passphrase",
       "sftp",
       "port_forwarding",
       "plugins",
@@ -874,7 +1071,19 @@
       "pty_allocation_failed",
       "server_busy",
       "interaction_not_found",
+      "interaction_expired",
       "interaction_already_answered",
+      "interaction_claim_conflict",
+      "interaction_responder_unauthorized",
+      "interaction_secret_expected",
+      "interaction_secret_duplicate",
+      "interaction_type_unsupported",
+      "prompt_classification_failed",
+      "askpass_helper_unavailable",
+      "secret_backend_unavailable",
+      "secret_storage_failed",
+      "host_key_persistence_failed",
+      "authentication_attempts_exhausted",
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
@@ -901,6 +1110,8 @@
       "session.interaction_requested",
       "session.exited",
       "session.closed",
+      "interaction.created",
+      "interaction.state_changed",
       "error.occurred"
     ],
     "FileEntryKind": [
@@ -921,6 +1132,16 @@
       "stopping",
       "stopped"
     ],
+    "HostKeyDecision": [
+      "accept_once",
+      "accept_and_store",
+      "reject"
+    ],
+    "HostKeyStatus": [
+      "unknown",
+      "changed",
+      "revoked"
+    ],
     "InteractionKind": [
       "password",
       "key_passphrase",
@@ -929,12 +1150,35 @@
       "overwrite_confirmation",
       "plugin_question"
     ],
+    "InteractionState": [
+      "pending",
+      "claimed",
+      "answered",
+      "cancelled",
+      "expired",
+      "failed"
+    ],
     "InteractionStatus": [
       "pending",
       "answered",
       "cancelled",
       "timed_out",
       "rejected"
+    ],
+    "InteractionType": [
+      "host_key_confirmation",
+      "password",
+      "private_key_passphrase"
+    ],
+    "RememberPolicy": [
+      "do_not_store",
+      "store_after_success",
+      "replace_stored_after_success",
+      "delete_stored_secret"
+    ],
+    "SecretDecision": [
+      "submit",
+      "cancel"
     ],
     "SessionState": [
       "created",

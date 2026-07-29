@@ -157,6 +157,7 @@ class MultiplexedFrameDecoder:
         return bool(self._buffer) or self._expected_size is not None
 
     def feed(self, data: bytes) -> List[Union[Dict[str, Any], object]]:
+        from .secret_frames import decode_secret_payload, is_secret_payload
         from .terminal_frames import decode_terminal_payload, is_terminal_payload
 
         if not isinstance(data, bytes):
@@ -191,7 +192,11 @@ class MultiplexedFrameDecoder:
             messages.append(
                 decode_terminal_payload(payload)
                 if is_terminal_payload(payload)
-                else _decode_payload(payload)
+                else (
+                    decode_secret_payload(payload)
+                    if is_secret_payload(payload)
+                    else _decode_payload(payload)
+                )
             )
         return messages
 

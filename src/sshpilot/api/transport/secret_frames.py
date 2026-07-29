@@ -1,0 +1,103 @@
+"""One-use client-to-daemon secret response frames."""
+
+from __future__ import annotations
+
+import struct
+from dataclasses import dataclass, field
+from enum import IntEnum
+from uuid import UUID
+
+from sshpilot.api.errors import ErrorCode
+from sshpilot.api.interaction_identity import (
+    interaction_id_from_uuid,
+    interaction_uuid_from_id,
+)
+from sshpilot.api.models.common import InteractionId
+
+from .framing import FramingError, MAX_FRAME_SIZE
+
+SECRET_STREAM_VERSION = 1
+MAX_SECRET_PAYLOAD_SIZE = 16 * 1024
+_MAGIC = b"SPSB"
+_HEADER = struct.Struct(">4sBBH16s16s")
+
+
+class SecretFrameKind(IntEnum):
+    RESPONSE = 1
+
+
+@dataclass
+class SecretFrame:
+    kind: SecretFrameKind
+    interaction_id: InteractionId
+    nonce: bytes = field(repr=False)
+    secret: bytearray = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if self.kind is not SecretFrameKind.RESPONSE:
+            raise ValueError("secret frame kind is unsupported")
+        interaction_uuid_from_id(self.interaction_id)
+        if type(self.nonce) is not bytes or len(self.nonce) != 16:
+            raise ValueError("secret response nonce is malformed")
+        if type(self.secret) is not bytearray:
+            raise TypeError("secret response payload must be a bytearray")
+        if not self.secret or len(self.secret) > MAX_SECRET_PAYLOAD_SIZE:
+            raise ValueError("secret response payload size is invalid")
+        if b"\0" in self.secret:
+            raise ValueError("secret response payload must not contain NUL")
+
+    def clear(self) -> None:
+        self.secret[:] = b"\0" * len(self.secret)
+        self.secret.clear()
+
+
+def is_secret_payload(payload: bytes) -> bool:
+    return len(payload) >= len(_MAGIC) and payload[: len(_MAGIC)] == _MAGIC
+
+
+def encode_secret_payload(frame: SecretFrame) -> bytes:
+    if type(frame) is not SecretFrame:
+        raise TypeError("a SecretFrame is required")
+    interaction_uuid = interaction_uuid_from_id(frame.interaction_id).bytes
+    payload = _HEADER.pack(
+        _MAGIC,
+        SECRET_STREAM_VERSION,
+        int(frame.kind),
+        0,
+        interaction_uuid,
+        frame.nonce,
+    ) + bytes(frame.secret)
+    if len(payload) > MAX_FRAME_SIZE:
+        raise FramingError(
+            ErrorCode.FRAME_TOO_LARGE,
+            "The secret response frame exceeds the maximum size",
+        )
+    return payload
+
+
+def decode_secret_payload(payload: bytes) -> SecretFrame:
+    if not isinstance(payload, bytes) or len(payload) <= _HEADER.size:
+        raise FramingError(
+            ErrorCode.INVALID_FRAME,
+            "The secret response frame is incomplete",
+        )
+    try:
+        magic, version, kind_value, flags, interaction_bytes, nonce = (
+            _HEADER.unpack(payload[: _HEADER.size])
+        )
+        if magic != _MAGIC or version != SECRET_STREAM_VERSION or flags != 0:
+            raise ValueError
+        secret = bytearray(payload[_HEADER.size :])
+        return SecretFrame(
+            kind=SecretFrameKind(kind_value),
+            interaction_id=interaction_id_from_uuid(
+                UUID(bytes=interaction_bytes)
+            ),
+            nonce=nonce,
+            secret=secret,
+        )
+    except (TypeError, ValueError):
+        raise FramingError(
+            ErrorCode.INVALID_FRAME,
+            "The secret response frame is malformed",
+        ) from None

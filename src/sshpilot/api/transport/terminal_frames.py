@@ -34,6 +34,18 @@ class TerminalFrameFlags(IntFlag):
     TRUNCATED = 4
 
 
+_FLAGS_BY_KIND = {
+    TerminalFrameKind.OUTPUT: (
+        TerminalFrameFlags.REPLAY
+        | TerminalFrameFlags.EOF
+        | TerminalFrameFlags.TRUNCATED
+    ),
+    TerminalFrameKind.INPUT: TerminalFrameFlags.NONE,
+    TerminalFrameKind.CONTINUITY_LOST: TerminalFrameFlags.TRUNCATED,
+    TerminalFrameKind.INPUT_ERROR: TerminalFrameFlags.NONE,
+}
+
+
 @dataclass(frozen=True)
 class TerminalFrame:
     kind: TerminalFrameKind
@@ -58,9 +70,11 @@ class TerminalFrame:
             _attachment_uuid(self.attachment_id)
         elif self.attachment_id is not None:
             raise ValueError("only terminal input/status frames carry an attachment")
-        if self.kind is not TerminalFrameKind.OUTPUT and (
-            self.flags & (TerminalFrameFlags.REPLAY | TerminalFrameFlags.EOF)
-        ):
+        if not isinstance(self.kind, TerminalFrameKind):
+            raise TypeError("terminal frame kind is invalid")
+        if not isinstance(self.flags, TerminalFrameFlags):
+            raise TypeError("terminal frame flags are invalid")
+        if self.flags & ~_FLAGS_BY_KIND[self.kind]:
             raise ValueError("terminal flags do not match the frame kind")
 
 

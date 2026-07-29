@@ -31,7 +31,12 @@ from .models.connections import (
     DeleteConnectionResult,
     UpdateConnectionRequest,
 )
-from .models.interactions import InteractionResponse
+from .models.interactions import (
+    InteractionClaim,
+    InteractionDecisionRequest,
+    InteractionId,
+    InteractionSummary,
+)
 from .models.sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -70,6 +75,9 @@ from .transport.codec import (
     error_from_wire,
     handshake_request_to_wire,
     handshake_result_from_wire,
+    interaction_claim_from_wire,
+    interaction_decision_to_wire,
+    interaction_summary_from_wire,
     open_session_request_to_wire,
     public_event_from_envelope,
     replay_request_to_wire,
@@ -97,6 +105,11 @@ from .transport.terminal_frames import (
     TerminalFrameKind,
     encode_terminal_payload,
 )
+from .transport.secret_frames import (
+    SecretFrame,
+    SecretFrameKind,
+    encode_secret_payload,
+)
 from .version import PROTOCOL_VERSION
 
 DEFAULT_REQUEST_TIMEOUT = 5.0
@@ -109,11 +122,18 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
     "get_session": Capability.SESSIONS_READ,
+    "get_interaction": Capability.INTERACTIONS_READ,
+    "claim_interaction": Capability.INTERACTIONS_RESPOND,
+    "cancel_interaction": Capability.INTERACTIONS_RESPOND,
+    "list_interactions": Capability.INTERACTIONS_READ,
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
     "resize_terminal": Capability.TERMINAL_RESIZE,
+    "release_interaction": Capability.INTERACTIONS_RESPOND,
+    "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
+    "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "replay_terminal": Capability.TERMINAL_REPLAY,
 }
 
@@ -136,6 +156,16 @@ class _TerminalCallbacks:
     on_continuity_lost: Optional[TerminalContinuityCallback]
     on_eof: Optional[TerminalEofCallback]
     on_error: Optional[TerminalErrorCallback]
+
+
+class _ConcurrentRequestGate:
+    """Compatibility context manager; pending correlation permits concurrency."""
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *_args: object) -> None:
+        return None
 
 
 class DaemonClient:
@@ -164,7 +194,7 @@ class DaemonClient:
         self._client_name = client_name
         self._client_version = client_version
         self._frontend_type = frontend_type
-        self._request_lock = threading.Lock()
+        self._request_lock = _ConcurrentRequestGate()
         self._send_lock = threading.Lock()
         self._state_lock = threading.RLock()
         self._publisher = EventPublisher()
@@ -429,9 +459,103 @@ class DaemonClient:
 
         return TerminalSubscription(_cancel)
 
-    def respond_to_interaction(self, response: InteractionResponse) -> None:
-        del response
-        raise self._unsupported("respond_to_interaction")
+    def list_interactions(self) -> List[InteractionSummary]:
+        self._require_capability(Capability.INTERACTIONS_READ)
+        values = self._request("interactions.list", {})
+        if type(values) is not list:
+            self._fail_protocol("The daemon returned an invalid interaction list")
+        try:
+            return [interaction_summary_from_wire(item) for item in values]
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid interaction data")
+
+    def get_interaction(self, interaction_id: InteractionId) -> InteractionSummary:
+        self._require_capability(Capability.INTERACTIONS_READ)
+        value = self._request(
+            "interactions.get",
+            {"interaction_id": interaction_id},
+        )
+        try:
+            return interaction_summary_from_wire(value)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid interaction data")
+
+    def claim_interaction(self, interaction_id: InteractionId) -> InteractionClaim:
+        self._require_capability(Capability.INTERACTIONS_RESPOND)
+        value = self._request(
+            "interactions.claim",
+            {"interaction_id": interaction_id},
+        )
+        try:
+            return interaction_claim_from_wire(value)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid interaction claim")
+
+    def release_interaction(self, interaction_id: InteractionId) -> None:
+        self._require_capability(Capability.INTERACTIONS_RESPOND)
+        self._request(
+            "interactions.release",
+            {"interaction_id": interaction_id},
+        )
+
+    def respond_to_interaction(
+        self,
+        response: InteractionDecisionRequest,
+    ) -> None:
+        self._require_capability(Capability.INTERACTIONS_RESPOND)
+        self._request(
+            "interactions.respond",
+            interaction_decision_to_wire(response),
+        )
+
+    def cancel_interaction(self, interaction_id: InteractionId) -> None:
+        self._require_capability(Capability.INTERACTIONS_RESPOND)
+        self._request(
+            "interactions.cancel",
+            {"interaction_id": interaction_id},
+        )
+
+    def send_interaction_secret(
+        self,
+        interaction_id: InteractionId,
+        nonce: str,
+        secret: bytearray,
+    ) -> None:
+        self._require_capability(Capability.INTERACTIONS_RESPOND)
+        if type(secret) is not bytearray:
+            raise TypeError("interaction secret must be a bytearray")
+        try:
+            nonce_bytes = bytes.fromhex(nonce)
+            frame = encode_binary_frame(
+                encode_secret_payload(
+                    SecretFrame(
+                        kind=SecretFrameKind.RESPONSE,
+                        interaction_id=interaction_id,
+                        nonce=nonce_bytes,
+                        secret=secret,
+                    )
+                )
+            )
+            with self._send_lock:
+                with self._state_lock:
+                    transport = self._socket
+                    if self._closed or transport is None:
+                        raise self._closed_error()
+                transport.sendall(frame)
+        except ValueError:
+            raise ValueError("interaction claim nonce is malformed") from None
+        except OSError:
+            self._fail_transport(
+                SshPilotError(
+                    ErrorCode.TRANSPORT_CLOSED,
+                    "The daemon transport failed during secret submission",
+                    retryable=False,
+                )
+            )
+            raise self._closed_error() from None
+        finally:
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         with self._state_lock:
@@ -494,10 +618,18 @@ class DaemonClient:
                     Capability.TERMINAL_INPUT.value,
                     Capability.TERMINAL_RESIZE.value,
                     Capability.TERMINAL_REPLAY.value,
+                    Capability.INTERACTIONS_READ.value,
+                    Capability.INTERACTIONS_RESPOND.value,
+                    Capability.INTERACTIONS_EVENTS.value,
+                    Capability.INTERACTIONS_HOST_KEY.value,
+                    Capability.INTERACTIONS_PASSWORD.value,
+                    Capability.INTERACTIONS_PASSPHRASE.value,
                 }
             ),
             frontend_type=self._frontend_type,
-            supported_frame_types=frozenset({"binary-terminal-v1"}),
+            supported_frame_types=frozenset(
+                {"binary-secret-v1", "binary-terminal-v1"}
+            ),
         )
         result = self._request(
             "system.handshake",

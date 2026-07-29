@@ -16,7 +16,22 @@ from ..models.common import (
     CompatibilityResult,
     ConnectionId,
     CoreInfo,
+    InteractionId,
     SessionId,
+)
+from ..models.interactions import (
+    HostKeyDecision,
+    HostKeyPrompt,
+    HostKeyStatus,
+    InteractionClaim,
+    InteractionDecisionRequest,
+    InteractionState,
+    InteractionSummary,
+    InteractionType,
+    PassphrasePrompt,
+    PasswordPrompt,
+    RememberPolicy,
+    SecretDecision,
 )
 from ..models.connections import (
     AuthenticationMethod,
@@ -309,7 +324,15 @@ _SESSION_EVENT_TYPES = frozenset(
         EventType.SESSION_CLOSED,
     }
 )
-_FORWARDED_EVENT_TYPES = _CONNECTION_EVENT_TYPES | _SESSION_EVENT_TYPES
+_INTERACTION_EVENT_TYPES = frozenset(
+    {
+        EventType.INTERACTION_CREATED,
+        EventType.INTERACTION_STATE_CHANGED,
+    }
+)
+_FORWARDED_EVENT_TYPES = (
+    _CONNECTION_EVENT_TYPES | _SESSION_EVENT_TYPES | _INTERACTION_EVENT_TYPES
+)
 
 
 def public_event_to_envelope(
@@ -326,6 +349,10 @@ def public_event_to_envelope(
         if type(event.payload) is not ConnectionSummary:
             raise TypeError("connection event payload must be ConnectionSummary")
         payload = connection_summary_to_wire(event.payload)
+    elif event.type in _INTERACTION_EVENT_TYPES:
+        if type(event.payload) is not InteractionSummary:
+            raise TypeError("interaction event payload must be InteractionSummary")
+        payload = interaction_summary_to_wire(event.payload)
     elif event.type is EventType.SESSION_EXITED:
         if type(event.payload) is not SessionExitInfo:
             raise TypeError("session exited payload must be SessionExitInfo")
@@ -365,6 +392,15 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             payload=summary,
             sequence=envelope.sequence,
             connection_id=summary.id,
+        )
+    if event_type in _INTERACTION_EVENT_TYPES:
+        summary = interaction_summary_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=summary,
+            sequence=envelope.sequence,
+            connection_id=summary.connection_id,
+            session_id=summary.session_id,
         )
     if event_type is EventType.SESSION_EXITED:
         data = _strict_fields(
@@ -1318,5 +1354,258 @@ def capabilities_from_wire(value: Any) -> Capabilities:
                 "compatibility message",
                 allow_empty=True,
             ),
+        ),
+    )
+
+
+def _interaction_prompt_to_wire(
+    interaction_type: InteractionType,
+    prompt: HostKeyPrompt | PasswordPrompt | PassphrasePrompt,
+) -> Dict[str, Any]:
+    if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
+        if type(prompt) is not HostKeyPrompt:
+            raise TypeError("host-key interaction requires a host-key prompt")
+        return {
+            "hostname": prompt.hostname,
+            "port": prompt.port,
+            "key_type": prompt.key_type,
+            "fingerprint": prompt.fingerprint,
+            "status": prompt.status.value,
+        }
+    if interaction_type is InteractionType.PASSWORD:
+        if type(prompt) is not PasswordPrompt:
+            raise TypeError("password interaction requires a password prompt")
+        return {
+            "username": prompt.username,
+            "hostname": prompt.hostname,
+            "port": prompt.port,
+            "attempt": prompt.attempt,
+            "can_remember": prompt.can_remember,
+            "saved_value_available": prompt.stored_secret_available,
+        }
+    if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
+        if type(prompt) is not PassphrasePrompt:
+            raise TypeError("passphrase interaction requires a passphrase prompt")
+        return {
+            "key_display_name": prompt.key_display_name,
+            "key_fingerprint": prompt.key_fingerprint,
+            "attempt": prompt.attempt,
+            "can_remember": prompt.can_remember,
+            "saved_value_available": prompt.stored_secret_available,
+        }
+    raise TypeError("unsupported interaction type")
+
+
+def _interaction_prompt_from_wire(
+    interaction_type: InteractionType,
+    value: Any,
+) -> HostKeyPrompt | PasswordPrompt | PassphrasePrompt:
+    if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
+        data = _strict_fields(
+            value,
+            required={"hostname", "port", "key_type", "fingerprint", "status"},
+            context="host-key prompt",
+        )
+        return HostKeyPrompt(
+            hostname=_text(data["hostname"], "host-key hostname"),
+            port=_integer(data["port"], "host-key port"),
+            key_type=_text(data["key_type"], "host-key type"),
+            fingerprint=_text(data["fingerprint"], "host-key fingerprint"),
+            status=HostKeyStatus(_identifier(data["status"], "host-key status")),
+        )
+    if interaction_type is InteractionType.PASSWORD:
+        data = _strict_fields(
+            value,
+            required={
+                "username",
+                "hostname",
+                "port",
+                "attempt",
+                "can_remember",
+                "saved_value_available",
+            },
+            context="password prompt",
+        )
+        return PasswordPrompt(
+            username=_text(data["username"], "password username"),
+            hostname=_text(data["hostname"], "password hostname"),
+            port=_integer(data["port"], "password port"),
+            attempt=_integer(data["attempt"], "password attempt"),
+            can_remember=_boolean(data["can_remember"], "password remember support"),
+            stored_secret_available=_boolean(
+                data["saved_value_available"],
+                "password stored-secret availability",
+            ),
+        )
+    if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
+        data = _strict_fields(
+            value,
+            required={
+                "key_display_name",
+                "key_fingerprint",
+                "attempt",
+                "can_remember",
+                "saved_value_available",
+            },
+            context="passphrase prompt",
+        )
+        fingerprint = data["key_fingerprint"]
+        if fingerprint is not None:
+            fingerprint = _text(fingerprint, "key fingerprint")
+        return PassphrasePrompt(
+            key_display_name=_text(data["key_display_name"], "key display name"),
+            key_fingerprint=fingerprint,
+            attempt=_integer(data["attempt"], "passphrase attempt"),
+            can_remember=_boolean(data["can_remember"], "passphrase remember support"),
+            stored_secret_available=_boolean(
+                data["saved_value_available"],
+                "passphrase stored-secret availability",
+            ),
+        )
+    raise ValueError("unsupported interaction type")
+
+
+def interaction_summary_to_wire(summary: InteractionSummary) -> Dict[str, Any]:
+    if type(summary) is not InteractionSummary:
+        raise TypeError("interaction summary is required")
+    return {
+        "id": summary.id,
+        "session_id": summary.session_id,
+        "connection_id": summary.connection_id,
+        "type": summary.type.value,
+        "state": summary.state.value,
+        "created_at": _datetime_to_wire(summary.created_at, "interaction creation time"),
+        "expires_at": _datetime_to_wire(summary.expires_at, "interaction expiry time"),
+        "attempt": summary.attempt,
+        "metadata": _interaction_prompt_to_wire(summary.type, summary.prompt),
+        "responder_client_id": summary.responder_client_id,
+    }
+
+
+def interaction_summary_from_wire(value: Any) -> InteractionSummary:
+    data = _strict_fields(
+        value,
+        required={
+            "id",
+            "session_id",
+            "connection_id",
+            "type",
+            "state",
+            "created_at",
+            "expires_at",
+            "attempt",
+            "metadata",
+            "responder_client_id",
+        },
+        context="interaction summary",
+    )
+    interaction_type = InteractionType(
+        _identifier(data["type"], "interaction type")
+    )
+    responder = data["responder_client_id"]
+    return InteractionSummary(
+        id=InteractionId(_identifier(data["id"], "interaction id")),
+        session_id=_session_id(data["session_id"], "session id"),
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        type=interaction_type,
+        state=InteractionState(_identifier(data["state"], "interaction state")),
+        created_at=_datetime_from_wire(data["created_at"], "interaction creation time"),
+        expires_at=_datetime_from_wire(data["expires_at"], "interaction expiry time"),
+        attempt=_integer(data["attempt"], "interaction attempt"),
+        prompt=_interaction_prompt_from_wire(interaction_type, data["metadata"]),
+        responder_client_id=(
+            ClientId(_identifier(responder, "responder client id"))
+            if responder is not None
+            else None
+        ),
+    )
+
+
+def interaction_claim_to_wire(claim: InteractionClaim) -> Dict[str, Any]:
+    if type(claim) is not InteractionClaim:
+        raise TypeError("interaction claim is required")
+    return {
+        "interaction_id": claim.interaction_id,
+        "responder_client_id": claim.responder_client_id,
+        "nonce": claim.nonce,
+        "expires_at": _datetime_to_wire(claim.expires_at, "claim expiry time"),
+    }
+
+
+def interaction_claim_from_wire(value: Any) -> InteractionClaim:
+    data = _strict_fields(
+        value,
+        required={
+            "interaction_id",
+            "responder_client_id",
+            "nonce",
+            "expires_at",
+        },
+        context="interaction claim",
+    )
+    return InteractionClaim(
+        interaction_id=InteractionId(
+            _identifier(data["interaction_id"], "interaction id")
+        ),
+        responder_client_id=ClientId(
+            _identifier(data["responder_client_id"], "responder client id")
+        ),
+        nonce=_identifier(data["nonce"], "interaction nonce"),
+        expires_at=_datetime_from_wire(data["expires_at"], "claim expiry time"),
+    )
+
+
+def interaction_decision_to_wire(
+    request: InteractionDecisionRequest,
+) -> Dict[str, Any]:
+    if type(request) is not InteractionDecisionRequest:
+        raise TypeError("interaction decision request is required")
+    return {
+        "interaction_id": request.interaction_id,
+        "host_key_decision": (
+            request.host_key_decision.value
+            if request.host_key_decision is not None
+            else None
+        ),
+        "value_action": (
+            request.secret_decision.value
+            if request.secret_decision is not None
+            else None
+        ),
+        "remember_policy": request.remember_policy.value,
+    }
+
+
+def interaction_decision_from_wire(value: Any) -> InteractionDecisionRequest:
+    data = _strict_fields(
+        value,
+        required={
+            "interaction_id",
+            "host_key_decision",
+            "value_action",
+            "remember_policy",
+        },
+        context="interaction decision",
+    )
+    host_key = data["host_key_decision"]
+    secret = data["value_action"]
+    return InteractionDecisionRequest(
+        interaction_id=InteractionId(
+            _identifier(data["interaction_id"], "interaction id")
+        ),
+        host_key_decision=(
+            HostKeyDecision(_identifier(host_key, "host-key decision"))
+            if host_key is not None
+            else None
+        ),
+        secret_decision=(
+            SecretDecision(_identifier(secret, "secret decision"))
+            if secret is not None
+            else None
+        ),
+        remember_policy=RememberPolicy(
+            _identifier(data["remember_policy"], "remember policy")
         ),
     )

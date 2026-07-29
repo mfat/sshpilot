@@ -47,6 +47,7 @@ def test_capabilities_errors_events_and_states_are_documented():
     assert _markers(_read("state-machines.md"), "state") == {
         "ConnectionHealth",
         "ForwardState",
+        "InteractionState",
         "InteractionStatus",
         "SessionState",
         "TransferState",
@@ -89,6 +90,12 @@ def test_runtime_capability_markers_match_the_provider(
                 Capability.TERMINAL_INPUT.value,
                 Capability.TERMINAL_RESIZE.value,
                 Capability.TERMINAL_REPLAY.value,
+                Capability.INTERACTIONS_READ.value,
+                Capability.INTERACTIONS_RESPOND.value,
+                Capability.INTERACTIONS_EVENTS.value,
+                Capability.INTERACTIONS_HOST_KEY.value,
+                Capability.INTERACTIONS_PASSWORD.value,
+                Capability.INTERACTIONS_PASSPHRASE.value,
             }
         )
     assert documented == supported == expected
@@ -172,6 +179,12 @@ def test_schema_only_capabilities_are_not_advertised(
                 Capability.TERMINAL_INPUT,
                 Capability.TERMINAL_RESIZE,
                 Capability.TERMINAL_REPLAY,
+                Capability.INTERACTIONS_READ,
+                Capability.INTERACTIONS_RESPOND,
+                Capability.INTERACTIONS_EVENTS,
+                Capability.INTERACTIONS_HOST_KEY,
+                Capability.INTERACTIONS_PASSWORD,
+                Capability.INTERACTIONS_PASSPHRASE,
             }
         )
     assert client.get_capabilities().supported == frozenset(runtime_capabilities)

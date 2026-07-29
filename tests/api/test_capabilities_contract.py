@@ -11,8 +11,8 @@ from sshpilot.api.in_process_client import (
 )
 from sshpilot.api.models import (
     CreateConnectionRequest,
-    InteractionResponse,
-    InteractionStatus,
+    InteractionDecisionRequest,
+    SecretDecision,
     TerminalDimensions,
     TerminalInput,
 )
@@ -105,14 +105,58 @@ UNSUPPORTED_OPERATION_CASES = [
         Capability.TERMINAL_OUTPUT,
     ),
     (
+        "list_interactions",
+        lambda client: client.list_interactions(),
+        Capability.INTERACTIONS_READ,
+    ),
+    (
+        "get_interaction",
+        lambda client: client.get_interaction(
+            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+        ),
+        Capability.INTERACTIONS_READ,
+    ),
+    (
+        "claim_interaction",
+        lambda client: client.claim_interaction(
+            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+        ),
+        Capability.INTERACTIONS_RESPOND,
+    ),
+    (
+        "release_interaction",
+        lambda client: client.release_interaction(
+            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+        ),
+        Capability.INTERACTIONS_RESPOND,
+    ),
+    (
         "respond_to_interaction",
         lambda client: client.respond_to_interaction(
-            InteractionResponse(
-                interaction_id=InteractionId("interaction:test"),
-                status=InteractionStatus.CANCELLED,
+            InteractionDecisionRequest(
+                interaction_id=InteractionId(
+                    "interaction:550e8400-e29b-41d4-a716-446655440000"
+                ),
+                secret_decision=SecretDecision.CANCEL,
             )
         ),
-        Capability.INTERACTIONS,
+        Capability.INTERACTIONS_RESPOND,
+    ),
+    (
+        "cancel_interaction",
+        lambda client: client.cancel_interaction(
+            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+        ),
+        Capability.INTERACTIONS_RESPOND,
+    ),
+    (
+        "send_interaction_secret",
+        lambda client: client.send_interaction_secret(
+            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000"),
+            "00" * 16,
+            bytearray(b"value"),
+        ),
+        Capability.INTERACTIONS_RESPOND,
     ),
 ]
 UNSUPPORTED_OPERATION_CASES.extend(
@@ -155,6 +199,12 @@ def test_capabilities_advertise_only_contract_tested_runtime(
                 Capability.TERMINAL_INPUT,
                 Capability.TERMINAL_RESIZE,
                 Capability.TERMINAL_REPLAY,
+                Capability.INTERACTIONS_READ,
+                Capability.INTERACTIONS_RESPOND,
+                Capability.INTERACTIONS_EVENTS,
+                Capability.INTERACTIONS_HOST_KEY,
+                Capability.INTERACTIONS_PASSWORD,
+                Capability.INTERACTIONS_PASSPHRASE,
             }
         )
     assert capabilities.supported == frozenset(expected)
@@ -213,6 +263,12 @@ def test_advertised_capabilities_have_implemented_operations(
                 Capability.TERMINAL_INPUT,
                 Capability.TERMINAL_RESIZE,
                 Capability.TERMINAL_REPLAY,
+                Capability.INTERACTIONS_READ,
+                Capability.INTERACTIONS_RESPOND,
+                Capability.INTERACTIONS_EVENTS,
+                Capability.INTERACTIONS_HOST_KEY,
+                Capability.INTERACTIONS_PASSWORD,
+                Capability.INTERACTIONS_PASSPHRASE,
             }
         )
     assert client.get_capabilities().supported <= implemented_capabilities

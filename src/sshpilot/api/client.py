@@ -19,7 +19,12 @@ from .models.connections import (
     DeleteConnectionResult,
     UpdateConnectionRequest,
 )
-from .models.interactions import InteractionResponse
+from .models.interactions import (
+    InteractionClaim,
+    InteractionDecisionRequest,
+    InteractionId,
+    InteractionSummary,
+)
 from .models.sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -100,7 +105,33 @@ class SshPilotClient(Protocol):
     ) -> TerminalSubscription:
         ...
 
-    def respond_to_interaction(self, response: InteractionResponse) -> None:
+    def list_interactions(self) -> List[InteractionSummary]:
+        ...
+
+    def get_interaction(self, interaction_id: InteractionId) -> InteractionSummary:
+        ...
+
+    def claim_interaction(self, interaction_id: InteractionId) -> InteractionClaim:
+        ...
+
+    def release_interaction(self, interaction_id: InteractionId) -> None:
+        ...
+
+    def respond_to_interaction(
+        self,
+        response: InteractionDecisionRequest,
+    ) -> None:
+        ...
+
+    def cancel_interaction(self, interaction_id: InteractionId) -> None:
+        ...
+
+    def send_interaction_secret(
+        self,
+        interaction_id: InteractionId,
+        nonce: str,
+        secret: bytearray,
+    ) -> None:
         ...
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:

@@ -27,7 +27,12 @@ from .models.connections import (
     GroupReference,
     UpdateConnectionRequest,
 )
-from .models.interactions import InteractionResponse
+from .models.interactions import (
+    InteractionClaim,
+    InteractionDecisionRequest,
+    InteractionId,
+    InteractionSummary,
+)
 from .models.sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -75,11 +80,17 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
     "get_session": Capability.SESSIONS_READ,
+    "get_interaction": Capability.INTERACTIONS_READ,
+    "claim_interaction": Capability.INTERACTIONS_RESPOND,
+    "cancel_interaction": Capability.INTERACTIONS_RESPOND,
+    "list_interactions": Capability.INTERACTIONS_READ,
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
     "replay_terminal": Capability.TERMINAL_REPLAY,
     "resize_terminal": Capability.TERMINAL_RESIZE,
-    "respond_to_interaction": Capability.INTERACTIONS,
+    "release_interaction": Capability.INTERACTIONS_RESPOND,
+    "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
+    "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
 }
@@ -149,6 +160,8 @@ class InProcessClient:
     def prepare_daemon_terminal_launch(
         self,
         connection_id: ConnectionId,
+        *,
+        interaction_policy: str = "none",
     ) -> tuple:
         """Internal daemon launch hook using the canonical native SSH path."""
 
@@ -157,7 +170,7 @@ class InProcessClient:
 
         connection = self._find_connection(connection_id)
         prepared = asyncio.run(
-            connection.native_connect(interaction_policy="none")
+            connection.native_connect(interaction_policy=interaction_policy)
         )
         command = getattr(connection, "ssh_connection_cmd", None)
         if not prepared or command is None:
@@ -187,6 +200,31 @@ class InProcessClient:
                 connection_id=connection_id,
             )
         return (executable, *argv[1:]), environment
+
+    def lookup_daemon_password(self, connection_id: ConnectionId) -> Optional[str]:
+        connection = self._find_connection(connection_id)
+        return self._connection_manager.get_connection_password(connection)
+
+    def store_daemon_password(
+        self,
+        connection_id: ConnectionId,
+        password: str,
+    ) -> bool:
+        connection = self._find_connection(connection_id)
+        return bool(
+            self._connection_manager.store_connection_password(
+                connection,
+                password,
+            )
+        )
+
+    def lookup_daemon_passphrase(self, key_path: str) -> Optional[str]:
+        return self._connection_manager.get_key_passphrase(key_path)
+
+    def store_daemon_passphrase(self, key_path: str, passphrase: str) -> bool:
+        return bool(
+            self._connection_manager.store_key_passphrase(key_path, passphrase)
+        )
 
     def enable_serialized_command_threads(self) -> None:
         """Allow daemon-owned serialized workers to invoke this adapter."""
@@ -421,9 +459,40 @@ class InProcessClient:
         del session_id, on_output, on_continuity_lost, on_eof, on_error
         raise self._unsupported("subscribe_terminal")
 
-    def respond_to_interaction(self, response: InteractionResponse) -> None:
+    def list_interactions(self) -> List[InteractionSummary]:
+        raise self._unsupported("list_interactions")
+
+    def get_interaction(self, interaction_id: InteractionId) -> InteractionSummary:
+        del interaction_id
+        raise self._unsupported("get_interaction")
+
+    def claim_interaction(self, interaction_id: InteractionId) -> InteractionClaim:
+        del interaction_id
+        raise self._unsupported("claim_interaction")
+
+    def release_interaction(self, interaction_id: InteractionId) -> None:
+        del interaction_id
+        raise self._unsupported("release_interaction")
+
+    def respond_to_interaction(
+        self,
+        response: InteractionDecisionRequest,
+    ) -> None:
         del response
         raise self._unsupported("respond_to_interaction")
+
+    def cancel_interaction(self, interaction_id: InteractionId) -> None:
+        del interaction_id
+        raise self._unsupported("cancel_interaction")
+
+    def send_interaction_secret(
+        self,
+        interaction_id: InteractionId,
+        nonce: str,
+        secret: bytearray,
+    ) -> None:
+        del interaction_id, nonce, secret
+        raise self._unsupported("send_interaction_secret")
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         if self._closed:

@@ -13,7 +13,7 @@ from typing import Any, Callable, Deque, Dict, Generic, Mapping, Optional, Tuple
 from ._safe_values import copy_safe_details
 from .models.common import ConnectionId, RequestId, SessionId, utc_now
 from .models.connections import ConnectionSummary
-from .models.interactions import InteractionRequest
+from .models.interactions import InteractionRequest, InteractionSummary
 from .models.sessions import SessionExitInfo, SessionSummary
 from .models.terminal import TerminalOutput
 
@@ -33,6 +33,8 @@ class EventType(str, Enum):
     SESSION_INTERACTION_REQUESTED = "session.interaction_requested"
     SESSION_EXITED = "session.exited"
     SESSION_CLOSED = "session.closed"
+    INTERACTION_CREATED = "interaction.created"
+    INTERACTION_STATE_CHANGED = "interaction.state_changed"
     ERROR_OCCURRED = "error.occurred"
 
 
@@ -83,6 +85,8 @@ _EVENT_PAYLOAD_TYPES = {
     EventType.SESSION_INTERACTION_REQUESTED: InteractionRequest,
     EventType.SESSION_EXITED: SessionExitInfo,
     EventType.SESSION_CLOSED: SessionSummary,
+    EventType.INTERACTION_CREATED: InteractionSummary,
+    EventType.INTERACTION_STATE_CHANGED: InteractionSummary,
     EventType.ERROR_OCCURRED: Mapping,
 }
 
