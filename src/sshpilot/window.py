@@ -191,10 +191,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         # Icon theme path is already registered in main.py load_resources()
         # No need to register again here
-        
+
         self.active_terminals = {}
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
@@ -208,7 +208,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._command_sidebar_visible: bool = False
         self._cmd_blocks_toggle_btn = None
         self._headerbar_theme_menu_button = None
-        
+
         # Update notification
         self.update_banner = None
         self._latest_version = None
@@ -316,7 +316,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_request = None
         self._client_mode_warning = None
         self._compose_api_client(app)
-        
+
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
@@ -345,7 +345,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             stored_sort = DEFAULT_CONNECTION_SORT
         self._connection_sort_last = stored_sort
         self.sort_button = None
-        
+
         # Set up window
         self.setup_window()
         self.setup_ui()
@@ -381,7 +381,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.remove_action('toast-reconnect')
         except Exception:
             pass
-        
+
         # Connect to close request signal
         self.connect('close-request', self.on_close_request)
 
@@ -420,6 +420,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.client = fallback
         try:
             mode = requested_client_mode()
+            # Also check config setting for daemon mode preference
+            if mode is ClientMode.IN_PROCESS and self.config.get_setting('terminal.daemon_backed_ssh', True):
+                # Config requests daemon mode, try to honor it
+                mode = ClientMode.DAEMON
         except ValueError:
             selection = in_process_selection(
                 self.connection_manager,
@@ -535,6 +539,54 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if selection.warning:
             self._client_mode_warning = selection.warning
             self._show_client_mode_warning()
+        if daemon_active:
+            self._maybe_restore_daemon_sessions()
+
+    def _maybe_restore_daemon_sessions(self) -> None:
+        """Offer or auto-reattach retained daemon sessions after GTK restart."""
+
+        try:
+            if not self.config.get_setting("terminal.daemon_restore_sessions", True):
+                return
+            if self.client_bridge is None or not hasattr(self.client, "list_sessions"):
+                return
+            from .daemon_session_restore import DaemonSessionRestoreManager
+
+            restore = DaemonSessionRestoreManager(self.config)
+            restorable = restore.get_restorable_sessions(self.client)
+            if not restorable:
+                return
+            if self.config.get_setting("terminal.daemon_auto_attach", False):
+                for metadata in restorable:
+                    restore.restore_session(self, metadata, self.client, self.client_bridge)
+                return
+            dialog = Adw.AlertDialog.new(
+                _("Restore Daemon Sessions?"),
+                _(
+                    "One or more SSH sessions are still running in the local "
+                    "service. Restore them into tabs now?"
+                ),
+            )
+            dialog.add_response("skip", _("Not Now"))
+            dialog.add_response("restore", _("Restore"))
+            dialog.set_response_appearance(
+                "restore", Adw.ResponseAppearance.SUGGESTED
+            )
+            dialog.set_default_response("restore")
+            dialog.set_close_response("skip")
+
+            def _respond(_dialog, response):
+                if response != "restore":
+                    return
+                for metadata in restorable:
+                    restore.restore_session(
+                        self, metadata, self.client, self.client_bridge
+                    )
+
+            dialog.connect("response", _respond)
+            dialog.present(self)
+        except Exception:
+            logger.error("Daemon session restore failed", exc_info=True)
 
     def _handle_client_selection_error(self, error) -> None:
         """Defensive fallback for failures outside the factory's policy."""
@@ -873,6 +925,50 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         file_dialog.save(self, None, _on_save)
 
+    def on_daemon_sessions_action(self, action=None, param=None):
+        """Show live daemon sessions management dialog."""
+        del action, param
+        try:
+            if not hasattr(self.client, "list_sessions"):
+                dialog = Adw.AlertDialog.new(
+                    _("Daemon Sessions Unavailable"),
+                    _(
+                        "Daemon sessions are not available. Enable daemon-backed "
+                        "SSH terminals and ensure the local service is running."
+                    ),
+                )
+                dialog.add_response("ok", _("OK"))
+                dialog.set_default_response("ok")
+                dialog.set_close_response("ok")
+                dialog.present(self)
+                return
+
+            bridge = getattr(self, "client_bridge", None)
+            if bridge is None:
+                dialog = Adw.AlertDialog.new(
+                    _("Daemon Sessions Unavailable"),
+                    _("The local SSH Pilot service bridge is unavailable."),
+                )
+                dialog.add_response("ok", _("OK"))
+                dialog.set_default_response("ok")
+                dialog.set_close_response("ok")
+                dialog.present(self)
+                return
+
+            from .daemon_sessions_dialog import DaemonSessionsDialog
+
+            DaemonSessionsDialog(self, self.client, bridge).show()
+        except Exception:
+            logger.error("Failed to show daemon sessions", exc_info=True)
+            dialog = Adw.AlertDialog.new(
+                _("Error"),
+                _("Failed to open the daemon sessions dialog."),
+            )
+            dialog.add_response("ok", _("OK"))
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(self)
+
     def _on_export_diagnostics_done(self, ok, error, path):
         if ok:
             dialog = Adw.MessageDialog(
@@ -932,22 +1028,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _on_startup_complete(self):
         """Called when startup is complete - process any pending focus operations"""
         self._startup_complete = True
-        
+
         # Process any pending focus operations
         for focus_op in self._pending_focus_operations:
             try:
                 focus_op()
             except Exception as e:
                 logger.debug(f"Failed to execute pending focus operation: {e}")
-        
+
         self._pending_focus_operations.clear()
-        
+
         # Check for updates if enabled in preferences
         try:
             check_on_startup = self.config.get_setting('updates.check_on_startup', True)
             if check_on_startup:
                 logger.debug("Checking for updates on startup")
-                
+
                 def on_update_check_complete(latest_version):
                     """Callback when startup update check completes.
 
@@ -974,7 +1070,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug(f"Failed to schedule operation mode prompt: {e}")
 
         return False  # Don't repeat
-    
+
     def _queue_focus_operation(self, focus_func):
         """Queue a focus operation to be executed after startup is complete"""
         if self._startup_complete:
@@ -989,7 +1085,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _toggle_class(self, widget, name, on):
         """Helper to toggle CSS class on a widget"""
-        if on: 
+        if on:
             widget.add_css_class(name)
         else:
             widget.remove_css_class(name)
@@ -1591,19 +1687,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return False
 
 
-        
+
         # Sidebar toggle action registered via register_window_actions
 
     def setup_window(self):
         """Configure main window properties"""
         self.set_title('SSH Pilot')
         self.set_icon_name('io.github.mfat.sshpilot')
-        
+
         # Load window geometry
         geometry = self.config.get_window_geometry()
         self.set_default_size(geometry['width'], geometry['height'])
         self.set_resizable(True)
-        
+
         # Connect window state signals
         self.connect('notify::default-width', self.on_window_size_changed)
         self.connect('notify::default-height', self.on_window_size_changed)
@@ -1625,11 +1721,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Use overlay to position dismiss button on top of banner
         banner_overlay = Gtk.Overlay()
         banner_overlay.set_visible(False)  # Hidden by default
-        
+
         self.update_banner = Adw.Banner()
         self.update_banner.set_revealed(False)
         banner_overlay.set_child(self.update_banner)
-        
+
         # Create dismiss button with text, positioned at the left
         dismiss_button = Gtk.Button()
         dismiss_button.set_label(_('Dismiss'))
@@ -1638,7 +1734,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         dismiss_button.set_margin_start(12)
         dismiss_button.connect('clicked', self._on_update_banner_dismiss)
         banner_overlay.add_overlay(dismiss_button)
-        
+
         self.update_banner_container = banner_overlay
         self.update_banner_dismiss_button = dismiss_button
         # Note: Update banner will be added to content area in setup_content_area()
@@ -1707,15 +1803,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
-        
-        
+
+
         # Add sidebar toggle button to the left side of header bar
         self.sidebar_toggle_button = Gtk.ToggleButton()
         self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
-        
+
         # Sidebar always starts visible
         sidebar_visible = True
-        
+
         from sshpilot import icon_utils
         icon_utils.set_button_icon(self.sidebar_toggle_button, 'sidebar-show-symbolic')
         # Show the effective (possibly user-customized) shortcut in the tooltip.
@@ -1753,11 +1849,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
-        
+
         # Add header bar to main container only when using traditional split views
         if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
             main_box.append(self.header_bar)
-        
+
         # Honor the saved max-sidebar-width on startup (previously it was read but
         # ignored here, so the saved width only took effect after being changed
         # mid-session); fall back to 400 when unset/invalid.
@@ -1793,7 +1889,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.split_view.set_vexpand(True)
             self._split_variant = 'paned'
             logger.debug("Using Gtk.Paned fallback")
-        
+
         # Initial sidebar visibility. Apply "hide on startup" HERE — before the
         # window is presented — so it never flashes visible then collapses.
         try:
@@ -1822,7 +1918,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._toggle_sidebar_visibility(False)
             except Exception:
                 pass
-        
+
         # Create sidebar
         self.setup_sidebar()
 
@@ -2024,14 +2120,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Update sidebar display based on current preferences."""
         if not hasattr(self, 'connection_list'):
             return
-        
+
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
-        
+
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:
@@ -2051,7 +2147,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     row.status_icon.set_visible(show_status)
             if hasattr(row, '_update_forwarding_indicators'):
                 row._update_forwarding_indicators()
-            
+
             # Update GroupRow elements
             if hasattr(row, 'count_label'):
                 row.count_label.set_visible(show_group_count)
@@ -2751,7 +2847,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             GLib.idle_add(_push_now)
         except Exception:
             pass
-        
+
         # Create tab overview
         self.tab_overview = Adw.TabOverview()
         self.tab_overview.set_view(self.tab_view)
@@ -2760,7 +2856,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Hide window buttons in tab overview
         self.tab_overview.set_show_start_title_buttons(False)
         self.tab_overview.set_show_end_title_buttons(False)
-        
+
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
@@ -2814,13 +2910,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_content_box.append(self.tab_view)
         if hasattr(self.tab_view, 'add_css_class'):
             self.tab_view.add_css_class('terminal-bg')
-        
+
         # Set the tab content box as the child of the tab overview
         self.tab_overview.set_child(self.tab_content_box)
 
         self._create_start_tab()
         self._update_tab_button_visibility()
-        
+
         # Split-view button — opens a new split-view tab
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
@@ -2863,41 +2959,41 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.broadcast_hide_timeout_id: Optional[int] = None
         self.broadcast_entry_dirty = False
         self._suppress_broadcast_entry_changed = False
-        
+
         # Create banner content box
         banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         banner_box.add_css_class('banner')
         banner_box.set_can_focus(True)
         banner_box.set_focusable(True)
-        
+
         # Create banner header with title and send button
         banner_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         banner_header.set_margin_start(12)
         banner_header.set_margin_end(12)
         banner_header.set_margin_top(8)
         banner_header.set_margin_bottom(4)
-        
+
         # Banner title
         banner_title = Gtk.Label(label=_("Broadcast Command"))
         banner_title.set_xalign(0)
         banner_title.add_css_class('title-4')
         banner_header.append(banner_title)
-        
+
         # Send button
         self.broadcast_send_button = Gtk.Button()
         self.broadcast_send_button.set_label(_("Send"))
         self.broadcast_send_button.add_css_class('suggested-action')
         self.broadcast_send_button.connect('clicked', self.on_broadcast_send_clicked)
         banner_header.append(self.broadcast_send_button)
-        
+
         banner_box.append(banner_header)
-        
+
         # Create banner content with entry and cancel button
         banner_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         banner_content.set_margin_start(12)
         banner_content.set_margin_end(12)
         banner_content.set_margin_bottom(8)
-        
+
         # Create command entry
         self.broadcast_entry = Gtk.Entry()
         self.broadcast_entry.set_placeholder_text(_("e.g., ls -la"))
@@ -2916,18 +3012,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.broadcast_entry.add_controller(focus_controller)
 
         banner_content.append(self.broadcast_entry)
-        
+
         # Create cancel button
         self.broadcast_cancel_button = Gtk.Button()
         self.broadcast_cancel_button.set_label(_("Cancel"))
         self.broadcast_cancel_button.connect('clicked', self.on_broadcast_cancel_clicked)
         banner_content.append(self.broadcast_cancel_button)
-        
+
         banner_box.append(banner_content)
-        
+
         # Set the banner box as the revealer's child
         self.broadcast_banner.set_child(banner_box)
-        
+
         # Add global ESC key handling to the entire banner
         banner_controller = Gtk.EventControllerKey()
         banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
@@ -3154,7 +3250,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def setup_connections(self):
         """Load and display existing connections with grouping"""
         self.rebuild_connection_list()
-        
+
         # Select first connection if available
         connections = self.connection_manager.get_connections()
         if connections:
@@ -3163,7 +3259,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._select_only_row(first_row)
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
-    
+
     def _finish_rebuild(
         self,
         scroll_position,
@@ -3244,7 +3340,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 selected_connection_rows.append(
                     (connection_uuid, getattr(row, '_group_id', None))
                 )
-        
+
         # Clear existing rows
         child = self.connection_list.get_first_child()
         while child:
@@ -3252,7 +3348,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.connection_list.remove(child)
             child = next_child
         self.connection_rows.clear()
-        
+
         # Get all connections
         connections = self.connection_manager.get_connections()
         # Attach tags so the search filter and freshly built rows see them.
@@ -3438,7 +3534,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, "group_id") and row.group_id == group_id:
                 self._select_only_row(row)
                 break
-    
+
     def add_connection_row(
         self,
         connection: Connection,
@@ -3456,10 +3552,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
         )
-        
+
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)
-        
+
         self.connection_list.append(row)
         # A connection can appear under multiple groups, so keep a list of rows
         self.connection_rows.setdefault(connection, []).append(row)
@@ -3522,7 +3618,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_manager.connect_after('connection-added', self.on_connection_added)
         self.connection_manager.connect_after('connection-removed', self.on_connection_removed)
         self.connection_manager.connect_after('connection-status-changed', self.on_connection_status_changed)
-        
+
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
 
@@ -3707,8 +3803,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     target_row.grab_focus()
                 else:
                     self.connection_list.grab_focus()
-                
-                
+
+
                 # Show toast notification
                 toast = Adw.Toast.new(
                     _("Switched to connection list — ↑/↓ navigate, Enter open, {modifier}+Enter new tab").format(
@@ -3884,7 +3980,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     getattr(self, 'sidebar_toggle_button', None)
                     and self.sidebar_toggle_button.get_active()
                 )
-                
+
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
                     is_visible = self.search_container.get_visible()
@@ -3896,12 +3992,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         # Search was hidden, now showing it
                         # Focus the search entry
                         self.search_entry.grab_focus()
-                        
+
                         # Select all text if there's any
                         text = self.search_entry.get_text()
                         if text:
                             self.search_entry.select_region(0, len(text))
-                        
+
                         # Show toast notification
                         toast = Adw.Toast.new(
                             _("Search mode — Type to filter connections, Esc to clear and hide")
@@ -3919,7 +4015,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         # Return focus to connection list
                         if hasattr(self, 'connection_list') and self.connection_list:
                             self.connection_list.grab_focus()
-                        
+
                         # Show toast notification
                         toast = Adw.Toast.new(
                             _("Search hidden — {modifier}+F to search again").format(
@@ -4155,7 +4251,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             name_row = Adw.EntryRow()
             name_row.set_title(_("Key file name"))
             name_row.set_text("id_ed25519")
-            
+
             # Add real-time validation
             def on_name_changed(entry):
                 key_name = (entry.get_text() or "").strip()
@@ -4170,7 +4266,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 else:
                     entry.remove_css_class("error")
                     entry.set_title(_("Key file name"))
-            
+
             name_row.connect("changed", on_name_changed)
             form.add(name_row)
 
@@ -4242,7 +4338,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         while (self.key_manager.ssh_dir / f"{base_name}_{counter}").exists():
                             counter += 1
                         suggestion = f"{base_name}_{counter}"
-                        
+
                         raise ValueError(_("A key named '{name}' already exists. Try '{suggestion}' instead.").format(name=key_name, suggestion=suggestion))
 
                     kt = "ed25519" if type_row.get_selected() == 0 else "rsa"
@@ -4262,7 +4358,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
                     logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
                                f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
-                    
+
                     new_key = self._km.generate_key(
                         key_name=key_name,
                         key_type=kt,
@@ -4270,7 +4366,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         comment=None,
                         passphrase=passphrase,
                     )
-                    
+
                     if not new_key:
                         logger.debug("SshCopyIdWindow: Key generation returned None")
                         raise RuntimeError("Key generation failed. See logs for details.")
@@ -4278,27 +4374,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
                     logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
                                f"public_path='{new_key.public_path}'")
-                    
+
                     # Ensure the key files are properly written and accessible
                     import time
                     logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
                     time.sleep(0.5)  # Small delay to ensure files are written
-                    
+
                     # Verify the key files exist and are accessible
                     private_exists = os.path.exists(new_key.private_path)
                     public_exists = os.path.exists(new_key.public_path)
                     logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
-                    
+
                     if not private_exists:
                         logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
                         raise RuntimeError(f"Private key file not found: {new_key.private_path}")
                     if not public_exists:
                         logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
                         raise RuntimeError(f"Public key file not found: {new_key.public_path}")
-                    
+
                     logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
                     logger.debug("SshCopyIdWindow: All key files verified successfully")
-                    
+
                     # Run your terminal ssh-copy-id flow
                     logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
                     self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
@@ -4324,7 +4420,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_copy_key_to_server_clicked(self, _button):
         logger.info("Main window: ssh-copy-id button clicked")
         logger.debug("Main window: Starting ssh-copy-id process")
-        
+
         selected_row = self.connection_list.get_selected_row()
         if not selected_row or not getattr(selected_row, "connection", None):
             logger.warning("Main window: No connection selected for ssh-copy-id")
@@ -4406,9 +4502,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Handle group row activation - toggle expand/collapse
             logger.debug(f"Group row activated - toggling expand/collapse for group: {row.group_id}")
             row._toggle_expand()
-            
 
-        
+
+
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
         self._return_to_tab_view_if_welcome()
@@ -4416,7 +4512,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
         return False
-        
+
     def on_activate_connection(self, action, param):
         """Handle the activate-connection action"""
         self._return_to_tab_view_if_welcome()
@@ -4571,9 +4667,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     _('Show Sidebar (F9, {modifier}+B)').format(
                         modifier=get_primary_modifier_label())
                 )
-            
+
             # No need to save state - sidebar always starts visible
-                
+
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
 
@@ -4788,7 +4884,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             connection = getattr(selected_row, 'connection', None)
             if not connection:
                 return
-            
+
             # Use the same logic as the context menu action
             self.open_in_system_terminal(connection)
         except Exception as e:
@@ -4998,7 +5094,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for row in self._rows_for_connection(connection):
                 self.connection_list.remove(row)
             del self.connection_rows[connection]
-        
+
         # Remove from group manager, including any group it was copied into
         self.group_manager.connections.pop(connection.uuid, None)
         if connection.uuid in self.group_manager.root_connections:
@@ -5184,7 +5280,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_setting_changed(self, config, key, value):
         """Handle configuration setting change"""
         logger.debug(f"Setting changed: {key} = {value}")
-        
+
         # Apply relevant changes
         if key.startswith('terminal.'):
             # Update terminal themes/fonts
@@ -5211,18 +5307,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         width = self.get_default_size()[0]
         height = self.get_default_size()[1]
         sidebar_width = self._get_sidebar_width()
-        
+
         self.config.save_window_geometry(width, height, sidebar_width)
 
     def simple_close_handler(self, window):
         """Handle window close - distinguish between tab close and window close"""
         logger.info("")
-        
+
         try:
             # Check if we have any tabs open
             n_pages = self.tab_view.get_n_pages()
             logger.info(f" Number of tabs: {n_pages}")
-            
+
             # If we have tabs, close all tabs first and then quit
             if n_pages > 0:
                 logger.info(" CLOSING ALL TABS FIRST")
@@ -5230,20 +5326,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 while self.tab_view.get_n_pages() > 0:
                     page = self.tab_view.get_nth_page(0)
                     self.tab_view.close_page(page)
-            
+
             # Now quit the application
             logger.info(" QUITTING APPLICATION")
             app = self.get_application()
             if app:
                 app.quit()
-                
+
         except Exception as e:
             logger.error(f" ERROR IN WINDOW CLOSE: {e}")
             # Force quit even if there's an error
             app = self.get_application()
             self.show_quit_confirmation_dialog()
             return False  # Don't quit yet, let dialog handle it
-        
+
         # No active connections, safe to quit
         self._do_quit()
         return True  # Safe to quit
@@ -5263,12 +5359,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 session_manager.save_previous(self.capture_session())
         except Exception as e:
             logger.debug(f"Failed to capture previous session on close: {e}")
-            
+
         # Check for active connections across all tabs
         actually_connected = {}
         local_terminals = []
         ssh_terminals = []
-        
+
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
@@ -5278,12 +5374,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         local_terminals.append(term)
                     else:
                         ssh_terminals.append(term)
-        
+
         # If there are SSH terminals, always show warning
         if ssh_terminals:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
-        
+
         # If there are only local terminals, check their job status
         if local_terminals:
             # Check if any local terminal has an active job
@@ -5292,12 +5388,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if hasattr(term, 'has_active_job') and term.has_active_job():
                     has_active_jobs = True
                     break
-            
+
             # If any local terminal has an active job, show warning
             if has_active_jobs:
                 self.show_quit_confirmation_dialog()
                 return True  # Prevent close, let dialog handle it
-        
+
         # No active connections or all local terminals are idle, safe to close
         self._teardown_ssh_config_monitor()
         self._invalidate_api_window_callbacks()
@@ -5499,7 +5595,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         connected_items = []
         local_terminals = []
         ssh_terminals = []
-        
+
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
@@ -5509,9 +5605,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         local_terminals.append((conn, term))
                     else:
                         ssh_terminals.append((conn, term))
-        
+
         active_count = len(connected_items)
-        
+
         # Determine dialog content based on terminal types
         if ssh_terminals:
             # SSH terminals present - use original messaging
@@ -5712,7 +5808,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection = getattr(row, 'connection', None) if row else None
             if connection is None:
                 return
-            
+
             self.open_in_system_terminal(connection)
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
@@ -5792,7 +5888,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         except Exception as e:
             logger.error(f"Failed to move connection to ungrouped: {e}")
-    
+
     def move_connection_to_group(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a specific group"""
         try:
@@ -5800,7 +5896,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.rebuild_connection_list()
         except Exception as e:
             logger.error(f"Failed to move connection {connection_nickname} to group: {e}")
-    
+
     def get_available_groups(self) -> List[Dict]:
         """Get list of available groups for selection"""
         return self.group_manager.get_all_groups()
@@ -5888,12 +5984,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 heading=_("No Terminal Found"),
                 body=_("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
             )
-            
+
             dialog.add_response("ok", _("OK"))
             dialog.set_default_response("ok")
             dialog.set_close_response("ok")
             dialog.present()
-            
+
         except Exception as e:
             logger.error(f"Failed to show terminal error dialog: {e}")
 
@@ -5903,11 +5999,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Determine error type for appropriate messaging
             is_ssh_error = "ssh connection" in error_message.lower() or "connection failed" in error_message.lower()
             is_timeout_error = "timeout" in error_message.lower()
-            
+
             if is_ssh_error or is_timeout_error:
                 heading = _("SSH Connection Failed")
                 body = _("Could not establish SSH connection to the server. Please check:")
-                
+
                 suggestions = [
                     _("• Server is running and accessible"),
                     _("• SSH service is enabled on the server"),
@@ -5923,17 +6019,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     _("• Check if the server is accessible"),
                     _("• Ensure you have proper permissions")
                 ]
-            
+
             # Create suggestions box
             suggestions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             suggestions_box.set_margin_top(12)
-            
+
             for suggestion in suggestions:
                 label = Gtk.Label(label=suggestion)
                 label.set_halign(Gtk.Align.START)
                 label.set_wrap(True)
                 suggestions_box.append(label)
-            
+
             msg = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
@@ -5941,7 +6037,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 body=body
             )
             msg.set_extra_child(suggestions_box)
-            
+
             # Add technical details if available
             if error_message and error_message.strip():
                 detail_label = Gtk.Label(label=error_message)
@@ -5949,12 +6045,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 detail_label.set_wrap(True)
                 detail_label.set_margin_top(8)
                 suggestions_box.append(detail_label)
-            
+
             msg.add_response("ok", _("OK"))
             msg.set_default_response("ok")
             msg.set_close_response("ok")
             msg.present()
-            
+
         except Exception as e:
             logger.error(f"Failed to show manage files error dialog: {e}")
 
@@ -5962,7 +6058,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Actually quit the application - FINAL STEP"""
         try:
             logger.info("Quitting application")
-            
+
             # Close all file manager windows first
             if hasattr(self, '_internal_file_manager_windows'):
                 count = len(self._internal_file_manager_windows)
@@ -5986,7 +6082,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             logger.error(f"Error closing file manager window: {exc}", exc_info=True)
                 self._internal_file_manager_windows.clear()
                 logger.info("All file manager windows closed")
-            
+
             # Also check all application windows for file manager windows (defensive)
             try:
                 app = self.get_application()
@@ -6006,10 +6102,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                                     logger.error(f"Error closing untracked file manager window: {exc}", exc_info=True)
             except Exception as exc:
                 logger.debug(f"Error checking for untracked file manager windows: {exc}")
-            
+
             # Save window geometry
             self._save_window_state()
-            
+
             # Get the application and quit
             app = self.get_application()
             if app:
@@ -6017,13 +6113,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 # Fallback: close the window directly
                 self.close()
-                
+
         except Exception as e:
             logger.error(f"Error during final quit: {e}")
             # Force exit as last resort
             import sys
             sys.exit(0)
-        
+
         return False  # Don't repeat timeout
 
     def _save_window_state(self):
@@ -6035,7 +6131,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug(f"Saved window geometry: {width}x{height}, sidebar: {sidebar_width}")
         except Exception as e:
             logger.error(f"Failed to save window state: {e}")
-    
+
     def _apply_saved_connection_meta(self, nickname, meta):
         """Persist the dialog's WoL/tags metadata after a successful save."""
         if not nickname or not isinstance(meta, dict):
@@ -6461,7 +6557,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to save connection: {e}")
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
-    
+
     def _warn_if_effective_config_differs(self, connection, connection_data):
         """After a save, warn if global SSH config overrides/adds values for this
         connection. Informational only — offers a diff view and a shortcut to the

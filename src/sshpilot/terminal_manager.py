@@ -187,6 +187,10 @@ class TerminalManager:
             window._open_connection_in_external_terminal(connection)
             return
         else:
+            # Check if we should use daemon-backed SSH terminals
+            from .daemon_terminal_policy import should_use_daemon_ssh_terminal
+            use_daemon = should_use_daemon_ssh_terminal(window, connection, client=window.client)
+
             group_color, group_name = self._resolve_group_color_and_name(connection)
 
             terminal = TerminalWidget(
@@ -221,6 +225,65 @@ class TerminalManager:
 
             window.show_tab_view()
             window.tab_view.set_selected_page(page)
+
+            # Initialize daemon session if daemon mode is enabled
+            if use_daemon:
+                try:
+                    from .api.in_process_client import InProcessClient
+                    from .terminal_session_controller import (
+                        daemon_terminal_capabilities_missing,
+                    )
+
+                    missing = daemon_terminal_capabilities_missing(window.client)
+                    if missing:
+                        logger.error(
+                            "Required daemon terminal capabilities missing"
+                        )
+                        self._show_daemon_error_dialog(
+                            window,
+                            _(
+                                "Daemon terminal capabilities are unavailable "
+                                "for this SSH Pilot service."
+                            ),
+                        )
+                        return
+
+                    bridge = getattr(window, "client_bridge", None)
+                    if bridge is None:
+                        self._show_daemon_error_dialog(
+                            window,
+                            _(
+                                "The local SSH Pilot service bridge is "
+                                "unavailable."
+                            ),
+                        )
+                        return
+
+                    connection_id = InProcessClient.connection_id_for(connection)
+                    terminal.start_daemon_session(
+                        window.client,
+                        bridge,
+                        connection_id,
+                        remote_command=remote_command,
+                        force_tty=force_tty,
+                    )
+                    return
+                except Exception as e:
+                    logger.error(
+                        "Failed to initialize daemon session type=%s",
+                        type(e).__name__,
+                    )
+                    # Never silently fall back mid-activation after choosing
+                    # the daemon path; legacy mode is selected up front only.
+                    self._show_daemon_error_dialog(
+                        window,
+                        _(
+                            "The daemon-backed SSH session could not be "
+                            "started. Enable legacy local SSH in Preferences "
+                            "only if you intentionally need that fallback."
+                        ),
+                    )
+                    return
 
         def _cleanup_failed_terminal():
             connection.is_connected = False
@@ -258,34 +321,44 @@ class TerminalManager:
                         app = Adw.Application.get_default()
                     except Exception:
                         app = None
-                # sshPilot connects in native mode only; connect() delegates to
-                # native_connect(), so either entry point prepares a native command.
-                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
-                        and not getattr(connection, 'ssh_cmd', None)):
-                    prepare = (
-                        connection.native_connect(remote_command=remote_command,
-                                                  force_tty=force_tty)
-                        if hasattr(connection, 'native_connect')
-                        else connection.connect()
-                    )
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
-                            fut.result()
-                        else:
-                            loop.run_until_complete(prepare)
-                    except Exception as prep_err:
-                        logger.error(f"Failed to prepare SSH command: {prep_err}")
+                # For daemon-backed terminals, SSH connection is handled by daemon session
+                # For local terminals, prepare SSH command normally
+                if not use_daemon:
+                    # sshPilot connects in native mode only; connect() delegates to
+                    # native_connect(), so either entry point prepares a native command.
+                    if (getattr(connection, 'protocol', 'ssh') == 'ssh'
+                            and not getattr(connection, 'ssh_cmd', None)):
+                        prepare = (
+                            connection.native_connect(remote_command=remote_command,
+                                                      force_tty=force_tty)
+                            if hasattr(connection, 'native_connect')
+                            else connection.connect()
+                        )
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                fut = asyncio.run_coroutine_threadsafe(prepare, loop)
+                                fut.result()
+                            else:
+                                loop.run_until_complete(prepare)
+                        except Exception as prep_err:
+                            logger.error(f"Failed to prepare SSH command: {prep_err}")
 
-                terminal.apply_theme()
-                if terminal.backend:
-                    terminal.backend.queue_draw()
-                elif hasattr(terminal, 'vte') and terminal.vte:
-                    terminal.vte.queue_draw()
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection')
-                    _cleanup_failed_terminal()
+                    terminal.apply_theme()
+                    if terminal.backend:
+                        terminal.backend.queue_draw()
+                    elif hasattr(terminal, 'vte') and terminal.vte:
+                        terminal.vte.queue_draw()
+                    if not terminal._connect_ssh():
+                        logger.error('Failed to establish SSH connection')
+                        _cleanup_failed_terminal()
+                else:
+                    # Daemon session already started, just apply theme
+                    terminal.apply_theme()
+                    if terminal.backend:
+                        terminal.backend.queue_draw()
+                    elif hasattr(terminal, 'vte') and terminal.vte:
+                        terminal.vte.queue_draw()
             except Exception as e:
                 logger.error(f"Error setting terminal colors: {e}")
                 if not terminal._connect_ssh():
@@ -302,6 +375,11 @@ class TerminalManager:
         The caller (SplitPane) embeds the returned widget in its own layout.
         """
         window = self.window
+
+        # Check if we should use daemon-backed SSH terminals
+        from .daemon_terminal_policy import should_use_daemon_ssh_terminal
+        use_daemon = should_use_daemon_ssh_terminal(window, connection, client=window.client)
+
         group_color, group_name = self._resolve_group_color_and_name(connection)
 
         terminal = TerminalWidget(
@@ -339,43 +417,101 @@ class TerminalManager:
                         app = _Adw.Application.get_default()
                     except Exception:
                         app = None
-                # Native-only connection (connect() delegates to native_connect()).
-                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
-                        and not getattr(connection, 'ssh_cmd', None)):
-                    prepare = (
-                        connection.native_connect()
-                        if hasattr(connection, 'native_connect')
-                        else connection.connect()
-                    )
+                # For daemon-backed terminals, SSH connection is handled by daemon session
+                # For local terminals, prepare SSH command normally
+                if use_daemon:
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
-                            fut.result()
-                        else:
-                            loop.run_until_complete(prepare)
-                    except Exception as prep_err:
-                        logger.error(f"Failed to prepare SSH command for pane: {prep_err}")
+                        from .api.in_process_client import InProcessClient
+                        from .terminal_session_controller import (
+                            daemon_terminal_capabilities_missing,
+                        )
 
-                terminal.apply_theme()
-                if terminal.backend:
-                    terminal.backend.queue_draw()
-                elif hasattr(terminal, 'vte') and terminal.vte:
-                    terminal.vte.queue_draw()
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection for pane')
-                    connection.is_connected = False
-                    try:
-                        if window.active_terminals.get(connection) is terminal:
-                            del window.active_terminals[connection]
-                        window.terminal_to_connection.pop(terminal, None)
-                        terms = window.connection_to_terminals.get(connection, [])
-                        if terminal in terms:
-                            terms.remove(terminal)
-                            if not terms:
-                                del window.connection_to_terminals[connection]
-                    except Exception:
-                        pass
+                        missing = daemon_terminal_capabilities_missing(
+                            window.client
+                        )
+                        if missing:
+                            raise RuntimeError(
+                                "Daemon terminal capabilities unavailable"
+                            )
+
+                        bridge = getattr(window, "client_bridge", None)
+                        if bridge is None:
+                            raise RuntimeError(
+                                "Daemon client bridge unavailable"
+                            )
+
+                        connection_id = InProcessClient.connection_id_for(
+                            connection
+                        )
+                        terminal.start_daemon_session(
+                            window.client,
+                            bridge,
+                            connection_id,
+                        )
+
+                        terminal.apply_theme()
+                        if terminal.backend:
+                            terminal.backend.queue_draw()
+                        elif hasattr(terminal, 'vte') and terminal.vte:
+                            terminal.vte.queue_draw()
+
+                    except Exception as e:
+                        logger.error(
+                            "Failed to initialize daemon session for pane type=%s",
+                            type(e).__name__,
+                        )
+                        connection.is_connected = False
+                        try:
+                            if window.active_terminals.get(connection) is terminal:
+                                del window.active_terminals[connection]
+                            window.terminal_to_connection.pop(terminal, None)
+                            terms = window.connection_to_terminals.get(connection, [])
+                            if terminal in terms:
+                                terms.remove(terminal)
+                                if not terms:
+                                    del window.connection_to_terminals[connection]
+                        except Exception:
+                            pass
+                        return terminal
+
+                if not use_daemon:
+                    # Native-only connection (connect() delegates to native_connect()).
+                    if (getattr(connection, 'protocol', 'ssh') == 'ssh'
+                            and not getattr(connection, 'ssh_cmd', None)):
+                        prepare = (
+                            connection.native_connect()
+                            if hasattr(connection, 'native_connect')
+                            else connection.connect()
+                        )
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                fut = asyncio.run_coroutine_threadsafe(prepare, loop)
+                                fut.result()
+                            else:
+                                loop.run_until_complete(prepare)
+                        except Exception as prep_err:
+                            logger.error(f"Failed to prepare SSH command for pane: {prep_err}")
+
+                    terminal.apply_theme()
+                    if terminal.backend:
+                        terminal.backend.queue_draw()
+                    elif hasattr(terminal, 'vte') and terminal.vte:
+                        terminal.vte.queue_draw()
+                    if not terminal._connect_ssh():
+                        logger.error('Failed to establish SSH connection for pane')
+                        connection.is_connected = False
+                        try:
+                            if window.active_terminals.get(connection) is terminal:
+                                del window.active_terminals[connection]
+                            window.terminal_to_connection.pop(terminal, None)
+                            terms = window.connection_to_terminals.get(connection, [])
+                            if terminal in terms:
+                                terms.remove(terminal)
+                                if not terms:
+                                    del window.connection_to_terminals[connection]
+                        except Exception:
+                            pass
             except Exception as exc:
                 logger.error(f"Error initialising pane terminal: {exc}")
 
@@ -532,13 +668,13 @@ class TerminalManager:
             # Use a simple approach - create a basic colored icon
             # Convert RGBA to hex for CSS
             hex_color = f"#{int(rgba.red * 255):02x}{int(rgba.green * 255):02x}{int(rgba.blue * 255):02x}"
-            
+
             # Create a tag SVG icon with the color
             # Based on tag-symbolic.svg but with the group color
             svg_data = f"""<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 0 16 16" width="16px">
                 <path d="m 1 2 v 6 l 6.691406 6.691406 c 0.1875 0.1875 0.414063 0.203125 0.597656 0.019532 l 6.382813 -6.382813 c 0.222656 -0.222656 0.207031 -0.449219 0.019531 -0.636719 l -6.691406 -6.691406 h -6 c -0.464844 0 -1 0.492188 -1 1 z m 3 0.960938 c 0.589844 0 1.070312 0.480468 1.070312 1.070312 s -0.480468 1.070312 -1.070312 1.070312 s -1.070312 -0.480468 -1.070312 -1.070312 s 0.480468 -1.070312 1.070312 -1.070312 z m 0 0" fill="{hex_color}"/>
             </svg>"""
-            
+
             # Create a bytes icon from the SVG
             svg_bytes = svg_data.encode('utf-8')
             return Gio.BytesIcon.new(GLib.Bytes.new(svg_bytes))
@@ -557,18 +693,18 @@ class TerminalManager:
                     tab_view = self.window.tab_view
             except Exception:
                 pass
-            
+
             if not tab_view:
                 return
-            
+
             # Remove any existing CSS provider
             if hasattr(tab_view, '_sshpilot_tab_css_provider'):
                 tab_view.get_style_context().remove_provider(tab_view._sshpilot_tab_css_provider)
-            
+
             # Create new CSS provider with the group color
             provider = Gtk.CssProvider()
             color_value = rgba.to_string()
-            
+
             # Use a simple CSS rule to color indicator icons
             css_data = f"tab page indicator-icon {{ color: {color_value}; }}"
             provider.load_from_data(css_data.encode())
@@ -576,7 +712,7 @@ class TerminalManager:
                 provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
             )
             tab_view._sshpilot_tab_css_provider = provider
-            
+
         except Exception as exc:
             logger.debug(f"Failed to apply tab CSS color: {exc}")
 
@@ -588,7 +724,7 @@ class TerminalManager:
             if icon is None:
                 self._clear_tab_group_color(page)
                 return
-            
+
             # Set the colored icon on the tab page
             page.set_indicator_icon(icon)
             page.set_indicator_activatable(True)
@@ -852,10 +988,34 @@ class TerminalManager:
         for terminal_widget in self.iter_ssh_terminals():
             connection = terminal_widget.connection
             try:
-                if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
-                    terminal_widget.backend.feed_child(cmd)
-                elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
-                    terminal_widget.vte.feed_child(cmd)
+                # For daemon terminals, only send if has input ownership
+                if getattr(terminal_widget, 'is_daemon_backed', False):
+                    if not getattr(terminal_widget, 'has_input_ownership', False):
+                        failed_count += 1
+                        logger.debug(
+                            "Skipped daemon terminal without input ownership: %s",
+                            getattr(connection, 'nickname', ''),
+                        )
+                        continue
+
+                    # Send via daemon controller
+                    controller = getattr(terminal_widget, '_daemon_controller', None)
+                    if controller:
+                        controller.send_input(cmd)
+                    else:
+                        failed_count += 1
+                        logger.error(
+                            "Daemon terminal has no controller: %s",
+                            getattr(connection, 'nickname', ''),
+                        )
+                        continue
+                else:
+                    # Local terminal - use traditional feed_child
+                    if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
+                        terminal_widget.backend.feed_child(cmd)
+                    elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
+                        terminal_widget.vte.feed_child(cmd)
+
                 sent_count += 1
                 logger.debug(
                     "Sent command to SSH terminal: %s",
@@ -871,6 +1031,22 @@ class TerminalManager:
         logger.info(
             f"Broadcast command completed: {sent_count} terminals received command, {failed_count} failed")
         return sent_count, failed_count
+
+    def _show_daemon_error_dialog(self, window, message):
+        """Show error dialog for daemon terminal failures."""
+        try:
+            from gi.repository import Adw
+
+            dialog = Adw.AlertDialog.new(
+                "Daemon Terminal Error",
+                message
+            )
+            dialog.add_response("ok", "OK")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(window)
+        except Exception as e:
+            logger.error(f"Failed to show daemon error dialog: {e}")
 
     # Terminal signal handlers
     def on_terminal_connected(self, terminal):
@@ -1014,10 +1190,10 @@ class TerminalManager:
         """
         Get the job status of a terminal.
         Only works for local terminals.
-        
+
         Args:
             terminal: TerminalWidget instance
-            
+
         Returns:
             dict: Job status information including idle state and status string
         """
@@ -1028,15 +1204,15 @@ class TerminalManager:
                 'status': 'UNKNOWN',
                 'error': 'Terminal does not support job detection'
             }
-        
+
         try:
             is_idle = terminal.is_terminal_idle()
             has_active_job = terminal.has_active_job()
             status = terminal.get_job_status()
-            
+
             # Check if this is an SSH terminal
             is_ssh = status == "SSH_TERMINAL"
-            
+
             return {
                 'is_idle': is_idle,
                 'has_active_job': has_active_job,
@@ -1057,7 +1233,7 @@ class TerminalManager:
         """
         Get job status for all active terminals.
         Only local terminals will have meaningful job detection.
-        
+
         Returns:
             list: List of dicts with terminal info and job status
         """

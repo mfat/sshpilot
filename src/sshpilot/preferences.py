@@ -409,28 +409,28 @@ class PreferencesWindow(Adw.NavigationPage):
         row.set_title(_(title))
         page_id = self._page_id(title)
         row.set_name(page_id)
-        
+
         # Add icon using bundled icon helper
         from sshpilot import icon_utils
         icon = icon_utils.new_image_from_icon_name(icon_name)
         row.add_prefix(icon)
-        
+
         # Add to sidebar
         self.sidebar.append(row)
-        
+
         # Add page to stack
         self.content_stack.add_named(page, page_id)
-        
+
         # Store reference
         self.pages[page_id] = page
-        
+
         # Select first page
         if len(self.pages) == 1:
             self.sidebar.select_row(row)
             if isinstance(row, Adw.ActionRow):
                 title = row.get_title() or ""
                 self._update_header_title(title)
-    
+
     def _add_terminal_appearance_groups(self, terminal_page):
         """Add Terminal appearance and color-scheme preview groups."""
         # Terminal appearance group
@@ -694,6 +694,73 @@ class PreferencesWindow(Adw.NavigationPage):
 
             terminal_page.add(terminal_choice_group)
 
+    def _add_terminal_daemon_group(self, terminal_page):
+        """Add the Daemon Terminal Settings group."""
+        daemon_group = Adw.PreferencesGroup(title=_("Daemon Terminal Settings"))
+        daemon_group.set_description(
+            _("Configure daemon-backed SSH terminals for better session management")
+        )
+
+        # Enable daemon-backed SSH terminals
+        self.daemon_backed_ssh_switch = Adw.SwitchRow()
+        self.daemon_backed_ssh_switch.set_title(_("Use daemon-backed SSH terminals"))
+        self.daemon_backed_ssh_switch.set_subtitle(
+            _("Enable enhanced SSH terminal management through daemon sessions")
+        )
+        daemon_backed_ssh_active = bool(self.config.get_setting('terminal.daemon_backed_ssh', True))
+        self.daemon_backed_ssh_switch.set_active(daemon_backed_ssh_active)
+        self.daemon_backed_ssh_switch.connect(
+            'notify::active', self.on_daemon_backed_ssh_toggled
+        )
+        daemon_group.add(self.daemon_backed_ssh_switch)
+
+        # Tab close policy
+        self.tab_close_policy_row = Adw.ComboRow()
+        self.tab_close_policy_row.set_title(_("Tab close policy"))
+        self.tab_close_policy_row.set_subtitle(
+            _("Action when closing daemon-backed terminal tabs")
+        )
+
+        policy_model = Gtk.StringList()
+        policy_model.append(_("Detach (keep session running)"))
+        policy_model.append(_("Terminate (end session)"))
+        policy_model.append(_("Ask each time"))
+        self.tab_close_policy_row.set_model(policy_model)
+
+        current_policy = self.config.get_setting('terminal.daemon_tab_close_policy', 'detach')
+        policy_index = {'detach': 0, 'terminate': 1, 'ask': 2}.get(current_policy, 0)
+        self.tab_close_policy_row.set_selected(policy_index)
+        self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
+        daemon_group.add(self.tab_close_policy_row)
+
+        # Session restore
+        self.restore_sessions_switch = Adw.SwitchRow()
+        self.restore_sessions_switch.set_title(_("Restore daemon sessions on startup"))
+        self.restore_sessions_switch.set_subtitle(
+            _("Automatically reattach to daemon sessions from previous session")
+        )
+        restore_sessions_active = bool(self.config.get_setting('terminal.daemon_restore_sessions', False))
+        self.restore_sessions_switch.set_active(restore_sessions_active)
+        self.restore_sessions_switch.connect(
+            'notify::active', self.on_restore_sessions_toggled
+        )
+        daemon_group.add(self.restore_sessions_switch)
+
+        # Legacy fallback
+        self.legacy_fallback_switch = Adw.SwitchRow()
+        self.legacy_fallback_switch.set_title(_("Legacy local SSH fallback"))
+        self.legacy_fallback_switch.set_subtitle(
+            _("⚠️ Fall back to local SSH when daemon is unavailable (not recommended)")
+        )
+        legacy_fallback_active = bool(self.config.get_setting('terminal.legacy_local_ssh_fallback', False))
+        self.legacy_fallback_switch.set_active(legacy_fallback_active)
+        self.legacy_fallback_switch.connect(
+            'notify::active', self.on_legacy_fallback_toggled
+        )
+        daemon_group.add(self.legacy_fallback_switch)
+
+        terminal_page.add(daemon_group)
+
     def _build_terminal_preferences_page(self):
         """Build the Terminal preferences page."""
         terminal_page = Adw.PreferencesPage()
@@ -703,6 +770,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._add_terminal_appearance_groups(terminal_page)
         self._add_terminal_backend_group(terminal_page)
         self._add_terminal_input_groups(terminal_page)
+        self._add_terminal_daemon_group(terminal_page)
         self._add_terminal_preferred_group(terminal_page)
         return terminal_page
 
@@ -3221,6 +3289,36 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update paste-on-right-click mode: %s", exc)
 
+    def on_daemon_backed_ssh_toggled(self, switch, _pspec):
+        """Persist the daemon-backed SSH preference."""
+        try:
+            self.config.set_setting('terminal.daemon_backed_ssh', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update daemon-backed SSH setting: %s", exc)
+
+    def on_tab_close_policy_changed(self, row, _pspec):
+        """Persist the tab close policy preference."""
+        try:
+            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
+            policy = policy_map.get(row.get_selected(), 'detach')
+            self.config.set_setting('terminal.daemon_tab_close_policy', policy)
+        except Exception as exc:
+            logger.error("Failed to update tab close policy: %s", exc)
+
+    def on_restore_sessions_toggled(self, switch, _pspec):
+        """Persist the restore sessions preference."""
+        try:
+            self.config.set_setting('terminal.daemon_restore_sessions', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update restore sessions setting: %s", exc)
+
+    def on_legacy_fallback_toggled(self, switch, _pspec):
+        """Persist the legacy fallback preference."""
+        try:
+            self.config.set_setting('terminal.legacy_local_ssh_fallback', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update legacy fallback setting: %s", exc)
+
     def _set_shortcut_controls_enabled(self, enabled: bool):
         for widget in (getattr(self, '_shortcuts_row', None), getattr(self, '_shortcuts_button', None)):
             if widget is None:
@@ -3233,26 +3331,26 @@ class PreferencesWindow(Adw.NavigationPage):
     def on_font_button_clicked(self, button):
         """Handle font button click"""
         logger.info("Font button clicked")
-        
+
         # Get current font from config
         current_font = self.config.get_setting('terminal.font', 'Monospace 12')
-        
+
         # Create custom monospace font dialog
         font_dialog = MonospaceFontDialog(parent=self, current_font=current_font)
-        
+
         def on_font_selected(font_string):
             self.font_row.set_subtitle(font_string)
             logger.info(f"Font selected: {font_string}")
-            
+
             # Save to config
             self.config.set_setting('terminal.font', font_string)
-            
+
             # Apply to all active terminals
             self.apply_font_to_terminals(font_string)
-        
+
         font_dialog.set_callback(on_font_selected)
         font_dialog.present()
-    
+
     def apply_font_to_terminals(self, font_string):
         """Apply font to all active terminal widgets"""
         try:
@@ -3272,7 +3370,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 logger.info(f"Applied font {font_string} to {count} terminals")
         except Exception as e:
             logger.error(f"Failed to apply font to terminals: {e}")
-    
+
     def on_language_changed(self, combo_row, param):
         """Persist the interface language and offer a restart.
 
@@ -4660,12 +4758,12 @@ class PreferencesWindow(Adw.NavigationPage):
                 css_rules.append("  background-color: @theme_selected_bg_color;")
                 css_rules.append("  color: @theme_selected_fg_color;")
                 css_rules.append("}")
-                
+
                 # Apply custom CSS
                 provider = Gtk.CssProvider()
                 css = "\n".join(css_rules)
                 provider.load_from_data(css.encode('utf-8'))
-                
+
                 # Add provider to display
                 display = Gdk.Display.get_default()
                 if display:
@@ -4673,8 +4771,8 @@ class PreferencesWindow(Adw.NavigationPage):
                     self.remove_color_override_provider()
 
                     Gtk.StyleContext.add_provider_for_display(
-                        display, 
-                        provider, 
+                        display,
+                        provider,
                         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                     )
                     # Store provider reference for cleanup
@@ -4683,7 +4781,7 @@ class PreferencesWindow(Adw.NavigationPage):
             else:
                 # Remove any existing color override provider
                 self.remove_color_override_provider()
-                
+
         except Exception as e:
             logger.error(f"Failed to apply color overrides: {e}")
 
@@ -4971,7 +5069,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
         self._sync_encoding_row_selection(current_encoding, notify_user=True)
-        
+
         # Update visibility based on current backend
         self._update_encoding_row_visibility()
 
@@ -4990,7 +5088,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 ('UTF-8', 'Unicode (UTF-8)'),
                 ('UTF-16', 'Unicode (UTF-16)'),
             ]
-            
+
             # Add common legacy encodings that can be handled via luit/iconv
             # These will be transcoded at the PTY bridge level
             legacy_encodings = [
@@ -5009,7 +5107,7 @@ class PreferencesWindow(Adw.NavigationPage):
             ]
             options.extend(legacy_encodings)
             return options
-        
+
         # VTE (GTK4) is UTF-8-only and set_encoding is unsupported, so there is
         # nothing to enumerate — and the encoding row is hidden for VTE anyway
         # (_update_encoding_row_visibility). Return a static list instead of
@@ -5203,36 +5301,36 @@ class PreferencesWindow(Adw.NavigationPage):
             combo_row.set_selected(self._backend_last_valid_index)
             logger.warning("PyXterm backend unavailable: %s", option.get('error'))
             return
-        
+
         backend_id = option.get('id', 'vte')
         current_backend = self.config.get_setting('terminal.backend', 'vte')
-        
+
         # If backend hasn't actually changed, do nothing
         if backend_id.lower() == current_backend.lower():
             return
-        
+
         # Check if there are any open terminal tabs
         open_terminals = self._get_open_terminals()
-        
+
         if open_terminals:
             # Show info dialog explaining the change only applies to new terminals
             self._show_backend_change_info(backend_id, open_terminals, index)
         else:
             # No open terminals, proceed with backend switch
             self._apply_backend_change(index, backend_id)
-    
+
     def _get_open_terminals(self):
         """Get all currently open terminal tabs (connected or not)"""
         terminals = []
         if not self.parent_window:
             return terminals
-        
+
         # Check active_terminals
         active_terminals = getattr(self.parent_window, 'active_terminals', {})
         for connection, terminal in active_terminals.items():
             if terminal:
                 terminals.append((connection, terminal))
-        
+
         # Also check connection_to_terminals for any other terminals
         connection_to_terminals = getattr(self.parent_window, 'connection_to_terminals', {})
         for connection, terminal_list in connection_to_terminals.items():
@@ -5241,7 +5339,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     # Avoid duplicates
                     if (connection, terminal) not in terminals:
                         terminals.append((connection, terminal))
-        
+
         # Check tab_view for any terminal pages
         tab_view = getattr(self.parent_window, 'tab_view', None)
         if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
@@ -5262,14 +5360,14 @@ class PreferencesWindow(Adw.NavigationPage):
                             terminals.append((None, terminal))
             except Exception:
                 pass
-        
+
         return terminals
-    
+
     def _show_backend_change_info(self, backend_id, open_terminals, index):
         """Show an info dialog explaining that backend change only applies to new terminals"""
         backend_name = 'PyXterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
         num_terminals = len(open_terminals)
-        
+
         dialog = Gtk.MessageDialog(
             transient_for=self.get_root(),
             modal=True,
@@ -5288,7 +5386,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self._apply_backend_change(index, backend_id)
         dialog.connect("response", _on_info_response)
         dialog.present()
-    
+
     def _apply_backend_change(self, index, backend_id):
         """Apply the backend change (only affects new terminals, not existing ones)"""
         self._backend_last_valid_index = index
@@ -5304,7 +5402,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         # Update encoding row visibility when backend changes
         self._update_encoding_row_visibility()
-        
+
         # Note: We do NOT call refresh_backends() here
         # This ensures existing terminals keep their current backend
         # Only new terminals will use the new backend setting
@@ -5323,7 +5421,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # Refresh the color preview
         if hasattr(self, 'color_preview_terminal'):
             self.color_preview_terminal.queue_draw()
-    
+
     def draw_color_preview(self, drawing_area, cr, width, height):
         """Draw a preview of the selected color scheme.
 
@@ -5377,7 +5475,7 @@ class PreferencesWindow(Adw.NavigationPage):
             'green': _p(2, '#00ff00'),
             'blue': _p(4, '#0088ff'),
         }
-    
+
     def hex_to_rgba(self, hex_color):
         """Convert hex color to RGBA values (0-1 range)"""
         hex_color = hex_color.lstrip('#')
@@ -5545,13 +5643,13 @@ class PreferencesWindow(Adw.NavigationPage):
             _logging.getLogger('sshpilot').setLevel(target)
         except Exception as exc:
             logger.debug("Could not apply log level on the fly: %s", exc)
-    
+
     def on_check_updates_changed(self, switch, *args):
         """Handle check for updates on startup setting change"""
         check_on_startup = switch.get_active()
         logger.info(f"Check for updates on startup changed to: {check_on_startup}")
         self.config.set_setting('updates.check_on_startup', check_on_startup)
-    
+
     def on_startup_behavior_changed(self, radio_button, *args):
         """Handle startup behavior radio button change"""
         if self.terminal_startup_radio.get_active():
@@ -5582,24 +5680,24 @@ class PreferencesWindow(Adw.NavigationPage):
             name = names[index]
             logger.info(f"Startup session changed to: {name}")
             self.config.set_setting('app-startup-session-name', name)
-    
+
     def on_terminal_choice_changed(self, radio_button, *args):
         """Handle terminal choice radio button change"""
         use_external = self.external_terminal_radio.get_active()
         logger.info(f"Terminal choice changed to: {'external' if use_external else 'built-in'}")
-        
+
         # Enable/disable external terminal options
         self.external_terminal_box.set_sensitive(use_external)
-        
+
         # Save preference
         self.config.set_setting('use-external-terminal', use_external)
-    
+
     def on_terminal_dropdown_changed(self, dropdown, *args):
         """Handle terminal dropdown selection change"""
         selected = dropdown.get_selected()
         if selected is None or selected < 0:
             return
-        
+
         # Get the selected terminal from the model
         model = dropdown.get_model()
         if model and selected < model.get_n_items():
@@ -5617,12 +5715,12 @@ class PreferencesWindow(Adw.NavigationPage):
             if terminal_name != "Custom":
                 command = self.terminal_commands.get(terminal_name, terminal_name)
                 self.config.set_setting('external-terminal', command)
-    
+
     def on_custom_terminal_path_changed(self, entry, *args):
         """Handle custom terminal path entry change"""
         custom_path = entry.get_text().strip()
         logger.info(f"Custom terminal path changed to: {custom_path}")
-        
+
         # Save the path if not empty
         if custom_path:
             self.config.set_setting('custom-terminal-path', custom_path)
@@ -5630,7 +5728,7 @@ class PreferencesWindow(Adw.NavigationPage):
         else:
             # Clear empty path
             self.config.set_setting('custom-terminal-path', '')
-    
+
     def _populate_terminal_dropdown(self):
         """Populate the terminal dropdown with available terminals"""
         try:
@@ -5710,10 +5808,10 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.info(
                 f"Populated terminal dropdown with {len(available_terminals)} available terminals"
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to populate terminal dropdown: {e}")
-    
+
     def _set_terminal_dropdown_selection(self, terminal_name):
         """Set the dropdown selection to the specified terminal"""
         try:
@@ -5746,16 +5844,16 @@ class PreferencesWindow(Adw.NavigationPage):
                         else:
                             self.custom_terminal_box.set_visible(False)
                     return
-            
+
             # If not found, default to first available terminal
             if model.get_n_items() > 0:
                 self.terminal_dropdown.set_selected(0)
-                
+
         except Exception as e:
             logger.error(f"Failed to set terminal dropdown selection: {e}")
-    
 
-    
+
+
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
         try:
