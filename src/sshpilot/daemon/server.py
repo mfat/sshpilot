@@ -18,10 +18,10 @@ from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
 from sshpilot.api.models.common import RequestId
 from sshpilot.api.transport.codec import (
-    connection_event_to_envelope,
     decode_envelope,
     encode_envelope,
     error_to_wire,
+    public_event_to_envelope,
 )
 from sshpilot.api.transport.envelopes import (
     ErrorResponseEnvelope,
@@ -41,6 +41,7 @@ from .lifecycle import (
     unlink_owned_socket,
     verify_bound_socket,
 )
+from .session_runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,10 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.CONNECTION_CREATED,
         EventType.CONNECTION_UPDATED,
         EventType.CONNECTION_DELETED,
+        EventType.SESSION_CREATED,
+        EventType.SESSION_STATE_CHANGED,
+        EventType.SESSION_EXITED,
+        EventType.SESSION_CLOSED,
     }
 )
 
@@ -85,6 +90,9 @@ class DaemonServer:
         socket_path: Optional[os.PathLike] = None,
         client_event_queue_limit: int = DEFAULT_CLIENT_EVENT_QUEUE_LIMIT,
         max_client_outbound_bytes: int = DEFAULT_MAX_CLIENT_OUTBOUND_BYTES,
+        session_runtime_factory: Optional[
+            Callable[[SshPilotClient], SessionRuntime]
+        ] = None,
     ) -> None:
         if (
             type(client_event_queue_limit) is not int
@@ -100,11 +108,13 @@ class DaemonServer:
         self.client_event_queue_limit = client_event_queue_limit
         self.max_client_outbound_bytes = max_client_outbound_bytes
         self._core_factory = core_factory
+        self._session_runtime_factory = session_runtime_factory
         self._selector: Optional[selectors.BaseSelector] = None
         self._listener: Optional[socket.socket] = None
         self._wakeup_read: Optional[socket.socket] = None
         self._wakeup_write: Optional[socket.socket] = None
         self._core_client: Optional[SshPilotClient] = None
+        self._session_runtime: Optional[SessionRuntime] = None
         self._dispatcher: Optional[RequestDispatcher] = None
         self._clients: Dict[int, _ClientConnection] = {}
         self._socket_identity: Optional[Tuple[int, int]] = None
@@ -116,6 +126,7 @@ class DaemonServer:
         self._event_lock = threading.Lock()
         self._accepting_core_events = False
         self._core_subscription: Optional[Subscription] = None
+        self._session_subscription: Optional[Subscription] = None
         self._next_event_sequence = 0
 
     @property
@@ -179,6 +190,8 @@ class DaemonServer:
             self._stop_core_events()
             if self._dispatcher is not None:
                 self._dispatcher.begin_shutdown()
+            if self._session_runtime is not None:
+                self._session_runtime.shutdown()
             self._cleanup()
             self._stopped.set()
 
@@ -240,7 +253,16 @@ class DaemonServer:
             # Own the single-instance socket before loading/migrating the core.
             # Readiness remains false until construction and migration finish.
             self._core_client = self._core_factory()
-            self._dispatcher = RequestDispatcher(self._core_client)
+            if self._session_runtime_factory is None:
+                self._session_runtime = SessionRuntime(self._core_client)
+            else:
+                self._session_runtime = self._session_runtime_factory(
+                    self._core_client
+                )
+            self._dispatcher = RequestDispatcher(
+                self._core_client,
+                self._session_runtime,
+            )
             wakeup_read, wakeup_write = socket.socketpair()
             wakeup_read.setblocking(False)
             wakeup_write.setblocking(False)
@@ -257,6 +279,9 @@ class DaemonServer:
         subscribe_events = getattr(self._core_client, "subscribe_events", None)
         if callable(subscribe_events):
             self._core_subscription = subscribe_events(self._on_core_event)
+        self._session_subscription = self._session_runtime.subscribe_events(
+            self._on_core_event
+        )
         with self._event_lock:
             self._accepting_core_events = True
 
@@ -488,6 +513,9 @@ class DaemonServer:
             state.sock.close()
         except OSError:
             pass
+        session_runtime = self._session_runtime
+        if session_runtime is not None:
+            session_runtime.detach_client(state.protocol.client_id)
 
     def _cleanup(self) -> None:
         self._stop_core_events()
@@ -513,7 +541,11 @@ class DaemonServer:
         self._wakeup_write = None
         core_client = self._core_client
         self._core_client = None
+        session_runtime = self._session_runtime
+        self._session_runtime = None
         try:
+            if session_runtime is not None:
+                session_runtime.shutdown()
             if core_client is not None:
                 core_client.close()
         except Exception as error:
@@ -535,7 +567,7 @@ class DaemonServer:
                 return
             sequence = self._next_event_sequence
             try:
-                envelope = connection_event_to_envelope(
+                envelope = public_event_to_envelope(
                     event,
                     sequence=sequence,
                     protocol_version=PROTOCOL_VERSION,
@@ -620,5 +652,9 @@ class DaemonServer:
             self._accepting_core_events = False
             subscription = self._core_subscription
             self._core_subscription = None
+            session_subscription = self._session_subscription
+            self._session_subscription = None
         if subscription is not None:
             subscription.unsubscribe()
+        if session_subscription is not None:
+            session_subscription.unsubscribe()

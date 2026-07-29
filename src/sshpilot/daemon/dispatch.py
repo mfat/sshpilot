@@ -17,20 +17,28 @@ from sshpilot.api.models.common import (
     CompatibilityResult,
     ConnectionId,
     CoreInfo,
+    SessionId,
 )
 from sshpilot.api.transport.codec import (
+    attach_session_request_from_wire,
+    attach_session_result_to_wire,
     capabilities_to_wire,
+    close_session_request_from_wire,
     connection_details_to_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
     delete_connection_request_from_wire,
     delete_connection_result_to_wire,
+    detach_session_request_from_wire,
     handshake_request_from_wire,
     handshake_result_to_wire,
+    open_session_request_from_wire,
+    session_summary_to_wire,
     update_connection_request_from_wire,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, RequestEnvelope
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
+from sshpilot.daemon.session_runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +48,12 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.create": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
+    "sessions.list": Capability.SESSIONS_READ,
+    "sessions.get": Capability.SESSIONS_READ,
+    "sessions.open": Capability.SESSIONS_WRITE,
+    "sessions.attach": Capability.SESSIONS_WRITE,
+    "sessions.detach": Capability.SESSIONS_WRITE,
+    "sessions.close": Capability.SESSIONS_WRITE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -59,8 +73,13 @@ class ClientProtocolState:
 class RequestDispatcher:
     """Route the explicit Protocol v1 request methods implemented by the daemon."""
 
-    def __init__(self, core_client: SshPilotClient) -> None:
+    def __init__(
+        self,
+        core_client: SshPilotClient,
+        session_runtime: Optional[SessionRuntime] = None,
+    ) -> None:
         self._core_client = core_client
+        self._session_runtime = session_runtime or SessionRuntime(core_client)
         self.server_instance_id = uuid.uuid4().hex
         self._shutting_down = False
         self.HANDLERS: Dict[str, Callable[[RequestEnvelope, ClientProtocolState], Any]] = {
@@ -71,6 +90,12 @@ class RequestDispatcher:
             "connections.create": self._handle_create_connection,
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
+            "sessions.list": self._handle_list_sessions,
+            "sessions.get": self._handle_get_session,
+            "sessions.open": self._handle_open_session,
+            "sessions.attach": self._handle_attach_session,
+            "sessions.detach": self._handle_detach_session,
+            "sessions.close": self._handle_close_session,
         }
 
     def begin_shutdown(self) -> None:
@@ -248,6 +273,81 @@ class RequestDispatcher:
             self._core_client.delete_connection(mutation)
         )
 
+    def _handle_list_sessions(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> list:
+        self._require_empty_params(request)
+        return [
+            session_summary_to_wire(item)
+            for item in self._session_runtime.list_sessions()
+        ]
+
+    def _handle_get_session(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        if set(request.params) != {"session_id"}:
+            raise ValueError("sessions.get requires only session_id")
+        session_id = request.params["session_id"]
+        if type(session_id) is not str or not session_id.strip():
+            raise ValueError("session_id must be a non-empty string")
+        return session_summary_to_wire(
+            self._session_runtime.get_session(SessionId(session_id))
+        )
+
+    def _handle_open_session(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> dict:
+        client_id = self._required_client_id(state)
+        session_request = open_session_request_from_wire(request.params)
+        return session_summary_to_wire(
+            self._session_runtime.open_session(
+                session_request,
+                client_id=client_id,
+            )
+        )
+
+    def _handle_attach_session(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> dict:
+        client_id = self._required_client_id(state)
+        session_request = attach_session_request_from_wire(request.params)
+        return attach_session_result_to_wire(
+            self._session_runtime.attach_session(
+                session_request,
+                client_id=client_id,
+            )
+        )
+
+    def _handle_detach_session(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        client_id = self._required_client_id(state)
+        session_request = detach_session_request_from_wire(request.params)
+        self._session_runtime.detach_session(
+            session_request,
+            client_id=client_id,
+        )
+        return None
+
+    def _handle_close_session(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> None:
+        session_request = close_session_request_from_wire(request.params)
+        self._session_runtime.close_session(session_request)
+        return None
+
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
         if metadata is None or state.client_id is None:
@@ -280,8 +380,8 @@ class RequestDispatcher:
     def _safe_capabilities(
         supported: FrozenSet[Capability],
     ) -> FrozenSet[Capability]:
-        # Protocol v1 currently exposes snapshots plus typed connection events.
-        return frozenset(
+        # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
+        connection_capabilities = frozenset(
             item
             for item in supported
             if item
@@ -291,8 +391,24 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_WRITE,
             }
         )
+        return connection_capabilities | frozenset(
+            {
+                Capability.SESSIONS_READ,
+                Capability.SESSIONS_WRITE,
+                Capability.SESSIONS_EVENTS,
+            }
+        )
 
     @staticmethod
     def _require_empty_params(request: RequestEnvelope) -> None:
         if request.params:
             raise ValueError("method does not accept parameters")
+
+    @staticmethod
+    def _required_client_id(state: ClientProtocolState) -> ClientId:
+        if state.client_id is None:
+            raise SshPilotError(
+                ErrorCode.HANDSHAKE_REQUIRED,
+                "A protocol handshake is required before session operations",
+            )
+        return state.client_id

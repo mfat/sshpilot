@@ -5,6 +5,7 @@ import pytest
 from sshpilot.api import InProcessClient
 from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon import DaemonServer
+from sshpilot.daemon.session_runtime import SessionRuntime
 
 
 class TestConnection:
@@ -111,6 +112,8 @@ def daemon_factory(tmp_path):
         start=True,
         client_event_queue_limit=256,
         max_client_outbound_bytes=4 * 1024 * 1024,
+        session_runner=None,
+        session_runtime_kwargs=None,
     ):
         manager = manager or TestConnectionManager()
         path = Path(socket_path or tmp_path / f"daemon-{len(servers)}" / "sshpilotd.sock")
@@ -120,6 +123,17 @@ def daemon_factory(tmp_path):
             socket_path=path,
             client_event_queue_limit=client_event_queue_limit,
             max_client_outbound_bytes=max_client_outbound_bytes,
+            session_runtime_factory=(
+                (
+                    lambda core: SessionRuntime(
+                        core,
+                        runner=session_runner,
+                        **(session_runtime_kwargs or {}),
+                    )
+                )
+                if session_runner is not None or session_runtime_kwargs
+                else None
+            ),
         )
         servers.append(server)
         if start:
