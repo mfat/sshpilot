@@ -79,7 +79,6 @@ _ASKPASS_LOG_IO_LOCK = threading.Lock()
 
 def _extract_key_path(prompt: str) -> str:
     """Extract key path from an SSH passphrase prompt string."""
-    import re
     patterns = [
         r'passphrase.*for\s+key\s+["\']([^"\']*)["\']',
         r'passphrase.*for\s+["\']([^"\']*)["\']',
@@ -97,39 +96,9 @@ def _extract_key_path(prompt: str) -> str:
     return ""
 
 
-# Prompt classification for askpass (password vs passphrase vs OTP vs presence).
-# Only the last non-empty line is matched so scrollback like
-# "Permission denied (publickey,password)." cannot false-positive.
-#
-# OpenSSH FIDO presence usually goes to the TTY via notify_start() when stderr
-# is a tty — askpass is only used with SSH_ASKPASS_PROMPT=none (no tty / agent).
-_PRESENCE_MARKERS = (
-    'confirm user presence',
-    'tap your security key',
-    'tap secure token',
-    'touch your yubikey',
-    'touch your security key',
-    'touch your authenticator',
-    'touch the authenticator',
-)
-_HOSTKEY_MARKERS = (
-    '(yes/no',
-    'continue connecting',
-    "please type 'yes'",
-)
-# Word-boundary match: bare substrings would misfire on hostnames/usernames
-# ("user@alpine's password:" contains 'pin', "scotp1" contains 'otp').
-#
-# OTP/MFA markers shared with the "…password" exemption below so prompts like
-# "one time password" / "TOTP password" are never treated as login passwords
-# (which would autofill the stored SSH password into an MFA challenge).
-_OTP_MFA_MARKER_RE = re.compile(
-    r'\b(?:pin|otp|totp|mfa|2fa|two[-\s]?factor|one[-\s]?time)\b'
-)
-_TYPED_INTERACTIVE_RE = re.compile(
-    r'\b(?:pin|otp|totp|mfa|2fa|two[-\s]?factor|'
-    r'verification code|one[-\s]?time|authentication code)\b'
-)
+# Prompt classification lives in ``sshpilot.core.interaction``. Historical
+# marker constants below are retained only as documentation of the prior
+# inline implementation; ``classify_prompt`` delegates to core.
 
 
 def classify_prompt(text: str) -> "str | None":
@@ -139,33 +108,14 @@ def classify_prompt(text: str) -> "str | None":
     no typed secret), ``'hostkey'`` (yes/no host-key confirmation),
     ``'interactive'`` (OTP/PIN — a typed secret), or ``None`` when the text
     does not look like a prompt.
+
+    Delegates to :func:`sshpilot.core.interaction.classify_prompt` (GTK-free
+    policy). Compatibility shim — prefer importing from ``sshpilot.core.interaction``.
     """
-    lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
-    if not lines:
-        return None
-    last = lines[-1].lower()
-    if any(marker in last for marker in _PRESENCE_MARKERS):
-        return 'presence'
-    if any(marker in last for marker in _HOSTKEY_MARKERS):
-        return 'hostkey'
-    # PIN / OTP may omit a trailing colon ("Enter PIN for authenticator").
-    if _TYPED_INTERACTIVE_RE.search(last) and (
-            last.endswith(':') or last.startswith('enter ') or ' for ' in last):
-        if 'passphrase' in last:
-            return 'passphrase'
-        # "…'s password:" for a host that legitimately contains an OTP/PIN
-        # word is still a login password — but "one-time password",
-        # "one time password", "TOTP password", etc. are MFA challenges.
-        if 'password' in last and not _OTP_MFA_MARKER_RE.search(last):
-            return 'password'
-        return 'interactive'
-    if last.endswith(':'):
-        if 'passphrase' in last:
-            return 'passphrase'
-        # "Password:" but also PAM's "Password for user@host:".
-        if 'password' in last:
-            return 'password'
-    return None
+    from sshpilot.core.interaction import classify_prompt as _core_classify
+
+    kind = _core_classify(text)
+    return kind.value if kind is not None else None
 
 
 # One-shot in-memory passwords for the askpass helper (main process only).
