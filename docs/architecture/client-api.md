@@ -82,12 +82,15 @@ Do not:
 `DaemonClient` uses one persistent blocking socket, one concurrency gate, one
 send lock, one persistent reader thread, and a finite timeout. Callers register
 pending request IDs and never read the socket. A separate bounded serial event
-handoff prevents slow subscribers from blocking response correlation. It
-creates no event loop or thread per call. In opt-in daemon mode, the
-application-scoped GTK bridge uses one bounded worker and returns snapshots
-and mutation results through `GLib.idle_add`. Request tokens suppress stale results after
-refresh/window destruction. GLib remains outside `DaemonClient`, and
-`InProcessClient` stays on its construction/main thread.
+handoff prevents slow subscribers from blocking response correlation. On
+timeout the client logs payload-free diagnostics (ids, method, elapsed time,
+queue depths, thread liveness) and closes the transport. It creates no event
+loop or thread per call. In daemon mode, the application-scoped GTK bridge uses
+one bounded worker and returns snapshots and mutation results through
+`GLib.idle_add`. Request tokens suppress stale results after refresh/window
+destruction. GLib remains outside `DaemonClient`, and `InProcessClient` stays
+on its construction/main thread. Session restore listing also runs on the
+bridge worker so it cannot stall GTK behind welcome connection reads.
 
 Inside the daemon, `sessions.open` and `sessions.close` are deferred through a
 four-worker, 64-command keyed executor. `sessions.open` acknowledges the

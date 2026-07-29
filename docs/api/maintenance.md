@@ -179,7 +179,7 @@ before commit, participate in last-known-good rollback, and have atomic
 replacement plus self-write no-op coverage. GTK must not gain a daemon-mode
 migration bypass.
 
-## Phase 9 / 9.1 notes
+## Phase 9 / 9.1 / 9.3 notes
 
 Production GTK SSH terminals are daemon-backed by default (`terminal.daemon_backed_ssh`).
 Phase 9.1 keeps route selection (`SshTerminalRoute`) separate from daemon readiness;
@@ -187,3 +187,19 @@ readiness failures must never silently select legacy local SSH.
 When regenerating API artifacts after claim/release or multi-attachment changes, run
 `python3 scripts/generate_api_artifacts.py` and keep `docs/api/methods.md` /
 `docs/api/errors.md` markers in sync with `SshPilotClient` and `DAEMON_METHOD_CAPABILITIES`.
+
+### Phase 9.3 testing notes
+
+- GUI tests (`SSHPILOT_GUI_TESTS=1`) isolate `HOME`/`XDG_*` **and**
+  `XDG_RUNTIME_DIR`, and force `SSHPILOT_CLIENT_MODE=in_process`. They must
+  never attach to the developer user socket under `/run/user/$UID/sshpilot/`.
+- Daemon-specific GUI cases start an owned `DaemonServer` on a unique temp
+  socket, assert `server_instance_id` / `threads_alive()`, and tear down
+  bridge → client → server (with `wait_stopped`) before removing temps.
+- After updating daemon code, restart `sshpilotd` before manual testing.
+  Compare handshake `daemon_version` / `api_implementation_version` /
+  optional `SSHPILOT_DEV_REVISION` via logs or `DaemonClient.build_mismatch()`.
+- Transport timeouts emit structured safe diagnostics; do not widen the default
+  five-second control RPC timeout to paper over stalls.
+- PTY autofill is local/legacy only. Daemon SSH uses interaction dialogs and
+  must not feed a local VTE child.

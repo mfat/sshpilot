@@ -46,6 +46,10 @@ writes; responses and unsolicited events may arrive in either order. Events
 move through a separate bounded serial dispatcher, so a slow callback cannot
 stop response correlation. Every call has a finite timeout (five seconds by
 default); timeout closes the transport, making late responses unambiguous.
+Timeout diagnostics log only safe fields (request id, method, elapsed time,
+client/server instance ids, socket state, pending/event/terminal queue depths,
+reader/event/terminal thread liveness, and whether the frame was sent). Request
+payloads, secrets, terminal bytes, and environment values are never logged.
 
 GTK never invokes that blocking API on its main thread. One application-scoped
 `GtkClientBridge` owns a single worker. It serializes selection/startup and
@@ -55,20 +59,43 @@ Welcome-page refreshes are coalesced: one pending/active snapshot plus at most
 one follow-up. Per-widget request tokens suppress stale delivery after refresh
 or destruction. Closing the application unsubscribes before it closes the
 selected client and bridge; closing one window only invalidates callbacks.
+Daemon session restore also lists sessions through the bridge so a blocked
+control RPC cannot stall GTK behind welcome `connections.list`.
 
 ## Experimental GTK selection
 
-Normal startup still selects `InProcessClient`. Development daemon mode is
-enabled only for the current process:
+Production Stage C enables daemon-backed SSH via
+`terminal.daemon_backed_ssh` (default `True`) when
+`SSHPILOT_CLIENT_MODE` is unset. Development overrides:
 
 ```bash
 SSHPILOT_CLIENT_MODE=daemon python3 run.py
+SSHPILOT_CLIENT_MODE=in_process python3 run.py   # explicit; wins over Stage C
 ```
 
 The parser ignores surrounding whitespace and case. Missing or blank values
-mean `in_process`; invalid values retain in-process mode and produce the same
-safe compatibility warning as a failed daemon selection. The environment value
-is not persisted as an application preference.
+mean `in_process` before Stage C promotion; invalid values retain in-process
+mode and produce the same safe compatibility warning as a failed daemon
+selection. An explicit `SSHPILOT_CLIENT_MODE=in_process` is never auto-promoted
+to daemon mode (GUI tests rely on this). The environment value is not persisted
+as an application preference.
+
+### Stale daemon diagnosis
+
+After updating daemon code, **restart sshpilotd before testing**. GTK may remain
+connected to an older process that still holds the runtime socket.
+
+Verify the active daemon safely:
+
+1. Note handshake identity in logs: `version`, `api`, `instance`, `started_at`,
+   optional opaque `SSHPILOT_DEV_REVISION`.
+2. Compare application `__version__` / `API_IMPLEMENTATION_VERSION` with the
+   daemon values (`DaemonClient.build_mismatch()`).
+3. Confirm the process command line and `XDG_RUNTIME_DIR/.../sshpilotd.sock`.
+4. Stop the old daemon (no active sessions, or after warning), then relaunch
+   the app so `DaemonLauncher` starts a fresh process from current sources.
+
+Never auto-kill a daemon that still owns live sessions.
 
 `api/client_factory.py` is the single selection policy. Widgets neither read
 the environment nor construct `DaemonClient`. The current application has one

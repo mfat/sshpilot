@@ -136,12 +136,18 @@ To prevent attaching to sessions from previous daemon instances, the system veri
 ### Stale Session Detection
 
 ```python
-def get_restorable_sessions(self, client) -> List[SessionRestoreMetadata]:
+def get_restorable_sessions(self, client, sessions=None) -> List[SessionRestoreMetadata]:
     """Get sessions that can be restored to current daemon instance."""
     current_instance_id = getattr(client, "server_instance_id", "") or ""
     if not current_instance_id:
         return []
 
+    # Prefer a pre-fetched list from GtkClientBridge so the GTK main loop
+    # never blocks on client.list_sessions().
+    active_sessions = {
+        str(session.id)
+        for session in (sessions if sessions is not None else client.list_sessions() or [])
+    }
     restore_state = self.config.get_setting(SESSION_RESTORE_STATE_SETTING, [])
     restorable = []
 

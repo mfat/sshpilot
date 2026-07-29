@@ -445,3 +445,20 @@ SFTP file manager and port forwarding are **explicitly deferred to Phase 10**:
 ### Daemon Runtime
 - `src/sshpilot/daemon/session_runtime.py` - Daemon session lifecycle
 - `src/sshpilot/daemon/interaction_broker.py` - Authentication interaction handling
+
+## PTY autofill ownership (Phase 9.3)
+
+| Runtime | Autofill | Input path |
+| --- | --- | --- |
+| Local / legacy GTK-owned SSH or shell | Allowed (sudo / residual password) | `TerminalWidget.feed_child_data` → backend `feed_child_data` / VTE child |
+| Daemon-backed SSH | Disabled | Interaction dialogs; `send_input` only with attachment ownership |
+
+Daemon tabs must never call VTE `feed_child` for SSH secrets, must not send
+before attachment is active, and must not replay autofill after reattach or GTK
+restart. One-shot values are cleared after delivery and never logged.
+
+## Production soak reminder
+
+After pulling daemon changes, restart `sshpilotd` (or quit sessions and relaunch
+the app so the launcher starts a fresh process). Confirm handshake identity in
+logs before trusting interactive SSH behavior.

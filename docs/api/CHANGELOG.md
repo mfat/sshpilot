@@ -5,6 +5,26 @@ notes remain separate.
 
 ## Unreleased
 
+### Phase 9.3: GUI Transport Stability (Changed)
+
+- PTY autofill uses the canonical `feed_child_data` widget/backend input API.
+  Daemon-backed SSH terminals disable PTY autofill; authentication stays on
+  interaction dialogs. Local/legacy GTK-owned children keep one-shot sudo /
+  residual password fills without logging secrets.
+- `DaemonClient` logs structured, payload-free transport timeout diagnostics
+  (request id, method, elapsed time, instance id, queue depths, thread
+  liveness) and exposes `threads_alive()` / `build_mismatch()` for tests.
+- Handshake may include optional `daemon_started_at`, `development_revision`
+  (`SSHPILOT_DEV_REVISION`), and `api_implementation_version`. Mismatch is
+  surfaced as a safe warning; active sessions are never killed automatically.
+- GUI tests isolate `XDG_RUNTIME_DIR` and force
+  `SSHPILOT_CLIENT_MODE=in_process` so the suite cannot attach to a developer
+  user daemon. Explicit env `in_process` wins over Stage C
+  `terminal.daemon_backed_ssh` auto-promotion.
+- Daemon session restore lists sessions through `GtkClientBridge` so a blocked
+  control RPC cannot stall the GTK main loop behind welcome
+  `connections.list`.
+
 ### Phase 9.2: Non-Blocking Session Open Acknowledgement (Changed)
 
 - `sessions.open` now returns the accepted `starting` `SessionSummary` as soon
