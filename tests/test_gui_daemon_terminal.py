@@ -77,6 +77,11 @@ def _pump_until(gui, predicate, timeout=3.0):
 
 def test_daemon_terminal_streams_without_blocking_gtk(gui, tmp_path):
     from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.api.models import (
+        InteractionState,
+        InteractionType,
+        PasswordPrompt,
+    )
     from sshpilot.daemon import DaemonServer
     from sshpilot.daemon.pty_runner import PtySessionProcessRunner
     from sshpilot.daemon.session_runtime import SessionRuntime
@@ -122,6 +127,48 @@ def test_daemon_terminal_streams_without_blocking_gtk(gui, tmp_path):
         _GLib.idle_add(lambda: heartbeat.append(True) and False)
         assert _pump_until(gui, lambda: widget.received_bytes >= len(b"READY\n"))
         assert heartbeat
+        interaction = server._interaction_broker.create(
+            session_id=widget._session.id,
+            connection_id=widget._session.connection_id,
+            interaction_type=InteractionType.PASSWORD,
+            prompt=PasswordPrompt(
+                username="tester",
+                hostname="terminal.test",
+                port=22,
+                attempt=1,
+                can_remember=False,
+                stored_secret_available=False,
+            ),
+        )
+        assert _pump_until(
+            gui,
+            lambda: interaction.id
+            in widget._interaction_dialogs._dialogs,
+        )
+        dialog = widget._interaction_dialogs._dialogs[interaction.id]
+        content = dialog.get_extra_child()
+        entry = content.get_first_child()
+        remember = entry.get_next_sibling()
+        entry.set_text("gui-one-use")
+        widget._interaction_dialogs._secret_response(
+            interaction,
+            dialog,
+            "submit",
+            entry,
+            remember,
+        )
+        assert _pump_until(
+            gui,
+            lambda: server._interaction_broker.get(
+                interaction.id,
+                client._client_id,
+            ).state
+            is InteractionState.ANSWERED,
+        )
+        result = server._interaction_broker.wait_for_result(interaction.id)
+        assert result is not None
+        assert bytes(result.secret or b"") == b"gui-one-use"
+        result.clear()
         before = widget.received_bytes
         widget._on_commit(widget._terminal, "x", 1)
         assert _pump_until(gui, lambda: widget.received_bytes > before)

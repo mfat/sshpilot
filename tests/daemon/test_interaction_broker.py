@@ -1,0 +1,568 @@
+import json
+import os
+import socket
+import struct
+import subprocess
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Iterator
+
+import pytest
+
+from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models import (
+    ClientId,
+    ConnectionId,
+    HostKeyDecision,
+    HostKeyPrompt,
+    HostKeyStatus,
+    InteractionDecisionRequest,
+    InteractionState,
+    InteractionType,
+    PasswordPrompt,
+    RememberPolicy,
+    SecretDecision,
+    SessionId,
+)
+from sshpilot.api.transport.secret_frames import SecretFrame, SecretFrameKind
+from sshpilot.daemon.interaction_broker import InteractionBroker
+from sshpilot.daemon.session_runtime import SessionLaunchSpec
+
+SESSION_ID = SessionId("session:550e8400-e29b-41d4-a716-446655440000")
+CONNECTION_ID = ConnectionId(
+    "connection:550e8400-e29b-41d4-a716-446655440001"
+)
+CLIENT_A = ClientId("client-a")
+CLIENT_B = ClientId("client-b")
+
+
+@pytest.fixture
+def broker() -> Iterator[InteractionBroker]:
+    instance = InteractionBroker(secret_timeout=2, host_key_timeout=2)
+    yield instance
+    instance.close()
+
+
+def _password(broker: InteractionBroker):
+    return broker.create(
+        session_id=SESSION_ID,
+        connection_id=CONNECTION_ID,
+        interaction_type=InteractionType.PASSWORD,
+        prompt=PasswordPrompt(
+            username="alice",
+            hostname="example.test",
+            port=22,
+            attempt=1,
+            can_remember=True,
+            stored_secret_available=False,
+        ),
+    )
+
+
+def test_claim_release_and_disconnect_takeover(broker: InteractionBroker) -> None:
+    summary = _password(broker)
+    claim = broker.claim(summary.id, CLIENT_A)
+    assert claim.responder_client_id == CLIENT_A
+    with pytest.raises(SshPilotError) as conflict:
+        broker.claim(summary.id, CLIENT_B)
+    assert conflict.value.code is ErrorCode.INTERACTION_CLAIM_CONFLICT
+
+    broker.disconnect_client(CLIENT_A)
+    replacement = broker.claim(summary.id, CLIENT_B)
+    assert replacement.responder_client_id == CLIENT_B
+
+
+def test_secret_is_responder_bound_one_use_and_cleared(
+    broker: InteractionBroker,
+) -> None:
+    summary = _password(broker)
+    claim = broker.claim(summary.id, CLIENT_A)
+    broker.respond(
+        InteractionDecisionRequest(
+            interaction_id=summary.id,
+            secret_decision=SecretDecision.SUBMIT,
+            remember_policy=RememberPolicy.STORE_AFTER_SUCCESS,
+        ),
+        CLIENT_A,
+    )
+    wrong = SecretFrame(
+        kind=SecretFrameKind.RESPONSE,
+        interaction_id=summary.id,
+        nonce=bytes.fromhex(claim.nonce),
+        secret=bytearray(b"not-authorised"),
+    )
+    with pytest.raises(SshPilotError) as denied:
+        broker.submit_secret(wrong, CLIENT_B)
+    assert denied.value.code is ErrorCode.INTERACTION_RESPONDER_UNAUTHORIZED
+    assert wrong.secret == bytearray()
+
+    frame = SecretFrame(
+        kind=SecretFrameKind.RESPONSE,
+        interaction_id=summary.id,
+        nonce=bytes.fromhex(claim.nonce),
+        secret=bytearray(b"correct"),
+    )
+    broker.submit_secret(frame, CLIENT_A)
+    assert frame.secret == bytearray()
+    result = broker.wait_for_result(summary.id)
+    assert result is not None
+    assert bytes(result.secret or b"") == b"correct"
+    assert result.remember_policy is RememberPolicy.STORE_AFTER_SUCCESS
+    assert broker.wait_for_result(summary.id) is None
+    result.clear()
+
+
+def test_host_key_answer_is_typed_and_final(broker: InteractionBroker) -> None:
+    summary = broker.create(
+        session_id=SESSION_ID,
+        connection_id=CONNECTION_ID,
+        interaction_type=InteractionType.HOST_KEY_CONFIRMATION,
+        prompt=HostKeyPrompt(
+            hostname="example.test",
+            port=22,
+            key_type="ssh-ed25519",
+            fingerprint="SHA256:abc",
+            status=HostKeyStatus.UNKNOWN,
+        ),
+    )
+    broker.claim(summary.id, CLIENT_A)
+    broker.respond(
+        InteractionDecisionRequest(
+            interaction_id=summary.id,
+            host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+        ),
+        CLIENT_A,
+    )
+    result = broker.wait_for_result(summary.id)
+    assert result is not None
+    assert result.decision is HostKeyDecision.ACCEPT_ONCE
+    assert broker.get(summary.id, CLIENT_A).state is InteractionState.ANSWERED
+
+
+def test_expiry_wakes_waiter_and_rejects_late_response() -> None:
+    broker = InteractionBroker(secret_timeout=0.03, host_key_timeout=0.03)
+    try:
+        summary = _password(broker)
+        completed = threading.Event()
+
+        def wait() -> None:
+            assert broker.wait_for_result(summary.id) is None
+            completed.set()
+
+        thread = threading.Thread(target=wait)
+        thread.start()
+        assert completed.wait(1)
+        thread.join(1)
+        assert broker.get(summary.id, CLIENT_A).state is InteractionState.EXPIRED
+        with pytest.raises(SshPilotError) as expired:
+            broker.claim(summary.id, CLIENT_A)
+        assert expired.value.code is ErrorCode.INTERACTION_EXPIRED
+    finally:
+        broker.close()
+
+
+def test_session_cancel_and_close_leave_no_active_interactions(
+    broker: InteractionBroker,
+) -> None:
+    summary = _password(broker)
+    broker.cancel_session(SESSION_ID)
+    assert broker.get(summary.id, CLIENT_A).state is InteractionState.CANCELLED
+    assert tuple(broker.active_ids()) == ()
+
+
+def test_private_askpass_helper_delivers_only_one_brokered_secret(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(
+        broker,
+        "_prepare_host_key",
+        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
+    )
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {
+                "HOME": "/tmp",
+                "PATH": os.environ.get("PATH", ""),
+                "PYTHONPATH": str(Path.cwd() / "src"),
+            },
+        ),
+    )
+    helper = subprocess.Popen(
+        (environment["SSH_ASKPASS"], "alice@example.test's password:"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+    )
+    deadline = time.monotonic() + 2
+    interactions = []
+    while time.monotonic() < deadline:
+        interactions = broker.list(CLIENT_A)
+        if interactions:
+            break
+        time.sleep(0.01)
+    assert len(interactions) == 1
+    interaction = interactions[0]
+    claim = broker.claim(interaction.id, CLIENT_A)
+    broker.respond(
+        InteractionDecisionRequest(
+            interaction_id=interaction.id,
+            secret_decision=SecretDecision.SUBMIT,
+        ),
+        CLIENT_A,
+    )
+    broker.submit_secret(
+        SecretFrame(
+            kind=SecretFrameKind.RESPONSE,
+            interaction_id=interaction.id,
+            nonce=bytes.fromhex(claim.nonce),
+            secret=bytearray(b"brokered-value"),
+        ),
+        CLIENT_A,
+    )
+    stdout, stderr = helper.communicate(timeout=2)
+    assert helper.returncode == 0
+    assert stdout == b"brokered-value\n"
+    assert stderr == b""
+
+
+def test_askpass_helper_disconnect_cancels_pending_interaction(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(
+        broker,
+        "_prepare_host_key",
+        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
+    )
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+    request = json.dumps(
+        {
+            "token": environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"],
+            "prompt": "alice@example.test's password:",
+        },
+        separators=(",", ":"),
+    ).encode()
+    transport = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    transport.connect(environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"])
+    transport.sendall(struct.pack(">I", len(request)) + request)
+    deadline = time.monotonic() + 1
+    interactions = []
+    while time.monotonic() < deadline and not interactions:
+        interactions = broker.list(CLIENT_A)
+        time.sleep(0.005)
+    assert len(interactions) == 1
+    transport.close()
+
+    deadline = time.monotonic() + 1
+    while (
+        time.monotonic() < deadline
+        and broker.get(interactions[0].id, CLIENT_A).state
+        is not InteractionState.CANCELLED
+    ):
+        time.sleep(0.005)
+    assert (
+        broker.get(interactions[0].id, CLIENT_A).state
+        is InteractionState.CANCELLED
+    )
+
+
+def test_stored_password_is_used_once_without_public_secret_metadata(
+    monkeypatch,
+) -> None:
+    lookups = []
+    instance = InteractionBroker(
+        secret_timeout=1,
+        host_key_timeout=1,
+        password_lookup=lambda connection_id: (
+            lookups.append(connection_id) or "stored-value"
+        ),
+    )
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(
+        instance,
+        "_prepare_host_key",
+        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
+    )
+    try:
+        _argv, environment = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                {"PATH": os.environ.get("PATH", "")},
+            ),
+        )
+        secret = instance._resolve_askpass_secret(
+            environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"],
+            "alice@example.test's password:",
+        )
+        assert secret == bytearray(b"stored-value")
+        assert lookups == [CONNECTION_ID]
+        assert instance.list(CLIENT_A) == []
+        secret[:] = b"\0" * len(secret)
+        secret.clear()
+    finally:
+        instance.close()
+
+
+def test_remembered_password_is_stored_only_after_authenticated_status(
+    monkeypatch,
+) -> None:
+    stored = []
+    instance = InteractionBroker(
+        secret_timeout=1,
+        host_key_timeout=1,
+        password_store=lambda connection_id, value: (
+            stored.append((connection_id, value)) or True
+        ),
+    )
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(
+        instance,
+        "_prepare_host_key",
+        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
+    )
+    try:
+        _argv, environment = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                {"PATH": os.environ.get("PATH", "")},
+            ),
+        )
+        token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+        resolved = []
+
+        def resolve() -> None:
+            resolved.append(
+                instance._resolve_askpass_secret(
+                    token,
+                    "alice@example.test's password:",
+                )
+            )
+
+        waiter = threading.Thread(target=resolve)
+        waiter.start()
+        deadline = time.monotonic() + 1
+        interactions = []
+        while time.monotonic() < deadline and not interactions:
+            interactions = instance.list(CLIENT_A)
+            time.sleep(0.005)
+        interaction = interactions[0]
+        claim = instance.claim(interaction.id, CLIENT_A)
+        instance.respond(
+            InteractionDecisionRequest(
+                interaction_id=interaction.id,
+                secret_decision=SecretDecision.SUBMIT,
+                remember_policy=RememberPolicy.STORE_AFTER_SUCCESS,
+            ),
+            CLIENT_A,
+        )
+        instance.submit_secret(
+            SecretFrame(
+                kind=SecretFrameKind.RESPONSE,
+                interaction_id=interaction.id,
+                nonce=bytes.fromhex(claim.nonce),
+                secret=bytearray(b"new-value"),
+            ),
+            CLIENT_A,
+        )
+        waiter.join(1)
+        assert not waiter.is_alive()
+        assert stored == []
+        instance._store_authenticated_secrets(token)
+        assert stored == [(CONNECTION_ID, "new-value")]
+        assert resolved == [bytearray(b"new-value")]
+        resolved[0][:] = b"\0" * len(resolved[0])
+        resolved[0].clear()
+    finally:
+        instance.close()
+
+
+def test_persistent_host_key_write_is_atomic_private_and_hashable(
+    broker: InteractionBroker,
+    tmp_path,
+) -> None:
+    path = tmp_path / "known_hosts"
+    broker._persist_host_key(
+        path,
+        "[example.test]:2222",
+        ("ssh-ed25519", "QUJDRA=="),
+        hash_host=True,
+    )
+
+    content = path.read_text()
+    assert content.startswith("|1|")
+    assert "example.test" not in content
+    assert content.endswith(" ssh-ed25519 QUJDRA==\n")
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_persistent_host_key_rejects_symlink(
+    broker: InteractionBroker,
+    tmp_path,
+) -> None:
+    target = tmp_path / "target"
+    target.write_text("")
+    path = tmp_path / "known_hosts"
+    path.symlink_to(target)
+
+    with pytest.raises(SshPilotError) as caught:
+        broker._persist_host_key(
+            path,
+            "example.test",
+            ("ssh-ed25519", "QUJDRA=="),
+            hash_host=False,
+        )
+
+    assert caught.value.code is ErrorCode.HOST_KEY_PERSISTENCE_FAILED
+    assert target.read_text() == ""
+
+
+def test_broker_options_win_over_conflicting_preference_overrides(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(
+        broker,
+        "_prepare_host_key",
+        lambda *_args, **_kwargs: ("/tmp/pinned-hosts", "ssh-ed25519"),
+    )
+    argv, _environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            (
+                "/usr/bin/ssh",
+                "-F",
+                "/tmp/config",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                "UserKnownHostsFile=/tmp/user-known-hosts",
+                "-o",
+                "ConnectTimeout=5",
+                "example",
+            ),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+    assert argv[:5] == (
+        "/usr/bin/ssh",
+        "-F",
+        "/tmp/config",
+        "-o",
+        "BatchMode=no",
+    )
+    text = " ".join(argv)
+    assert text.index("BatchMode=no") < text.index("ConnectTimeout=5")
+    assert "BatchMode=yes" not in argv
+    assert "StrictHostKeyChecking=accept-new" not in argv
+    assert "UserKnownHostsFile=/tmp/user-known-hosts" not in argv
+    assert "StrictHostKeyChecking=yes" in argv
+    assert "UserKnownHostsFile=/tmp/pinned-hosts" in argv
+    assert argv[-1] == "example"
+
+
+def test_changed_host_key_remains_blocking_even_if_client_accepts(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    candidate = "QUJDRA=="
+    monkeypatch.setattr(
+        "sshpilot.daemon.interaction_broker.shutil.which",
+        lambda _name: "/usr/bin/tool",
+    )
+    monkeypatch.setattr(
+        "sshpilot.daemon.interaction_broker.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout=f"example.test ssh-ed25519 {candidate}\n"
+        ),
+    )
+    monkeypatch.setattr(
+        broker,
+        "_known_entries",
+        lambda *_args: {("ssh-ed25519", "RUZHSA==")},
+    )
+
+    def answer(event) -> None:
+        if event.type.value != "interaction.created":
+            return
+        broker.claim(event.payload.id, CLIENT_A)
+        broker.respond(
+            InteractionDecisionRequest(
+                interaction_id=event.payload.id,
+                host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+            ),
+            CLIENT_A,
+        )
+
+    subscription = broker.subscribe_events(answer)
+    try:
+        with pytest.raises(SshPilotError) as caught:
+            broker._prepare_host_key(
+                SessionLaunchSpec(
+                    session_id=SESSION_ID,
+                    connection_id=CONNECTION_ID,
+                    protocol="ssh",
+                    hostname="example.test",
+                    username="alice",
+                    port=22,
+                ),
+                hostname="example.test",
+                port=22,
+                effective={},
+            )
+    finally:
+        subscription.close()
+
+    assert caught.value.code is ErrorCode.SESSION_STARTUP_FAILED

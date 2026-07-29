@@ -88,6 +88,12 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.TERMINAL_INPUT,
                 Capability.TERMINAL_RESIZE,
                 Capability.TERMINAL_REPLAY,
+                Capability.INTERACTIONS_READ,
+                Capability.INTERACTIONS_RESPOND,
+                Capability.INTERACTIONS_EVENTS,
+                Capability.INTERACTIONS_HOST_KEY,
+                Capability.INTERACTIONS_PASSWORD,
+                Capability.INTERACTIONS_PASSPHRASE,
             }
         )
         assert result.client.list_connections() == []

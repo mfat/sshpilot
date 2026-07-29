@@ -69,6 +69,41 @@ def test_bridge_serializes_operations_on_one_bounded_worker():
     assert order == ["first", "second"]
 
 
+def test_interaction_lane_remains_responsive_while_session_open_waits():
+    dispatches = queue.Queue()
+    open_started = threading.Event()
+    release_open = threading.Event()
+    interaction_ran = threading.Event()
+    bridge = GtkClientBridge(
+        dispatcher=lambda callback, *args: dispatches.put((callback, args))
+    )
+
+    def _blocked_open():
+        open_started.set()
+        assert release_open.wait(2)
+        return "opened"
+
+    try:
+        bridge.submit(
+            _blocked_open,
+            on_success=lambda _result: None,
+            on_error=lambda _error: None,
+        )
+        assert open_started.wait(1)
+        bridge.submit_interaction(
+            lambda: interaction_ran.set(),
+            on_success=lambda _result: None,
+            on_error=lambda _error: None,
+        )
+        assert interaction_ran.wait(1)
+        _run_dispatched(dispatches)
+        release_open.set()
+        _run_dispatched(dispatches)
+    finally:
+        release_open.set()
+        bridge.shutdown()
+
+
 def test_cancelled_request_discards_late_result_without_ui_callback():
     dispatches = queue.Queue()
     release = threading.Event()
