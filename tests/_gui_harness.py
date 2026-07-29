@@ -178,6 +178,17 @@ class GuiApp:
                 omni.dismiss(clear=True)
         except Exception:
             pass
+        # Leave Settings and close hosted Adw dialogs so a prior test cannot
+        # leak NavigationPage state or an AlertDialog into the next one.
+        try:
+            if hasattr(win, 'is_preferences_visible') and win.is_preferences_visible():
+                win.leave_preferences()
+        except Exception:
+            pass
+        try:
+            self._close_hosted_dialogs()
+        except Exception:
+            pass
         win._suppress_close_confirmation = True
         try:
             for p in list(win.tab_view.get_pages()):
@@ -194,6 +205,31 @@ class GuiApp:
         except Exception:
             pass
         self.pump(300)
+
+    def _close_hosted_dialogs(self):
+        """Force-close any mapped ``Adw.Dialog`` still hosted on the main window."""
+        Adw = self.Adw
+        win = self.window
+        if win is None:
+            return
+
+        def walk(widget):
+            yield widget
+            child = widget.get_first_child()
+            while child is not None:
+                yield from walk(child)
+                child = child.get_next_sibling()
+
+        for widget in list(walk(win)):
+            if isinstance(widget, Adw.Dialog) and widget.get_mapped():
+                try:
+                    widget.force_close()
+                except Exception:
+                    try:
+                        widget.close()
+                    except Exception:
+                        pass
+        self.pump(100)
 
 
 # The pytest fixtures (`gui`, `_gui_app_session`) live in tests/conftest.py, not

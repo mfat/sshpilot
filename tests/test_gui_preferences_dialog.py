@@ -147,6 +147,53 @@ def test_collapsed_split_shows_content_on_page_change(gui):
     assert not split.get_show_content(), 'reselecting the same row forced content'
 
 
+def _assert_alert_stacks_over_settings(gui, alert):
+    """Shared checks: presented into MainWindow, above Settings, interactive."""
+    from gi.repository import Adw
+
+    assert alert.get_visible()
+    assert alert.get_mapped()
+    assert gui.window.is_preferences_visible(), 'alert should not leave Settings'
+    assert alert.get_root() is gui.window
+
+    host = alert.get_parent()
+    assert host is not None, 'alert was not hosted in the window'
+    assert type(host).__name__ == 'AdwDialogHost', (
+        f'expected AdwDialogHost parent, got {type(host).__name__}'
+    )
+    # Newest hosted dialog is last among the host's dialog children.
+    last_dialog = None
+    child = host.get_first_child()
+    while child is not None:
+        if isinstance(child, Adw.Dialog):
+            last_dialog = child
+        child = child.get_next_sibling()
+    assert last_dialog is alert, 'alert is not the topmost hosted dialog'
+
+    def focus_inside_alert():
+        # Adw.Dialog keeps its own focus widget; window focus may be unset when
+        # the toplevel is inactive (common on Wayland after prior GUI tests).
+        widget = alert.get_focus() or gui.window.get_focus()
+        while widget is not None:
+            if widget is alert:
+                return True
+            widget = widget.get_parent()
+        return False
+
+    if gui.window.is_active():
+        for _ in range(20):
+            if focus_inside_alert():
+                break
+            gui.pump(100)
+        assert focus_inside_alert(), 'active window did not move focus into the alert'
+    else:
+        # Wayland clients cannot force reactivation after another surface stole
+        # focus; present() still hosts the dialog, and it must accept focus.
+        alert.grab_focus()
+        gui.pump(100)
+        assert alert.get_focus() is not None, 'hosted alert cannot accept focus'
+
+
 def test_dialog_presented_on_the_window_while_in_settings(gui):
     """A dialog parented to MainWindow still works while Settings mode is open."""
     from gi.repository import Adw
@@ -159,23 +206,42 @@ def test_dialog_presented_on_the_window_while_in_settings(gui):
     alert.present(gui.window)
     gui.pump(300)
 
-    assert alert.get_visible()
-    assert gui.window.is_preferences_visible(), 'alert should not leave Settings'
-    assert alert.get_root() is gui.window
+    _assert_alert_stacks_over_settings(gui, alert)
 
-    def focus_inside_alert():
-        widget = gui.window.get_focus()
-        while widget is not None:
-            if widget is alert:
-                return True
-            widget = widget.get_parent()
-        return False
+    alert.close()
+    gui.pump(200)
 
-    for _ in range(20):
-        if focus_inside_alert():
-            break
-        gui.pump(100)
-    assert focus_inside_alert(), 'the alert is not the focused (topmost) dialog'
+
+def test_dialog_stacks_after_settings_split_churn(gui):
+    """Regression: NavigationSplitView churn must not bury window-parented alerts.
+
+    Prior GUI tests that collapse/select Settings rows can leave the Wayland
+    toplevel inactive. Presentation and stacking must still succeed.
+    """
+    from gi.repository import Adw
+
+    prefs = _open_preferences(gui)
+    split = prefs.split_view
+    split.set_collapsed(True)
+    gui.pump(200)
+    current = prefs.sidebar.get_selected_row()
+    other = next(
+        r for i in range(10)
+        if (r := prefs.sidebar.get_row_at_index(i)) is not None and r is not current
+    )
+    prefs.sidebar.select_row(other)
+    gui.pump(200)
+    split.set_show_content(False)
+    gui.pump(100)
+    prefs.sidebar.select_row(other)
+    gui.pump(200)
+
+    alert = Adw.AlertDialog(heading='Unlock', body='after split churn')
+    alert.add_response('ok', 'OK')
+    alert.present(gui.window)
+    gui.pump(300)
+
+    _assert_alert_stacks_over_settings(gui, alert)
 
     alert.close()
     gui.pump(200)
