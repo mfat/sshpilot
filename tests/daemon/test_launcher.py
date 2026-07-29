@@ -84,6 +84,10 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,
+                Capability.TERMINAL_OUTPUT,
+                Capability.TERMINAL_INPUT,
+                Capability.TERMINAL_RESIZE,
+                Capability.TERMINAL_REPLAY,
             }
         )
         assert result.client.list_connections() == []

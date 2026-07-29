@@ -357,6 +357,7 @@ def test_attachment_membership_is_idempotent_and_client_scoped(runtime_parts):
     assert first == second
     assert first.attachment.id != other.attachment.id
     assert first.attachment.input_owner is False
+    assert other.attachment.input_owner is False
     with pytest.raises(SshPilotError) as caught:
         runtime.detach_session(
             DetachSessionRequest(

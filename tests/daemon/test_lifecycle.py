@@ -18,6 +18,10 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.SESSIONS_READ,
             Capability.SESSIONS_WRITE,
             Capability.SESSIONS_EVENTS,
+            Capability.TERMINAL_OUTPUT,
+            Capability.TERMINAL_INPUT,
+            Capability.TERMINAL_RESIZE,
+            Capability.TERMINAL_REPLAY,
         }
     )
     client.close()

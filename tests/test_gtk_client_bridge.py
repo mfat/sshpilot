@@ -1,6 +1,9 @@
 import queue
 import threading
 
+from sshpilot.api.models.common import SessionId
+from sshpilot.api.models.terminal import TerminalOutput
+from sshpilot.api.terminal_events import TerminalSubscription
 from sshpilot.gtk_client_bridge import GtkClientBridge
 
 
@@ -117,3 +120,57 @@ def test_shutdown_suppresses_result_already_queued_for_glib_delivery():
     callback(*args)
 
     assert callbacks == []
+
+
+class _TerminalClient:
+    def subscribe_terminal(
+        self,
+        _session_id,
+        on_output,
+        *,
+        on_continuity_lost=None,
+        on_eof=None,
+        on_error=None,
+    ):
+        self.on_output = on_output
+        self.on_continuity_lost = on_continuity_lost
+        self.on_eof = on_eof
+        self.on_error = on_error
+        return TerminalSubscription(lambda: setattr(self, "closed", True))
+
+
+def test_terminal_binding_coalesces_output_and_suppresses_after_close():
+    dispatches = queue.Queue()
+    client = _TerminalClient()
+    delivered = []
+    bridge = GtkClientBridge(
+        dispatcher=lambda callback, *args: dispatches.put((callback, args))
+    )
+    session_id = SessionId(
+        "session:550e8400-e29b-41d4-a716-446655440000"
+    )
+    binding = bridge.bind_terminal(
+        client,
+        session_id,
+        on_output=delivered.append,
+    )
+    try:
+        client.on_output(
+            TerminalOutput(session_id=session_id, sequence=0, data=b"a")
+        )
+        client.on_output(
+            TerminalOutput(session_id=session_id, sequence=1, data=b"b")
+        )
+
+        assert dispatches.qsize() == 1
+        _run_dispatched(dispatches)
+        assert [item.data for item in delivered] == [b"a", b"b"]
+
+        binding.close()
+        client.on_output(
+            TerminalOutput(session_id=session_id, sequence=2, data=b"late")
+        )
+        assert dispatches.empty()
+        assert client.closed is True
+    finally:
+        bridge.shutdown()

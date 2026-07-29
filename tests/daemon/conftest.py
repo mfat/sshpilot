@@ -112,6 +112,7 @@ def daemon_factory(tmp_path):
         start=True,
         client_event_queue_limit=256,
         max_client_outbound_bytes=4 * 1024 * 1024,
+        max_client_terminal_bytes=1024 * 1024,
         session_runner=None,
         session_runtime_kwargs=None,
         session_command_workers=4,
@@ -126,6 +127,7 @@ def daemon_factory(tmp_path):
             socket_path=path,
             client_event_queue_limit=client_event_queue_limit,
             max_client_outbound_bytes=max_client_outbound_bytes,
+            max_client_terminal_bytes=max_client_terminal_bytes,
             session_runtime_factory=(
                 (
                     lambda core: SessionRuntime(

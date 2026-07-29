@@ -243,6 +243,42 @@ def test_resolve_native_auth_askpass_disabled():
     assert 'SSH_ASKPASS_REQUIRE' not in auth.env
 
 
+def test_noninteractive_daemon_auth_skips_secrets_and_allowlists_environment(
+    monkeypatch,
+):
+    import sshpilot.ssh_connection_builder as scb
+
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/run/user/test/agent.sock")
+    monkeypatch.setenv("SSH_ASKPASS", "/unsafe/helper")
+    monkeypatch.setenv("BW_SESSION", "secret-session")
+    monkeypatch.setattr(
+        scb,
+        "_get_stored_password",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("secret lookup must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        scb,
+        "lookup_passphrase",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("passphrase lookup must not run")
+        ),
+    )
+
+    cmd, result = _build(
+        {"host": "h", "hostname": "h", "auth_method": 1},
+        interaction_policy="none",
+    )
+
+    assert _has_o_option(cmd, "BatchMode=yes")
+    assert result.env["SSH_AUTH_SOCK"] == "/run/user/test/agent.sock"
+    assert result.env["TERM"] == "xterm-256color"
+    assert "SSH_ASKPASS" not in result.env
+    assert "SSH_ASKPASS_REQUIRE" not in result.env
+    assert "BW_SESSION" not in result.env
+
+
 def test_resolve_native_auth_key_mode_saved_passphrase_uses_askpass(monkeypatch):
     import sshpilot.ssh_connection_builder as scb
     monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: 'pp')

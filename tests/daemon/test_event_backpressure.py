@@ -1,10 +1,12 @@
 from collections import deque
+from types import SimpleNamespace
 
 from sshpilot.api import EventType
 from sshpilot.api.events import CoreEvent
 from sshpilot.api.models import ConnectionId, ConnectionSummary
-from sshpilot.api.models.common import RequestId
+from sshpilot.api.models.common import RequestId, SessionId
 from sshpilot.api.transport.envelopes import SuccessResponseEnvelope
+from sshpilot.api.transport.terminal_frames import TerminalFrame, TerminalFrameKind
 from sshpilot.api.version import PROTOCOL_VERSION
 from sshpilot.daemon.server import (
     DaemonServer,
@@ -186,3 +188,158 @@ def test_response_frames_count_toward_total_outbound_limit(tmp_path):
 
     assert state.closed is True
     assert state.queued_outbound_bytes == 0
+
+
+def test_terminal_overflow_preserves_control_and_healthy_peer(tmp_path):
+    server = DaemonServer(
+        lambda: None,
+        socket_path=tmp_path / "sshpilotd.sock",
+        max_client_outbound_bytes=4096,
+        max_client_terminal_bytes=256,
+    )
+    slow = _handshaken_state(10)
+    healthy = _handshaken_state(11)
+    session_id = SessionId(
+        "session:550e8400-e29b-41d4-a716-446655440000"
+    )
+    frame = TerminalFrame(
+        kind=TerminalFrameKind.OUTPUT,
+        session_id=session_id,
+        sequence=0,
+        data=b"x" * 96,
+    )
+    slow.output.append(
+        _OutboundFrame(
+            b"old" * 50,
+            is_terminal=True,
+            session_id=session_id,
+        )
+    )
+    slow.queued_terminal_bytes = 150
+    slow.queued_outbound_bytes = 150
+
+    server._queue_terminal_frame(slow, frame)
+    server._queue_terminal_frame(healthy, frame)
+    server._write_client(healthy)
+    server._queue_response(
+        slow,
+        SuccessResponseEnvelope(
+            protocol_version=PROTOCOL_VERSION,
+            request_id=RequestId("request:still-responsive"),
+            result={"ok": True},
+        ),
+    )
+
+    assert slow.closed is False
+    assert slow.queued_terminal_bytes == 0
+    assert slow.queued_outbound_bytes <= server.max_client_outbound_bytes
+    assert any(not queued.is_terminal for queued in slow.output)
+    assert session_id in slow.terminal_continuity_lost
+    queued_after_loss = len(slow.output)
+    server._queue_terminal_frame(
+        slow,
+        TerminalFrame(
+            kind=TerminalFrameKind.OUTPUT,
+            session_id=session_id,
+            sequence=96,
+            data=b"ignored-until-replay",
+        ),
+    )
+    assert len(slow.output) == queued_after_loss
+    server._queue_replay(
+        slow,
+        session_id,
+        SimpleNamespace(
+            truncated=False,
+            chunks=((0, b"recovered"),),
+            eof=False,
+            returned_end=9,
+        ),
+    )
+    assert session_id not in slow.terminal_continuity_lost
+    assert any(frame.is_terminal for frame in slow.output)
+    assert healthy.closed is False
+    assert healthy.queued_terminal_bytes == 0
+    assert bytes(healthy.sock.sent)
+
+
+def test_control_room_drop_reports_terminal_continuity_loss(tmp_path):
+    server = DaemonServer(
+        lambda: None,
+        socket_path=tmp_path / "sshpilotd.sock",
+        max_client_outbound_bytes=600,
+        max_client_terminal_bytes=600,
+    )
+    state = _handshaken_state(10)
+    session_id = SessionId(
+        "session:550e8400-e29b-41d4-a716-446655440000"
+    )
+    state.output.append(
+        _OutboundFrame(
+            b"x" * 580,
+            is_terminal=True,
+            session_id=session_id,
+            terminal_sequence=37,
+        )
+    )
+    state.queued_terminal_bytes = 580
+    state.queued_outbound_bytes = 580
+
+    server._queue_response(
+        state,
+        SuccessResponseEnvelope(
+            protocol_version=PROTOCOL_VERSION,
+            request_id=RequestId("request:needs-control-room"),
+            result={"ok": True},
+        ),
+    )
+
+    assert state.closed is False
+    assert state.queued_terminal_bytes == 0
+    assert any(
+        frame.session_id == session_id and not frame.is_terminal
+        for frame in state.output
+    )
+    assert any(frame.session_id is None for frame in state.output)
+    assert state.queued_outbound_bytes <= server.max_client_outbound_bytes
+
+
+def test_control_and_lifecycle_frames_overtake_terminal_without_reordering_events(
+    tmp_path,
+):
+    server = DaemonServer(
+        lambda: None,
+        socket_path=tmp_path / "sshpilotd.sock",
+    )
+    state = _handshaken_state(10)
+    terminal = _OutboundFrame(
+        b"terminal",
+        is_terminal=True,
+        session_id=SessionId(
+            "session:550e8400-e29b-41d4-a716-446655440000"
+        ),
+    )
+    with server._event_lock:
+        server._enqueue_frame_locked(state, terminal)
+        server._enqueue_frame_locked(
+            state,
+            _OutboundFrame(b"event-one", is_event=True),
+            priority=True,
+        )
+        server._enqueue_frame_locked(
+            state,
+            _OutboundFrame(b"event-two", is_event=True),
+            priority=True,
+        )
+        server._enqueue_frame_locked(
+            state,
+            _OutboundFrame(b"response"),
+            priority=True,
+        )
+
+    assert [frame.data for frame in state.output] == [
+        b"response",
+        b"event-one",
+        b"event-two",
+        b"terminal",
+    ]
