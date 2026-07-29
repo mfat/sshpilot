@@ -109,7 +109,8 @@ class ConnectionService:
 
     def create(self, data: Mapping[str, Any]) -> ConnectionRecord:
         payload = dict(data or {})
-        payload.pop("uuid", None)
+        # Allow adapters to supply a pre-allocated UUID; otherwise mint one.
+        preset_uuid = str(payload.get("uuid") or "").strip() or None
         nickname = str(payload.get("nickname") or payload.get("host") or "").strip()
         hostname = str(payload.get("hostname") or payload.get("host") or "").strip()
         username = str(payload.get("username") or "").strip()
@@ -120,8 +121,14 @@ class ConnectionService:
 
         self._validator.set_existing_names({n.lower() for n in self.existing_nicknames()})
         errors: List[str] = []
+        if not nickname:
+            errors.append("Connection name is required")
+        elif nickname.lower() in {n.lower() for n in self.existing_nicknames()}:
+            errors.append("Nickname already exists")
+        # Nickname whitespace is enforced by the connection dialog UI; plugins
+        # (e.g. EasyEnv) historically create spaced Host aliases — domain create
+        # must not reject those.
         for result in (
-            self._validator.validate_connection_name(nickname),
             self._validator.validate_hostname(hostname) if hostname else None,
             self._validator.validate_port(str(port)),
             self._validator.validate_username(username) if username else None,
@@ -131,7 +138,12 @@ class ConnectionService:
         if errors:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "; ".join(errors))
 
-        connection_id = new_connection_uuid()
+        connection_id = preset_uuid or new_connection_uuid()
+        if connection_id in self._connections:
+            raise CoreError(
+                ErrorCode.VALIDATION_ERROR,
+                f"Duplicate connection id {connection_id!r}",
+            )
         payload["uuid"] = connection_id
         payload["nickname"] = nickname
         payload.setdefault("hostname", hostname)
@@ -145,11 +157,8 @@ class ConnectionService:
             if group_id:
                 group_id = str(group_id)
                 if group_id not in self._groups:
-                    raise CoreError(
-                        ErrorCode.VALIDATION_ERROR,
-                        f"Unknown group {group_id!r}",
-                        details={"field": "group_id"},
-                    )
+                    # Adapter sync may assign before GroupManager mirrored the group.
+                    self._groups[group_id] = GroupRecord(id=group_id, name=group_id)
             record = ConnectionRecord.from_dict(payload, connection_id=connection_id)
             record.order = order
             record.group_id = group_id
@@ -165,6 +174,25 @@ class ConnectionService:
         self._emit(MutationEvent(MutationKind.CREATED, connection_id=connection_id))
         return saved
 
+    def upsert(self, data: Mapping[str, Any]) -> ConnectionRecord:
+        """Create or update by UUID — used by GTK adapters after SSH-config I/O."""
+        payload = dict(data or {})
+        connection_id = str(payload.get("uuid") or "").strip()
+        if not connection_id:
+            return self.create(payload)
+        with self._lock:
+            exists = connection_id in self._connections
+        if exists:
+            return self.update(connection_id, payload)
+        return self.create(payload)
+
+    def delete_if_present(self, connection_id: str) -> bool:
+        with self._lock:
+            if connection_id not in self._connections:
+                return False
+        self.delete(connection_id)
+        return True
+
     def update(self, connection_id: str, updates: Mapping[str, Any]) -> ConnectionRecord:
         if not connection_id:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "connection id is required")
@@ -178,19 +206,22 @@ class ConnectionService:
             payload.pop("uuid", None)
             if "nickname" in payload:
                 nick = str(payload["nickname"]).strip()
-                self._validator.set_existing_names(
-                    {n.lower() for n in self.existing_nicknames(exclude_id=connection_id)}
-                )
-                result = self._validator.validate_connection_name(nick)
-                if not result.is_valid and result.severity == "error":
-                    raise CoreError(ErrorCode.VALIDATION_ERROR, result.message)
+                if not nick:
+                    raise CoreError(ErrorCode.VALIDATION_ERROR, "Connection name is required")
+                lowered = nick.lower()
+                for other_id, other in self._connections.items():
+                    if other_id != connection_id and other.nickname.lower() == lowered:
+                        raise CoreError(ErrorCode.VALIDATION_ERROR, "Nickname already exists")
+                # Whitespace allowed — same policy as create() (dialog enforces Host-safe).
+                payload = dict(payload)
+                payload["nickname"] = nick
             updated = existing.with_updates(payload)
             # Preserve group/order unless explicitly changed
             if "group_id" in payload:
                 new_gid = payload.get("group_id")
                 new_gid = str(new_gid) if new_gid else None
                 if new_gid and new_gid not in self._groups:
-                    raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown group {new_gid!r}")
+                    self._groups[new_gid] = GroupRecord(id=new_gid, name=new_gid)
                 old_gid = existing.group_id
                 if old_gid and old_gid in self._groups:
                     ids = self._groups[old_gid].connection_ids
@@ -274,25 +305,74 @@ class ConnectionService:
 
     # --- groups ------------------------------------------------------------
 
-    def create_group(self, name: str, *, parent_id: Optional[str] = None) -> GroupRecord:
+    def create_group(
+        self,
+        name: str,
+        *,
+        parent_id: Optional[str] = None,
+        group_id: Optional[str] = None,
+        color: str = "",
+        order: Optional[int] = None,
+    ) -> GroupRecord:
         name = (name or "").strip()
         if not name:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "Group name is required")
-        group_id = new_connection_uuid()
+        gid = str(group_id or new_connection_uuid()).strip()
         with self._lock:
             if parent_id and parent_id not in self._groups:
                 raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown parent group {parent_id!r}")
+            if gid in self._groups:
+                existing = self._groups[gid]
+                existing.name = name
+                existing.parent_id = parent_id
+                if color:
+                    existing.color = color
+                saved = copy.deepcopy(existing)
+                self._persist()
+                return saved
             record = GroupRecord(
-                id=group_id,
+                id=gid,
                 name=name,
                 parent_id=parent_id,
-                order=len(self._groups),
+                order=len(self._groups) if order is None else int(order),
+                color=color or "",
             )
-            self._groups[group_id] = record
+            self._groups[gid] = record
             saved = copy.deepcopy(record)
         self._persist()
-        self._emit(MutationEvent(MutationKind.GROUP_CREATED, group_id=group_id))
+        self._emit(MutationEvent(MutationKind.GROUP_CREATED, group_id=gid))
         return saved
+
+    def ensure_group(
+        self,
+        group_id: str,
+        *,
+        name: str = "",
+        parent_id: Optional[str] = None,
+        color: str = "",
+        order: Optional[int] = None,
+    ) -> GroupRecord:
+        """Create a group with a known id if missing (GTK GroupManager sync)."""
+        gid = str(group_id or "").strip()
+        if not gid:
+            raise CoreError(ErrorCode.VALIDATION_ERROR, "Group id is required")
+        if parent_id:
+            parent_id = str(parent_id)
+            with self._lock:
+                missing_parent = parent_id not in self._groups
+            if missing_parent:
+                self.ensure_group(parent_id, name=parent_id)
+        with self._lock:
+            existing = self._groups.get(gid)
+            if existing is not None:
+                return copy.deepcopy(existing)
+        return self.create_group(
+            name or gid,
+            parent_id=parent_id,
+            group_id=gid,
+            color=color,
+            order=order,
+        )
 
     def delete_group(self, group_id: str, *, move_connections_to_root: bool = True) -> None:
         with self._lock:

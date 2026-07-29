@@ -236,7 +236,45 @@ class GroupManager:
             self.groups[parent_id]['children'].append(group_id)
 
         self._save_groups()
+        self._sync_domain_group_created(group_id)
         return group_id
+
+    def _domain(self):
+        manager = self.connection_manager
+        return getattr(manager, "domain", None) if manager is not None else None
+
+    def _sync_domain_group_created(self, group_id: str) -> None:
+        domain = self._domain()
+        if domain is None or group_id not in self.groups:
+            return
+        info = self.groups[group_id]
+        try:
+            domain.ensure_group(
+                group_id,
+                name=str(info.get("name") or group_id),
+                parent_id=info.get("parent_id"),
+                color=str(info.get("color") or ""),
+                order=info.get("order"),
+            )
+        except Exception:
+            logger.debug("Domain group create sync failed", exc_info=True)
+
+    def _sync_domain_assign(self, connection_key: str, target_group_id: Optional[str]) -> None:
+        domain = self._domain()
+        if domain is None:
+            return
+        try:
+            if target_group_id:
+                self._sync_domain_group_created(target_group_id)
+            record = domain.get(connection_key)
+            if record is None:
+                nick = self.connection_nickname(connection_key)
+                record = domain.find_by_nickname(nick) if nick else None
+            if record is None:
+                return
+            domain.assign_group(record.id, target_group_id)
+        except Exception:
+            logger.debug("Domain group assignment failed", exc_info=True)
 
     def set_group_color(self, group_id: str, color: Optional[str]):
         """Update a group's color and persist the change."""
@@ -253,6 +291,7 @@ class GroupManager:
             return
         self.groups[group_id]['name'] = new_name
         self._save_groups()
+        self._sync_domain_group_created(group_id)
 
     def delete_group(self, group_id: str):
         """Delete a group and move its contents to parent or root"""
@@ -300,6 +339,12 @@ class GroupManager:
         # Delete the group
         del self.groups[group_id]
         self._save_groups()
+        domain = self._domain()
+        if domain is not None:
+            try:
+                domain.delete_group(group_id, move_connections_to_root=True)
+            except Exception:
+                logger.debug("Domain group delete sync failed", exc_info=True)
 
     def move_connection(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a different group"""
@@ -322,6 +367,7 @@ class GroupManager:
                 self.root_connections.append(connection_nickname)
 
         self._save_groups()
+        self._sync_domain_assign(connection_nickname, target_group_id)
 
     def copy_connection_to_group(self, connection_nickname: str, target_group_id: str):
         """Add a connection to ``target_group_id`` without removing it from any
@@ -348,6 +394,9 @@ class GroupManager:
             self.connections[connection_nickname] = target_group_id
 
         self._save_groups()
+        # Domain models a single primary group_id — sync only when this became primary.
+        if self.connections.get(connection_nickname) == target_group_id:
+            self._sync_domain_assign(connection_nickname, target_group_id)
 
     def remove_connection_from_group(self, connection_nickname: str, group_id: str):
         """Remove a connection from a single group.
@@ -374,6 +423,9 @@ class GroupManager:
                 self.root_connections.append(connection_nickname)
 
         self._save_groups()
+        self._sync_domain_assign(
+            connection_nickname, self.connections.get(connection_nickname)
+        )
 
     def forget_connection(self, reference) -> None:
         """Remove every persisted group reference for a deleted connection."""

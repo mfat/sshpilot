@@ -999,17 +999,29 @@ class ConnectionManager(GObject.Object):
     @property
     def domain(self):
         """GTK-free :class:`~sshpilot.core.connections.ConnectionService`."""
+        existing = getattr(self, "_domain", None)
+        if existing is None:
+            from .core.connections import ConnectionService
+
+            self._domain = ConnectionService(autosave=False)
+            try:
+                self._domain.add_listener(self._on_domain_mutation)
+            except Exception:
+                pass
         return self._domain
 
     def _on_domain_mutation(self, event) -> None:
         """Domain events are informational; GTK signals are emitted by adapter methods."""
         logger.debug("Domain mutation: %s", getattr(event, "kind", event))
 
-    def sync_domain_from_live_connections(self) -> None:
+    def sync_domain_from_live_connections(self, group_manager=None) -> None:
         """Rebuild the domain store from the live GObject connection list."""
         domain = getattr(self, "_domain", None)
         if domain is None:
             return
+        gm = group_manager
+        if gm is None:
+            gm = getattr(self, "group_manager", None)
         payloads = []
         for connection in list(self.connections):
             data = dict(getattr(connection, "data", None) or {})
@@ -1019,8 +1031,30 @@ class ConnectionManager(GObject.Object):
             data.setdefault("username", getattr(connection, "username", ""))
             data.setdefault("port", getattr(connection, "port", 22))
             data.setdefault("protocol", getattr(connection, "protocol", "ssh"))
+            if gm is not None:
+                primary = gm.connections.get(getattr(connection, "uuid", ""))
+                if primary:
+                    data["group_id"] = primary
             payloads.append(data)
-        domain.replace_all(payloads)
+        groups_blob: dict = {}
+        if gm is not None:
+            groups_blob = {
+                "groups": {
+                    gid: {
+                        "id": gid,
+                        "name": g.get("name", ""),
+                        "parent_id": g.get("parent_id"),
+                        "order": g.get("order", 0),
+                        "connections": list(g.get("connections") or []),
+                        "collapsed": not bool(g.get("expanded", True)),
+                        "color": g.get("color") or "",
+                    }
+                    for gid, g in gm.groups.items()
+                },
+                "connections": dict(gm.connections),
+                "root_connections": list(gm.root_connections),
+            }
+        domain.replace_all(payloads, groups=groups_blob)
 
     def _register_connection(self, connection: Connection) -> None:
         """Link a connection to this manager and add it to the list."""
@@ -2067,7 +2101,9 @@ class ConnectionManager(GObject.Object):
             )
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
             try:
-                self.sync_domain_from_live_connections()
+                self.sync_domain_from_live_connections(
+                    getattr(self, "group_manager", None)
+                )
             except Exception:
                 logger.debug("Domain sync after SSH config load failed", exc_info=True)
         except Exception as e:
@@ -2759,17 +2795,16 @@ class ConnectionManager(GObject.Object):
     def add_connection_from_data(self, data: Dict[str, Any]) -> Connection:
         """Create, persist, and announce a new connection from a data dict.
 
-        The programmatic counterpart of the connection dialog's save path,
-        exposed to plugins via PluginContext.add_connection (e.g. a VPS
-        provider provisioning hosts). Raises ValueError on invalid data."""
+        Domain validation and identity allocation go through
+        :class:`~sshpilot.core.connections.ConnectionService` first; this
+        adapter then persists to SSH config / non-SSH JSON and emits GTK signals.
+        """
+        from .core.errors import CoreError
+
         data = dict(data)
-        # Ordinary create/duplicate/plugin flows never import identity.  A
-        # future trusted native-import path may opt into preserving UUIDs.
         data.pop('uuid', None)
         data.setdefault('protocol', 'ssh')
 
-        # Validate via the protocol backend (late import: plugins.api/registry
-        # never import connection_manager, so there is no cycle).
         from .plugins.registry import protocol_registry
         backend = protocol_registry().get_or_none(data['protocol'])
         if backend is None:
@@ -2786,6 +2821,13 @@ class ConnectionManager(GObject.Object):
             raise ValueError('; '.join(errors))
         data['nickname'] = nickname
 
+        # Canonical domain create (UUID + field validation).
+        try:
+            record = self.domain.create(data)
+        except CoreError as exc:
+            raise ValueError(str(exc)) from exc
+        data['uuid'] = record.id
+
         connection = Connection(dict(data))
         if self.isolated_mode:
             connection.isolated_config = True
@@ -2794,21 +2836,18 @@ class ConnectionManager(GObject.Object):
             if self.ssh_config_path:
                 connection.data['config_root'] = self.ssh_config_path
 
-        # update_connection persists to the protocol's store (ssh_config for
-        # SSH — including password keyring handling — or the non-SSH JSON
-        # store) and retains this programmatic plugin path's established
-        # connection-updated notification before connection-added.
         if not self.update_connection(connection, dict(data)):
+            self.domain.delete_if_present(record.id)
             raise RuntimeError("Failed to persist connection")
         if connection not in self.connections:
             self._register_connection(connection)
 
-        # Announce on the main loop: provider plugins may call from workers.
-        GLib.idle_add(self.emit, 'connection-added', connection)
         try:
-            self.sync_domain_from_live_connections()
+            self.domain.upsert(connection.data if isinstance(connection.data, dict) else data)
         except Exception:
-            logger.debug("Domain sync after add failed", exc_info=True)
+            logger.debug("Domain upsert after add failed", exc_info=True)
+
+        GLib.idle_add(self.emit, 'connection-added', connection)
         return connection
 
     def update_connection(
@@ -2926,7 +2965,15 @@ class ConnectionManager(GObject.Object):
             )
             if callable(binder):
                 binder(self.connections)
-            
+
+            # Domain is the reusable state owner — upsert after successful persist.
+            try:
+                payload = dict(getattr(connection, 'data', None) or new_data)
+                payload['uuid'] = connection.uuid
+                self.domain.upsert(payload)
+            except Exception:
+                logger.debug("Domain upsert after update failed", exc_info=True)
+
             logger.info(f"Connection updated: {connection}")
             return True
             
@@ -2994,7 +3041,12 @@ class ConnectionManager(GObject.Object):
             
             # Emit signal
             self.emit('connection-removed', connection)
-            
+
+            try:
+                self.domain.delete_if_present(connection.uuid)
+            except Exception:
+                logger.debug("Domain delete after remove failed", exc_info=True)
+
             # Bulk UI deletion defers this expensive full parse until every
             # selected connection has been persisted.
             if reload_config:

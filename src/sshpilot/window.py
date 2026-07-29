@@ -262,6 +262,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             identity_migration_enabled=not daemon_requested,
         )
 
+        # Wire GTK interaction provider for core.interaction requests.
+        try:
+            from .gtk.interaction import GtkInteractionProvider, set_default_provider
+            set_default_provider(
+                GtkInteractionProvider(
+                    parent_widget=self,
+                    connection_manager=self.connection_manager,
+                )
+            )
+        except Exception:
+            logger.debug("GTK interaction provider setup skipped", exc_info=True)
+
         # Lazy, cached, off-main-thread check of each connection against its
         # effective SSH config (shows a warning icon on mismatched rows).
         from .effective_config_check import EffectiveConfigChecker
@@ -307,6 +319,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.config,
             connection_manager=self.connection_manager,
         )
+        # So ConnectionManager.sync_domain_from_live_connections can mirror groups.
+        self.connection_manager.group_manager = self.group_manager
+        try:
+            self.connection_manager.sync_domain_from_live_connections(self.group_manager)
+        except Exception:
+            logger.debug("Initial domain group sync failed", exc_info=True)
         self.session_manager = SessionManager(
             self.config,
             connection_manager=self.connection_manager,

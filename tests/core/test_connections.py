@@ -31,15 +31,21 @@ def test_create_update_delete(service):
     assert MutationKind.DELETED in events
 
 
-def test_duplicate_and_invalid_identifier(service):
+def test_duplicate_and_empty_identifier(service):
     base = service.create(
         {"nickname": "Base", "hostname": "h.example", "username": "u", "port": 22}
     )
     dup = service.duplicate(base.id)
     assert dup.nickname.startswith("Base-")
     assert dup.id != base.id
+    # Spaced nicknames are allowed (plugins like EasyEnv create them); dialog UI
+    # still enforces Host-safe tokens separately.
+    spaced = service.create(
+        {"nickname": "ws / Ubuntu 24.04", "hostname": "h.example", "username": "u"}
+    )
+    assert spaced.nickname == "ws / Ubuntu 24.04"
     with pytest.raises(CoreError):
-        service.create({"nickname": "bad name", "hostname": "h.example", "username": "u"})
+        service.create({"nickname": "", "hostname": "h.example", "username": "u"})
     with pytest.raises(CoreError):
         service.create({"nickname": "Base", "hostname": "h.example", "username": "u"})
 
