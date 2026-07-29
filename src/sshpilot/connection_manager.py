@@ -534,8 +534,13 @@ class Connection:
         """
         return await self.native_connect()
 
-    async def native_connect(self, remote_command: Optional[str] = None,
-                             force_tty: bool = False):
+    async def native_connect(
+        self,
+        remote_command: Optional[str] = None,
+        force_tty: bool = False,
+        *,
+        interaction_policy: str = "normal",
+    ):
         """Prepare a minimal SSH command using ssh_connection_builder in native mode.
 
         ``remote_command``, when given, is appended to the ssh invocation on the
@@ -578,6 +583,7 @@ class Connection:
                 extra_ssh_config=None,
                 known_hosts_path=known_hosts_path,
                 native_mode=True,  # Use native mode
+                interaction_policy=interaction_policy,
             )
 
             # Resolve identity files FIRST so resolve_native_auth (inside
@@ -607,7 +613,18 @@ class Connection:
             self.is_connected = True
             return True
         except Exception as exc:
-            logger.error(f"Failed to prepare native SSH command for {self}: {exc}")
+            if interaction_policy == "none":
+                logger.error(
+                    "Failed to prepare non-interactive daemon SSH command "
+                    "error=%s",
+                    type(exc).__name__,
+                )
+            else:
+                logger.error(
+                    "Failed to prepare native SSH command for %s: %s",
+                    self,
+                    exc,
+                )
             self.is_connected = False
             return False
 

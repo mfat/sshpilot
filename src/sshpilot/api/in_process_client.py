@@ -42,6 +42,13 @@ from .models.terminal import (
     ResizeTerminalRequest,
     TerminalInput,
 )
+from .terminal_events import (
+    TerminalContinuityCallback,
+    TerminalEofCallback,
+    TerminalErrorCallback,
+    TerminalOutputCallback,
+    TerminalSubscription,
+)
 from .version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from sshpilot.connection_identity import (
     connection_id_from_uuid,
@@ -71,9 +78,10 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
     "replay_terminal": Capability.TERMINAL_REPLAY,
-    "resize_terminal": Capability.TERMINAL,
+    "resize_terminal": Capability.TERMINAL_RESIZE,
     "respond_to_interaction": Capability.INTERACTIONS,
-    "send_terminal_input": Capability.TERMINAL,
+    "send_terminal_input": Capability.TERMINAL_INPUT,
+    "subscribe_terminal": Capability.TERMINAL_OUTPUT,
 }
 
 
@@ -137,6 +145,48 @@ class InProcessClient:
 
     def get_capabilities(self) -> Capabilities:
         return self._capabilities
+
+    def prepare_daemon_terminal_launch(
+        self,
+        connection_id: ConnectionId,
+    ) -> tuple:
+        """Internal daemon launch hook using the canonical native SSH path."""
+
+        import asyncio
+        import shutil
+
+        connection = self._find_connection(connection_id)
+        prepared = asyncio.run(
+            connection.native_connect(interaction_policy="none")
+        )
+        command = getattr(connection, "ssh_connection_cmd", None)
+        if not prepared or command is None:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The SSH session could not be prepared",
+                connection_id=connection_id,
+            )
+        argv = tuple(getattr(command, "command", ()) or ())
+        environment = dict(getattr(command, "env", {}) or {})
+        if (
+            not argv
+            or getattr(command, "use_askpass", False)
+            or environment.get("SSH_ASKPASS")
+            or environment.get("SSH_ASKPASS_REQUIRE")
+        ):
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The SSH session requires unsupported interaction",
+                connection_id=connection_id,
+            )
+        executable = shutil.which(argv[0], path=environment.get("PATH"))
+        if executable is None:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The OpenSSH executable is unavailable",
+                connection_id=connection_id,
+            )
+        return (executable, *argv[1:]), environment
 
     def enable_serialized_command_threads(self) -> None:
         """Allow daemon-owned serialized workers to invoke this adapter."""
@@ -358,6 +408,18 @@ class InProcessClient:
     def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
         del request
         raise self._unsupported("replay_terminal")
+
+    def subscribe_terminal(
+        self,
+        session_id: SessionId,
+        on_output: TerminalOutputCallback,
+        *,
+        on_continuity_lost: Optional[TerminalContinuityCallback] = None,
+        on_eof: Optional[TerminalEofCallback] = None,
+        on_error: Optional[TerminalErrorCallback] = None,
+    ) -> TerminalSubscription:
+        del session_id, on_output, on_continuity_lost, on_eof, on_error
+        raise self._unsupported("subscribe_terminal")
 
     def respond_to_interaction(self, response: InteractionResponse) -> None:
         del response

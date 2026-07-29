@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -40,10 +40,25 @@ from sshpilot.api.models.sessions import (
     SessionState,
     SessionSummary,
 )
+from sshpilot.api.models.terminal import (
+    ReplayBounds,
+    ReplayRequest,
+    ReplayResult,
+    ResizeTerminalRequest,
+    TerminalDimensions,
+    TerminalInput,
+    TerminalOutput,
+)
 from sshpilot.api.session_identity import (
     new_session_uuid,
     session_id_from_uuid,
     session_uuid_from_id,
+)
+
+from .terminal_stream import (
+    DEFAULT_SESSION_REPLAY_BYTES,
+    ReplaySlice,
+    TerminalReplayBuffer,
 )
 
 
@@ -62,6 +77,7 @@ class SessionLaunchSpec:
     hostname: str
     username: str
     port: int
+    dimensions: Optional[TerminalDimensions] = None
 
 
 class SessionProcessHandle(Protocol):
@@ -291,6 +307,11 @@ class _SessionRecord:
     startup_scheduled: bool = False
     startup_started: bool = False
     close_scheduled: bool = False
+    replay: TerminalReplayBuffer = field(default_factory=TerminalReplayBuffer)
+    terminal_capable: bool = False
+    pty_eof: bool = False
+    input_owner_client_id: Optional[ClientId] = None
+    output_clients: Set[ClientId] = field(default_factory=set)
 
 
 _ALLOWED_TRANSITIONS = {
@@ -335,32 +356,38 @@ class SessionRuntime:
         self,
         core_client: SshPilotClient,
         *,
-        runner: Optional[SessionProcessRunner] = None,
+        runner: Optional[Any] = None,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         uuid_factory: Callable[[], str] = new_session_uuid,
         close_grace_seconds: float = DEFAULT_CLOSE_GRACE_SECONDS,
         shutdown_timeout_seconds: float = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
         max_retained_closed_sessions: int = DEFAULT_MAX_RETAINED_CLOSED_SESSIONS,
+        replay_bytes: int = DEFAULT_SESSION_REPLAY_BYTES,
     ) -> None:
         if close_grace_seconds < 0 or shutdown_timeout_seconds < 0:
             raise ValueError("session close timeouts must not be negative")
         if type(max_retained_closed_sessions) is not int or max_retained_closed_sessions < 0:
             raise ValueError("closed-session retention limit must not be negative")
         self._core_client = core_client
-        self._runner = runner or UnsupportedSessionProcessRunner()
+        self._runner: Any = runner or UnsupportedSessionProcessRunner()
         self._clock = clock
         self._monotonic = monotonic
         self._uuid_factory = uuid_factory
         self._close_grace_seconds = float(close_grace_seconds)
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_retained_closed_sessions = max_retained_closed_sessions
+        if type(replay_bytes) is not int or replay_bytes < 1:
+            raise ValueError("terminal replay byte limit must be positive")
+        self._replay_bytes = replay_bytes
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[SessionId, _SessionRecord] = {}
         self._creation_order: List[SessionId] = []
         self._accepting_commands = True
         self._closed = False
+        self._terminal_callbacks: Dict[int, Callable[[TerminalOutput], None]] = {}
+        self._next_terminal_callback = 1
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         with self._lock:
@@ -370,6 +397,32 @@ class SessionRuntime:
                     "The session runtime is closed",
                 )
         return self._publisher.subscribe(callback)
+
+    @property
+    def terminal_supported(self) -> bool:
+        return bool(getattr(self._runner, "terminal_capable", False))
+
+    def subscribe_terminal(
+        self,
+        callback: Callable[[TerminalOutput], None],
+    ) -> Subscription:
+        if not callable(callback):
+            raise TypeError("terminal callback must be callable")
+        with self._lock:
+            if self._closed:
+                raise SshPilotError(
+                    ErrorCode.INVALID_REQUEST,
+                    "The session runtime is closed",
+                )
+            token = self._next_terminal_callback
+            self._next_terminal_callback += 1
+            self._terminal_callbacks[token] = callback
+
+        def _cancel() -> None:
+            with self._lock:
+                self._terminal_callbacks.pop(token, None)
+
+        return Subscription(_cancel)
 
     def list_sessions(self) -> List[SessionSummary]:
         with self._lock:
@@ -428,8 +481,13 @@ class SessionRuntime:
             state=SessionState.CREATED,
             created_at=now,
             updated_at=now,
-            launch_spec=self._launch_spec(connection, session_id),
+            launch_spec=self._launch_spec(
+                connection,
+                session_id,
+                request.dimensions,
+            ),
             startup_scheduled=True,
+            replay=TerminalReplayBuffer(self._replay_bytes),
         )
         with self._lock:
             self._require_accepting_commands_locked()
@@ -460,14 +518,25 @@ class SessionRuntime:
                 return
             record.startup_scheduled = False
             record.startup_started = True
+            record.terminal_capable = bool(
+                getattr(self._runner, "terminal_capable", False)
+            )
             spec = record.launch_spec
             if spec is None:
                 raise RuntimeError("starting session has no launch specification")
         try:
-            handle = self._runner.start(
-                spec,
-                lambda exit_info: self._process_exited(session_id, exit_info),
-            )
+            if getattr(self._runner, "terminal_capable", False):
+                handle = self._runner.start(
+                    spec,
+                    lambda exit_info: self._process_exited(session_id, exit_info),
+                    lambda data: self._terminal_output(session_id, data),
+                    lambda: self._terminal_eof(session_id),
+                )
+            else:
+                handle = self._runner.start(
+                    spec,
+                    lambda exit_info: self._process_exited(session_id, exit_info),
+                )
             if handle is None:
                 raise TypeError("session runner returned no process handle")
         except SshPilotError as error:
@@ -546,15 +615,52 @@ class SessionRuntime:
                 attachment_id = AttachmentId(f"attachment:{uuid.uuid4()}")
                 record.attachments[client_id] = attachment_id
                 record.updated_at = self._clock()
+            if request.want_terminal_output:
+                if not record.terminal_capable and record.state is not SessionState.STARTING:
+                    raise SshPilotError(
+                        ErrorCode.TERMINAL_UNAVAILABLE,
+                        "The session does not own a terminal stream",
+                        session_id=request.session_id,
+                    )
+                record.output_clients.add(client_id)
+            if (
+                request.request_input
+                and self.terminal_supported
+                and record.input_owner_client_id is None
+            ):
+                record.input_owner_client_id = client_id
+            replay = record.replay.replay(
+                min(request.from_sequence, record.replay.end_sequence),
+                record.replay.max_bytes,
+            )
             return AttachSessionResult(
                 session=self._summary_locked(record),
                 attachment=AttachmentInfo(
                     id=attachment_id,
                     session_id=record.session_id,
                     client_id=client_id,
-                    input_owner=False,
+                    input_owner=record.input_owner_client_id == client_id,
                 ),
+                available_start=replay.available_start,
+                live_sequence=replay.live_sequence,
+                replay_truncated=request.from_sequence < replay.available_start,
+                eof=replay.eof,
             )
+
+    def attach_replay(
+        self,
+        request: AttachSessionRequest,
+        *,
+        client_id: ClientId,
+    ) -> Tuple[AttachSessionResult, ReplaySlice]:
+        result = self.attach_session(request, client_id=client_id)
+        with self._lock:
+            record = self._record_locked(request.session_id)
+            replay = record.replay.replay(
+                min(request.from_sequence, record.replay.end_sequence),
+                record.replay.max_bytes,
+            )
+        return result, replay
 
     def detach_session(
         self,
@@ -581,7 +687,169 @@ class SessionRuntime:
                     session_id=request.session_id,
                 )
             del record.attachments[client_id]
+            record.output_clients.discard(client_id)
+            if record.input_owner_client_id == client_id:
+                record.input_owner_client_id = None
             record.updated_at = self._clock()
+
+    def receives_terminal(self, session_id: SessionId, client_id: ClientId) -> bool:
+        with self._lock:
+            record = self._records.get(session_id)
+            return bool(record is not None and client_id in record.output_clients)
+
+    def send_terminal_input(
+        self,
+        request: TerminalInput,
+        *,
+        client_id: ClientId,
+    ) -> None:
+        if type(request) is not TerminalInput:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "Terminal input is invalid")
+        with self._lock:
+            self._require_accepting_commands_locked()
+            record = self._record_locked(request.session_id)
+            attachment = record.attachments.get(client_id)
+            if attachment != request.attachment_id:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                    "A matching terminal attachment is required",
+                    session_id=request.session_id,
+                )
+            if record.input_owner_client_id != client_id:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+                    "The attachment does not own terminal input",
+                    session_id=request.session_id,
+                )
+            if record.state is not SessionState.RUNNING or record.process_handle is None:
+                raise SshPilotError(
+                    ErrorCode.SESSION_INVALID_STATE,
+                    "The session is not accepting terminal input",
+                    session_id=request.session_id,
+                )
+            handle = record.process_handle
+        write = getattr(handle, "write", None)
+        if not callable(write):
+            raise SshPilotError(
+                ErrorCode.TERMINAL_UNAVAILABLE,
+                "The session does not own a writable terminal",
+                session_id=request.session_id,
+            )
+        if not write(request.data):
+            raise SshPilotError(
+                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                "The terminal input queue is full",
+                retryable=True,
+                session_id=request.session_id,
+            )
+
+    def resize_terminal(
+        self,
+        request: ResizeTerminalRequest,
+        *,
+        client_id: ClientId,
+    ) -> None:
+        if type(request) is not ResizeTerminalRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "Terminal resize is invalid")
+        with self._lock:
+            self._require_accepting_commands_locked()
+            record = self._record_locked(request.session_id)
+            if (
+                request.attachment_id is None
+                or record.attachments.get(client_id) != request.attachment_id
+            ):
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                    "A matching terminal attachment is required",
+                    session_id=request.session_id,
+                )
+            if record.input_owner_client_id != client_id:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+                    "The attachment does not own terminal resize",
+                    session_id=request.session_id,
+                )
+            if record.process_handle is None:
+                spec = record.launch_spec
+                if spec is None or record.state not in {
+                    SessionState.CREATED,
+                    SessionState.STARTING,
+                }:
+                    raise SshPilotError(
+                        ErrorCode.TERMINAL_UNAVAILABLE,
+                        "The session does not own a resizable terminal",
+                        session_id=request.session_id,
+                    )
+                record.launch_spec = SessionLaunchSpec(
+                    session_id=spec.session_id,
+                    connection_id=spec.connection_id,
+                    protocol=spec.protocol,
+                    hostname=spec.hostname,
+                    username=spec.username,
+                    port=spec.port,
+                    dimensions=request.dimensions,
+                )
+                return
+            handle = record.process_handle
+        resize = getattr(handle, "resize", None)
+        if not callable(resize):
+            raise SshPilotError(
+                ErrorCode.TERMINAL_UNAVAILABLE,
+                "The session does not own a resizable terminal",
+                session_id=request.session_id,
+            )
+        try:
+            resize(request.dimensions)
+        except RuntimeError:
+            raise SshPilotError(
+                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                "The terminal I/O queue is busy",
+                retryable=True,
+                session_id=request.session_id,
+            ) from None
+
+    def replay_terminal(
+        self,
+        request: ReplayRequest,
+        *,
+        client_id: ClientId,
+    ) -> Tuple[ReplayResult, ReplaySlice]:
+        if type(request) is not ReplayRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "Replay request is invalid")
+        with self._lock:
+            record = self._record_locked(request.session_id)
+            if record.attachments.get(client_id) != request.attachment_id:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                    "A matching terminal attachment is required",
+                    session_id=request.session_id,
+                )
+            requested = (
+                record.replay.start_sequence
+                if request.after_sequence is None
+                else request.after_sequence
+            )
+            try:
+                replay = record.replay.replay(requested, request.max_bytes)
+            except ValueError:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_SEQUENCE_OUT_OF_RANGE,
+                    "The requested terminal sequence is unavailable",
+                    session_id=request.session_id,
+                ) from None
+            result = ReplayResult(
+                session_id=request.session_id,
+                first_sequence=replay.returned_start,
+                next_sequence=replay.returned_end,
+                bounds=ReplayBounds(
+                    earliest_sequence=replay.available_start,
+                    latest_sequence=replay.live_sequence,
+                    retained_bytes=record.replay.retained_bytes,
+                ),
+                truncated=replay.truncated,
+                eof=replay.eof,
+            )
+        return result, replay
 
     def close_session(self, request: CloseSessionRequest) -> None:
         """Compatibility helper that accepts and completes close synchronously."""
@@ -653,6 +921,9 @@ class SessionRuntime:
         with self._lock:
             for record in self._records.values():
                 if record.attachments.pop(client_id, None) is not None:
+                    record.output_clients.discard(client_id)
+                    if record.input_owner_client_id == client_id:
+                        record.input_owner_client_id = None
                     record.updated_at = self._clock()
 
     def shutdown(self) -> None:
@@ -672,6 +943,9 @@ class SessionRuntime:
         with self._lock:
             for record in self._records.values():
                 record.attachments.clear()
+                record.output_clients.clear()
+                record.input_owner_client_id = None
+            self._terminal_callbacks.clear()
             self._closed = True
         try:
             self._runner.close()
@@ -732,7 +1006,11 @@ class SessionRuntime:
             return
         try:
             handle.terminate()
-            remaining = max(0.0, deadline - self._monotonic())
+            graceful_deadline = min(
+                deadline,
+                self._monotonic() + self._close_grace_seconds,
+            )
+            remaining = max(0.0, graceful_deadline - self._monotonic())
             exit_info = handle.wait(remaining)
             if exit_info is None:
                 handle.kill()
@@ -798,20 +1076,77 @@ class SessionRuntime:
             }:
                 return
             record.exit_info = exit_info
-            record.process_handle = None
-            if record.state is SessionState.FAILED:
-                events.append(
-                    self._event_locked(
-                        record,
-                        EventType.SESSION_EXITED,
-                        payload=exit_info,
-                    )
-                )
-                events.append(self._transition_locked(record, SessionState.CLOSED))
-            else:
-                events.append(self._transition_locked(record, SessionState.EXITED))
-                events.append(self._transition_locked(record, SessionState.CLOSED))
+            if record.terminal_capable and not record.pty_eof:
+                return
+            events.extend(self._final_exit_events_locked(record))
         self._publish(events)
+
+    def _terminal_output(self, session_id: SessionId, data: bytes) -> None:
+        if not data:
+            return
+        with self._lock:
+            record = self._records.get(session_id)
+            if record is None or record.pty_eof:
+                return
+            start, _end = record.replay.append(data)
+            output = TerminalOutput(
+                session_id=session_id,
+                sequence=start,
+                data=data,
+            )
+            callbacks = tuple(self._terminal_callbacks.values())
+        for callback in callbacks:
+            try:
+                callback(output)
+            except Exception:
+                continue
+
+    def _terminal_eof(self, session_id: SessionId) -> None:
+        events: List[CoreEvent] = []
+        with self._lock:
+            record = self._records.get(session_id)
+            if record is None or record.pty_eof:
+                return
+            record.pty_eof = True
+            sequence = record.replay.mark_eof()
+            callbacks = tuple(self._terminal_callbacks.values())
+            output = TerminalOutput(
+                session_id=session_id,
+                sequence=sequence,
+                data=b"",
+                eof=True,
+            )
+            if record.exit_info is not None:
+                events.extend(self._final_exit_events_locked(record))
+        for callback in callbacks:
+            try:
+                callback(output)
+            except Exception:
+                continue
+        self._publish(events)
+
+    def _final_exit_events_locked(
+        self,
+        record: _SessionRecord,
+    ) -> List[CoreEvent]:
+        events: List[CoreEvent] = []
+        if record.state in {SessionState.EXITED, SessionState.CLOSED}:
+            return events
+        exit_info = record.exit_info or SessionExitInfo(reason="process_exit")
+        record.process_handle = None
+        if record.state is SessionState.FAILED:
+            events.append(
+                self._event_locked(
+                    record,
+                    EventType.SESSION_EXITED,
+                    payload=exit_info,
+                )
+            )
+            events.append(self._transition_locked(record, SessionState.CLOSED))
+        else:
+            events.append(self._transition_locked(record, SessionState.EXITED))
+            events.append(self._transition_locked(record, SessionState.CLOSED))
+        return events
 
     def _startup_failed(
         self,
@@ -823,6 +1158,7 @@ class SessionRuntime:
             if record.state is not SessionState.STARTING:
                 return
             record.startup_scheduled = False
+            record.terminal_capable = False
             record.failure = SessionFailure(code=code.value, message=message)
             event = self._transition_locked(record, SessionState.FAILED)
         self._publish((event,))
@@ -844,6 +1180,8 @@ class SessionRuntime:
         elif new_state is SessionState.CLOSED:
             record.closed_at = now
             record.attachments.clear()
+            record.output_clients.clear()
+            record.input_owner_client_id = None
             self._evict_closed_locked()
         event_type = EventType.SESSION_STATE_CHANGED
         payload = self._summary_locked(record)
@@ -894,12 +1232,33 @@ class SessionRuntime:
 
     @staticmethod
     def _summary_locked(record: _SessionRecord) -> SessionSummary:
+        input_owner = None
+        if record.input_owner_client_id is not None:
+            attachment_id = record.attachments.get(record.input_owner_client_id)
+            if attachment_id is not None:
+                from sshpilot.api.models.sessions import InputOwner
+
+                input_owner = InputOwner(
+                    client_id=record.input_owner_client_id,
+                    attachment_id=attachment_id,
+                )
+        supported = frozenset(
+            {
+                "terminal.output",
+                "terminal.input",
+                "terminal.resize",
+                "terminal.replay",
+            }
+            if record.terminal_capable
+            else ()
+        )
         return SessionSummary(
             id=record.session_id,
             connection_id=record.connection_id,
             state=record.state,
             created_at=record.created_at,
-            capabilities=SessionCapabilities(),
+            input_owner=input_owner,
+            capabilities=SessionCapabilities(supported=supported),
             exit_info=record.exit_info,
             failure=record.failure,
             attachment_count=len(record.attachments),
@@ -926,6 +1285,7 @@ class SessionRuntime:
     def _launch_spec(
         connection: ConnectionDetails,
         session_id: SessionId,
+        dimensions: Optional[TerminalDimensions],
     ) -> SessionLaunchSpec:
         return SessionLaunchSpec(
             session_id=session_id,
@@ -934,6 +1294,7 @@ class SessionRuntime:
             hostname=connection.hostname,
             username=connection.username,
             port=connection.port,
+            dimensions=dimensions,
         )
 
     def _require_accepting_commands_locked(self) -> None:

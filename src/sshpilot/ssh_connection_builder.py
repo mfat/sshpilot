@@ -168,6 +168,8 @@ def resolve_native_auth(
     connection: any,
     connection_manager: Optional[any] = None,
     app_config: Optional[any] = None,
+    *,
+    interaction_policy: str = "normal",
 ) -> NativeAuth:
     """Resolve the authentication environment + options for a connection.
 
@@ -187,6 +189,26 @@ def resolve_native_auth(
     * Askpass disabled / nothing saved → no askpass; SSH prompts on the TTY.
     * ``use_sshpass`` is never set (sshpass removed from the native path).
     """
+    if interaction_policy not in {"normal", "none"}:
+        raise ValueError("unsupported SSH interaction policy")
+    if interaction_policy == "none":
+        allowed = {
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "LANG",
+            "SSH_AUTH_SOCK",
+        }
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key in allowed or key.startswith("LC_")
+        }
+        env["TERM"] = "xterm-256color"
+        env["COLORTERM"] = "truecolor"
+        return NativeAuth(env=env, extra_opts=[], use_askpass=False)
+
     auth_method = int(getattr(connection, 'auth_method', 0) or 0)
     password_mode = (auth_method == 1)
 
@@ -373,6 +395,7 @@ class ConnectionContext:
     extra_ssh_config: Optional[str] = None  # Extra SSH config options (from advanced tab)
     known_hosts_path: Optional[str] = None  # Custom known hosts file
     native_mode: bool = False  # Use native SSH mode (minimal command)
+    interaction_policy: str = "normal"
 
 
 def _get_ssh_config_value(
@@ -854,11 +877,19 @@ def build_ssh_connection(
 
         # Authentication is resolved by the single shared helper so the terminal,
         # SCP, and ssh-copy-id all authenticate identically.
-        auth = resolve_native_auth(connection, connection_manager, app_config)
+        auth = resolve_native_auth(
+            connection,
+            connection_manager,
+            app_config,
+            interaction_policy=ctx.interaction_policy,
+        )
 
         # BatchMode preference — never when askpass may need to answer a prompt
         # (or a stored password / password method is in play).
-        if (bool(app_ssh_config.get('batch_mode', False))
+        if ctx.interaction_policy == "none":
+            if "BatchMode=yes" not in base_cmd:
+                base_cmd.extend(["-o", "BatchMode=yes"])
+        elif (bool(app_ssh_config.get('batch_mode', False))
                 and not auth.password_mode
                 and not auth.use_askpass
                 and not auth.password):
