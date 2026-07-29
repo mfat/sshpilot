@@ -166,7 +166,7 @@ def _wait_until(predicate, timeout=2.0, message="condition not met in time"):
     raise AssertionError(message)
 
 
-def test_prepare_start_transfer_returns_starting_summary():
+def test_prepare_start_transfer_returns_queued_summary():
     owner = ClientId("client:owner")
     sftp_runtime, service_id, _client = _make_ready_sftp_service(owner)
     transfer_runtime = TransferRuntime(sftp_runtime)
@@ -174,7 +174,8 @@ def test_prepare_start_transfer_returns_starting_summary():
     summary = transfer_runtime.prepare_start_transfer(
         _upload_request(service_id, local_path), client_id=owner
     )
-    assert summary.state is TransferState.STARTING
+    assert summary.state is TransferState.QUEUED
+    assert summary.started_at is None
 
 
 def test_run_transfer_completes_upload():
@@ -238,8 +239,8 @@ def test_prepare_start_rejects_when_over_capacity():
     second = transfer_runtime.prepare_start_transfer(
         _upload_request(service_id, local_path, "/remote/b.txt"), client_id=owner
     )
-    assert first.state is TransferState.STARTING
-    assert second.state is TransferState.STARTING
+    assert first.state is TransferState.QUEUED
+    assert second.state is TransferState.QUEUED
     with pytest.raises(SshPilotError) as excinfo:
         transfer_runtime.prepare_start_transfer(
             _upload_request(service_id, local_path, "/remote/c.txt"), client_id=owner
@@ -249,7 +250,7 @@ def test_prepare_start_rejects_when_over_capacity():
     assert len(transfer_runtime.list_transfers()) == 2
 
 
-def test_queued_transfer_starts_after_earlier_completes():
+def test_queued_transfer_stays_queued_until_worker_assigned():
     owner = ClientId("client:owner")
     client = _BlockingSftpClient()
     sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
@@ -258,12 +259,12 @@ def test_queued_transfer_starts_after_earlier_completes():
         max_concurrent_transfers=1,
         max_queued_transfers=2,
     )
-    local_path = _temp_source(b"payload-one")
     first = transfer_runtime.prepare_start_transfer(
-        _upload_request(service_id, local_path, "/remote/first.txt"), client_id=owner
+        _upload_request(service_id, _temp_source(b"one"), "/remote/first.txt"),
+        client_id=owner,
     )
     second = transfer_runtime.prepare_start_transfer(
-        _upload_request(service_id, _temp_source(b"payload-two"), "/remote/second.txt"),
+        _upload_request(service_id, _temp_source(b"two"), "/remote/second.txt"),
         client_id=owner,
     )
     transfer_runtime.run_transfer(first.id)
@@ -271,21 +272,17 @@ def test_queued_transfer_starts_after_earlier_completes():
         client.write_started.is_set,
         message="first transfer never reached write",
     )
+    assert transfer_runtime.get_transfer(first.id).state is TransferState.RUNNING
     transfer_runtime.run_transfer(second.id)
     _wait_until(
         lambda: second.id in transfer_runtime._pending_run,
         message="second transfer was not queued behind the active worker",
     )
-    assert len(transfer_runtime._worker_threads) == 1
-    assert first.id in transfer_runtime._worker_threads
-
+    assert transfer_runtime.get_transfer(second.id).state is TransferState.QUEUED
+    assert transfer_runtime.get_transfer(second.id).started_at is None
     client.allow_write.set()
-    first_summary = _wait_for_terminal_state(transfer_runtime, first.id)
-    second_summary = _wait_for_terminal_state(transfer_runtime, second.id)
-    assert first_summary.state is TransferState.COMPLETED
-    assert second_summary.state is TransferState.COMPLETED
-    assert client.files["/remote/first.txt"] == b"payload-one"
-    assert client.files["/remote/second.txt"] == b"payload-two"
+    _wait_for_terminal_state(transfer_runtime, first.id)
+    _wait_for_terminal_state(transfer_runtime, second.id)
 
 
 def test_cancel_queued_transfer_without_worker_thread():

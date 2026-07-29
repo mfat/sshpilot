@@ -99,11 +99,11 @@ _ALLOWED_TRANSITIONS = {
 
 _TRANSITION_EVENT_TYPES = {
     TransferState.STARTING: EventType.TRANSFER_STARTED,
-    TransferState.RUNNING: EventType.TRANSFER_STARTED,
     TransferState.COMPLETED: EventType.TRANSFER_COMPLETED,
     TransferState.CANCELLED: EventType.TRANSFER_CANCELLED,
     TransferState.FAILED: EventType.TRANSFER_FAILED,
     # CANCELLING has no dedicated public event type; applied silently.
+    # RUNNING is entered after STARTING without a second TRANSFER_STARTED event.
 }
 
 
@@ -269,8 +269,7 @@ class TransferRuntime:
             self._records[transfer_id] = record
             self._creation_order.append(transfer_id)
             created_event = self._event_locked(record, EventType.TRANSFER_CREATED)
-            starting_event = self._transition_locked(record, TransferState.STARTING)
-        self._publish((created_event, starting_event))
+        self._publish((created_event,))
         with self._lock:
             return self._summary_locked(record)
 
@@ -284,10 +283,18 @@ class TransferRuntime:
             if record.state is TransferState.CANCELLING:
                 record.completed_at = self._clock()
                 events.append(self._transition_locked(record, TransferState.CANCELLED))
-            elif record.state is TransferState.STARTING:
-                record.started_at = self._clock()
-                events.append(self._transition_locked(record, TransferState.RUNNING))
+            elif record.state is TransferState.QUEUED:
+                # Stay QUEUED until a worker slot exists; STARTING only when assigned.
                 thread_to_start = self._schedule_or_queue_locked(transfer_id)
+                if thread_to_start is not None:
+                    record.started_at = self._clock()
+                    events.append(
+                        self._transition_locked(record, TransferState.STARTING)
+                    )
+            elif record.state is TransferState.STARTING:
+                # Already assigned; ensure a worker is registered.
+                if transfer_id not in self._worker_threads:
+                    thread_to_start = self._register_worker_thread_locked(transfer_id)
             else:
                 return
         self._publish(events)
@@ -318,6 +325,19 @@ class TransferRuntime:
         record = self._records.get(transfer_id)
         if record is None:
             return
+        # Worker assigned and validating — enter STARTING if still queued, then RUNNING
+        # once bytes may move.
+        events: List[Optional[CoreEvent]] = []
+        with self._lock:
+            if record.state is TransferState.QUEUED:
+                if record.started_at is None:
+                    record.started_at = self._clock()
+                events.append(self._transition_locked(record, TransferState.STARTING))
+            if record.state is TransferState.STARTING:
+                events.append(self._transition_locked(record, TransferState.RUNNING))
+            elif record.state is not TransferState.RUNNING:
+                return
+        self._publish(events)
         try:
             client, _ = self._sftp_runtime.acquire_active_client(
                 record.sftp_service_id, record.owner_client_id
@@ -343,11 +363,20 @@ class TransferRuntime:
             self._finish_completed(record)
         finally:
             thread_to_start: Optional[threading.Thread] = None
+            promote_events: List[Optional[CoreEvent]] = []
             with self._lock:
                 self._worker_threads.pop(transfer_id, None)
                 next_id = self._take_next_runnable_locked()
                 if next_id is not None:
-                    thread_to_start = self._register_worker_thread_locked(next_id)
+                    next_record = self._records.get(next_id)
+                    if next_record is not None and next_record.state is TransferState.QUEUED:
+                        if next_record.started_at is None:
+                            next_record.started_at = self._clock()
+                        promote_events.append(
+                            self._transition_locked(next_record, TransferState.STARTING)
+                        )
+                        thread_to_start = self._register_worker_thread_locked(next_id)
+            self._publish(promote_events)
             if thread_to_start is not None:
                 thread_to_start.start()
 
@@ -680,9 +709,20 @@ class TransferRuntime:
             record = self._records.get(transfer_id)
             if record is None:
                 continue
-            if record.state is TransferState.RUNNING and not record.cancel_requested:
+            if record.state is TransferState.QUEUED and not record.cancel_requested:
                 return transfer_id
         return None
+
+    def _promote_queued_locked(self, transfer_id: TransferId) -> Optional[threading.Thread]:
+        """Assign a worker to a previously queued transfer."""
+
+        record = self._records.get(transfer_id)
+        if record is None or record.state is not TransferState.QUEUED:
+            return None
+        if record.started_at is None:
+            record.started_at = self._clock()
+        self._transition_locked(record, TransferState.STARTING)
+        return self._register_worker_thread_locked(transfer_id)
 
     @staticmethod
     def _require_owner(record: _TransferRecord, client_id: ClientId) -> None:
