@@ -29,7 +29,7 @@ from gi.repository import GObject
 from . import sftp_protocol as proto
 from .common import FileEntry, _MainThreadDispatcher
 from .exceptions import TransferCancelledException
-from ..sftp.client import OpenSSHSFTPClient, OpenSSHSFTPFile, _is_dir
+from ..sftp.client import OpenSSHSFTPClient, _is_dir
 
 logger = logging.getLogger(__name__)
 
