@@ -138,7 +138,14 @@ class BaseTerminalBackend(Protocol):
         """Ensure the backend widget is visible."""
 
     def feed_child(self, data: bytes) -> None:
-        """Feed raw bytes to the child process input if supported."""
+        """Feed raw bytes to the child process input if supported.
+
+        Deprecated alias: prefer ``feed_child_data``. Kept for call-site
+        compatibility during the daemon terminal migration.
+        """
+
+    def feed_child_data(self, data: bytes) -> None:
+        """Canonical backend input API — feed raw bytes to the child process."""
 
     def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
         """Return the terminal contents if the backend can provide it."""
@@ -504,6 +511,10 @@ class VTETerminalBackend:
         self.vte.feed(data)
 
     def feed_child(self, data: bytes) -> None:
+        # Deprecated alias — prefer feed_child_data.
+        self.feed_child_data(data)
+
+    def feed_child_data(self, data: bytes) -> None:
         try:
             self.vte.feed_child(data)
         except Exception:
@@ -1214,6 +1225,10 @@ class PyXtermTerminalBackend:
         return
 
     def feed_child(self, data: bytes) -> None:
+        # Deprecated alias — prefer feed_child_data.
+        self.feed_child_data(data)
+
+    def feed_child_data(self, data: bytes) -> None:
         """Feed raw bytes to the child process input over the pyxtermjs WebSocket."""
         if not self.available:
             return
@@ -1879,6 +1894,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         return self._real_child_pid
 
     def feed_child(self, data: bytes) -> None:
+        # Deprecated alias — prefer feed_child_data.
+        self.feed_child_data(data)
+
+    def feed_child_data(self, data: bytes) -> None:
         # Direct to the PTY (keystrokes/broadcast) — no JS round-trip.
         if self._bridge is not None:
             self._bridge.write(data)

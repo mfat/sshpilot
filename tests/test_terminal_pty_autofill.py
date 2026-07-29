@@ -1,4 +1,5 @@
 """TerminalWidget PTY auto-fill: one-shot typing when a known prompt appears."""
+import logging
 import types
 
 import pytest
@@ -10,12 +11,18 @@ from sshpilot.terminal import TerminalWidget
 
 def _term(*, prompt="[sshPilot] sudo password:", response="s3cret"):
     t = TerminalWidget.__new__(TerminalWidget)
+    t._daemon_mode = False
+    t._daemon_controller = None
     t._pty_autofill = (prompt, response)
     t._pty_autofill_done = False
     t._pty_autofill_handler = 42
     t._pty_autofill_timeout_id = 99
     fed = []
-    t.backend = types.SimpleNamespace(feed_child=lambda data: fed.append(data))
+    t.backend = types.SimpleNamespace(
+        feed_child_data=lambda data: fed.append(data),
+        # Legacy alias still accepted by feed_child_data fallback.
+        feed_child=lambda data: fed.append(("legacy", data)),
+    )
     t.vte = None
     t._scrape_recent_terminal_text = lambda max_chars=2000: (
         f"docker logs\n{prompt}"
@@ -52,6 +59,14 @@ def test_pty_autofill_falls_back_to_vte_feed_child():
     assert fed == [b"s3cret\n"]
 
 
+def test_pty_autofill_uses_legacy_backend_feed_child_alias():
+    t = _term()
+    fed = []
+    t.backend = types.SimpleNamespace(feed_child=lambda data: fed.append(data))
+    t._on_pty_autofill_changed(None)
+    assert fed == [b"s3cret\n"]
+
+
 def test_cancel_pty_autofill_clears_state():
     t = _term()
     disconnected = []
@@ -66,8 +81,33 @@ def test_cancel_pty_autofill_clears_state():
 
 def test_install_pty_autofill_noop_without_config():
     t = TerminalWidget.__new__(TerminalWidget)
+    t._daemon_mode = False
     t._pty_autofill = None
+    t._pty_autofills = None
     t._install_pty_autofill()  # must not raise
+
+
+def test_install_pty_autofill_disabled_for_daemon_mode():
+    t = TerminalWidget.__new__(TerminalWidget)
+    t._daemon_mode = True
+    t._daemon_controller = object()
+    t._pty_autofill = ("Password:", "secret")
+    t._pty_autofills = [("Password:", "secret")]
+    t._install_pty_autofill()
+    assert t._pty_autofill is None
+    assert t._pty_autofills is None
+
+
+def test_daemon_autofill_tick_does_not_feed_local_child():
+    t = _term()
+    t._daemon_mode = True
+    controller = types.SimpleNamespace(sent=[], input_owner=True)
+    controller.send_input = lambda data: controller.sent.append(data)
+    t._daemon_controller = controller
+    t._on_pty_autofill_changed(None)
+    assert t._fed == []
+    assert controller.sent == []
+    assert t._pty_autofill is None
 
 
 def _password_fill(password="pw123"):
@@ -131,3 +171,45 @@ def test_arm_password_pty_autofill_queues_classifier():
     assert response == "secret"
     assert matcher("Password:") is True
     assert matcher("Verification code:") is False
+
+
+def test_feed_child_data_requires_ownership_for_daemon():
+    t = TerminalWidget.__new__(TerminalWidget)
+    t._daemon_mode = True
+    shown = []
+    t._show_view_only_indicator = lambda: shown.append(True)
+    controller = types.SimpleNamespace(sent=[], input_owner=False)
+    controller.send_input = lambda data: controller.sent.append(data)
+    t._daemon_controller = controller
+    t.backend = types.SimpleNamespace(
+        feed_child_data=lambda data: (_ for _ in ()).throw(
+            AssertionError("local feed must not run")
+        )
+    )
+    t.feed_child_data(b"nope\n")
+    assert controller.sent == []
+    assert shown == [True]
+
+
+def test_feed_child_data_daemon_with_ownership_uses_controller():
+    t = TerminalWidget.__new__(TerminalWidget)
+    t._daemon_mode = True
+    controller = types.SimpleNamespace(sent=[], input_owner=True)
+    controller.send_input = lambda data: controller.sent.append(data)
+    t._daemon_controller = controller
+    t.backend = types.SimpleNamespace(
+        feed_child_data=lambda data: (_ for _ in ()).throw(
+            AssertionError("local feed must not run")
+        )
+    )
+    t.feed_child_data(b"typed\n")
+    assert controller.sent == [b"typed\n"]
+
+
+def test_pty_autofill_does_not_log_secret(caplog):
+    t = _term(response="super-secret-value")
+    with caplog.at_level(logging.DEBUG, logger="sshpilot.terminal"):
+        t._on_pty_autofill_changed(None)
+    joined = " ".join(record.getMessage() for record in caplog.records)
+    assert "super-secret-value" not in joined
+    assert t._fed == [b"super-secret-value\n"]

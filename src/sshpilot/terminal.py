@@ -1292,20 +1292,38 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"Failed to hide view-only indicator: {e}")
 
     def feed_child_data(self, data):
-        """Feed data to terminal child process or daemon session."""
-        if self._daemon_mode and self._daemon_controller:
-            if self.has_input_ownership:
-                self._daemon_controller.send_input(data)
-            else:
-                self._show_view_only_indicator()
+        """Feed bytes to the active input owner for this terminal.
+
+        Canonical widget-level input API. Daemon-backed SSH routes through
+        ``TerminalSessionController.send_input`` (never a local VTE child).
+        Local/legacy terminals feed the GTK-owned backend/VTE child.
+        """
+        if getattr(self, '_daemon_mode', False):
+            controller = getattr(self, '_daemon_controller', None)
+            if controller is not None:
+                if self.has_input_ownership:
+                    controller.send_input(data)
+                else:
+                    self._show_view_only_indicator()
+                return
+            # Daemon mode without a controller: refuse local child feed so a
+            # missing attachment cannot accidentally type into a stale PTY.
+            logger.debug("Daemon terminal has no controller; dropping feed")
             return
 
-        # Local terminal - use traditional feed_child
+        # Local / legacy terminal — GTK owns the child process.
         try:
-            if getattr(self, 'backend', None) is not None and hasattr(self.backend, 'feed_child'):
-                self.backend.feed_child(data)
-            elif getattr(self, 'vte', None) is not None:
-                self.vte.feed_child(data)
+            backend = getattr(self, 'backend', None)
+            if backend is not None:
+                feed = getattr(backend, 'feed_child_data', None) or getattr(
+                    backend, 'feed_child', None
+                )
+                if callable(feed):
+                    feed(data)
+                    return
+            vte = getattr(self, 'vte', None)
+            if vte is not None:
+                vte.feed_child(data)
         except Exception as e:
             logger.debug(f"Feed child data failed: {e}", exc_info=True)
 
@@ -2177,7 +2195,17 @@ class TerminalWidget(Gtk.Box):
         encrypted PTY exactly as if typed, never on a command line. Fills come
         from the ``_pty_autofills`` queue of ``(matcher, response)`` entries
         (matcher: substring or callable over the scraped tail) and/or the legacy
-        single-slot ``_pty_autofill`` tuple; no-op when neither is set."""
+        single-slot ``_pty_autofill`` tuple; no-op when neither is set.
+
+        Ownership: local/legacy GTK-owned terminals only. Daemon-backed SSH
+        authenticates via interaction dialogs and must not scrape/autofill into
+        a nonexistent local child (or replay after reattach).
+        """
+        if getattr(self, '_daemon_mode', False):
+            logger.debug("Skipping PTY autofill on daemon-backed terminal")
+            self._pty_autofill = None
+            self._pty_autofills = None
+            return
         autofill = getattr(self, '_pty_autofill', None)
         if (not getattr(self, '_pty_autofills', None)
                 and (not autofill or not autofill[0])):
@@ -2209,6 +2237,10 @@ class TerminalWidget(Gtk.Box):
             30, self._cancel_pty_autofill)
 
     def _on_pty_autofill_changed(self, _vte):
+        if getattr(self, '_daemon_mode', False):
+            # Daemon SSH must not deliver autofill through a local child feed.
+            self._cancel_pty_autofill()
+            return False
         fills = getattr(self, '_pty_autofills', None) or []
         legacy = (None if getattr(self, '_pty_autofill_done', True)
                   else getattr(self, '_pty_autofill', None))
@@ -2238,6 +2270,7 @@ class TerminalWidget(Gtk.Box):
         if response is None:
             return False
         try:
+            # Never log ``response`` — it is a secret.
             data = (response + '\n').encode('utf-8')
             self.feed_child_data(data)
         except Exception:
