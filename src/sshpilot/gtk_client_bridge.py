@@ -46,6 +46,10 @@ class GtkClientBridge:
             max_workers=max_workers,
             thread_name_prefix="sshpilot-api",
         )
+        self._interaction_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="sshpilot-interaction",
+        )
         self._lock = threading.RLock()
         self._closed = False
         self._requests: Dict[Future, GtkClientRequest] = {}
@@ -95,11 +99,46 @@ class GtkClientBridge:
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]] = None,
     ) -> GtkClientRequest:
+        return self._submit_on(
+            self._executor,
+            operation,
+            on_success=on_success,
+            on_error=on_error,
+            on_discard=on_discard,
+        )
+
+    def submit_interaction(
+        self,
+        operation: Callable[[], T],
+        *,
+        on_success: Callable[[T], None],
+        on_error: Callable[[BaseException], None],
+        on_discard: Optional[Callable[[T], None]] = None,
+    ) -> GtkClientRequest:
+        """Run interaction control independently of a pending session open."""
+
+        return self._submit_on(
+            self._interaction_executor,
+            operation,
+            on_success=on_success,
+            on_error=on_error,
+            on_discard=on_discard,
+        )
+
+    def _submit_on(
+        self,
+        executor: ThreadPoolExecutor,
+        operation: Callable[[], T],
+        *,
+        on_success: Callable[[T], None],
+        on_error: Callable[[BaseException], None],
+        on_discard: Optional[Callable[[T], None]],
+    ) -> GtkClientRequest:
         request = GtkClientRequest()
         with self._lock:
             if self._closed:
                 raise RuntimeError("GTK client bridge is closed")
-            future = self._executor.submit(operation)
+            future = executor.submit(operation)
             self._requests[future] = request
             self._active_requests.add(request)
         future.add_done_callback(
@@ -197,6 +236,7 @@ class GtkClientBridge:
         for binding in terminal_bindings:
             binding.close()
         self._executor.shutdown(wait=False, cancel_futures=True)
+        self._interaction_executor.shutdown(wait=False, cancel_futures=True)
 
 
 class GtkTerminalBinding:

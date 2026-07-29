@@ -17,6 +17,7 @@ from .api.models.terminal import (
     TerminalDimensions,
     TerminalInput,
 )
+from .daemon_interaction_dialogs import DaemonInteractionDialogs
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,12 @@ class DaemonTerminalWidget(Gtk.Box):
             Capability.TERMINAL_INPUT,
             Capability.TERMINAL_RESIZE,
             Capability.TERMINAL_REPLAY,
+            Capability.INTERACTIONS_READ,
+            Capability.INTERACTIONS_RESPOND,
+            Capability.INTERACTIONS_EVENTS,
+            Capability.INTERACTIONS_HOST_KEY,
+            Capability.INTERACTIONS_PASSWORD,
+            Capability.INTERACTIONS_PASSPHRASE,
         }
         supported = client.get_capabilities().supported
         if not required <= supported:
@@ -53,6 +60,11 @@ class DaemonTerminalWidget(Gtk.Box):
         self.append(self._terminal)
         self._terminal.connect("commit", self._on_commit)
         self._terminal.connect("char-size-changed", self._on_size_changed)
+        self._interaction_dialogs = DaemonInteractionDialogs(
+            client,
+            bridge,
+            self,
+        )
 
     @property
     def terminal(self):
@@ -75,6 +87,7 @@ class DaemonTerminalWidget(Gtk.Box):
         if self._closed:
             return
         self._session = summary
+        self._interaction_dialogs.set_session(summary.id)
         self._stream = self._bridge.bind_terminal(
             self._client,
             summary.id,
@@ -181,6 +194,7 @@ class DaemonTerminalWidget(Gtk.Box):
         if self._closed:
             return
         self._closed = True
+        self._interaction_dialogs.close()
         if self._stream is not None:
             self._stream.close()
             self._stream = None
