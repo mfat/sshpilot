@@ -120,7 +120,9 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
     class _DelayedManager:
         def get_connections(self):
             entered.set()
-            release.wait(2)
+            # Wait until the test releases — never time out on our own, or the
+            # intentional stall races the client transport timeout.
+            release.wait(30)
             completed.set()
             return []
 
@@ -137,7 +139,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
     app = gui.app
     old_bridge = getattr(app, "_api_client_bridge", None)
     bridge = GtkClientBridge()
-    daemon_client = DaemonClient(socket_path=server.socket_path, timeout=2)
+    daemon_client = DaemonClient(socket_path=server.socket_path, timeout=10)
     calls = []
     original_list = daemon_client.list_connections
 
@@ -148,7 +150,13 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
     daemon_client.list_connections = _recorded_list
     app._api_client_bridge = bridge
     window.client_bridge = bridge
+    previous_restore = window.config.get_setting(
+        "terminal.daemon_restore_sessions", True
+    )
     try:
+        # Disable restore so it cannot enqueue a second control RPC behind the
+        # intentionally blocked connections.list (single request gate).
+        window.config.set_setting("terminal.daemon_restore_sessions", False)
         window._apply_client_selection(
             ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
         )
@@ -163,12 +171,21 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
         assert window.client is daemon_client
         assert welcome.client is daemon_client
         assert calls == [True]
+        assert daemon_client.server_instance_id
+        alive = daemon_client.threads_alive()
+        assert alive["reader"] and alive["event"] and alive["terminal"]
 
         release.set()
         gui.pump(200)
         assert completed.is_set()
     finally:
         release.set()
+        try:
+            window.config.set_setting(
+                "terminal.daemon_restore_sessions", previous_restore
+            )
+        except Exception:
+            pass
         app.clear_api_event_subscription()
         daemon_client.close()
         bridge.shutdown()

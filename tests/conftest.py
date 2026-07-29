@@ -194,24 +194,65 @@ if 'cairo' not in sys.modules:
 
 @pytest.fixture(scope='session')
 def _gui_app_session(tmp_path_factory):
-    """Boot the real app once per session in a hermetic temp HOME/XDG."""
+    """Boot the real app once per session in a hermetic temp HOME/XDG/runtime.
+
+    Isolates the GUI suite from the developer's user daemon socket by giving
+    every session its own ``XDG_RUNTIME_DIR`` and forcing in-process client
+    mode. Individual tests that need a daemon start an owned ``DaemonServer``
+    on a unique temp socket and inject it via ``_apply_client_selection``.
+    """
     from tests._gui_harness import GuiApp, requires_gui
 
     requires_gui()
     cfg = tmp_path_factory.mktemp('sshpilot-gui-home')
-    keys = ('HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME')
+    runtime = cfg / 'runtime'
+    runtime.mkdir(mode=0o700)
+    keys = (
+        'HOME',
+        'XDG_CONFIG_HOME',
+        'XDG_DATA_HOME',
+        'XDG_STATE_HOME',
+        'XDG_CACHE_HOME',
+        'XDG_RUNTIME_DIR',
+        'SSHPILOT_CLIENT_MODE',
+    )
     saved = {k: os.environ.get(k) for k in keys}
     os.environ['HOME'] = str(cfg)
     os.environ['XDG_CONFIG_HOME'] = str(cfg / 'config')
     os.environ['XDG_DATA_HOME'] = str(cfg / 'data')
     os.environ['XDG_STATE_HOME'] = str(cfg / 'state')
     os.environ['XDG_CACHE_HOME'] = str(cfg / 'cache')
+    os.environ['XDG_RUNTIME_DIR'] = str(runtime)
+    # Default GUI harness stays in-process so tests never attach to a user
+    # daemon that happens to be listening on the real runtime socket.
+    os.environ['SSHPILOT_CLIENT_MODE'] = 'in_process'
 
     app = GuiApp()
     app.boot()
+    # Sanity: the session app must not be holding a live daemon client against
+    # the developer's socket (contamination would make timeouts non-deterministic).
+    from sshpilot.api.daemon_client import DaemonClient
+    from sshpilot.api.client_factory import ClientMode
+
+    selection = getattr(app.app, '_api_client_selection', None)
+    assert selection is None or selection.mode is ClientMode.IN_PROCESS, (
+        f"GUI harness must boot in-process, got {selection!r}"
+    )
+    assert not isinstance(getattr(app.window, 'client', None), DaemonClient), (
+        "GUI harness connected a DaemonClient at boot; runtime isolation failed"
+    )
     try:
         yield app
     finally:
+        try:
+            bridge = getattr(app.app, '_api_client_bridge', None)
+            if bridge is not None:
+                bridge.shutdown()
+            client = getattr(app.window, 'client', None)
+            if client is not None and hasattr(client, 'close'):
+                client.close()
+        except Exception:
+            pass
         app.shutdown()
         for k, v in saved.items():
             if v is None:

@@ -170,6 +170,14 @@ class GuiApp:
     def reset(self):
         """Close all user tabs so each test starts from a clean window."""
         win = self.window
+        # Dismiss omni-search so content is re-docked into the welcome home
+        # bin; otherwise a prior test can leave home empty and flake later.
+        try:
+            omni = getattr(win, '_omni_search', None)
+            if omni is not None:
+                omni.dismiss(clear=True)
+        except Exception:
+            pass
         win._suppress_close_confirmation = True
         try:
             for p in list(win.tab_view.get_pages()):
@@ -180,6 +188,11 @@ class GuiApp:
                         pass
         finally:
             win._suppress_close_confirmation = False
+        try:
+            if hasattr(win, 'show_start_tab'):
+                win.show_start_tab()
+        except Exception:
+            pass
         self.pump(300)
 
 

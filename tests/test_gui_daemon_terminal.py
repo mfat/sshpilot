@@ -127,9 +127,11 @@ def test_daemon_terminal_streams_without_blocking_gtk(gui, tmp_path):
         _GLib.idle_add(lambda: heartbeat.append(True) and False)
         assert _pump_until(gui, lambda: widget.received_bytes >= len(b"READY\n"))
         assert heartbeat
+        assert widget._controller.tab_state.session_id is not None
+        assert client.threads_alive()["reader"]
         interaction = server._interaction_broker.create(
-            session_id=widget._session.id,
-            connection_id=widget._session.connection_id,
+            session_id=widget._controller.tab_state.session_id,
+            connection_id=widget._controller.tab_state.connection_id,
             interaction_type=InteractionType.PASSWORD,
             prompt=PasswordPrompt(
                 username="tester",
