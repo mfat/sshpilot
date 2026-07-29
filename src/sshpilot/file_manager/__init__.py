@@ -51,12 +51,61 @@ from .properties_dialog import PropertiesDialog
 from .remote_walk import _sftp_path_exists, stat_isdir, walk_remote
 
 
-def create_file_manager_backend(*args, **kwargs):
+def create_file_manager_backend(
+    *args,
+    daemon_client=None,
+    bridge=None,
+    connection_id=None,
+    parent_widget=None,
+    **kwargs,
+):
     """Construct the file-manager backend.
 
-    The OpenSSH SFTP backend (driving the native ``ssh -s sftp`` subprocess) is
-    the only backend; this factory remains as the single construction point.
+    Prefers the daemon-backed SFTP manager (no local ``ssh -s sftp``
+    subprocess) when ``daemon_client``/``bridge``/``connection_id`` are all
+    supplied and ``daemon_client`` is a real out-of-process ``DaemonClient``
+    with the required SFTP/transfer capabilities. Raises rather than
+    silently spawning a local subprocess if that client is missing
+    capabilities the running service should have (mirrors the daemon
+    terminal policy — no silent fallback once daemon mode is selected).
+
+    Falls back to the legacy ``OpenSSHSFTPManager`` (driving a native
+    ``ssh -s sftp`` subprocess) when no daemon client is supplied, or when
+    the supplied client is the in-process adapter rather than a real daemon
+    connection (legacy path, kept until in-process mode is removed).
     """
+
+    if daemon_client is not None and bridge is not None and connection_id is not None:
+        from ..api.daemon_client import DaemonClient
+
+        if isinstance(daemon_client, DaemonClient):
+            from ..daemon_sftp_backend import (
+                DaemonSftpManager,
+                daemon_file_manager_capabilities_missing,
+            )
+
+            missing = daemon_file_manager_capabilities_missing(daemon_client)
+            if missing:
+                raise RuntimeError(
+                    "The running SSH Pilot service does not support the file "
+                    f"manager's SFTP API (missing: {sorted(c.value for c in missing)}); "
+                    "refusing to spawn a local SFTP subprocess."
+                )
+            logger.info("File manager backend: daemon-sftp")
+            return DaemonSftpManager(
+                *args,
+                connection_id=connection_id,
+                daemon_client=daemon_client,
+                bridge=bridge,
+                parent_widget=parent_widget,
+                **kwargs,
+            )
+
+        logger.info(
+            "Daemon SFTP unavailable (client is %s, not a DaemonClient); "
+            "using legacy OpenSSH SFTP backend",
+            type(daemon_client).__name__,
+        )
 
     from .openssh_backend import OpenSSHSFTPManager
 

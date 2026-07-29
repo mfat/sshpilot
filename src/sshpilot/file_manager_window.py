@@ -94,6 +94,9 @@ class FileManagerWindow(Adw.Window):
         connection: Any = None,
         connection_manager: Any = None,
         ssh_config: Optional[Dict[str, Any]] = None,
+        daemon_client: Any = None,
+        bridge: Any = None,
+        connection_id: Any = None,
     ) -> None:
         super().__init__(application=application, title="")
         # Register this window in the global registry for cleanup
@@ -105,6 +108,9 @@ class FileManagerWindow(Adw.Window):
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
+        self._daemon_client = daemon_client
+        self._bridge = bridge
+        self._connection_id = connection_id
         # Set default and minimum sizes following GNOME HIG
         self.set_default_size(1000, 640)
         # Set minimum size to ensure usability (GNOME HIG recommends minimum 360px width)
@@ -424,6 +430,20 @@ class FileManagerWindow(Adw.Window):
                             exc,
                         )
 
+        daemon_client = self._daemon_client
+        bridge = self._bridge
+        connection_id = self._connection_id
+        if connection_id is None and connection is not None:
+            try:
+                from .connection_identity import connection_id_from_uuid
+
+                uuid_value = getattr(connection, "uuid", None) or getattr(
+                    connection, "_uuid", None
+                )
+                if uuid_value:
+                    connection_id = connection_id_from_uuid(str(uuid_value))
+            except Exception:
+                connection_id = None
         self._manager = create_file_manager_backend(
             host,
             username,
@@ -432,6 +452,10 @@ class FileManagerWindow(Adw.Window):
             connection=connection,
             connection_manager=connection_manager,
             ssh_config=self._ssh_config,
+            daemon_client=daemon_client,
+            bridge=bridge,
+            connection_id=connection_id,
+            parent_widget=self,
         )
 
         # Connect signals with error handling
@@ -2988,6 +3012,19 @@ def launch_file_manager_window(
     if app is None:
         raise RuntimeError("An application instance is required to show the window")
 
+    from .connection_identity import connection_id_from_uuid
+
+    daemon_client = getattr(parent, "client", None) if parent is not None else None
+    bridge = getattr(parent, "client_bridge", None) if parent is not None else None
+    connection_id = None
+    if connection is not None:
+        try:
+            uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
+            if uuid_value:
+                connection_id = connection_id_from_uuid(str(uuid_value))
+        except Exception:
+            connection_id = None
+
     window = FileManagerWindow(
         application=app,
         host=host,
@@ -2998,6 +3035,9 @@ def launch_file_manager_window(
         connection=connection,
         connection_manager=connection_manager,
         ssh_config=ssh_config,
+        daemon_client=daemon_client,
+        bridge=bridge,
+        connection_id=connection_id,
     )
     if parent is not None and transient_for_parent:
         window.set_transient_for(parent)

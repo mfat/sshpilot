@@ -1088,6 +1088,88 @@ class PluginContext:
         except Exception:  # noqa: BLE001 — best-effort teardown; ControlPersist
             pass               # expiry is the fallback, so failures are harmless
 
+    def _try_daemon_local_forward(
+        self,
+        connection: Any,
+        remote_port: int,
+        timeout: float,
+    ) -> Optional[int]:
+        """Open a daemon-owned local forward when the live client supports it.
+
+        Returns the local bind port on success, or ``None`` to fall back to
+        the legacy ControlMaster / ``ssh -N`` path.
+        """
+
+        import time
+
+        from ..api.capabilities import Capability
+        from ..api.models.operations import ForwardState, ForwardType, OpenForwardRequest
+        from ..connection_identity import connection_id_from_uuid
+        from ..port_utils import find_available_port
+
+        host = self._host
+        client = None
+        if host is not None:
+            client = getattr(host, "client", None)
+            if client is None:
+                window = getattr(host, "window", None)
+                client = getattr(window, "client", None) if window is not None else None
+        if client is None or not hasattr(client, "open_forward"):
+            return None
+        try:
+            supported = client.get_capabilities().supported
+        except Exception:
+            return None
+        required = {
+            Capability.FORWARDS_READ,
+            Capability.FORWARDS_WRITE,
+            Capability.FORWARDS_LOCAL,
+        }
+        if not required <= supported:
+            return None
+        uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
+        if not uuid_value:
+            return None
+        try:
+            connection_id = connection_id_from_uuid(str(uuid_value))
+        except Exception:
+            return None
+        local_port = find_available_port(
+            remote_port if remote_port >= 1024 else 8000 + remote_port
+        )
+        if not local_port:
+            return None
+        try:
+            summary = client.open_forward(
+                OpenForwardRequest(
+                    connection_id=connection_id,
+                    type=ForwardType.LOCAL,
+                    bind_host="127.0.0.1",
+                    bind_port=int(local_port),
+                    destination_host="127.0.0.1",
+                    destination_port=int(remote_port),
+                )
+            )
+        except Exception:
+            return None
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        forward_id = summary.id
+        while time.monotonic() < deadline:
+            try:
+                current = client.get_forward(forward_id)
+            except Exception:
+                return None
+            if current.state is ForwardState.ACTIVE:
+                with _FORWARDS_LOCK:
+                    _FORWARDS[(getattr(connection, "nickname", ""), int(remote_port))] = _Forward(
+                        int(current.bind_port or local_port)
+                    )
+                return int(current.bind_port or local_port)
+            if current.state in {ForwardState.FAILED, ForwardState.CLOSED}:
+                return None
+            time.sleep(0.1)
+        return None
+
     def ensure_local_forward(self, nickname: str, remote_port: int, *,
                              timeout: float = 15) -> int:
         """Return a local TCP port forwarded to ``localhost:remote_port`` on the
@@ -1122,6 +1204,12 @@ class PluginContext:
         conn = self.connection_manager.find_connection_by_nickname(nickname)
         if conn is None:
             raise RuntimeError(f"No connection named {nickname!r}")
+
+        # Prefer daemon-owned forwarding when the live client supports it.
+        daemon_forward = self._try_daemon_local_forward(conn, int(remote_port), timeout)
+        if daemon_forward is not None:
+            return daemon_forward
+
         lp = find_available_port(
             remote_port if remote_port >= 1024 else 8000 + remote_port)
         if not lp:
