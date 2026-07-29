@@ -37,3 +37,20 @@ def test_dynamic_forward_skips_remote_host():
         {"type": "dynamic", "listen_port": 1080}
     )
     assert errors == []
+
+
+def test_remote_socks_and_listen_addr_alias():
+    errors = validate_forwarding_rule(
+        {"type": "remote", "listen_addr": "", "listen_port": 8080, "socks": True}
+    )
+    assert errors == []
+    errors = validate_forwarding_rule(
+        {
+            "type": "remote",
+            "listen_addr": "0.0.0.0",
+            "listen_port": 9000,
+            "local_host": "127.0.0.1",
+            "local_port": 22,
+        }
+    )
+    assert errors == []

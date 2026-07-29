@@ -6,6 +6,7 @@ import pytest
 
 from sshpilot.core.errors import CoreError
 from sshpilot.core.transfers import (
+    ConflictDecision,
     OverwritePolicy,
     PathRef,
     Progress,
@@ -16,7 +17,9 @@ from sshpilot.core.transfers import (
     TransferState,
     TransferSummary,
     atomic_temp_name,
+    decide_conflict,
     transition,
+    ui_conflict_response_to_policy,
 )
 
 
@@ -98,3 +101,14 @@ def test_atomic_cancel_progress_queue():
     )
     failed = transition(failed, TransferState.FAILED)
     assert failed.error_kind == TransferErrorKind.IO
+
+
+def test_decide_conflict_and_ui_mapping():
+    assert decide_conflict(False, OverwritePolicy.FAIL) is ConflictDecision.PROCEED
+    assert decide_conflict(True, OverwritePolicy.OVERWRITE) is ConflictDecision.PROCEED
+    assert decide_conflict(True, OverwritePolicy.SKIP) is ConflictDecision.SKIP
+    assert decide_conflict(True, OverwritePolicy.RENAME) is ConflictDecision.RENAME
+    assert decide_conflict(True, OverwritePolicy.FAIL) is ConflictDecision.FAIL
+    assert ui_conflict_response_to_policy("replace") is OverwritePolicy.OVERWRITE
+    assert ui_conflict_response_to_policy("skip") is OverwritePolicy.SKIP
+    assert ui_conflict_response_to_policy("cancel") is OverwritePolicy.FAIL

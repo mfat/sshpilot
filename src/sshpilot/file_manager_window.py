@@ -1350,6 +1350,8 @@ class FileManagerWindow(Adw.Window):
             dialog.set_close_response("cancel")
 
             def _on_conflict_response(_dialog, response: str) -> None:
+                from sshpilot.core.transfers import OverwritePolicy, ui_conflict_response_to_policy
+
                 dialog.close()
 
                 if response == "cancel":
@@ -1361,8 +1363,9 @@ class FileManagerWindow(Adw.Window):
                     if hasattr(self, '_right_pane') and self._right_pane:
                         self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
                     return
-                
-                elif response == "skip":
+
+                policy = ui_conflict_response_to_policy(response)
+                if policy is OverwritePolicy.SKIP:
                     # Only transfer files that don't conflict
                     non_conflicting = [item for item in files_to_transfer if item not in conflicts]
                     if non_conflicting:
@@ -1373,7 +1376,7 @@ class FileManagerWindow(Adw.Window):
                             self._left_pane.show_toast(f"Skipped existing file: {filename}")
                         else:
                             self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
-                elif response == "replace":
+                elif policy is OverwritePolicy.OVERWRITE:
                     # Transfer all files, replacing existing ones
                     callback(files_to_transfer)
 

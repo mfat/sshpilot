@@ -226,6 +226,54 @@ class TransferRuntime:
                 ErrorCode.INVALID_REQUEST,
                 "A start transfer request is required",
             )
+        # Shared core policy — recursive unsupported, paths validated, queue limits.
+        try:
+            from sshpilot.core.transfers import (
+                OverwritePolicy,
+                PathRef,
+                TransferDirection as CoreDirection,
+                TransferQueuePolicy,
+                TransferRequest,
+            )
+
+            if request.direction is TransferDirection.UPLOAD:
+                core_req = TransferRequest(
+                    direction=CoreDirection.UPLOAD,
+                    source=PathRef(request.local_path, is_remote=False),
+                    destination=PathRef(request.remote_path, is_remote=True),
+                    overwrite={
+                        TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
+                        TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
+                        TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
+                        TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
+                    }.get(request.conflict_policy, OverwritePolicy.FAIL),
+                    recursive=bool(request.recursive),
+                )
+            else:
+                core_req = TransferRequest(
+                    direction=CoreDirection.DOWNLOAD,
+                    source=PathRef(request.remote_path, is_remote=True),
+                    destination=PathRef(request.local_path, is_remote=False),
+                    overwrite={
+                        TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
+                        TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
+                        TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
+                        TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
+                    }.get(request.conflict_policy, OverwritePolicy.FAIL),
+                    recursive=bool(request.recursive),
+                )
+            core_req.validate(check_local_filesystem=False)
+        except Exception as exc:
+            from sshpilot.core.errors import CoreError
+
+            if isinstance(exc, CoreError):
+                raise SshPilotError(
+                    ErrorCode.REMOTE_UNSUPPORTED_OPERATION
+                    if "Recursive" in str(exc)
+                    else ErrorCode.INVALID_REQUEST,
+                    str(exc),
+                ) from exc
+            raise
         if request.recursive:
             raise SshPilotError(
                 ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
@@ -258,7 +306,13 @@ class TransferRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             capacity = self._max_concurrent_transfers + self._max_queued_transfers
-            if self._count_inflight_locked() >= capacity:
+            inflight = self._count_inflight_locked()
+            # Core queue policy: treat combined in-flight capacity as the admit limit.
+            policy = TransferQueuePolicy(
+                max_queued=capacity,
+                max_concurrent=self._max_concurrent_transfers,
+            )
+            if policy.admit(inflight, 0) is not None:
                 raise SshPilotError(
                     ErrorCode.SERVER_BUSY,
                     "The transfer queue is full; try again when an in-flight transfer finishes",
@@ -465,20 +519,27 @@ class TransferRuntime:
             record.bytes_completed = offset
 
     def _resolve_local_destination(self, record: _TransferRecord) -> str:
+        from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
+
         path = record.local_path
-        if not os.path.exists(path):
+        exists = os.path.exists(path)
+        overwrite = {
+            TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
+            TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
+            TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
+            TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
+        }.get(record.conflict_policy, OverwritePolicy.FAIL)
+        decision = decide_conflict(exists, overwrite)
+        if decision is ConflictDecision.PROCEED:
             return path
-        policy = record.conflict_policy
-        if policy is TransferConflictPolicy.OVERWRITE:
-            return path
-        if policy is TransferConflictPolicy.FAIL:
+        if decision is ConflictDecision.FAIL:
             raise SshPilotError(
                 ErrorCode.TRANSFER_CONFLICT,
                 "The local destination already exists",
             )
-        if policy is TransferConflictPolicy.SKIP:
+        if decision is ConflictDecision.SKIP:
             raise _TransferSkipped()
-        if policy is TransferConflictPolicy.RENAME:
+        if decision is ConflictDecision.RENAME:
             base, ext = os.path.splitext(path)
             for index in range(1, 1000):
                 candidate = f"{base} ({index}){ext}"
@@ -491,6 +552,8 @@ class TransferRuntime:
         raise AssertionError("unhandled transfer conflict policy")
 
     def _resolve_remote_destination(self, record: _TransferRecord, client) -> str:
+        from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
+
         path = record.remote_path
         try:
             client.stat(path)
@@ -499,19 +562,23 @@ class TransferRuntime:
             exists = False
         except Exception:
             exists = False
-        if not exists:
+        overwrite = {
+            TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
+            TransferConflictPolicy.OVERWRITE: OverwritePolicy.OVERWRITE,
+            TransferConflictPolicy.SKIP: OverwritePolicy.SKIP,
+            TransferConflictPolicy.RENAME: OverwritePolicy.RENAME,
+        }.get(record.conflict_policy, OverwritePolicy.FAIL)
+        decision = decide_conflict(exists, overwrite)
+        if decision is ConflictDecision.PROCEED:
             return path
-        policy = record.conflict_policy
-        if policy is TransferConflictPolicy.OVERWRITE:
-            return path
-        if policy is TransferConflictPolicy.FAIL:
+        if decision is ConflictDecision.FAIL:
             raise SshPilotError(
                 ErrorCode.TRANSFER_CONFLICT,
                 "The remote destination already exists",
             )
-        if policy is TransferConflictPolicy.SKIP:
+        if decision is ConflictDecision.SKIP:
             raise _TransferSkipped()
-        if policy is TransferConflictPolicy.RENAME:
+        if decision is ConflictDecision.RENAME:
             base, dot, ext = path.rpartition(".")
             stem, ext = (base, f".{ext}") if dot else (path, "")
             for index in range(1, 1000):

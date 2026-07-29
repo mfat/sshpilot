@@ -325,6 +325,8 @@ class ConnectionDialogPortForwardingMixin:
         dialog.present()
 
     def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
+        from sshpilot.core.forwards import validate_forwarding_rule
+
         idx = type_row.get_selected()
         rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
         listen_addr = listen_addr_row.get_text().strip()
@@ -332,8 +334,40 @@ class ConnectionDialogPortForwardingMixin:
             listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
         except Exception:
             listen_port = 0
-        if listen_port <= 0 or listen_port > 65535:
-            self.show_error(_("Please enter a valid listen port (1–65535)"))
+
+        rule = {
+            'type': rtype,
+            'enabled': True,
+            # RemoteForward binds on the REMOTE host: an empty bind address means
+            # "let the remote/GatewayPorts decide" (loopback by default), so keep
+            # it empty rather than pinning localhost. Local/dynamic bind locally
+            # and keep defaulting to localhost.
+            'listen_addr': listen_addr if rtype == 'remote' else (listen_addr or 'localhost'),
+            'listen_port': listen_port,
+        }
+        if rtype == 'local':
+            try:
+                remote_port = int((remote_port_row.get_text() or '0').strip() or '0')
+            except Exception:
+                remote_port = 0
+            rule['remote_host'] = remote_host_row.get_text().strip() or 'localhost'
+            rule['remote_port'] = remote_port
+        elif rtype == 'remote':
+            # RemoteForward: empty destination → reverse SOCKS (ssh_config(5)).
+            dest_host = remote_host_row.get_text().strip()
+            try:
+                dest_port = int((remote_port_row.get_text() or '0').strip() or '0')
+            except Exception:
+                dest_port = 0
+            if not dest_host and dest_port <= 0:
+                rule['socks'] = True
+            else:
+                rule['local_host'] = dest_host or 'localhost'
+                rule['local_port'] = dest_port
+
+        errors = validate_forwarding_rule(rule)
+        if errors:
+            self.show_error(_(errors[0].message))
             return
 
         # Check for port conflicts (for local and dynamic forwarding)
@@ -363,46 +397,6 @@ class ConnectionDialogPortForwardingMixin:
             except Exception as e:
                 logger.debug(f"Could not check port conflict for {listen_port}: {e}")
                 # Continue without port checking if there's an error
-        rule = {
-            'type': rtype,
-            'enabled': True,
-            # RemoteForward binds on the REMOTE host: an empty bind address means
-            # "let the remote/GatewayPorts decide" (loopback by default), so keep
-            # it empty rather than pinning localhost. Local/dynamic bind locally
-            # and keep defaulting to localhost.
-            'listen_addr': listen_addr if rtype == 'remote' else (listen_addr or 'localhost'),
-            'listen_port': listen_port,
-        }
-        if rtype == 'local':
-            # LocalForward: [listen_addr:]listen_port remote_host:remote_port
-            # The destination is mandatory and must be a valid port.
-            try:
-                remote_port = int((remote_port_row.get_text() or '0').strip() or '0')
-            except Exception:
-                remote_port = 0
-            if remote_port <= 0 or remote_port > 65535:
-                self.show_error(_("Please enter a valid destination port (1–65535)"))
-                return
-            rule['remote_host'] = remote_host_row.get_text().strip() or 'localhost'
-            rule['remote_port'] = remote_port
-        elif rtype == 'remote':
-            # RemoteForward: [listen_addr:]listen_port [local_host:local_port]
-            # With no destination it is a reverse SOCKS proxy (single-argument
-            # form, ssh_config(5)). An empty destination is therefore valid and
-            # means SOCKS rather than a malformed forward.
-            dest_host = remote_host_row.get_text().strip()
-            try:
-                dest_port = int((remote_port_row.get_text() or '0').strip() or '0')
-            except Exception:
-                dest_port = 0
-            if not dest_host and dest_port <= 0:
-                rule['socks'] = True
-            else:
-                if dest_port <= 0 or dest_port > 65535:
-                    self.show_error(_("Please enter a valid destination port (1–65535)"))
-                    return
-                rule['local_host'] = dest_host or 'localhost'
-                rule['local_port'] = dest_port
 
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
@@ -425,15 +419,20 @@ class ConnectionDialogPortForwardingMixin:
         previous_idx=None,
     ):
         """Apply defaults for rule editor fields based on selected forwarding type."""
+        from sshpilot.core.forwards import forwarding_rule_defaults
+
         try:
+            rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
+            defaults = forwarding_rule_defaults(rtype)
+            default_listen = str(defaults.get('listen_port') or 8080)
             if idx == 0:  # Local
                 if not listen_addr_row.get_text().strip():
                     listen_addr_row.set_text('localhost')
                 try:
                     if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                        listen_port_row.set_text('8080')
+                        listen_port_row.set_text(default_listen)
                 except Exception:
-                    listen_port_row.set_text('8080')
+                    listen_port_row.set_text(default_listen)
 
                 # When switching from Remote to Local, always reset the local
                 # target host to localhost instead of carrying remote destination.
@@ -456,9 +455,9 @@ class ConnectionDialogPortForwardingMixin:
                     listen_addr_row.set_text('')
                 try:
                     if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                        listen_port_row.set_text('8080')
+                        listen_port_row.set_text(default_listen)
                 except Exception:
-                    listen_port_row.set_text('8080')
+                    listen_port_row.set_text(default_listen)
                 # Only seed a destination when the user actively switches into
                 # Remote from another type; on the initial load we leave it as-is
                 # so an existing single-argument (SOCKS) rule keeps its blank
@@ -476,9 +475,9 @@ class ConnectionDialogPortForwardingMixin:
                     listen_addr_row.set_text('localhost')
                 try:
                     if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                        listen_port_row.set_text('1080')
+                        listen_port_row.set_text(default_listen)
                 except Exception:
-                    listen_port_row.set_text('1080')
+                    listen_port_row.set_text(default_listen)
         except Exception:
             pass
 

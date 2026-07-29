@@ -75,7 +75,7 @@ class TransferRequest:
     recursive: bool = False
     atomic: bool = True
 
-    def validate(self) -> None:
+    def validate(self, *, check_local_filesystem: bool = True) -> None:
         from ..errors import CoreError, ErrorCode
 
         if self.recursive:
@@ -95,25 +95,27 @@ class TransferRequest:
                     ErrorCode.VALIDATION_ERROR,
                     "Upload requires local source and remote destination",
                 )
-            if not os.path.exists(src.path):
-                raise CoreError(ErrorCode.VALIDATION_ERROR, f"Local path does not exist: {src.path}")
-            if not os.path.isfile(src.path):
-                raise CoreError(
-                    ErrorCode.VALIDATION_ERROR,
-                    "Upload source must be a regular file (recursive not supported)",
-                )
+            if check_local_filesystem:
+                if not os.path.exists(src.path):
+                    raise CoreError(ErrorCode.VALIDATION_ERROR, f"Local path does not exist: {src.path}")
+                if not os.path.isfile(src.path):
+                    raise CoreError(
+                        ErrorCode.VALIDATION_ERROR,
+                        "Upload source must be a regular file (recursive not supported)",
+                    )
         elif self.direction == TransferDirection.DOWNLOAD:
             if not src.is_remote or dst.is_remote:
                 raise CoreError(
                     ErrorCode.VALIDATION_ERROR,
                     "Download requires remote source and local destination",
                 )
-            parent = os.path.dirname(dst.path) or "."
-            if not os.path.isdir(parent):
-                raise CoreError(
-                    ErrorCode.VALIDATION_ERROR,
-                    f"Local destination directory does not exist: {parent}",
-                )
+            if check_local_filesystem:
+                parent = os.path.dirname(dst.path) or "."
+                if not os.path.isdir(parent):
+                    raise CoreError(
+                        ErrorCode.VALIDATION_ERROR,
+                        f"Local destination directory does not exist: {parent}",
+                    )
 
 
 @dataclass
@@ -176,6 +178,38 @@ def atomic_temp_name(destination: str) -> str:
     base = os.path.basename(destination) or "transfer"
     parent = os.path.dirname(destination) or "."
     return os.path.join(parent, f".{base}.sshpilot-tmp-{uuid.uuid4().hex[:8]}")
+
+
+class ConflictDecision(str, Enum):
+    """How a transfer should treat an existing destination path."""
+
+    PROCEED = "proceed"
+    SKIP = "skip"
+    FAIL = "fail"
+    RENAME = "rename"
+
+
+def decide_conflict(exists: bool, policy: OverwritePolicy) -> ConflictDecision:
+    """Shared overwrite/conflict decision used by daemon and GTK controllers."""
+    if not exists:
+        return ConflictDecision.PROCEED
+    if policy is OverwritePolicy.OVERWRITE:
+        return ConflictDecision.PROCEED
+    if policy is OverwritePolicy.SKIP:
+        return ConflictDecision.SKIP
+    if policy is OverwritePolicy.RENAME:
+        return ConflictDecision.RENAME
+    return ConflictDecision.FAIL
+
+
+def ui_conflict_response_to_policy(response: str) -> OverwritePolicy:
+    """Map AlertDialog responses (replace/skip/cancel) onto overwrite policy."""
+    key = (response or "").strip().lower()
+    if key in ("replace", "overwrite", "yes"):
+        return OverwritePolicy.OVERWRITE
+    if key in ("skip",):
+        return OverwritePolicy.SKIP
+    return OverwritePolicy.FAIL
 
 
 @dataclass
