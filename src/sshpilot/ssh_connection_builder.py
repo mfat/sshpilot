@@ -189,9 +189,9 @@ def resolve_native_auth(
     * Askpass disabled / nothing saved → no askpass; SSH prompts on the TTY.
     * ``use_sshpass`` is never set (sshpass removed from the native path).
     """
-    if interaction_policy not in {"normal", "none"}:
+    if interaction_policy not in {"normal", "none", "broker"}:
         raise ValueError("unsupported SSH interaction policy")
-    if interaction_policy == "none":
+    if interaction_policy in {"none", "broker"}:
         allowed = {
             "PATH",
             "HOME",
