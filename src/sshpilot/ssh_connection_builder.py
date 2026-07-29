@@ -889,6 +889,11 @@ def build_ssh_connection(
         if ctx.interaction_policy == "none":
             if "BatchMode=yes" not in base_cmd:
                 base_cmd.extend(["-o", "BatchMode=yes"])
+            # BatchMode does not suppress the unknown-host confirmation. Until
+            # the daemon has a typed trust-prompt channel, require an already
+            # trusted host instead of leaving an invisible prompt on its PTY.
+            if "StrictHostKeyChecking=yes" not in base_cmd:
+                base_cmd.extend(["-o", "StrictHostKeyChecking=yes"])
         elif (bool(app_ssh_config.get('batch_mode', False))
                 and not auth.password_mode
                 and not auth.use_askpass

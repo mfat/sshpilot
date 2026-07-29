@@ -272,6 +272,7 @@ def test_noninteractive_daemon_auth_skips_secrets_and_allowlists_environment(
     )
 
     assert _has_o_option(cmd, "BatchMode=yes")
+    assert _has_o_option(cmd, "StrictHostKeyChecking=yes")
     assert result.env["SSH_AUTH_SOCK"] == "/run/user/test/agent.sock"
     assert result.env["TERM"] == "xterm-256color"
     assert "SSH_ASKPASS" not in result.env

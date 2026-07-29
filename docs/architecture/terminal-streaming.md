@@ -17,10 +17,12 @@ non-blocking master until EOF and process exit have both been reconciled.
 The daemon reuses the canonical `Connection.native_connect()` /
 `build_ssh_connection()` path with `interaction_policy="none"`. This preserves
 the normal SSH config semantics while adding `BatchMode=yes` and suppressing
-askpass and secret lookup. The environment is allow-listed to locale, user,
+askpass and secret lookup. It also applies `StrictHostKeyChecking=yes` until a
+typed trust-prompt channel exists, so unknown hosts fail instead of waiting on
+an invisible confirmation. The environment is allow-listed to locale, user,
 home, path, terminal, and `SSH_AUTH_SOCK` values. Agent or unencrypted-key
 authentication can work; passwords, encrypted keys without agent support, and
-host-key confirmation fail truthfully instead of waiting invisibly.
+unknown host keys fail truthfully instead of waiting invisibly.
 
 One shared PTY I/O thread owns all master reads and writes. It limits each read
 to 32 KiB and returns to its selector regularly. Input is queued per session
