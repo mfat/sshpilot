@@ -74,6 +74,13 @@ class AskpassPromptServer:
         self._socket_path = os.path.join(base, f"askpass-{secrets.token_hex(8)}.sock")
         self._token = secrets.token_hex(32)
         try:
+            # Drop orphaned askpass sockets left by unclean exits.
+            from sshpilot.daemon.runtime_cleanup import sweep_stale_askpass_sockets
+
+            sweep_stale_askpass_sockets(base, protect_paths=[self._socket_path])
+        except Exception as exc:
+            logger.debug("askpass server: stale sweep skipped: %s", exc)
+        try:
             if os.path.exists(self._socket_path):
                 os.unlink(self._socket_path)
         except Exception:
