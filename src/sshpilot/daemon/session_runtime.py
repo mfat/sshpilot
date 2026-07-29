@@ -585,15 +585,39 @@ class SessionRuntime:
     def reject_pending_start(self, session_id: SessionId) -> None:
         """Mark an unscheduled startup failed after executor saturation."""
 
+        self.fail_pending_start(
+            session_id,
+            SshPilotError(
+                ErrorCode.SERVER_BUSY,
+                "The daemon session command queue is full",
+                retryable=True,
+                session_id=session_id,
+            ),
+        )
+
+    def fail_pending_start(
+        self,
+        session_id: SessionId,
+        error: BaseException,
+    ) -> None:
+        """Mark a prepared startup failed after acknowledgement."""
+
+        if isinstance(error, SshPilotError):
+            code = error.code
+            message = error.message
+        else:
+            code = ErrorCode.SESSION_STARTUP_FAILED
+            message = "The session process could not be started"
         with self._lock:
-            record = self._record_locked(session_id)
+            try:
+                record = self._record_locked(session_id)
+            except SshPilotError:
+                return
             if record.startup_started or record.state is not SessionState.STARTING:
                 return
             record.startup_scheduled = False
-            record.failure = SessionFailure(
-                code=ErrorCode.SERVER_BUSY.value,
-                message="The daemon session command queue is full",
-            )
+            record.terminal_capable = False
+            record.failure = SessionFailure(code=code.value, message=message)
             event = self._transition_locked(record, SessionState.FAILED)
         self._publish((event,))
 

@@ -721,7 +721,11 @@ class DaemonServer:
             )
             return
 
+        respond_on_accept = result.respond_on_accept
+
         def _complete(value: object) -> None:
+            if respond_on_accept:
+                return
             self._enqueue_completion(
                 _DeferredCompletion(
                     peer_token=peer_token,
@@ -732,6 +736,17 @@ class DaemonServer:
             )
 
         def _error(error: BaseException) -> None:
+            if respond_on_accept:
+                callback = result.on_background_error
+                if callback is not None:
+                    try:
+                        callback(error)
+                    except Exception as callback_error:
+                        logger.error(
+                            "Background deferred error handler failed type=%s",
+                            type(callback_error).__name__,
+                        )
+                return
             if isinstance(error, SshPilotError):
                 safe_error = SshPilotError(
                     error.code,
@@ -765,21 +780,52 @@ class DaemonServer:
                 )
             )
 
-        command = DeferredCommand(
-            key=result.command_key,
-            operation=result.operation,
-            on_complete=_complete,
-            on_error=_error,
-            on_cancel=lambda: None,
-        )
-        state.pending_request_ids.add(request.request_id)
-        if executor.submit(command):
-            logger.debug(
-                "Deferred daemon command accepted method=%s",
-                request.method,
+        def _cancel() -> None:
+            callback = result.on_cancel or result.on_rejected
+            try:
+                callback()
+            except Exception as callback_error:
+                logger.error(
+                    "Deferred command cancellation failed type=%s",
+                    type(callback_error).__name__,
+                )
+
+        if respond_on_accept:
+            accepted = executor.submit_background(
+                key=result.command_key,
+                operation=result.operation,
+                on_error=_error,
+                on_cancel=_cancel,
             )
+        else:
+            command = DeferredCommand(
+                key=result.command_key,
+                operation=result.operation,
+                on_complete=_complete,
+                on_error=_error,
+                on_cancel=lambda: None,
+            )
+            accepted = executor.submit(command)
+            if accepted:
+                state.pending_request_ids.add(request.request_id)
+
+        if accepted:
+            logger.debug(
+                "Deferred daemon command accepted method=%s respond_on_accept=%s",
+                request.method,
+                respond_on_accept,
+            )
+            if respond_on_accept:
+                self._queue_response(
+                    state,
+                    SuccessResponseEnvelope(
+                        protocol_version=protocol_version,
+                        request_id=request.request_id,
+                        result=result.accepted_result,
+                    ),
+                )
             return
-        state.pending_request_ids.discard(request.request_id)
+
         result.on_rejected()
         self._queue_response(
             state,

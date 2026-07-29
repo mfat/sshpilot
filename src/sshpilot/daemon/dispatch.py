@@ -103,13 +103,22 @@ class ImmediateResult:
 
 @dataclass(frozen=True)
 class DeferredResult:
-    """A daemon-owned blocking operation for the bounded command executor."""
+    """A daemon-owned blocking operation for the bounded command executor.
+
+    When ``respond_on_accept`` is true, the selector acknowledges the RPC as
+    soon as the executor accepts the command. Completion and background errors
+    must not send a second RPC response; they report through session state.
+    """
 
     operation: Callable[[], Any]
     command_key: Hashable
     on_rejected: Callable[[], None]
     session_id: Optional[SessionId] = None
     connection_id: Optional[ConnectionId] = None
+    respond_on_accept: bool = False
+    accepted_result: Any = None
+    on_background_error: Optional[Callable[[BaseException], None]] = None
+    on_cancel: Optional[Callable[[], None]] = None
 
 
 DispatchResult = Union[ImmediateResult, DeferredResult]
@@ -493,15 +502,19 @@ class RequestDispatcher:
         )
         prepared_wire = session_summary_to_wire(prepared)
 
-        def _start() -> dict:
-            self._session_runtime.start_session(prepared.id)
-            return prepared_wire
-
         return DeferredResult(
-            operation=_start,
+            operation=lambda: self._session_runtime.start_session(prepared.id),
             command_key=prepared.id,
             session_id=prepared.id,
             on_rejected=lambda: self._session_runtime.reject_pending_start(
+                prepared.id
+            ),
+            respond_on_accept=True,
+            accepted_result=prepared_wire,
+            on_background_error=lambda error: (
+                self._session_runtime.fail_pending_start(prepared.id, error)
+            ),
+            on_cancel=lambda: self._session_runtime.reject_pending_start(
                 prepared.id
             ),
         )

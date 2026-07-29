@@ -77,6 +77,26 @@ class BoundedCommandExecutor:
                 self._condition.notify()
             return True
 
+    def submit_background(
+        self,
+        *,
+        key: Hashable,
+        operation: Callable[[], object],
+        on_error: Callable[[BaseException], None],
+        on_cancel: Callable[[], None],
+    ) -> bool:
+        """Accept fire-and-report-state work without an RPC completion callback."""
+
+        return self.submit(
+            DeferredCommand(
+                key=key,
+                operation=operation,
+                on_complete=lambda _value: None,
+                on_error=on_error,
+                on_cancel=on_cancel,
+            )
+        )
+
     def stop_accepting(self, *, cancel_pending: bool) -> int:
         """Reject new work and optionally cancel commands not yet running."""
 
