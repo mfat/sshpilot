@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -19,16 +20,29 @@ from sshpilot.daemon.launcher import (
 )
 
 
-def _stop_owned_daemon(result):
+def _stop_owned_daemon(result, *, socket_path=None):
     result.client.close()
     handle = result.process
-    if handle is None or handle.process.poll() is not None:
-        return
-    handle.process.terminate()
-    handle.process.wait(timeout=3)
-    deadline = time.monotonic() + 2
-    while handle.process.poll() is None and time.monotonic() < deadline:
-        time.sleep(0.01)
+    if handle is not None and handle.process.poll() is None:
+        handle.process.terminate()
+        try:
+            handle.process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            handle.process.kill()
+            handle.process.wait(timeout=3)
+        deadline = time.monotonic() + 2
+        while handle.process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+    if socket_path is not None:
+        deadline = time.monotonic() + 5
+        while Path(socket_path).exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        # Last resort: unlink a leftover socket after the process is gone.
+        if Path(socket_path).exists() and (handle is None or handle.process.poll() is not None):
+            try:
+                Path(socket_path).unlink()
+            except OSError:
+                pass
 
 
 def test_existing_compatible_daemon_is_reused_without_launch(daemon_factory):
@@ -55,12 +69,15 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
     environment.update(
         {
             "HOME": str(tmp_path / "home"),
+            "XDG_RUNTIME_DIR": str(tmp_path / "xdg-runtime"),
             "XDG_CONFIG_HOME": str(tmp_path / "config"),
             "XDG_DATA_HOME": str(tmp_path / "data"),
             "XDG_STATE_HOME": str(tmp_path / "state"),
             "XDG_CACHE_HOME": str(tmp_path / "cache"),
         }
     )
+    for key in ("XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "HOME"):
+        Path(environment[key]).mkdir(parents=True, exist_ok=True)
     launcher = DaemonLauncher(
         socket_path=socket_path,
         startup_timeout=5,
@@ -124,11 +141,8 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
         finally:
             reused.client.close()
     finally:
-        _stop_owned_daemon(result)
+        _stop_owned_daemon(result, socket_path=socket_path)
 
-    deadline = time.monotonic() + 2
-    while socket_path.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
     assert not socket_path.exists()
 
 

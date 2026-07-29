@@ -8,6 +8,30 @@ from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.session_runtime import SessionRuntime
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daemon_xdg(tmp_path_factory, monkeypatch):
+    """Ensure every daemon test uses an isolated runtime root by default.
+
+    Overrides XDG_* so resolve_socket_path(None) never hits the user's live
+    daemon socket under the real ``$XDG_RUNTIME_DIR``.
+    """
+    root = tmp_path_factory.mktemp("daemon-xdg")
+    runtime = root / "runtime"
+    state = root / "state"
+    cache = root / "cache"
+    config = root / "config"
+    for path in (runtime, state, cache, config):
+        path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("HOME", str(root / "home"))
+    (root / "home").mkdir(exist_ok=True)
+    monkeypatch.delenv("SSHPILOT_DAEMON_SOCKET", raising=False)
+    yield root
+
+
 class TestConnection:
     def __init__(self, nickname="demo", hostname="example.test", username="alice"):
         self.nickname = nickname
