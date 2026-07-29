@@ -746,11 +746,14 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         daemon_group.add(self.restore_sessions_switch)
 
-        # Legacy fallback
+        # Explicit legacy local SSH (never an automatic failure fallback)
         self.legacy_fallback_switch = Adw.SwitchRow()
-        self.legacy_fallback_switch.set_title(_("Legacy local SSH fallback"))
+        self.legacy_fallback_switch.set_title(_("Use legacy local SSH terminals"))
         self.legacy_fallback_switch.set_subtitle(
-            _("⚠️ Fall back to local SSH when daemon is unavailable (not recommended)")
+            _(
+                "Force GTK-owned local SSH instead of daemon-backed sessions. "
+                "Daemon failures never fall back automatically."
+            )
         )
         legacy_fallback_active = bool(self.config.get_setting('terminal.legacy_local_ssh_fallback', False))
         self.legacy_fallback_switch.set_active(legacy_fallback_active)
