@@ -12,7 +12,7 @@ stored connection data.
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** AttachSessionRequest(session_id: sshpilot.api.models.common.SessionId, request_input: bool = True)
+**Purpose:** AttachSessionRequest(session_id: sshpilot.api.models.common.SessionId, request_input: bool = True, want_terminal_output: bool = False, from_sequence: int = 0)
 
 **Related methods:** `attach_session`
 **Related events:** None
@@ -21,13 +21,17 @@ stored connection data.
 | --- | --- | ---: | --- | ---: |
 | `session_id` | `SessionId` | Yes | — | No |
 | `request_input` | `bool` | No | `true` | No |
+| `want_terminal_output` | `bool` | No | `false` | No |
+| `from_sequence` | `int` | No | `0` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "from_sequence": 0,
   "request_input": true,
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
+  "want_terminal_output": false
 }
 ```
 
@@ -36,7 +40,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** AttachSessionResult(session: sshpilot.api.models.sessions.SessionSummary, attachment: sshpilot.api.models.sessions.AttachmentInfo)
+**Purpose:** AttachSessionResult(session: sshpilot.api.models.sessions.SessionSummary, attachment: sshpilot.api.models.sessions.AttachmentInfo, available_start: int = 0, live_sequence: int = 0, replay_truncated: bool = False, eof: bool = False)
 
 **Related methods:** `attach_session`
 **Related events:** None
@@ -45,6 +49,10 @@ Synthetic representation:
 | --- | --- | ---: | --- | ---: |
 | `session` | `SessionSummary` | Yes | — | No |
 | `attachment` | `AttachmentInfo` | Yes | — | No |
+| `available_start` | `int` | No | `0` | No |
+| `live_sequence` | `int` | No | `0` | No |
+| `replay_truncated` | `bool` | No | `false` | No |
+| `eof` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -56,6 +64,10 @@ Synthetic representation:
     "input_owner": false,
     "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
   },
+  "available_start": 0,
+  "eof": false,
+  "live_sequence": 0,
+  "replay_truncated": false,
   "session": {
     "attachment_count": 0,
     "capabilities": {
@@ -650,6 +662,7 @@ Synthetic representation:
 | `supported_protocol_versions` | `Tuple[str, ...]` | Yes | — | No |
 | `client_capabilities` | `FrozenSet[str]` | No | `[]` | No |
 | `frontend_type` | `Optional[str]` | No | `null` | No |
+| `supported_frame_types` | `FrozenSet[str]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -659,6 +672,7 @@ Synthetic representation:
   "client_name": {},
   "client_version": {},
   "frontend_type": null,
+  "supported_frame_types": [],
   "supported_protocol_versions": {}
 }
 ```
@@ -892,7 +906,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** OpenSessionRequest(connection_id: sshpilot.api.models.common.ConnectionId)
+**Purpose:** OpenSessionRequest(connection_id: sshpilot.api.models.common.ConnectionId, dimensions: sshpilot.api.models.terminal.TerminalDimensions | None = None)
 
 **Related methods:** `open_session`
 **Related events:** None
@@ -900,12 +914,14 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `connection_id` | `ConnectionId` | Yes | — | No |
+| `dimensions` | `TerminalDimensions | None` | No | `null` | No |
 
 Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000"
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "dimensions": null
 }
 ```
 
@@ -1056,7 +1072,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ReplayRequest(session_id: sshpilot.api.models.common.SessionId, after_sequence: int | None = None, max_bytes: int = 1048576)
+**Purpose:** ReplayRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId | None = None, after_sequence: int | None = None, max_bytes: int = 1048576)
 
 **Related methods:** `replay_terminal`
 **Related events:** None
@@ -1064,6 +1080,7 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `session_id` | `SessionId` | Yes | — | No |
+| `attachment_id` | `AttachmentId | None` | No | `null` | No |
 | `after_sequence` | `int | None` | No | `null` | No |
 | `max_bytes` | `int` | No | `1048576` | No |
 
@@ -1072,6 +1089,7 @@ Synthetic representation:
 ```json
 {
   "after_sequence": null,
+  "attachment_id": null,
   "max_bytes": 1048576,
   "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
@@ -1082,7 +1100,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ReplayResult(session_id: sshpilot.api.models.common.SessionId, data: bytes, first_sequence: int, next_sequence: int, bounds: sshpilot.api.models.terminal.ReplayBounds, truncated: bool = False)
+**Purpose:** ReplayResult(session_id: sshpilot.api.models.common.SessionId, first_sequence: int, next_sequence: int, bounds: sshpilot.api.models.terminal.ReplayBounds, data: bytes = b'', truncated: bool = False, eof: bool = False)
 
 **Related methods:** `replay_terminal`
 **Related events:** None
@@ -1090,11 +1108,12 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `session_id` | `SessionId` | Yes | — | No |
-| `data` | `bytes` | Yes | — | Yes |
 | `first_sequence` | `int` | Yes | — | No |
 | `next_sequence` | `int` | Yes | — | No |
 | `bounds` | `ReplayBounds` | Yes | — | No |
+| `data` | `bytes` | No | `<binary bytes>` | Yes |
 | `truncated` | `bool` | No | `false` | No |
+| `eof` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -1106,6 +1125,7 @@ Synthetic representation:
     "retained_bytes": 0
   },
   "data": "<sensitive value omitted>",
+  "eof": false,
   "first_sequence": 0,
   "next_sequence": 1,
   "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
@@ -1393,7 +1413,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** TerminalOutput(session_id: sshpilot.api.models.common.SessionId, sequence: int, data: bytes, created_at: datetime.datetime = <factory>)
+**Purpose:** TerminalOutput(session_id: sshpilot.api.models.common.SessionId, sequence: int, data: bytes, created_at: datetime.datetime = <factory>, replay: bool = False, eof: bool = False)
 
 **Related methods:** None
 **Related events:** `session.output`
@@ -1404,6 +1424,8 @@ Synthetic representation:
 | `sequence` | `int` | Yes | — | No |
 | `data` | `bytes` | Yes | — | Yes |
 | `created_at` | `datetime` | No | `<UTC timestamp at creation>` | No |
+| `replay` | `bool` | No | `false` | No |
+| `eof` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -1411,6 +1433,8 @@ Synthetic representation:
 {
   "created_at": "<UTC timestamp at creation>",
   "data": "<sensitive value omitted>",
+  "eof": false,
+  "replay": false,
   "sequence": 0,
   "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }

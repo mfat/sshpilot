@@ -76,7 +76,7 @@ UNSUPPORTED_OPERATION_CASES = [
                 data=b"example",
             )
         ),
-        Capability.TERMINAL,
+        Capability.TERMINAL_INPUT,
     ),
     (
         "resize_terminal",
@@ -87,7 +87,7 @@ UNSUPPORTED_OPERATION_CASES = [
                 dimensions=TerminalDimensions(rows=24, columns=80),
             )
         ),
-        Capability.TERMINAL,
+        Capability.TERMINAL_RESIZE,
     ),
     (
         "replay_terminal",
@@ -95,6 +95,14 @@ UNSUPPORTED_OPERATION_CASES = [
             ReplayRequest(session_id=SessionId("session:test"))
         ),
         Capability.TERMINAL_REPLAY,
+    ),
+    (
+        "subscribe_terminal",
+        lambda client: client.subscribe_terminal(
+            SessionId("session:test"),
+            lambda _output: None,
+        ),
+        Capability.TERMINAL_OUTPUT,
     ),
     (
         "respond_to_interaction",
@@ -143,6 +151,10 @@ def test_capabilities_advertise_only_contract_tested_runtime(
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,
+                Capability.TERMINAL_OUTPUT,
+                Capability.TERMINAL_INPUT,
+                Capability.TERMINAL_RESIZE,
+                Capability.TERMINAL_REPLAY,
             }
         )
     assert capabilities.supported == frozenset(expected)
@@ -197,6 +209,10 @@ def test_advertised_capabilities_have_implemented_operations(
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,
+                Capability.TERMINAL_OUTPUT,
+                Capability.TERMINAL_INPUT,
+                Capability.TERMINAL_RESIZE,
+                Capability.TERMINAL_REPLAY,
             }
         )
     assert client.get_capabilities().supported <= implemented_capabilities

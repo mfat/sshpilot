@@ -13,6 +13,7 @@ from .common import (
     require_identifier,
     utc_now,
 )
+from .terminal import TerminalDimensions
 
 
 class SessionState(str, Enum):
@@ -28,9 +29,12 @@ class SessionState(str, Enum):
 @dataclass(frozen=True)
 class OpenSessionRequest:
     connection_id: ConnectionId
+    dimensions: Optional[TerminalDimensions] = None
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
+        if self.dimensions is not None and type(self.dimensions) is not TerminalDimensions:
+            raise TypeError("initial terminal dimensions must be TerminalDimensions or None")
 
 
 @dataclass(frozen=True)
@@ -118,11 +122,17 @@ class SessionSummary:
 class AttachSessionRequest:
     session_id: SessionId
     request_input: bool = True
+    want_terminal_output: bool = False
+    from_sequence: int = 0
 
     def __post_init__(self) -> None:
         require_identifier(self.session_id, "session id")
         if type(self.request_input) is not bool:
             raise TypeError("request input must be a boolean")
+        if type(self.want_terminal_output) is not bool:
+            raise TypeError("terminal output preference must be a boolean")
+        if type(self.from_sequence) is not int or self.from_sequence < 0:
+            raise ValueError("terminal replay sequence must not be negative")
 
 
 @dataclass(frozen=True)
@@ -144,6 +154,10 @@ class AttachmentInfo:
 class AttachSessionResult:
     session: SessionSummary
     attachment: AttachmentInfo
+    available_start: int = 0
+    live_sequence: int = 0
+    replay_truncated: bool = False
+    eof: bool = False
 
     def __post_init__(self) -> None:
         if type(self.session) is not SessionSummary:
@@ -152,6 +166,15 @@ class AttachSessionResult:
             raise TypeError("attach result attachment must be AttachmentInfo")
         if self.attachment.session_id != self.session.id:
             raise ValueError("attachment and session identifiers must match")
+        if (
+            type(self.available_start) is not int
+            or type(self.live_sequence) is not int
+            or self.available_start < 0
+            or self.live_sequence < self.available_start
+        ):
+            raise ValueError("attach result contains invalid terminal bounds")
+        if type(self.replay_truncated) is not bool or type(self.eof) is not bool:
+            raise TypeError("attach terminal state flags must be booleans")
 
 
 @dataclass(frozen=True)

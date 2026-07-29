@@ -85,6 +85,10 @@ def test_runtime_capability_markers_match_the_provider(
                 Capability.SESSIONS_READ.value,
                 Capability.SESSIONS_WRITE.value,
                 Capability.SESSIONS_EVENTS.value,
+                Capability.TERMINAL_OUTPUT.value,
+                Capability.TERMINAL_INPUT.value,
+                Capability.TERMINAL_RESIZE.value,
+                Capability.TERMINAL_REPLAY.value,
             }
         )
     assert documented == supported == expected
@@ -164,6 +168,10 @@ def test_schema_only_capabilities_are_not_advertised(
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,
+                Capability.TERMINAL_OUTPUT,
+                Capability.TERMINAL_INPUT,
+                Capability.TERMINAL_RESIZE,
+                Capability.TERMINAL_REPLAY,
             }
         )
     assert client.get_capabilities().supported == frozenset(runtime_capabilities)

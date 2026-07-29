@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import struct
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from ..errors import ErrorCode
 
@@ -76,6 +76,21 @@ def encode_frame(message: Dict[str, Any], *, max_size: int = MAX_FRAME_SIZE) -> 
     return struct.pack(">I", len(payload)) + payload
 
 
+def encode_binary_frame(payload: bytes, *, max_size: int = MAX_FRAME_SIZE) -> bytes:
+    """Frame already-validated binary data without JSON conversion."""
+
+    if not isinstance(payload, bytes):
+        raise TypeError("binary frame payload must be bytes")
+    if not payload:
+        raise FramingError(ErrorCode.INVALID_FRAME, "Empty frames are not permitted")
+    if len(payload) > max_size:
+        raise FramingError(
+            ErrorCode.FRAME_TOO_LARGE,
+            "The transport frame exceeds the maximum size",
+        )
+    return struct.pack(">I", len(payload)) + payload
+
+
 class FrameDecoder:
     """Incrementally decode complete frames from fragmented socket reads."""
 
@@ -129,6 +144,65 @@ class FrameDecoder:
             )
 
 
+class MultiplexedFrameDecoder:
+    """Incrementally decode JSON and negotiated binary terminal frames."""
+
+    def __init__(self, *, max_size: int = MAX_FRAME_SIZE) -> None:
+        self._max_size = max_size
+        self._buffer = bytearray()
+        self._expected_size: Optional[int] = None
+
+    @property
+    def incomplete(self) -> bool:
+        return bool(self._buffer) or self._expected_size is not None
+
+    def feed(self, data: bytes) -> List[Union[Dict[str, Any], object]]:
+        from .terminal_frames import decode_terminal_payload, is_terminal_payload
+
+        if not isinstance(data, bytes):
+            raise TypeError("frame data must be bytes")
+        self._buffer.extend(data)
+        messages: List[Union[Dict[str, Any], object]] = []
+        while True:
+            if self._expected_size is None:
+                if len(self._buffer) < _HEADER_SIZE:
+                    break
+                self._expected_size = struct.unpack(
+                    ">I", self._buffer[:_HEADER_SIZE]
+                )[0]
+                del self._buffer[:_HEADER_SIZE]
+                if self._expected_size == 0:
+                    self._expected_size = None
+                    raise FramingError(
+                        ErrorCode.INVALID_FRAME,
+                        "Empty frames are not permitted",
+                    )
+                if self._expected_size > self._max_size:
+                    self._expected_size = None
+                    raise FramingError(
+                        ErrorCode.FRAME_TOO_LARGE,
+                        "The transport frame exceeds the maximum size",
+                    )
+            if len(self._buffer) < self._expected_size:
+                break
+            payload = bytes(self._buffer[: self._expected_size])
+            del self._buffer[: self._expected_size]
+            self._expected_size = None
+            messages.append(
+                decode_terminal_payload(payload)
+                if is_terminal_payload(payload)
+                else _decode_payload(payload)
+            )
+        return messages
+
+    def finish(self) -> None:
+        if self.incomplete:
+            raise FramingError(
+                ErrorCode.INVALID_FRAME,
+                "The transport connection closed during a frame",
+            )
+
+
 def _receive_exact(sock: socket.socket, size: int, *, allow_clean_close: bool) -> bytes:
     chunks = bytearray()
     while len(chunks) < size:
@@ -161,3 +235,27 @@ def receive_frame(
             "The transport frame exceeds the maximum size",
         )
     return _decode_payload(_receive_exact(sock, size, allow_clean_close=False))
+
+
+def receive_multiplexed_frame(
+    sock: socket.socket,
+    *,
+    max_size: int = MAX_FRAME_SIZE,
+) -> Union[Dict[str, Any], object]:
+    """Read one JSON envelope or negotiated binary terminal frame."""
+
+    from .terminal_frames import decode_terminal_payload, is_terminal_payload
+
+    header = _receive_exact(sock, _HEADER_SIZE, allow_clean_close=True)
+    size = struct.unpack(">I", header)[0]
+    if size == 0:
+        raise FramingError(ErrorCode.INVALID_FRAME, "Empty frames are not permitted")
+    if size > max_size:
+        raise FramingError(
+            ErrorCode.FRAME_TOO_LARGE,
+            "The transport frame exceeds the maximum size",
+        )
+    payload = _receive_exact(sock, size, allow_clean_close=False)
+    if is_terminal_payload(payload):
+        return decode_terminal_payload(payload)
+    return _decode_payload(payload)

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.7",
+  "api_implementation_version": "0.8",
   "client_method_contract": {
     "attach_session": {
       "capability": "sessions.write",
@@ -51,23 +51,27 @@
     },
     "replay_terminal": {
       "capability": "terminal.replay",
-      "status": "schema-only"
+      "status": "daemon-only"
     },
     "resize_terminal": {
-      "capability": "terminal",
-      "status": "schema-only"
+      "capability": "terminal.resize",
+      "status": "daemon-only"
     },
     "respond_to_interaction": {
       "capability": "interactions",
       "status": "schema-only"
     },
     "send_terminal_input": {
-      "capability": "terminal",
-      "status": "schema-only"
+      "capability": "terminal.input",
+      "status": "daemon-only"
     },
     "subscribe_events": {
       "capability": "connections.events",
       "status": "implemented"
+    },
+    "subscribe_terminal": {
+      "capability": "terminal.output",
+      "status": "daemon-only"
     },
     "update_connection": {
       "capability": "connections.write",
@@ -113,6 +117,12 @@
     },
     "system.handshake": {
       "capability": null
+    },
+    "terminal.replay": {
+      "capability": "terminal.replay"
+    },
+    "terminal.resize": {
+      "capability": "terminal.resize"
     }
   },
   "enums": {
@@ -129,6 +139,9 @@
       "sessions.events",
       "terminal",
       "terminal.attach",
+      "terminal.output",
+      "terminal.input",
+      "terminal.resize",
       "terminal.replay",
       "interactions",
       "sftp",
@@ -156,6 +169,15 @@
       "session_startup_failed",
       "session_termination_failed",
       "unsupported_session_protocol",
+      "terminal_attachment_required",
+      "terminal_input_owner_required",
+      "terminal_input_backpressure",
+      "terminal_invalid_dimensions",
+      "terminal_unavailable",
+      "terminal_replay_unavailable",
+      "terminal_sequence_out_of_range",
+      "terminal_continuity_lost",
+      "pty_allocation_failed",
       "server_busy",
       "interaction_not_found",
       "interaction_already_answered",
@@ -268,6 +290,20 @@
           "required": false,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "want_terminal_output",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "from_sequence",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
         }
       ],
       "status": "Implemented"
@@ -287,6 +323,34 @@
           "required": true,
           "sensitive": false,
           "type": "AttachmentInfo"
+        },
+        {
+          "default": 0,
+          "name": "available_start",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "live_sequence",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": false,
+          "name": "replay_truncated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "eof",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -1003,6 +1067,13 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[str]"
+        },
+        {
+          "default": [],
+          "name": "supported_frame_types",
+          "required": false,
+          "sensitive": false,
+          "type": "FrozenSet[str]"
         }
       ],
       "status": "Implemented"
@@ -1279,6 +1350,13 @@
           "required": true,
           "sensitive": false,
           "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "dimensions",
+          "required": false,
+          "sensitive": false,
+          "type": "TerminalDimensions | None"
         }
       ],
       "status": "Implemented"
@@ -1466,6 +1544,13 @@
         },
         {
           "default": null,
+          "name": "attachment_id",
+          "required": false,
+          "sensitive": false,
+          "type": "AttachmentId | None"
+        },
+        {
+          "default": null,
           "name": "after_sequence",
           "required": false,
           "sensitive": false,
@@ -1492,13 +1577,6 @@
         },
         {
           "default": null,
-          "name": "data",
-          "required": true,
-          "sensitive": true,
-          "type": "bytes"
-        },
-        {
-          "default": null,
           "name": "first_sequence",
           "required": true,
           "sensitive": false,
@@ -1519,8 +1597,22 @@
           "type": "ReplayBounds"
         },
         {
+          "default": "<binary bytes>",
+          "name": "data",
+          "required": false,
+          "sensitive": true,
+          "type": "bytes"
+        },
+        {
           "default": false,
           "name": "truncated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "eof",
           "required": false,
           "sensitive": false,
           "type": "bool"
@@ -1854,6 +1946,20 @@
           "required": false,
           "sensitive": false,
           "type": "datetime"
+        },
+        {
+          "default": false,
+          "name": "replay",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "eof",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Schema only"

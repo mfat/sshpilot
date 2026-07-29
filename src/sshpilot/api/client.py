@@ -1,9 +1,16 @@
 """Typed frontend-independent sshPilot client contract."""
 
-from typing import List, Protocol
+from typing import List, Optional, Protocol
 
 from .capabilities import Capabilities
 from .events import CoreEventCallback, Subscription
+from .terminal_events import (
+    TerminalContinuityCallback,
+    TerminalEofCallback,
+    TerminalErrorCallback,
+    TerminalOutputCallback,
+    TerminalSubscription,
+)
 from .models.connections import (
     ConnectionDetails,
     ConnectionSummary,
@@ -80,6 +87,17 @@ class SshPilotClient(Protocol):
         ...
 
     def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
+        ...
+
+    def subscribe_terminal(
+        self,
+        session_id: SessionId,
+        on_output: TerminalOutputCallback,
+        *,
+        on_continuity_lost: Optional[TerminalContinuityCallback] = None,
+        on_eof: Optional[TerminalEofCallback] = None,
+        on_error: Optional[TerminalErrorCallback] = None,
+    ) -> TerminalSubscription:
         ...
 
     def respond_to_interaction(self, response: InteractionResponse) -> None:

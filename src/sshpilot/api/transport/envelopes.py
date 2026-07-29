@@ -135,6 +135,7 @@ class HandshakeRequest:
     supported_protocol_versions: Tuple[str, ...]
     client_capabilities: FrozenSet[str] = frozenset()
     frontend_type: Optional[str] = None
+    supported_frame_types: FrozenSet[str] = frozenset()
 
     def __post_init__(self) -> None:
         require_identifier(self.client_name, "client name")
@@ -152,6 +153,10 @@ class HandshakeRequest:
             require_identifier(capability, "client capability")
         if self.frontend_type is not None:
             require_identifier(self.frontend_type, "frontend type")
+        if type(self.supported_frame_types) is not frozenset:
+            raise TypeError("supported frame types must be a frozenset")
+        for frame_type in self.supported_frame_types:
+            require_identifier(frame_type, "supported frame type")
 
 
 @dataclass(frozen=True)

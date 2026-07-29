@@ -43,6 +43,13 @@ from ..models.sessions import (
     SessionState,
     SessionSummary,
 )
+from ..models.terminal import (
+    ReplayBounds,
+    ReplayRequest,
+    ReplayResult,
+    ResizeTerminalRequest,
+    TerminalDimensions,
+)
 from ..session_identity import session_id_from_uuid, session_uuid_from_id
 from .envelopes import (
     ErrorData,
@@ -423,6 +430,7 @@ def handshake_request_to_wire(request: HandshakeRequest) -> Dict[str, Any]:
         "supported_protocol_versions": list(request.supported_protocol_versions),
         "client_capabilities": sorted(request.client_capabilities),
         "frontend_type": request.frontend_type,
+        "supported_frame_types": sorted(request.supported_frame_types),
     }
 
 
@@ -436,11 +444,17 @@ def handshake_request_from_wire(value: Any) -> HandshakeRequest:
             "client_capabilities",
             "frontend_type",
         },
+        optional={"supported_frame_types"},
         context="handshake request",
     )
     versions = data["supported_protocol_versions"]
     capabilities = data["client_capabilities"]
-    if type(versions) is not list or type(capabilities) is not list:
+    frame_types = data.get("supported_frame_types", [])
+    if (
+        type(versions) is not list
+        or type(capabilities) is not list
+        or type(frame_types) is not list
+    ):
         raise ValueError("handshake version and capability fields must be arrays")
     return HandshakeRequest(
         client_name=data["client_name"],
@@ -450,6 +464,9 @@ def handshake_request_from_wire(value: Any) -> HandshakeRequest:
             _identifier(item, "client capability") for item in capabilities
         ),
         frontend_type=data["frontend_type"],
+        supported_frame_types=frozenset(
+            _identifier(item, "supported frame type") for item in frame_types
+        ),
     )
 
 
@@ -923,6 +940,11 @@ def open_session_request_to_wire(request: OpenSessionRequest) -> Dict[str, Any]:
         raise TypeError("open session request is required")
     return {
         "connection_id": request.connection_id,
+        "dimensions": (
+            terminal_dimensions_to_wire(request.dimensions)
+            if request.dimensions is not None
+            else None
+        ),
     }
 
 
@@ -930,10 +952,16 @@ def open_session_request_from_wire(value: Any) -> OpenSessionRequest:
     data = _strict_fields(
         value,
         required={"connection_id"},
+        optional={"dimensions"},
         context="open session request",
     )
     return OpenSessionRequest(
         connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
+        dimensions=(
+            terminal_dimensions_from_wire(data["dimensions"])
+            if data.get("dimensions") is not None
+            else None
+        ),
     )
 
 
@@ -943,6 +971,8 @@ def attach_session_request_to_wire(request: AttachSessionRequest) -> Dict[str, A
     return {
         "session_id": request.session_id,
         "request_input": request.request_input,
+        "want_terminal_output": request.want_terminal_output,
+        "from_sequence": request.from_sequence,
     }
 
 
@@ -950,11 +980,20 @@ def attach_session_request_from_wire(value: Any) -> AttachSessionRequest:
     data = _strict_fields(
         value,
         required={"session_id", "request_input"},
+        optional={"want_terminal_output", "from_sequence"},
         context="attach session request",
     )
     return AttachSessionRequest(
         session_id=_session_id(data["session_id"], "session id"),
         request_input=_boolean(data["request_input"], "request input"),
+        want_terminal_output=_boolean(
+            data.get("want_terminal_output", False),
+            "terminal output preference",
+        ),
+        from_sequence=_integer(
+            data.get("from_sequence", 0),
+            "terminal replay sequence",
+        ),
     )
 
 
@@ -989,6 +1028,10 @@ def attach_session_result_to_wire(result: AttachSessionResult) -> Dict[str, Any]
     return {
         "session": session_summary_to_wire(result.session),
         "attachment": attachment_info_to_wire(result.attachment),
+        "available_start": result.available_start,
+        "live_sequence": result.live_sequence,
+        "replay_truncated": result.replay_truncated,
+        "eof": result.eof,
     }
 
 
@@ -996,11 +1039,151 @@ def attach_session_result_from_wire(value: Any) -> AttachSessionResult:
     data = _strict_fields(
         value,
         required={"session", "attachment"},
+        optional={
+            "available_start",
+            "live_sequence",
+            "replay_truncated",
+            "eof",
+        },
         context="attach session result",
     )
     return AttachSessionResult(
         session=session_summary_from_wire(data["session"]),
         attachment=attachment_info_from_wire(data["attachment"]),
+        available_start=_integer(data.get("available_start", 0), "available start"),
+        live_sequence=_integer(data.get("live_sequence", 0), "live sequence"),
+        replay_truncated=_boolean(
+            data.get("replay_truncated", False),
+            "replay truncated",
+        ),
+        eof=_boolean(data.get("eof", False), "terminal eof"),
+    )
+
+
+def terminal_dimensions_to_wire(value: TerminalDimensions) -> Dict[str, Any]:
+    if type(value) is not TerminalDimensions:
+        raise TypeError("terminal dimensions are required")
+    return {"rows": value.rows, "columns": value.columns}
+
+
+def terminal_dimensions_from_wire(value: Any) -> TerminalDimensions:
+    data = _strict_fields(
+        value,
+        required={"rows", "columns"},
+        context="terminal dimensions",
+    )
+    return TerminalDimensions(
+        rows=_integer(data["rows"], "terminal rows"),
+        columns=_integer(data["columns"], "terminal columns"),
+    )
+
+
+def resize_terminal_request_to_wire(
+    request: ResizeTerminalRequest,
+) -> Dict[str, Any]:
+    if type(request) is not ResizeTerminalRequest:
+        raise TypeError("terminal resize request is required")
+    return {
+        "session_id": request.session_id,
+        "attachment_id": request.attachment_id,
+        "dimensions": terminal_dimensions_to_wire(request.dimensions),
+    }
+
+
+def resize_terminal_request_from_wire(value: Any) -> ResizeTerminalRequest:
+    data = _strict_fields(
+        value,
+        required={"session_id", "attachment_id", "dimensions"},
+        context="terminal resize request",
+    )
+    return ResizeTerminalRequest(
+        session_id=_session_id(data["session_id"], "session id"),
+        attachment_id=AttachmentId(
+            _identifier(data["attachment_id"], "attachment id")
+        ),
+        dimensions=terminal_dimensions_from_wire(data["dimensions"]),
+    )
+
+
+def replay_request_to_wire(request: ReplayRequest) -> Dict[str, Any]:
+    if type(request) is not ReplayRequest:
+        raise TypeError("terminal replay request is required")
+    return {
+        "session_id": request.session_id,
+        "attachment_id": request.attachment_id,
+        "after_sequence": request.after_sequence,
+        "max_bytes": request.max_bytes,
+    }
+
+
+def replay_request_from_wire(value: Any) -> ReplayRequest:
+    data = _strict_fields(
+        value,
+        required={"session_id", "attachment_id", "after_sequence", "max_bytes"},
+        context="terminal replay request",
+    )
+    after = data["after_sequence"]
+    if after is not None:
+        after = _integer(after, "terminal replay sequence")
+    return ReplayRequest(
+        session_id=_session_id(data["session_id"], "session id"),
+        attachment_id=AttachmentId(
+            _identifier(data["attachment_id"], "attachment id")
+        ),
+        after_sequence=after,
+        max_bytes=_integer(data["max_bytes"], "terminal replay byte limit"),
+    )
+
+
+def replay_result_to_wire(result: ReplayResult) -> Dict[str, Any]:
+    if type(result) is not ReplayResult:
+        raise TypeError("terminal replay result is required")
+    return {
+        "session_id": result.session_id,
+        "first_sequence": result.first_sequence,
+        "next_sequence": result.next_sequence,
+        "bounds": {
+            "earliest_sequence": result.bounds.earliest_sequence,
+            "latest_sequence": result.bounds.latest_sequence,
+            "retained_bytes": result.bounds.retained_bytes,
+        },
+        "truncated": result.truncated,
+        "eof": result.eof,
+    }
+
+
+def replay_result_from_wire(value: Any) -> ReplayResult:
+    data = _strict_fields(
+        value,
+        required={
+            "session_id",
+            "first_sequence",
+            "next_sequence",
+            "bounds",
+            "truncated",
+            "eof",
+        },
+        context="terminal replay result",
+    )
+    bounds = _strict_fields(
+        data["bounds"],
+        required={"earliest_sequence", "latest_sequence", "retained_bytes"},
+        context="terminal replay bounds",
+    )
+    return ReplayResult(
+        session_id=_session_id(data["session_id"], "session id"),
+        first_sequence=_integer(data["first_sequence"], "first sequence"),
+        next_sequence=_integer(data["next_sequence"], "next sequence"),
+        bounds=ReplayBounds(
+            earliest_sequence=_integer(
+                bounds["earliest_sequence"],
+                "earliest sequence",
+            ),
+            latest_sequence=_integer(bounds["latest_sequence"], "latest sequence"),
+            retained_bytes=_integer(bounds["retained_bytes"], "retained bytes"),
+        ),
+        truncated=_boolean(data["truncated"], "replay truncated"),
+        eof=_boolean(data["eof"], "terminal eof"),
     )
 
 

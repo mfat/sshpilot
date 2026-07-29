@@ -7,7 +7,7 @@ from typing import Optional
 from .common import AttachmentId, SessionId, require_identifier, utc_now
 
 
-MAX_TERMINAL_DIMENSION = 10_000
+MAX_TERMINAL_DIMENSION = 1_000
 MAX_REPLAY_BYTES = 16 * 1024 * 1024
 
 
@@ -42,6 +42,8 @@ class TerminalOutput:
     sequence: int
     data: bytes = field(repr=False)
     created_at: datetime = field(default_factory=utc_now)
+    replay: bool = False
+    eof: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.session_id, "session id")
@@ -49,6 +51,12 @@ class TerminalOutput:
             raise ValueError("terminal output sequence must not be negative")
         if not isinstance(self.data, bytes):
             raise TypeError("terminal output must be bytes")
+        if type(self.replay) is not bool or type(self.eof) is not bool:
+            raise TypeError("terminal output flags must be booleans")
+
+    @property
+    def next_sequence(self) -> int:
+        return self.sequence + len(self.data)
 
 
 @dataclass(frozen=True)
@@ -65,11 +73,14 @@ class ResizeTerminalRequest:
 @dataclass(frozen=True)
 class ReplayRequest:
     session_id: SessionId
+    attachment_id: Optional[AttachmentId] = None
     after_sequence: Optional[int] = None
     max_bytes: int = 1024 * 1024
 
     def __post_init__(self) -> None:
         require_identifier(self.session_id, "session id")
+        if self.attachment_id is not None:
+            require_identifier(self.attachment_id, "attachment id")
         if self.after_sequence is not None and self.after_sequence < 0:
             raise ValueError("replay sequence must not be negative")
         if not 1 <= self.max_bytes <= MAX_REPLAY_BYTES:
@@ -94,14 +105,17 @@ class ReplayBounds:
 @dataclass(frozen=True)
 class ReplayResult:
     session_id: SessionId
-    data: bytes = field(repr=False)
     first_sequence: int
     next_sequence: int
     bounds: ReplayBounds
+    data: bytes = field(default=b"", repr=False)
     truncated: bool = False
+    eof: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.data, bytes):
             raise TypeError("terminal replay data must be bytes")
         if self.first_sequence < 0 or self.next_sequence < self.first_sequence:
             raise ValueError("invalid terminal replay sequence range")
+        if type(self.truncated) is not bool or type(self.eof) is not bool:
+            raise TypeError("terminal replay flags must be booleans")
