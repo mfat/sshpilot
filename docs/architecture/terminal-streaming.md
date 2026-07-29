@@ -15,14 +15,13 @@ that owned process group. The parent closes the slave immediately and keeps the
 non-blocking master until EOF and process exit have both been reconciled.
 
 The daemon reuses the canonical `Connection.native_connect()` /
-`build_ssh_connection()` path with `interaction_policy="none"`. This preserves
-the normal SSH config semantics while adding `BatchMode=yes` and suppressing
-askpass and secret lookup. It also applies `StrictHostKeyChecking=yes` until a
-typed trust-prompt channel exists, so unknown hosts fail instead of waiting on
-an invisible confirmation. The environment is allow-listed to locale, user,
-home, path, terminal, and `SSH_AUTH_SOCK` values. Agent or unencrypted-key
-authentication can work; passwords, encrypted keys without agent support, and
-unknown host keys fail truthfully instead of waiting invisibly.
+`build_ssh_connection()` path. Control-only sessions use
+`interaction_policy="none"` with `BatchMode=yes` and strict host checking.
+Phase 8 interaction-enabled sessions use `interaction_policy="broker"`:
+`BatchMode` is disabled only after a typed responder path exists, strict
+checking is retained against a session-private exact host-key pin, and
+password/passphrase values use the private askpass broker. The environment
+remains allow-listed and retains `SSH_AUTH_SOCK`.
 
 One shared PTY I/O thread owns all master reads and writes. It limits each read
 to 32 KiB and returns to its selector regularly. Input is queued per session
@@ -141,5 +140,8 @@ pure emulator through `feed()`; VTE does not own or spawn the child. It sends
 commit bytes and dimensions back through the client APIs. The normal VTE and
 PyXtermJS launch paths remain unchanged and in-process by default.
 
-No interaction broker, askpass, secret retrieval, reconnect replay, terminal
-persistence, remote transport, or Windows ConPTY support exists in this phase.
+Typed host-key/password/passphrase interactions are described in
+[interaction broker](interaction-broker.md) and
+[secret brokering](secret-brokering.md). Unrestricted keyboard-interactive,
+reconnect replay, terminal persistence, remote transport, and Windows ConPTY
+remain unsupported.

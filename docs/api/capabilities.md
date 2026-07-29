@@ -31,6 +31,12 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: terminal.input -->
 <!-- api-daemon-runtime-capability: terminal.resize -->
 <!-- api-daemon-runtime-capability: terminal.replay -->
+<!-- api-daemon-runtime-capability: interactions.read -->
+<!-- api-daemon-runtime-capability: interactions.respond -->
+<!-- api-daemon-runtime-capability: interactions.events -->
+<!-- api-daemon-runtime-capability: interactions.host_key -->
+<!-- api-daemon-runtime-capability: interactions.password -->
+<!-- api-daemon-runtime-capability: interactions.passphrase -->
 
 ## Inventory
 
@@ -48,7 +54,13 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `terminal.input` | Send raw bytes to the owned PTY | Daemon: Implemented after binary-frame negotiation | `send_terminal_input` | None | Input-owner attachment and bounded PTY input queue | v1 / API 0.8 |
 | `terminal.resize` | Resize the owned PTY | Daemon: Implemented after binary-frame negotiation | `resize_terminal`; wire `terminal.resize` | None | Attached input owner and `TIOCSWINSZ` | v1 / API 0.8 |
 | `terminal.replay` | Replay retained terminal bytes | Daemon: Implemented after binary-frame negotiation | `replay_terminal`; wire `terminal.replay` | Dedicated replay binary frames | Bounded per-session replay ring | v1 / API 0.8 |
-| `interactions` | Present and answer core-requested user interactions | Unsupported | `respond_to_interaction` | `session.interaction_requested` | Interaction broker and secret-safe frontend bridge | v1 |
+| `interactions` | Legacy broad interaction identifier | Deprecated and never advertised | None | None | Replaced by narrow interaction capabilities | v1 |
+| `interactions.read` | Read safe typed interaction metadata | Daemon implemented after `binary-secret-v1` negotiation | `list_interactions`, `get_interaction` | Interaction lifecycle events | Daemon interaction broker | v1 / API 0.9 |
+| `interactions.respond` | Claim and answer eligible interactions | Daemon implemented after `binary-secret-v1` negotiation | claim/release/respond/cancel and one-use secret send | Interaction lifecycle events | Responder-bound nonce and secure Unix socket | v1 / API 0.9 |
+| `interactions.events` | Observe safe interaction lifecycle metadata | Daemon implemented | `subscribe_events` | `interaction.created`, `interaction.state_changed` | Bounded daemon event stream | v1 / API 0.9 |
+| `interactions.host_key` | Strict unknown-host trust decisions | Daemon implemented | Typed host-key decisions | Interaction lifecycle events | Key scan plus exact session pinning | v1 / API 0.9 |
+| `interactions.password` | Typed login-password askpass | Daemon implemented | One-use secret response | Interaction lifecycle events | Daemon askpass helper and selected secret backend | v1 / API 0.9 |
+| `interactions.passphrase` | Typed private-key passphrase askpass | Daemon implemented | One-use secret response | Interaction lifecycle events | Daemon askpass helper and selected secret backend | v1 / API 0.9 |
 | `sftp` | Frontend-neutral remote file operations | Schema only; no client method | None | None defined | Core OpenSSH SFTP service | v1 |
 | `port_forwarding` | Manage runtime forwards | Schema only; no client method | None | None defined | Session/forward lifecycle service | v1 |
 | `plugins` | Invoke core plugin operations | Schema only; no client method | None | None defined | Split core plugin service | v1 |
@@ -92,9 +104,8 @@ are capped at 100 and are not persisted across restart.
 ## `sessions.write`
 
 Daemon-only and contract-tested for lifecycle control and logical attachment
-bookkeeping. It does not imply successful SSH startup, PTY allocation, terminal
-bytes, prompts, replay, or secrets. The production runner currently reports
-safe failed startup until those later capabilities exist.
+bookkeeping. PTY bytes and typed interaction behaviour remain separately
+negotiated through their narrow terminal/interaction capabilities.
 
 <!-- api-capability: sessions.events -->
 ## `sessions.events`
@@ -145,9 +156,44 @@ data. `InProcessClient` remains unsupported.
 <!-- api-capability: interactions -->
 ## `interactions`
 
-Unsupported. Interaction request/response schemas exist; the current
-credential dialogs and askpass flow have not been migrated to an interaction
-broker.
+Deprecated compatibility identifier and never advertised.
+
+<!-- api-capability: interactions.read -->
+## `interactions.read`
+
+Lists only public typed metadata visible to the current attached or originating
+client. Raw prompts and all secret values are excluded.
+
+<!-- api-capability: interactions.respond -->
+## `interactions.respond`
+
+Provides explicit responder claims and typed decisions. Password/passphrase
+bytes require the separately negotiated one-use binary frame and are never JSON.
+
+<!-- api-capability: interactions.events -->
+## `interactions.events`
+
+Interaction creation/state snapshots share the daemon-global event sequence and
+bounded slow-client policy. Events contain no response nonce or secret.
+
+<!-- api-capability: interactions.host_key -->
+## `interactions.host_key`
+
+Unknown keys can be accepted once or atomically stored. Changed/revoked keys
+remain blocking failures in this phase.
+
+<!-- api-capability: interactions.password -->
+## `interactions.password`
+
+OpenSSH login-password askpass is classified conservatively, attempt-bounded,
+and brokered without terminal prompt scraping.
+
+<!-- api-capability: interactions.passphrase -->
+## `interactions.passphrase`
+
+Private-key passphrases are associated with the exact key prompt and use the
+existing selected secret backend. Backend master-password unlock remains a
+separate local UI concern.
 
 <!-- api-capability: sftp -->
 ## `sftp`

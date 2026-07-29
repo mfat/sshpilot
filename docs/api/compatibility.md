@@ -113,9 +113,10 @@ The reusable connection contract suite runs against both `DaemonClient` and
 Daemon-only handshake, framing, correlation, timeout, socket security,
 lifecycle, event multiplexing, bounded event/byte backpressure, mutation
 ambiguity, and multi-client sequence rules have focused transport tests.
-Connection event parity is covered under `connections.events`. Prompt and
-cancellation parity remain out of scope. Terminal byte/replay contracts are
-daemon-only and capability-gated in API 0.8. Session lifecycle is intentionally
+Connection event parity is covered under `connections.events`. Typed
+authentication/trust interactions are daemon-only and capability-gated in API
+0.9; unrestricted prompt parity remains out of scope. Terminal byte/replay
+contracts are daemon-only and capability-gated in API 0.8. Session lifecycle is intentionally
 daemon-only: `InProcessClient` continues to return
 `unsupported_capability`, while daemon integration contracts cover lifecycle,
 attachment, multi-client event, shutdown, and process-ownership semantics.
@@ -128,6 +129,12 @@ changing Protocol v1 request/response shapes: open/close remain synchronous
 completes them from a bounded worker path. The open response is deliberately
 the `starting` acceptance snapshot. Clients were already required to reconcile
 later state through events or session reads, so Protocol remains `1.0`.
+API 0.9 adds typed interaction DTOs, narrow capabilities, JSON metadata
+methods/events, and the separately negotiated `binary-secret-v1` one-use
+response frame. Old clients do not claim that frame type, are never selected as
+responders, receive no secret frame, and retain all connection/session/
+terminal behaviour. Protocol remains `1.0` because the extension is additive
+and capability/frame negotiated.
 The [public API snapshot](../../tests/api/snapshots/public_api.json) is a review
 aid for structural changes, not proof of semantic compatibility.
 

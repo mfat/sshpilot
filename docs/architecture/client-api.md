@@ -3,8 +3,8 @@
 `SshPilotClient` is the stable frontend/core seam for sshPilot. GTK uses
 `InProcessClient` by default and can explicitly opt into `DaemonClient` for
 connection-read development through `SSHPILOT_CLIENT_MODE=daemon`.
-The experimental daemon slice now covers basic secret-free connection CRUD as
-well as snapshots and live connection events.
+The experimental daemon slice covers connection CRUD/events, session control,
+PTY terminal streaming, and typed authentication/trust interactions.
 
 ## Package layout
 
@@ -79,8 +79,8 @@ Do not:
 - block GTK waiting for futures;
 - make the Python calling convention mimic a not-yet-designed wire transport.
 
-`DaemonClient` uses one persistent blocking socket, one request lock, one send
-lock, one persistent reader thread, and a finite timeout. Callers register
+`DaemonClient` uses one persistent blocking socket, one concurrency gate, one
+send lock, one persistent reader thread, and a finite timeout. Callers register
 pending request IDs and never read the socket. A separate bounded serial event
 handoff prevents slow subscribers from blocking response correlation. It
 creates no event loop or thread per call. In opt-in daemon mode, the
@@ -94,7 +94,7 @@ four-worker, 64-command keyed executor. The selector reserves the request and
 later drains a bounded completion queue; workers never write sockets. Commands
 for one session serialize, while slow work for one session does not delay
 handshake, reads, attachments, or commands for other sessions. Connection
-mutations remain synchronous persistence operations in API 0.8.
+mutations remain synchronous persistence operations in API 0.9.
 
 ## Versioning and compatibility
 
@@ -130,13 +130,20 @@ terminal.output
 terminal.input
 terminal.resize
 terminal.replay
+interactions.read
+interactions.respond
+interactions.events
+interactions.host_key
+interactions.password
+interactions.passphrase
 ```
 
-`InProcessClient` deliberately returns `unsupported_capability` for session and
-terminal control because current production GTK terminal ownership has not
-moved. Daemon terminal capabilities require `binary-terminal-v1` negotiation.
-Neither provider advertises interactions, SFTP, forwarding, plugins, or
-secrets.
+`InProcessClient` deliberately returns `unsupported_capability` for session,
+terminal, and interaction control because current production GTK terminal
+ownership has not moved. Daemon terminal capabilities require
+`binary-terminal-v1`; responder/secret capabilities require
+`binary-secret-v1`. Neither provider advertises SFTP, forwarding, plugins, or
+broad secret access.
 
 The write DTO intentionally contains only basic connection metadata. Daemon
 GTK mode rejects secret, key/certificate, advanced SSH, group/tag, and
@@ -231,8 +238,11 @@ Current runtime events:
 - `session.state_changed` (daemon)
 - `session.exited` (daemon)
 - `session.closed` (daemon)
+- `interaction.created` (daemon)
+- `interaction.state_changed` (daemon)
 
-Schema-only event types still include session output and interaction requests.
+Schema-only event types still include session output and the legacy broad
+interaction request.
 `error.occurred` is a local safe `DaemonClient` continuity notification.
 
 Subscribers receive accepted in-process events in publisher-global sequence
@@ -242,7 +252,8 @@ delivery. Subscriber failure is isolated. `Subscription.unsubscribe()` and
 `close()` are idempotent. The client disconnects manager signal handlers during
 shutdown.
 
-The daemon forwards the three connection and four session lifecycle events. It
+The daemon forwards the three connection, four session, and two interaction
+lifecycle events. It
 assigns one daemon-global sequence starting at zero, uses explicit typed
 codecs, and keeps bounded per-peer queues. An overflowed peer is disconnected
 instead of continuing with a silent gap. `DaemonClient` checks sequence
@@ -255,9 +266,8 @@ the main context and coalesces bursts into one asynchronous
 a refresh is active. Transport/continuity failure replaces live cached state
 with the existing safe unavailable view; no automatic reconnect loop runs.
 
-Terminal output must not use this control-plane publisher. Before streaming,
-add bounded per-session byte queues, batching, per-session sequence ordering,
-replay bounds, truncation, and a binary slow-client policy.
+Terminal output and secret responses never use this control-plane publisher.
+They use separately negotiated binary frame types and bounded ownership paths.
 
 ## Terminal and interaction rules
 
@@ -265,9 +275,10 @@ replay bounds, truncation, and a binary slow-client policy.
 - Do not decode arbitrary PTY output as UTF-8.
 - Rows/columns must be positive and bounded.
 - Public models never expose PTY descriptors or subprocess objects.
-- Interaction responses hide secret values from `repr`.
+- Interaction decisions contain no secret values. A claimed responder sends a
+  secret only through one-use `binary-secret-v1`.
 - Secret answers must never enter event histories, error details or logs.
-- Completed/cancelled/timed-out interactions cannot be represented as pending.
+- Answered/cancelled/expired/failed interactions are final.
 
 ## Adding a client method
 

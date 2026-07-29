@@ -48,8 +48,20 @@ the validated internal envelope.
 | `terminal_sequence_out_of_range` | Implemented | No until offset changes | Terminal replay | Use the returned replay bounds |
 | `terminal_continuity_lost` | Implemented status | Recover through replay | Slow-client overflow | Request retained replay or show truncation |
 | `pty_allocation_failed` | Implemented | Explicit retry only | Session startup | Show safe startup failure without OS details |
-| `interaction_not_found` | Schema only | No | Future interaction response | Dismiss stale prompt |
-| `interaction_already_answered` | Schema only | No | Future interaction response | Treat the prompt as complete |
+| `interaction_not_found` | Implemented | No | Interaction list/get/claim/respond/cancel and secret frame | Dismiss stale prompt |
+| `interaction_expired` | Implemented | No | Interaction claim/response after deadline | Dismiss the expired dialog |
+| `interaction_already_answered` | Implemented | No | Duplicate or late interaction response | Treat the prompt as complete |
+| `interaction_claim_conflict` | Implemented | Yes after release/disconnect | Claim by a second eligible client | Keep observing or retry after ownership changes |
+| `interaction_responder_unauthorized` | Implemented | No until eligibility/claim changes | Claim, decision, or secret frame from wrong peer | Do not expose the response control |
+| `interaction_secret_expected` | Implemented | No until metadata response accepted | Secret frame without a reserved secret slot | Restart the typed response flow |
+| `interaction_secret_duplicate` | Implemented | No | Reused nonce or duplicate secret frame | Treat the interaction as already completed |
+| `interaction_type_unsupported` | Implemented | No | Unknown or deferred prompt type | Explain that the authentication mechanism is unsupported |
+| `prompt_classification_failed` | Implemented | No | Unknown askpass prompt | Fail authentication safely |
+| `askpass_helper_unavailable` | Implemented | Explicit retry only | Helper or host-key verification tooling unavailable | Repair the installation before retry |
+| `secret_backend_unavailable` | Implemented | Explicit retry or direct entry | Stored-secret lookup | Enter once or unlock/configure the selected backend |
+| `secret_storage_failed` | Implemented | Explicit retry only | Remember-after-success commit | Authentication may succeed; report that saving failed |
+| `host_key_persistence_failed` | Implemented | No automatic retry | Accept-and-store host key | Reject the launch; repair known-hosts permissions |
+| `authentication_attempts_exhausted` | Implemented | No automatic retry | Repeated password/passphrase failure | Start a fresh explicit session attempt |
 | `permission_denied` | Implemented | Depends on policy change | Attachment ownership and future protected operations | Explain denied action without exposing policy internals |
 | `operation_cancelled` | Schema only | Caller-dependent | Future cancellable operations | Return UI to idle; retry only on explicit user action |
 | `operation_timed_out` | Schema only | Operation-dependent | Future bounded operations | Use `retryable`; preserve safe context |
@@ -210,12 +222,88 @@ command, environment, or raw OS exception crosses the API boundary.
 <!-- api-error: interaction_not_found -->
 ## `interaction_not_found`
 
-Schema-only code for an unknown or expired interaction identifier.
+The strict interaction ID does not identify visible retained broker state.
+
+<!-- api-error: interaction_expired -->
+## `interaction_expired`
+
+The monotonic interaction deadline won before a response. Expiry is final,
+wakes the waiting helper, and rejects all later claims, decisions, or secrets.
 
 <!-- api-error: interaction_already_answered -->
 ## `interaction_already_answered`
 
-Schema-only code for a response race after an interaction became terminal.
+The interaction is already answered, cancelled, expired, or failed. Exactly one
+terminal outcome is accepted.
+
+<!-- api-error: interaction_claim_conflict -->
+## `interaction_claim_conflict`
+
+Another eligible client owns the responder claim. No responder nonce or peer
+metadata is disclosed.
+
+<!-- api-error: interaction_responder_unauthorized -->
+## `interaction_responder_unauthorized`
+
+The handshaken peer is not eligible for the linked session or does not own the
+current claim. A client cannot answer for another peer or session.
+
+<!-- api-error: interaction_secret_expected -->
+## `interaction_secret_expected`
+
+The broker has not accepted matching typed response metadata and therefore has
+no one-use secret slot. Secret bytes are discarded and never reflected in the
+error.
+
+<!-- api-error: interaction_secret_duplicate -->
+## `interaction_secret_duplicate`
+
+The one-use response nonce has already been consumed or does not match the
+reserved slot. Automatic resend is forbidden because delivery is ambiguous.
+
+<!-- api-error: interaction_type_unsupported -->
+## `interaction_type_unsupported`
+
+The prompt type is outside the Phase 8 host-key/password/passphrase vocabulary.
+Unrestricted keyboard-interactive and security-key PIN/touch prompts fail
+safely.
+
+<!-- api-error: prompt_classification_failed -->
+## `prompt_classification_failed`
+
+The bounded, sanitized askpass prompt could not be conservatively classified.
+It is never treated as a password by default and raw prompt text is not logged.
+
+<!-- api-error: askpass_helper_unavailable -->
+## `askpass_helper_unavailable`
+
+The private helper, required OpenSSH verification tool, or private broker
+channel could not be established. No command path or OS exception is exposed.
+
+<!-- api-error: secret_backend_unavailable -->
+## `secret_backend_unavailable`
+
+The selected existing backend could not satisfy an automatic lookup. Locked
+KDBX/Bitwarden master-password handling remains separate from SSH interactions.
+
+<!-- api-error: secret_storage_failed -->
+## `secret_storage_failed`
+
+Authentication completed but a requested remember-after-success operation did
+not commit through the selected backend. The secret and backend exception are
+not included in the envelope.
+
+<!-- api-error: host_key_persistence_failed -->
+## `host_key_persistence_failed`
+
+The accepted key could not be atomically and securely written to the configured
+known-hosts file. The connection is not weakened to bypass verification.
+
+<!-- api-error: authentication_attempts_exhausted -->
+## `authentication_attempts_exhausted`
+
+The bounded password/passphrase attempt limit was reached. The process is
+allowed to fail and a fresh session requires explicit user action.
 
 <!-- api-error: permission_denied -->
 ## `permission_denied`

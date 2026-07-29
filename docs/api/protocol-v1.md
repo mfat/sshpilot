@@ -13,9 +13,11 @@ DTOs, capabilities, events, structured errors, and the local wire envelope.
 `InProcessClient` implements connection reads and in-process connection events.
 `DaemonClient` additionally implements daemon-lifetime session control and
 lifecycle events over the same secure per-user Unix-domain socket. Capability-
-gated clients may also use daemon-owned Unix PTYs and the binary terminal
-stream. Prompts, secrets, reconnect replay, and session persistence remain
-unsupported. Named pipes, TCP, WebSocket, HTTP, and remote access do not exist.
+gated clients may also use daemon-owned Unix PTYs, the binary terminal stream,
+and typed authentication/trust interactions over a separate one-use secret
+frame. Unrestricted keyboard-interactive prompts, reconnect replay, and session
+persistence remain unsupported. Named pipes, TCP, WebSocket, HTTP, and remote
+access do not exist.
 
 See [methods](methods.md) and [capabilities](capabilities.md) for the precise
 runtime matrix.
@@ -39,7 +41,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.8` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.9` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -49,6 +51,7 @@ substitute for protocol negotiation.
 
 <!-- api-wire-framing: length-prefixed-json-v1 -->
 <!-- api-terminal-framing: binary-terminal-v1 -->
+<!-- api-secret-framing: binary-secret-v1 -->
 <!-- api-handshake: required-once-before-ordinary-methods -->
 
 ## Wire framing and envelopes
@@ -56,10 +59,13 @@ substitute for protocol negotiation.
 Each local IPC message is four unsigned big-endian bytes followed by that many
 payload bytes. Control payloads are UTF-8 JSON and remain limited to 1,048,576
 bytes. Negotiated terminal payloads begin with binary magic `SPTB`, use stream
-version 1, and are limited to a 48-byte header plus 65,536 raw bytes. Frames
-may be fragmented or coalesced by the socket. Empty, oversized, incomplete,
-invalid JSON, and malformed binary frames are rejected. Pickle, marshal,
-arbitrary class serialization, and object `repr` are never used.
+version 1, and are limited to a 48-byte header plus 65,536 raw bytes.
+Negotiated one-use secret responses begin with `SPSB`, use version 1, and carry
+an interaction UUID, a 16-byte responder nonce, and at most 16,384 raw secret
+bytes. Frames may be fragmented or coalesced by the socket. Empty, oversized,
+incomplete, invalid JSON, malformed binary frames, unsupported flags, and
+non-canonical identifiers are rejected. Pickle, marshal, arbitrary class
+serialization, and object `repr` are never used.
 
 Every envelope has a strict `type` and rejects missing or extra fields:
 
@@ -72,6 +78,12 @@ JSON remains the control-plane encoding. Terminal output/input use the
 capability-gated `binary-terminal-v1` format documented in
 [terminal streaming](../architecture/terminal-streaming.md); raw bytes are
 never base64-encoded.
+
+Secret bytes use only capability-gated `binary-secret-v1`. A frontend first
+claims an interaction and sends typed JSON decision metadata. The daemon then
+reserves one exact interaction/client/nonce slot. Only that peer may send one
+secret frame; it is delivered directly to the waiting private askpass channel,
+never enqueued as an event, response, terminal frame, or replay item.
 
 ## Handshake and correlation
 
@@ -105,7 +117,7 @@ current snapshot but must not parse them.
 | `ConnectionId` | Saved connection | Stable opaque `connection:<uuid>` backed by an immutable persisted UUID |
 | `SessionId` | Daemon-lifetime runtime session | Stable `session:<uuid>` for one daemon process; not persisted across restart |
 | `RequestId` | Operation/request correlation | Random UUID hex per daemon request; never reused on a connection |
-| `InteractionId` | One frontend interaction | Schema only; no allocator |
+| `InteractionId` | One daemon interaction | Stable `interaction:<uuid>` for one daemon process; not persisted across restart |
 | `TransferId` | One transfer | Schema only; no allocator |
 | `ClientId` | One frontend client | Random per `DaemonClient`; enforced after handshake |
 | `AttachmentId` | One logical client/session attachment | Random UUID-backed value; removed on detach/socket close |
@@ -117,6 +129,7 @@ opaque.
 
 <!-- api-connection-id: persisted-uuid-v1 -->
 <!-- api-session-id: daemon-uuid-v1 -->
+<!-- api-interaction-id: daemon-uuid-v1 -->
 
 Former `connection:v1:<hash>` IDs are deprecated input-only lookup aliases
 during Protocol v1. They resolve only when the hash matches the connection's
@@ -168,8 +181,8 @@ rendering. See [terminal streaming](../architecture/terminal-streaming.md).
   recursively growing the callback stack.
 - The three connection events follow the order in which manager signals reach
   the adapter.
-- The daemon assigns one sequence across all accepted connection and session
-  lifecycle events,
+- The daemon assigns one sequence across all accepted connection, session, and
+  interaction lifecycle events,
   starting at zero per daemon instance. All handshaken clients receive the same
   sequence for the same event. New clients receive no history, and daemon
   restart may reset the sequence.
@@ -203,10 +216,12 @@ Each `DaemonClient` socket has one persistent reader thread. Request callers
 register an opaque ID and serialize writes; only the reader decodes frames.
 Responses complete the matching pending request, lifecycle events enter one
 bounded serial queue, and terminal frames enter a separate bounded terminal
-dispatch queue. Thus a slow event or terminal subscriber does not block response
-correlation. Unknown or duplicate response IDs, malformed event payloads, and
-duplicate/regressing/gapped event sequences are protocol errors that close the
-transport and wake every pending caller.
+dispatch queue. Secret frames are write-only from capable clients and never
+reach callback dispatch. Thus a slow event or terminal subscriber does not
+block response correlation. Unknown or duplicate response IDs, malformed event
+payloads, invalid secret ownership/nonces, and duplicate/regressing/gapped
+event sequences are protocol errors that close the offending transport and
+wake its pending callers.
 
 The server has a separate bounded command plane for blocking session work:
 four daemon-owned workers, at most 64 outstanding commands, keyed FIFO
@@ -214,7 +229,7 @@ serialization per session, and a bounded completion queue. Workers call no
 socket or selector API. They enqueue immutable success/error completions and
 wake the selector; the selector validates peer token and request reservation,
 then queues the response. A full command plane returns retryable
-`server_busy` immediately. Connection mutations remain synchronous in API 0.8
+`server_busy` immediately. Connection mutations remain synchronous in API 0.9
 and may still perform bounded persistence work on the selector.
 
 ## Cancellation and timeouts
@@ -234,15 +249,17 @@ Daemon shutdown rejects new submissions, cancels commands that have not
 started where safe, runs required exact-resource cleanup, drains workers under
 one finite deadline, and discards late response completions.
 
-The `operation_cancelled` and `operation_timed_out` error codes are reserved
-schema vocabulary. Future cancellation must define request identity, race
-semantics, cleanup, and whether completion can win over cancellation.
+Typed interactions own monotonic deadlines (120 seconds for password/
+passphrase and 180 seconds for host-key decisions by default). Session close,
+process exit, helper loss, responder cancellation, and daemon shutdown wake
+pending waits. Exactly one response, cancellation, or expiry wins.
 
 ## Security rules
 
 - Ordinary DTOs contain no passwords, passphrases, private-key contents,
   backend tokens, authentication environments, or provider objects.
-- Secret input and terminal bytes must not be logged.
+- Secret input and terminal bytes must not be logged. Secret responses never
+  use JSON, event history, terminal replay, argv, or environment values.
 - `SshPilotError` exposes safe metadata, never raw internal exceptions or stack
   traces.
 - Frontends must use core operations and interaction requests; they must not

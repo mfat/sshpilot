@@ -53,13 +53,10 @@ transition. Process exit information is separate from safe startup failure
 metadata. There is no reconnect, replay, prompt, PTY, or terminal-byte state.
 
 <!-- api-state: InteractionStatus -->
-## Interaction lifecycle: `InteractionStatus`
+## Legacy interaction schema: `InteractionStatus`
 
-Construction validation currently enforces only:
-
-- `InteractionRequest` starts as `pending`.
-- `InteractionResponse` cannot be `pending`.
-- A response that is not `answered` cannot include answer data.
+The legacy broad request/response models remain schema-only. Runtime Phase 8
+uses the narrower `InteractionState` machine below.
 
 ```mermaid
 stateDiagram-v2
@@ -71,9 +68,31 @@ stateDiagram-v2
 ```
 
 `answered`, `cancelled`, `timed_out`, and `rejected` are intended terminal.
-There is no runtime store, ownership, timeout scheduler, persistence, duplicate
-answer detection, or event delivery. The
-`interaction_already_answered`/`interaction_not_found` codes are schema only.
+
+<!-- api-state: InteractionState -->
+## Runtime typed interaction lifecycle: `InteractionState`
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> claimed
+    pending --> answered
+    pending --> cancelled
+    pending --> expired
+    pending --> failed
+    claimed --> pending: release/disconnect
+    claimed --> answered
+    claimed --> cancelled
+    claimed --> expired
+    claimed --> failed
+```
+
+`answered`, `cancelled`, `expired`, and `failed` are final. The daemon broker
+serializes claim/response/timeout/cancel races; exactly one result wins. A
+responder disconnect before answer releases the claim. Session close, process
+exit, and daemon shutdown cancel linked active interactions. Completed safe
+metadata is retained under a bounded count; secrets are never retained in the
+public state.
 
 <!-- api-state: TransferState -->
 ## Transfer lifecycle: `TransferState`

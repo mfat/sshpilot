@@ -30,9 +30,10 @@ subscriber that is absent or already closed does not receive prior events.
 
 <!-- api-daemon-event-semantics: global-sequence-bounded-v1 -->
 
-The daemon subscribes to its `InProcessClient` connection publisher and its
-owned `SessionRuntime` publisher. It accepts three connection events and four
-session lifecycle events. It replaces each source publisher's process-local
+The daemon subscribes to its `InProcessClient` connection publisher, its owned
+`SessionRuntime` publisher, and its owned `InteractionBroker` publisher. It
+accepts three connection events, four session lifecycle events, and two safe
+interaction lifecycle events. It replaces each source publisher's process-local
 sequence with one daemon-global sequence that begins at `0`.
 Every healthy, handshaken peer receives the same sequence for the same accepted
 event, in daemon acceptance order. Sequence assignment and peer enqueueing are
@@ -82,9 +83,11 @@ local `error.occurred` continuity notification where delivery remains possible.
 | `session.created` | Daemon implemented | `sessions.events` | Session record allocation | `SessionSummary` |
 | `session.state_changed` | Daemon implemented | `sessions.events` | Accepted lifecycle transition other than exit/close | `SessionSummary` |
 | `session.output` | Legacy schema only; not emitted | `terminal.output` | None | Terminal bytes use dedicated binary frames |
-| `session.interaction_requested` | Schema only | `interactions` | Future core prompt | Intended `InteractionRequest` |
+| `session.interaction_requested` | Legacy schema only; not emitted | Legacy `interactions` | None | Replaced by typed interaction events |
 | `session.exited` | Daemon implemented | `sessions.events` | Owned runtime resource exit | `SessionExitInfo` plus envelope session ID |
 | `session.closed` | Daemon implemented | `sessions.events` | Final in-memory lifecycle transition | `SessionSummary` |
+| `interaction.created` | Daemon implemented | `interactions.events` | Broker accepts a typed authentication/trust interaction | `InteractionSummary` |
+| `interaction.state_changed` | Daemon implemented | `interactions.events` | Claim, release, answer, cancel, expiry, or failure | `InteractionSummary` |
 | `error.occurred` | Local runtime transport-continuity signal in `DaemonClient` | None fixed | Daemon transport/protocol continuity failure | Safe structured error envelope dictionary |
 
 <!-- api-event: connection.created -->
@@ -153,15 +156,36 @@ local `error.occurred` continuity notification where delivery remains possible.
   [terminal streaming](../architecture/terminal-streaming.md) for sequencing,
   replay, backpressure, and continuity rules.
 
+<!-- api-event: interaction.created -->
+## `interaction.created`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.9.
+- **Capability / trigger:** `interactions.events`; the broker accepts a typed
+  host-key, password, or private-key-passphrase interaction.
+- **Payload / IDs:** `InteractionSummary` with safe typed prompt metadata,
+  session ID, stable connection ID, state, attempt, and deadline.
+- **Guarantees / security:** Only eligible session clients receive the event.
+  Raw askpass text, responder nonce, backend keys, and secrets are absent.
+
+<!-- api-event: interaction.state_changed -->
+## `interaction.state_changed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.9.
+- **Capability / trigger:** `interactions.events`; a claim, release, accepted
+  answer, cancellation, expiry, or failure.
+- **Payload / IDs:** A fresh immutable `InteractionSummary`.
+- **Guarantees / security:** Exactly one final state wins. Interaction events
+  share the daemon-global sequence and bounded event queue; secret bytes use
+  neither events nor replay.
+
 <!-- api-event: session.interaction_requested -->
 ## `session.interaction_requested`
 
-- **Status / introduced:** Schema only / v1
-- **Capability / intended trigger:** `interactions`; core requires user input.
-- **Payload / IDs:** Intended `InteractionRequest`, request ID, and optional
-  session ID.
-- **Guarantees / security:** No delivery guarantee. Secret answers must never
-  appear in the request event or event history.
+- **Status / introduced:** Legacy schema only / v1.
+- **Capability / trigger:** None. The runtime never emits this broad event.
+- **Payload / IDs:** Historical `InteractionRequest` schema only.
+- **Guarantees / security:** Typed interaction events replace this vocabulary;
+  clients must not infer runtime support from the model.
 
 <!-- api-event: session.exited -->
 ## `session.exited`

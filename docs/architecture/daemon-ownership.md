@@ -1,9 +1,9 @@
 # Daemon and frontend ownership
 
 This document defines the intended ownership boundary. The local daemon
-currently owns connection CRUD/events and the daemon-lifetime session
-lifecycle. PTY/terminal streams, prompts, secrets, and normal GTK terminal
-migration remain future work.
+currently owns connection CRUD/events, daemon-lifetime sessions, PTYs,
+terminal streams, and typed authentication/trust brokering. Normal GTK terminal
+migration remains future work.
 
 The concrete current client contract is maintained in the
 [API reference](../api/README.md). This document describes intended ownership;
@@ -63,8 +63,8 @@ not the canonical domain contract.
 
 ## Protocol v1 session decisions
 
-- The daemon owns Phase 6 session records and exact runner handles. Future
-  terminal-capable sessions will also own the SSH process and PTY.
+- The daemon owns session records, exact runner handles, SSH processes, PTYs,
+  replay/input queues, and typed interaction records.
 - Process start, terminate, kill, and wait execute only on the daemon's bounded
   keyed session executor. The selector owns request validation and response
   framing, never those runner calls.
@@ -75,9 +75,11 @@ not the canonical domain contract.
   owner; later attachments are view-only until ownership is released.
 - Terminal output is bytes and is ordered per session.
 - A bounded per-session replay buffer is required in the daemon phase.
-- Prompts are routed to the client that initiated the relevant operation.
-- Secret values cross the boundary only when a prompt-capable frontend is
-  actively collecting an answer. They are never ordinary connection fields.
+- Typed prompts are visible only to the originating or attached eligible
+  clients; one explicit responder claim wins.
+- Secret values cross only through a nonce-bound one-use binary response from
+  the claimed frontend, or are retrieved directly by the daemon through the
+  existing selected backend. They are never ordinary connection fields.
 - If no prompt-capable frontend is attached, the operation fails or times out
   with a structured interaction error.
 - Frontend disconnect does not by itself terminate the session.

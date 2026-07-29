@@ -7,6 +7,19 @@ notes remain separate.
 
 ### Added
 
+- Added daemon-owned typed host-key, password, and private-key-passphrase
+  interactions with strict daemon-lifetime IDs, claim ownership, deadlines,
+  cancellation, bounded retention, and safe lifecycle events.
+- Added capability-gated `binary-secret-v1` one-use responder-bound frames;
+  secret values never enter JSON, events, terminal replay, logs, argv, or
+  process environment.
+- Added a private same-user daemon askpass helper channel, conservative prompt
+  classification, bounded attempts, existing selected-backend lookup, and
+  remember-after-authentication-success storage.
+- Added strict unknown-host accept-once/accept-and-store handling through an
+  exact session key pin. Changed/revoked keys remain blocking failures.
+- Added experimental daemon-mode GTK interaction dialogs on an independent
+  bridge lane so authentication UI does not block terminal streaming.
 - Added daemon-owned Unix PTYs with exact child/process-group ownership, one
   shared non-blocking PTY I/O owner, bounded input, and final-output draining.
 - Added negotiated `binary-terminal-v1` frames, per-session absolute byte
@@ -81,8 +94,12 @@ notes remain separate.
 - Daemon connection mutations now share a bounded configuration command lane
   with external reload. Self-write notifications reconcile as semantic no-ops,
   so Protocol v1 methods, capabilities, DTOs, and event names are unchanged.
-- Increased `API_IMPLEMENTATION_VERSION` to `0.8`; `PROTOCOL_VERSION` remains
+- Increased `API_IMPLEMENTATION_VERSION` to `0.9`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
+- The broker-enabled native SSH launch keeps the canonical builder/auth
+  resolver, disables `BatchMode` only when a capable typed responder path
+  exists, and keeps strict exact-key verification. Unrestricted
+  keyboard-interactive prompts remain unsupported.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon
   response and advertises only contract-tested runtime capabilities.
 - Defined publisher-global serial FIFO event delivery, including concurrent,

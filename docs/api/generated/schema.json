@@ -1,8 +1,16 @@
 {
-  "api_implementation_version": "0.8",
+  "api_implementation_version": "0.9",
   "client_method_contract": {
     "attach_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "cancel_interaction": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "claim_interaction": {
+      "capability": "interactions.respond",
       "status": "daemon-only"
     },
     "close": {
@@ -33,6 +41,10 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "get_interaction": {
+      "capability": "interactions.read",
+      "status": "daemon-only"
+    },
     "get_session": {
       "capability": "sessions.read",
       "status": "daemon-only"
@@ -41,12 +53,20 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "list_interactions": {
+      "capability": "interactions.read",
+      "status": "daemon-only"
+    },
     "list_sessions": {
       "capability": "sessions.read",
       "status": "daemon-only"
     },
     "open_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "release_interaction": {
+      "capability": "interactions.respond",
       "status": "daemon-only"
     },
     "replay_terminal": {
@@ -58,8 +78,12 @@
       "status": "daemon-only"
     },
     "respond_to_interaction": {
-      "capability": "interactions",
-      "status": "schema-only"
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "send_interaction_secret": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
     },
     "send_terminal_input": {
       "capability": "terminal.input",
@@ -93,6 +117,24 @@
     },
     "connections.update": {
       "capability": "connections.write"
+    },
+    "interactions.cancel": {
+      "capability": "interactions.respond"
+    },
+    "interactions.claim": {
+      "capability": "interactions.respond"
+    },
+    "interactions.get": {
+      "capability": "interactions.read"
+    },
+    "interactions.list": {
+      "capability": "interactions.read"
+    },
+    "interactions.release": {
+      "capability": "interactions.respond"
+    },
+    "interactions.respond": {
+      "capability": "interactions.respond"
     },
     "sessions.attach": {
       "capability": "sessions.write"
@@ -144,6 +186,12 @@
       "terminal.resize",
       "terminal.replay",
       "interactions",
+      "interactions.read",
+      "interactions.respond",
+      "interactions.events",
+      "interactions.host_key",
+      "interactions.password",
+      "interactions.passphrase",
       "sftp",
       "port_forwarding",
       "plugins",
@@ -180,7 +228,19 @@
       "pty_allocation_failed",
       "server_busy",
       "interaction_not_found",
+      "interaction_expired",
       "interaction_already_answered",
+      "interaction_claim_conflict",
+      "interaction_responder_unauthorized",
+      "interaction_secret_expected",
+      "interaction_secret_duplicate",
+      "interaction_type_unsupported",
+      "prompt_classification_failed",
+      "askpass_helper_unavailable",
+      "secret_backend_unavailable",
+      "secret_storage_failed",
+      "host_key_persistence_failed",
+      "authentication_attempts_exhausted",
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
@@ -207,6 +267,8 @@
       "session.interaction_requested",
       "session.exited",
       "session.closed",
+      "interaction.created",
+      "interaction.state_changed",
       "error.occurred"
     ],
     "FileEntryKind": [
@@ -227,6 +289,16 @@
       "stopping",
       "stopped"
     ],
+    "HostKeyDecision": [
+      "accept_once",
+      "accept_and_store",
+      "reject"
+    ],
+    "HostKeyStatus": [
+      "unknown",
+      "changed",
+      "revoked"
+    ],
     "InteractionKind": [
       "password",
       "key_passphrase",
@@ -235,12 +307,35 @@
       "overwrite_confirmation",
       "plugin_question"
     ],
+    "InteractionState": [
+      "pending",
+      "claimed",
+      "answered",
+      "cancelled",
+      "expired",
+      "failed"
+    ],
     "InteractionStatus": [
       "pending",
       "answered",
       "cancelled",
       "timed_out",
       "rejected"
+    ],
+    "InteractionType": [
+      "host_key_confirmation",
+      "password",
+      "private_key_passphrase"
+    ],
+    "RememberPolicy": [
+      "do_not_store",
+      "store_after_success",
+      "replace_stored_after_success",
+      "delete_stored_secret"
+    ],
+    "SecretDecision": [
+      "submit",
+      "cancel"
     ],
     "SessionState": [
       "created",
@@ -1125,6 +1220,46 @@
       ],
       "status": "Implemented"
     },
+    "HostKeyPrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "key_type",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "fingerprint",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "required": true,
+          "sensitive": false,
+          "type": "HostKeyStatus"
+        }
+      ],
+      "status": "Schema only"
+    },
     "InputOwner": {
       "fields": [
         {
@@ -1159,6 +1294,72 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionClaim": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "responder_client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        },
+        {
+          "default": null,
+          "name": "nonce",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionDecisionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "host_key_decision",
+          "required": false,
+          "sensitive": false,
+          "type": "HostKeyDecision | None"
+        },
+        {
+          "default": null,
+          "name": "secret_decision",
+          "required": false,
+          "sensitive": false,
+          "type": "SecretDecision | None"
+        },
+        {
+          "default": "do_not_store",
+          "name": "remember_policy",
+          "required": false,
+          "sensitive": false,
+          "type": "RememberPolicy"
         }
       ],
       "status": "Schema only"
@@ -1304,6 +1505,81 @@
       ],
       "status": "Schema only"
     },
+    "InteractionSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionType"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionState"
+        },
+        {
+          "default": null,
+          "name": "created_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "prompt",
+          "required": true,
+          "sensitive": false,
+          "type": "HostKeyPrompt | PasswordPrompt | PassphrasePrompt"
+        },
+        {
+          "default": null,
+          "name": "responder_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId | None"
+        }
+      ],
+      "status": "Schema only"
+    },
     "InteractionTimeout": {
       "fields": [
         {
@@ -1360,6 +1636,93 @@
         }
       ],
       "status": "Implemented"
+    },
+    "PassphrasePrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_display_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key_fingerprint",
+          "required": true,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "can_remember",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "stored_secret_available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PasswordPrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "can_remember",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "stored_secret_available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
     },
     "PluginArgument": {
       "fields": [

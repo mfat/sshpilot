@@ -121,6 +121,14 @@ disconnect/late-completion tests, and repeated blocked start/close/shutdown
 isolation runs. No runner start/terminate/kill/wait call may execute on the
 selector thread.
 
+Interaction changes additionally require strict typed metadata, complete state
+transition/race coverage, responder eligibility and takeover tests, bounded
+deadlines/retention, one-use nonce-bound secret transport tests, raw prompt and
+secret exclusion from JSON/events/replay/logs, existing-backend integration,
+remember-only-after-authentication-success checks, and daemon/GTK/helper
+shutdown coverage. Never add secret values to ordinary method DTOs merely to
+avoid implementing the dedicated response path.
+
 ## Example: connection health monitoring
 
 Ownership and flow should be:

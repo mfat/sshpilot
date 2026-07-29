@@ -31,18 +31,16 @@ these documents describe the concrete contract.
 
 ## Current runtime baseline
 
-`InProcessClient` currently advertises `connections.read` and
-`connections.events`. Capability
-discovery, connection listing/retrieval, connection-created/updated/deleted
-events, subscription cleanup, and client shutdown are implemented. Connection
-writes and all session, terminal, interaction, SFTP, forwarding, plugin, and
-secret operations are unsupported or schema-only.
+`InProcessClient` advertises connection read/event/write support.
+`DaemonClient` additionally negotiates daemon-lifetime session lifecycle,
+binary PTY terminal streaming, and typed authentication/trust interaction
+capabilities.
 
-`DaemonClient` negotiates the same `connections.read` capability over a secure
-per-user Unix socket and passes the shared connection contract. The daemon
-supports handshake, capability discovery, connection list/get, structured
-errors, typed connection events, and clean lifecycle. It does not own terminal,
-session, secret, prompt, SFTP, forwarding, or plugin runtime.
+The daemon supports handshake, capability discovery, connection CRUD/events,
+session control/events, terminal input/output/resize/replay, and typed
+host-key/password/private-key-passphrase interactions over a secure per-user
+Unix socket. SFTP, forwarding, plugins, remote transport, and broad secret
+operations remain unsupported.
 
 The API package is GTK-free. The existing managers wrapped by
 `InProcessClient` are not yet GTK/GObject-free, so this is a frontend-neutral

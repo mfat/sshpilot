@@ -4,6 +4,8 @@ Phase 6 introduced daemon-owned session control, and API 0.7 moved blocking
 runner work off the selector. Phase 7/API 0.8 adds the concrete PTY runner and
 binary terminal data plane described in
 [terminal streaming](terminal-streaming.md).
+Phase 8/API 0.9 adds daemon-owned typed authentication/trust interactions
+without changing session identity or persistence.
 `SessionManager` remains the GTK saved-layout store and is unrelated to live
 runtime records.
 
@@ -51,17 +53,17 @@ boundary. `SessionLaunchSpec` is built from authoritative secret-free
 `ConnectionDetails`; frontends cannot provide argv, executable paths, shell
 fragments, or environment values.
 
-The production Phase 6 runner deliberately returns a safe failed startup.
-Starting real SSH without the later prompt/secret/PTY contract would be
-misleading and could block indefinitely. The concrete injectable subprocess
-runner exists for ownership/lifecycle testing and future extraction:
+The production runner owns a real Unix PTY and launches only the canonical
+native SSH command. Control-only operation retains the non-interactive failure
+policy; an interaction-capable peer enables the brokered askpass and exact
+host-key pin described in [interaction broker](interaction-broker.md):
 
 - `shell=False` and an argument list are mandatory;
-- stdin/stdout/stderr are detached;
-- the default child environment is empty rather than inherited;
-- one shared reaper thread observes every owned child;
-- terminate/kill target only the exact stored `Popen` handle;
-- runner shutdown kills and reaps only handles it created.
+- stdin/stdout/stderr use the exact owned PTY slave;
+- the child environment is allow-listed rather than inherited wholesale;
+- one shared reaper observes every owned child;
+- terminate/kill target only the exact stored process group;
+- runner shutdown kills and reaps only resources it created.
 
 No command or environment is logged or exposed.
 

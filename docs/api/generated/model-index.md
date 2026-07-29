@@ -378,7 +378,7 @@ Synthetic representation:
 **Purpose:** CoreEvent(type: sshpilot.api.events.EventType, payload: ~PayloadT, sequence: int, timestamp: datetime.datetime = <factory>, request_id: sshpilot.api.models.common.RequestId | None = None, connection_id: sshpilot.api.models.common.ConnectionId | None = None, session_id: sshpilot.api.models.common.SessionId | None = None)
 
 **Related methods:** `subscribe_events`
-**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `error.occurred`
+**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `error.occurred`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
@@ -709,6 +709,36 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: HostKeyPrompt -->
+## `HostKeyPrompt`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** HostKeyPrompt(hostname: str, port: int, key_type: str, fingerprint: str, status: sshpilot.api.models.interactions.HostKeyStatus)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `hostname` | `str` | Yes | — | No |
+| `port` | `int` | Yes | — | No |
+| `key_type` | `str` | Yes | — | No |
+| `fingerprint` | `str` | Yes | — | No |
+| `status` | `HostKeyStatus` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "fingerprint": "example",
+  "hostname": "example.invalid",
+  "key_type": "example",
+  "port": 22,
+  "status": "unknown"
+}
+```
+
 <!-- api-model: InputOwner -->
 ## `InputOwner`
 
@@ -754,6 +784,62 @@ Synthetic representation:
 {
   "interaction_id": "interaction:example",
   "reason": ""
+}
+```
+
+<!-- api-model: InteractionClaim -->
+## `InteractionClaim`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** InteractionClaim(interaction_id: sshpilot.api.models.common.InteractionId, responder_client_id: sshpilot.api.models.common.ClientId, nonce: str, expires_at: datetime.datetime)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `interaction_id` | `InteractionId` | Yes | — | No |
+| `responder_client_id` | `ClientId` | Yes | — | No |
+| `nonce` | `str` | Yes | — | No |
+| `expires_at` | `datetime` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "expires_at": null,
+  "interaction_id": "interaction:example",
+  "nonce": "example",
+  "responder_client_id": "client:example"
+}
+```
+
+<!-- api-model: InteractionDecisionRequest -->
+## `InteractionDecisionRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** InteractionDecisionRequest(interaction_id: sshpilot.api.models.common.InteractionId, host_key_decision: sshpilot.api.models.interactions.HostKeyDecision | None = None, secret_decision: sshpilot.api.models.interactions.SecretDecision | None = None, remember_policy: sshpilot.api.models.interactions.RememberPolicy = <RememberPolicy.DO_NOT_STORE: 'do_not_store'>)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `interaction_id` | `InteractionId` | Yes | — | No |
+| `host_key_decision` | `HostKeyDecision | None` | No | `null` | No |
+| `secret_decision` | `SecretDecision | None` | No | `null` | No |
+| `remember_policy` | `RememberPolicy` | No | `do_not_store` | No |
+
+Synthetic representation:
+
+```json
+{
+  "host_key_decision": null,
+  "interaction_id": "interaction:example",
+  "remember_policy": "do_not_store",
+  "secret_decision": null
 }
 ```
 
@@ -853,6 +939,52 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: InteractionSummary -->
+## `InteractionSummary`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** InteractionSummary(id: sshpilot.api.models.common.InteractionId, session_id: sshpilot.api.models.common.SessionId, connection_id: sshpilot.api.models.common.ConnectionId, type: sshpilot.api.models.interactions.InteractionType, state: sshpilot.api.models.interactions.InteractionState, created_at: datetime.datetime, expires_at: datetime.datetime, attempt: int, prompt: sshpilot.api.models.interactions.HostKeyPrompt | sshpilot.api.models.interactions.PasswordPrompt | sshpilot.api.models.interactions.PassphrasePrompt, responder_client_id: sshpilot.api.models.common.ClientId | None = None)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `id` | `InteractionId` | Yes | — | No |
+| `session_id` | `SessionId` | Yes | — | No |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `type` | `InteractionType` | Yes | — | No |
+| `state` | `InteractionState` | Yes | — | No |
+| `created_at` | `datetime` | Yes | — | No |
+| `expires_at` | `datetime` | Yes | — | No |
+| `attempt` | `int` | Yes | — | No |
+| `prompt` | `HostKeyPrompt | PasswordPrompt | PassphrasePrompt` | Yes | — | No |
+| `responder_client_id` | `ClientId | None` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "attempt": 0,
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "2030-01-01T00:00:00Z",
+  "expires_at": null,
+  "id": "id:example",
+  "prompt": {
+    "fingerprint": "example",
+    "hostname": "example.invalid",
+    "key_type": "example",
+    "port": 22,
+    "status": "unknown"
+  },
+  "responder_client_id": null,
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
+  "state": "pending",
+  "type": "host_key_confirmation"
+}
+```
+
 <!-- api-model: InteractionTimeout -->
 ## `InteractionTimeout`
 
@@ -922,6 +1054,68 @@ Synthetic representation:
 {
   "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "dimensions": null
+}
+```
+
+<!-- api-model: PassphrasePrompt -->
+## `PassphrasePrompt`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** PassphrasePrompt(key_display_name: str, key_fingerprint: str | None, attempt: int, can_remember: bool, stored_secret_available: bool)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_display_name` | `str` | Yes | — | No |
+| `key_fingerprint` | `str | None` | Yes | — | No |
+| `attempt` | `int` | Yes | — | No |
+| `can_remember` | `bool` | Yes | — | No |
+| `stored_secret_available` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attempt": 0,
+  "can_remember": false,
+  "key_display_name": "example",
+  "key_fingerprint": null,
+  "stored_secret_available": false
+}
+```
+
+<!-- api-model: PasswordPrompt -->
+## `PasswordPrompt`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** PasswordPrompt(username: str, hostname: str, port: int, attempt: int, can_remember: bool, stored_secret_available: bool)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `username` | `str` | Yes | — | No |
+| `hostname` | `str` | Yes | — | No |
+| `port` | `int` | Yes | — | No |
+| `attempt` | `int` | Yes | — | No |
+| `can_remember` | `bool` | Yes | — | No |
+| `stored_secret_available` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attempt": 0,
+  "can_remember": false,
+  "hostname": "example.invalid",
+  "port": 22,
+  "stored_secret_available": false,
+  "username": "user"
 }
 ```
 

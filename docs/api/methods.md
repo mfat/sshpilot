@@ -24,11 +24,19 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `resize_terminal` | Daemon only | `terminal.resize` |
 | `replay_terminal` | Daemon only | `terminal.replay` |
 | `subscribe_terminal` | Daemon only | `terminal.output` |
-| `respond_to_interaction` | Unsupported | `interactions` |
+| `list_interactions` | Daemon only | `interactions.read` |
+| `get_interaction` | Daemon only | `interactions.read` |
+| `claim_interaction` | Daemon only | `interactions.respond` |
+| `release_interaction` | Daemon only | `interactions.respond` |
+| `respond_to_interaction` | Daemon only | `interactions.respond` |
+| `cancel_interaction` | Daemon only | `interactions.respond` |
+| `send_interaction_secret` | Daemon only | `interactions.respond` |
 | `subscribe_events` | Implemented | Bootstrap; event availability follows capabilities |
 | `close` | Implemented | None |
 
 <!-- api-method-contract: attach_session status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: cancel_interaction status=daemon-only capability=interactions.respond -->
+<!-- api-method-contract: claim_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: close status=implemented capability=none -->
 <!-- api-method-contract: close_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
@@ -36,13 +44,17 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
+<!-- api-method-contract: get_interaction status=daemon-only capability=interactions.read -->
 <!-- api-method-contract: get_session status=daemon-only capability=sessions.read -->
 <!-- api-method-contract: list_connections status=implemented capability=connections.read -->
+<!-- api-method-contract: list_interactions status=daemon-only capability=interactions.read -->
 <!-- api-method-contract: list_sessions status=daemon-only capability=sessions.read -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: replay_terminal status=daemon-only capability=terminal.replay -->
+<!-- api-method-contract: release_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: resize_terminal status=daemon-only capability=terminal.resize -->
-<!-- api-method-contract: respond_to_interaction status=schema-only capability=interactions -->
+<!-- api-method-contract: respond_to_interaction status=daemon-only capability=interactions.respond -->
+<!-- api-method-contract: send_interaction_secret status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
@@ -61,6 +73,12 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.create` | `connections.write` | Implemented |
 | `connections.update` | `connections.write` | Implemented |
 | `connections.delete` | `connections.write` | Implemented |
+| `interactions.list` | `interactions.read` | Implemented |
+| `interactions.get` | `interactions.read` | Implemented |
+| `interactions.claim` | `interactions.respond` | Implemented |
+| `interactions.release` | `interactions.respond` | Implemented |
+| `interactions.respond` | `interactions.respond` | Implemented; metadata only |
+| `interactions.cancel` | `interactions.respond` | Implemented |
 | `sessions.list` | `sessions.read` | Implemented |
 | `sessions.get` | `sessions.read` | Implemented |
 | `sessions.open` | `sessions.write` | Implemented |
@@ -75,6 +93,12 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
+<!-- api-daemon-method: interactions.cancel capability=interactions.respond -->
+<!-- api-daemon-method: interactions.claim capability=interactions.respond -->
+<!-- api-daemon-method: interactions.get capability=interactions.read -->
+<!-- api-daemon-method: interactions.list capability=interactions.read -->
+<!-- api-daemon-method: interactions.release capability=interactions.respond -->
+<!-- api-daemon-method: interactions.respond capability=interactions.respond -->
 <!-- api-daemon-method: sessions.attach capability=sessions.write -->
 <!-- api-daemon-method: sessions.close capability=sessions.write -->
 <!-- api-daemon-method: sessions.detach capability=sessions.write -->
@@ -88,7 +112,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 
 Unknown wire methods return `unsupported_method`. Terminal output and input use
 the negotiated binary frame path; resize and replay metadata use the two
-explicit wire methods above. Interactions remain unsupported.
+explicit wire methods above. Password/passphrase values use the negotiated
+one-use `binary-secret-v1` frame and never an ordinary JSON method.
 
 <!-- api-method: get_capabilities -->
 ## `get_capabilities`
@@ -227,6 +252,49 @@ client.update_connection(
 ```python
 client.delete_connection(DeleteConnectionRequest(connection_id))
 ```
+
+<!-- api-method: list_interactions -->
+## `list_interactions`
+
+Daemon-only `interactions.read` snapshot of safe interaction metadata visible
+to the handshaken client. Secret values and raw OpenSSH prompts are absent.
+
+<!-- api-method: get_interaction -->
+## `get_interaction`
+
+Daemon-only lookup by strict `interaction:<uuid>` identifier, scoped to the
+requesting client's eligible sessions.
+
+<!-- api-method: claim_interaction -->
+## `claim_interaction`
+
+Claims responder ownership and returns a short-lived claim plus one-use nonce.
+Claim conflicts are retryable; disconnect releases an unanswered claim.
+
+<!-- api-method: release_interaction -->
+## `release_interaction`
+
+Idempotently releases an unanswered claim. A reserved secret response cannot be
+released until it is answered or cancelled.
+
+<!-- api-method: respond_to_interaction -->
+## `respond_to_interaction`
+
+Submits a typed host-key or secret action. Secret bytes are deliberately absent
+and follow separately through `send_interaction_secret`.
+
+<!-- api-method: cancel_interaction -->
+## `cancel_interaction`
+
+Cancels one owned pending interaction. Expiry, session closure, process exit,
+and daemon shutdown also cancel pending interactions.
+
+<!-- api-method: send_interaction_secret -->
+## `send_interaction_secret`
+
+Sends a bounded mutable byte buffer through `binary-secret-v1` after a typed
+submit action reserved the slot. The client clears the supplied buffer after
+the send attempt; the operation is never retried.
 
 <!-- api-method: list_sessions -->
 ## `list_sessions`

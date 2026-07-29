@@ -220,22 +220,25 @@ before submitting bounded terminate/wait/kill and responds when that worker
 step finishes. A full 64-command executor returns retryable `server_busy`
 without blocking the selector. Immediate reads, handshake, attachment
 bookkeeping, and capability discovery remain on the selector because they are
-bounded. Connection persistence mutations also remain synchronous in API 0.8;
+bounded. Connection persistence mutations also remain synchronous in API 0.9;
 the selector is therefore hardened against session runner blocking, not claimed
 to be free of every possible filesystem delay.
 
-The production runner now owns a real Unix PTY and non-interactive OpenSSH
-child. Prompt- or secret-dependent startup still fails safely. See
-[session runtime](session-runtime.md) and
-[terminal streaming](terminal-streaming.md).
+The production runner owns a real Unix PTY and canonical OpenSSH child.
+Control-only clients retain safe non-interactive failure. A
+`binary-secret-v1` client may use typed host-key/password/passphrase
+interactions through the daemon broker. See
+[session runtime](session-runtime.md), [terminal streaming](terminal-streaming.md),
+and [interaction broker](interaction-broker.md).
 
 ## Current boundary
 
 Handshake, capability discovery, connection list/get/create/update/delete, and
 `connection.created`/`connection.updated`/`connection.deleted` cross the
-daemon. Session control, lifecycle events, and negotiated terminal data also
-cross it. The daemon advertises connection/session capabilities plus the four
-narrow terminal capabilities for binary-terminal peers.
+daemon. Session control, lifecycle events, negotiated terminal data, and typed
+interaction metadata also cross it. The daemon advertises connection/session
+capabilities, four narrow terminal capabilities for binary-terminal peers, and
+six narrow interaction capabilities for binary-secret peers.
 
 The write contract intentionally contains only nickname, hostname, username,
 port, and SSH protocol creation. Existing advanced SSH settings are preserved
@@ -247,8 +250,8 @@ snapshot refresh; it never removes or changes rows optimistically.
 Write requests are not automatically retried. If the transport closes after a
 request may have reached the daemon, `mutation_ambiguous` requires a fresh
 snapshot before explicit user action. There is no exactly-once/idempotency-key
-contract yet. Secrets, prompts, SFTP, forwarding, plugins, remote transport,
-and interaction channels remain out of scope.
+contract yet. Unrestricted prompts, SFTP, forwarding, plugins, and remote
+transport remain out of scope.
 
 ## Packaging and lifecycle backlog
 
@@ -258,7 +261,7 @@ and interaction channels remain out of scope.
 - add Windows named-pipe transport and ownership checks;
 - remove deprecated transitional-ID lookup in Protocol v2;
 - define explicit reconnect/resume/replay semantics;
-- define a separate binary terminal channel, PTY ownership, and prompt routing;
+- migrate the normal GTK terminal path only after extended interaction testing;
 - keep daemon mode experimental until extended GTK lifecycle testing is
   complete; production-default selection is a separate decision.
 

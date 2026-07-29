@@ -23,7 +23,7 @@ documented model surface.
 | `ConnectionId` | Saved connection identity | Non-empty opaque string | Implemented; stable UUID-backed ID |
 | `SessionId` | Daemon-lifetime runtime session identity | `session:<canonical UUID>` | Daemon implemented |
 | `RequestId` | Request correlation | Non-empty opaque string | Schema only |
-| `InteractionId` | Interaction identity | Non-empty opaque string | Schema only |
+| `InteractionId` | Daemon-lifetime interaction identity | `interaction:<canonical UUID>` | Daemon implemented |
 | `TransferId` | Transfer identity | Non-empty opaque string | Schema only |
 | `ClientId` | Handshaken frontend identity | Non-empty opaque string | Daemon implemented |
 | `AttachmentId` | Logical session attachment identity | Non-empty opaque string | Daemon implemented |
@@ -34,6 +34,8 @@ not runtime serialization. Consumers must not parse their contents.
 across rename and reload, and is validated by centralized internal helpers.
 `SessionId` is rendered as `session:<canonical UUID>` and is unique only for
 one daemon lifetime; consumers must not infer cross-restart persistence.
+`InteractionId` follows the same daemon-lifetime rule and is never derived from
+prompt text, session IDs, connection IDs, or timestamps.
 
 ## Discovery and event envelopes
 
@@ -102,13 +104,13 @@ returns `input_owner=False`: logical attachment does not imply terminal input.
 
 | Model | Purpose | Runtime support |
 | --- | --- | --- |
-| `TerminalDimensions` | PTY rows and columns | Schema only |
-| `TerminalInput` | Attachment-scoped input bytes | Schema only |
-| `TerminalOutput` | Sequenced session output bytes | Schema only |
-| `ResizeTerminalRequest` | Attachment-scoped dimension update | Schema only |
-| `ReplayRequest` | Retained-byte query after a sequence | Schema-only `replay_terminal` request |
-| `ReplayBounds` | Retained sequence/byte range | Schema only |
-| `ReplayResult` | Replay bytes and continuation metadata | Schema-only `replay_terminal` result |
+| `TerminalDimensions` | PTY rows and columns | Daemon implemented |
+| `TerminalInput` | Attachment-scoped input bytes | Daemon implemented over binary frames |
+| `TerminalOutput` | Sequenced session output bytes | Daemon implemented over binary frames |
+| `ResizeTerminalRequest` | Attachment-scoped dimension update | Daemon implemented |
+| `ReplayRequest` | Retained-byte query after a sequence | Daemon implemented |
+| `ReplayBounds` | Retained sequence/byte range | Daemon implemented |
+| `ReplayResult` | Replay continuation metadata | Daemon implemented; bytes use binary frames |
 
 Rows and columns must be 1–10,000. Input/output/replay data must be `bytes`.
 Sequences are non-negative; replay bounds are ordered; retained bytes are
@@ -119,17 +121,24 @@ non-negative. `ReplayRequest.max_bytes` defaults to 1 MiB and is limited to
 
 | Model | Purpose | Runtime support |
 | --- | --- | --- |
+| `HostKeyPrompt` | Safe host/port/key-type/SHA256 fingerprint and trust status | Daemon implemented |
+| `PasswordPrompt` | Safe login identity, attempt, and remember availability | Daemon implemented |
+| `PassphrasePrompt` | Safe key display identity, attempt, and remember availability | Daemon implemented |
+| `InteractionSummary` | Immutable typed lifecycle snapshot | Daemon implemented |
+| `InteractionClaim` | Responder ownership plus one-use nonce | Daemon implemented; nonce excluded from `repr` and events |
+| `InteractionDecisionRequest` | Typed host-key or secret-response metadata | Daemon implemented |
 | `InteractionRequest` | Pending prompt from core to a frontend | Schema only |
 | `InteractionResponse` | Answer or terminal disposition | Schema only |
 | `InteractionCancellation` | Cancellation record | Schema only |
 | `InteractionTimeout` | Timeout record | Schema only |
 | `InteractionRejection` | Rejection record | Schema only |
 
-New requests must be `pending`; expiry must follow creation. Responses cannot
-remain pending, and non-answered responses cannot carry `value` or `choice`.
-`InteractionResponse.value` is excluded from `repr` and classified sensitive.
-This protects accidental representation only; callers must still prevent
-logging, persistence, and event-history exposure.
+Runtime interactions use strict `InteractionType`, `InteractionState`,
+`HostKeyDecision`, `SecretDecision`, and `RememberPolicy` enums. The decision
+DTO contains no secret value. Password/passphrase bytes use the separately
+negotiated one-use secret frame after a claim and metadata response reserve an
+exact nonce. The retained legacy `InteractionResponse.value` is excluded from
+`repr` and remains schema-only.
 
 ## Transfer, SFTP, forwarding, and plugin models
 
@@ -157,14 +166,20 @@ handling is not defined until a transport codec exists.
 
 | Enum | Values | Runtime support |
 | --- | --- | --- |
-| `Capability` | Connection, session, terminal, interaction, transfer, plugin, and secret feature groups | Daemon advertises the three connection and three session lifecycle capabilities |
-| `EventType` | `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `error.occurred` | Connection events and four non-byte session lifecycle events emitted |
+| `Capability` | Connection, session, terminal, interaction, transfer, plugin, and secret feature groups | Daemon advertises narrow implemented connection/session/terminal/interaction capabilities |
+| `EventType` | Connection, session, typed interaction, and local error identifiers | Connection, four non-byte session, and two interaction lifecycle events emitted |
 | `ErrorCode` | `unsupported_capability`, `invalid_request`, `validation_failed`, `connection_not_found`, `session_not_found`, `interaction_not_found`, `interaction_already_answered`, `permission_denied`, `operation_cancelled`, `operation_timed_out`, `internal_error` | See [errors](errors.md) |
 | `ConnectionHealth` | `unknown`, `checking`, `reachable`, `unreachable` | DTO runtime always reports `unknown` |
 | `AuthenticationMethod` | `key`, `password` | Implemented safe projection |
 | `SessionState` | `created`, `starting`, `running`, `closing`, `exited`, `failed`, `closed` | Daemon implemented |
 | `InteractionKind` | `password`, `key_passphrase`, `host_key_confirmation`, `keyboard_interactive`, `overwrite_confirmation`, `plugin_question` | Schema only |
 | `InteractionStatus` | `pending`, `answered`, `cancelled`, `timed_out`, `rejected` | Schema only |
+| `InteractionType` | `host_key_confirmation`, `password`, `private_key_passphrase` | Daemon implemented |
+| `InteractionState` | `pending`, `claimed`, `answered`, `cancelled`, `expired`, `failed` | Daemon implemented |
+| `HostKeyStatus` | `unknown`, `changed`, `revoked` | Daemon implemented |
+| `HostKeyDecision` | `accept_once`, `accept_and_store`, `reject` | Daemon implemented |
+| `SecretDecision` | `submit`, `cancel` | Daemon implemented |
+| `RememberPolicy` | `do_not_store`, `store_after_success`, `replace_stored_after_success`, `delete_stored_secret` | Daemon implemented |
 | `TransferDirection` | `upload`, `download` | Schema only |
 | `TransferState` | `queued`, `running`, `paused`, `completed`, `failed`, `cancelled` | Schema only |
 | `FileEntryKind` | `file`, `directory`, `symlink`, `other` | Schema only |
