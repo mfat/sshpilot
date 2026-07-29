@@ -420,9 +420,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.client = fallback
         try:
             mode = requested_client_mode()
-            # Also check config setting for daemon mode preference
-            if mode is ClientMode.IN_PROCESS and self.config.get_setting('terminal.daemon_backed_ssh', True):
-                # Config requests daemon mode, try to honor it
+            # Stage C defaults ``terminal.daemon_backed_ssh`` to True, which
+            # promotes an unset environment to daemon mode. An explicit
+            # ``SSHPILOT_CLIENT_MODE=in_process`` (GUI harness, debugging)
+            # must win so tests never attach to a user daemon by accident.
+            from .api.client_factory import CLIENT_MODE_ENVIRONMENT
+
+            explicit_mode = (os.environ.get(CLIENT_MODE_ENVIRONMENT) or "").strip()
+            if (
+                mode is ClientMode.IN_PROCESS
+                and not explicit_mode
+                and self.config.get_setting('terminal.daemon_backed_ssh', True)
+            ):
                 mode = ClientMode.DAEMON
         except ValueError:
             selection = in_process_selection(
@@ -543,7 +552,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._maybe_restore_daemon_sessions()
 
     def _maybe_restore_daemon_sessions(self) -> None:
-        """Offer or auto-reattach retained daemon sessions after GTK restart."""
+        """Offer or auto-reattach retained daemon sessions after GTK restart.
+
+        Session listing runs on the client bridge worker so a slow or blocked
+        control RPC cannot stall the GTK main loop (and cannot serialize behind
+        an in-flight welcome ``connections.list`` on the single request gate).
+        """
 
         try:
             if not self.config.get_setting("terminal.daemon_restore_sessions", True):
@@ -553,38 +567,70 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             from .daemon_session_restore import DaemonSessionRestoreManager
 
             restore = DaemonSessionRestoreManager(self.config)
-            restorable = restore.get_restorable_sessions(self.client)
-            if not restorable:
-                return
-            if self.config.get_setting("terminal.daemon_auto_attach", False):
-                for metadata in restorable:
-                    restore.restore_session(self, metadata, self.client, self.client_bridge)
-                return
-            dialog = Adw.AlertDialog.new(
-                _("Restore Daemon Sessions?"),
-                _(
-                    "One or more SSH sessions are still running in the local "
-                    "service. Restore them into tabs now?"
-                ),
-            )
-            dialog.add_response("skip", _("Not Now"))
-            dialog.add_response("restore", _("Restore"))
-            dialog.set_response_appearance(
-                "restore", Adw.ResponseAppearance.SUGGESTED
-            )
-            dialog.set_default_response("restore")
-            dialog.set_close_response("skip")
+            client = self.client
+            bridge = self.client_bridge
+            expected_instance = getattr(client, "server_instance_id", "") or ""
 
-            def _respond(_dialog, response):
-                if response != "restore":
+            def _list_sessions():
+                return list(client.list_sessions() or [])
+
+            def _on_listed(sessions):
+                if self._is_quitting or self.client is not client:
                     return
-                for metadata in restorable:
-                    restore.restore_session(
-                        self, metadata, self.client, self.client_bridge
-                    )
+                if (
+                    expected_instance
+                    and getattr(client, "server_instance_id", "") != expected_instance
+                ):
+                    return
+                restorable = restore.get_restorable_sessions(
+                    client,
+                    sessions=sessions,
+                )
+                if not restorable:
+                    return
+                if self.config.get_setting("terminal.daemon_auto_attach", False):
+                    for metadata in restorable:
+                        restore.restore_session(
+                            self, metadata, self.client, self.client_bridge
+                        )
+                    return
+                dialog = Adw.AlertDialog.new(
+                    _("Restore Daemon Sessions?"),
+                    _(
+                        "One or more SSH sessions are still running in the local "
+                        "service. Restore them into tabs now?"
+                    ),
+                )
+                dialog.add_response("skip", _("Not Now"))
+                dialog.add_response("restore", _("Restore"))
+                dialog.set_response_appearance(
+                    "restore", Adw.ResponseAppearance.SUGGESTED
+                )
+                dialog.set_default_response("restore")
+                dialog.set_close_response("skip")
 
-            dialog.connect("response", _respond)
-            dialog.present(self)
+                def _respond(_dialog, response):
+                    if response != "restore":
+                        return
+                    for metadata in restorable:
+                        restore.restore_session(
+                            self, metadata, self.client, self.client_bridge
+                        )
+
+                dialog.connect("response", _respond)
+                dialog.present(self)
+
+            def _on_error(error):
+                logger.warning(
+                    "Failed to list daemon sessions for restore code=%s",
+                    getattr(getattr(error, "code", None), "value", type(error).__name__),
+                )
+
+            bridge.submit(
+                _list_sessions,
+                on_success=_on_listed,
+                on_error=_on_error,
+            )
         except Exception:
             logger.error("Daemon session restore failed", exc_info=True)
 

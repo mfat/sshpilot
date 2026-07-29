@@ -63,7 +63,11 @@ class DaemonSessionRestoreManager:
         except Exception:
             logger.error("Failed to save daemon session restore metadata", exc_info=True)
 
-    def get_restorable_sessions(self, client) -> List[SessionRestoreMetadata]:
+    def get_restorable_sessions(
+        self,
+        client,
+        sessions=None,
+    ) -> List[SessionRestoreMetadata]:
         try:
             if not self.config.get_setting(RESTORE_SESSIONS_SETTING, True):
                 return []
@@ -74,7 +78,10 @@ class DaemonSessionRestoreManager:
             if not current_instance_id:
                 return []
             try:
-                active_sessions = list(client.list_sessions() or [])
+                if sessions is None:
+                    active_sessions = list(client.list_sessions() or [])
+                else:
+                    active_sessions = list(sessions)
             except Exception:
                 logger.warning("Failed to list daemon sessions for restore")
                 return []

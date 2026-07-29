@@ -216,8 +216,13 @@ class GtkClientBridge:
         with self._lock:
             self._active_requests.discard(request)
 
-    def shutdown(self) -> None:
-        """Suppress callbacks and stop accepting work without an unbounded wait."""
+    def shutdown(self, *, wait: bool = False, wait_timeout: float = 1.0) -> None:
+        """Suppress callbacks and stop accepting work.
+
+        ``wait=False`` (default) matches historical non-blocking teardown used
+        by the live app. Tests may pass ``wait=True`` so worker threads exit
+        before the next case starts.
+        """
 
         with self._lock:
             if self._closed:
@@ -235,8 +240,24 @@ class GtkClientBridge:
             future.cancel()
         for binding in terminal_bindings:
             binding.close()
-        self._executor.shutdown(wait=False, cancel_futures=True)
-        self._interaction_executor.shutdown(wait=False, cancel_futures=True)
+        self._executor.shutdown(wait=wait, cancel_futures=True)
+        self._interaction_executor.shutdown(wait=wait, cancel_futures=True)
+        if wait and wait_timeout > 0:
+            # ThreadPoolExecutor has no join timeout; a short sleep gives
+            # cancelled workers a bounded chance to exit without hanging tests.
+            import time
+
+            deadline = time.monotonic() + wait_timeout
+            while time.monotonic() < deadline:
+                if not any(
+                    getattr(t, "is_alive", lambda: False)()
+                    for t in (
+                        *getattr(self._executor, "_threads", ()),
+                        *getattr(self._interaction_executor, "_threads", ()),
+                    )
+                ):
+                    break
+                time.sleep(0.01)
 
 
 class GtkTerminalBinding:
