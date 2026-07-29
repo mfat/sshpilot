@@ -4,6 +4,10 @@ Unified SSH connection builder that uses SSH config as primary source of truth.
 
 This module provides a single, consistent way to build SSH commands for all
 components (terminal, SCP, SFTP, ssh-copy-id) that matches default SSH behavior.
+
+GTK-free argv composition for explicit launch descriptions lives in
+``sshpilot.core.ssh.build_ssh_process_spec``. This module remains the runtime
+adapter that resolves askpass/secret backends for live Connection objects.
 """
 import os
 import logging
@@ -15,6 +19,7 @@ from .askpass_utils import (
     ensure_key_in_agent,
     lookup_passphrase,
 )
+from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
 
 
 def _askpass_env_for_connection(

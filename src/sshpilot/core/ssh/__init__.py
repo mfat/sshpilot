@@ -1,9 +1,25 @@
 """SSH launch policy helpers (GTK-free).
 
-Command construction that needs askpass / secret backends remains in
-``sshpilot.ssh_connection_builder`` (already imports without ``gi`` at
-module load). Core exposes the portable :class:`ProcessSpec` adapter.
+``sshpilot.ssh_connection_builder`` remains the runtime adapter that resolves
+askpass env from secret backends. Core owns portable launch descriptions and
+deterministic argv composition via :func:`build_ssh_process_spec`.
 """
+from .launch import (
+    AuthMethod,
+    ForwardSpec,
+    HostKeyMode,
+    LaunchMode,
+    SSHLaunchRequest,
+    build_ssh_process_spec,
+)
 from .process_spec import ProcessSpec
 
-__all__ = ["ProcessSpec"]
+__all__ = [
+    "AuthMethod",
+    "ForwardSpec",
+    "HostKeyMode",
+    "LaunchMode",
+    "ProcessSpec",
+    "SSHLaunchRequest",
+    "build_ssh_process_spec",
+]
