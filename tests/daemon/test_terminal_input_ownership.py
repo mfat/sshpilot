@@ -2,13 +2,12 @@
 
 import threading
 import uuid
-from unittest.mock import Mock
 
 import pytest
 
 from sshpilot.api import InProcessClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId, SessionId
+from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId
 from sshpilot.api.models.sessions import AttachSessionRequest, OpenSessionRequest, SessionExitInfo, SessionState
 from sshpilot.api.models.terminal import TerminalDimensions
 from sshpilot.connection_identity import new_connection_uuid
@@ -202,7 +201,7 @@ def test_claim_input_already_owned(session_with_attachment):
     """Test claiming input when already owned by another attachment."""
     session_id = session_with_attachment['session_id']
     attachment_id = session_with_attachment['attachment_id']
-    client_id = session_with_attachment['client_id']
+    session_with_attachment['client_id']
     runtime = session_with_attachment['runtime']
     
     # Create a second attachment
@@ -283,7 +282,7 @@ def test_release_input_success(session_with_attachment):
 def test_release_input_not_owner(session_with_attachment):
     """Test releasing input when not owner."""
     session_id = session_with_attachment['session_id']
-    client_id = session_with_attachment['client_id']
+    session_with_attachment['client_id']
     runtime = session_with_attachment['runtime']
     
     # Create a second attachment
@@ -341,7 +340,7 @@ def test_client_disconnect_cleans_all_attachments(session_with_attachment):
     runtime = session_with_attachment['runtime']
     
     # Create a second attachment for the same client
-    result_2 = runtime.attach_session(
+    runtime.attach_session(
         AttachSessionRequest(
             session_id=session_id,
             request_input=False,
@@ -382,7 +381,7 @@ def test_output_subscription_with_multiple_attachments(session_with_attachment):
     assert runtime.receives_terminal(session_id, client_id)
     
     # Create a second attachment without output
-    result_2 = runtime.attach_session(
+    runtime.attach_session(
         AttachSessionRequest(
             session_id=session_id,
             request_input=False,
@@ -391,7 +390,6 @@ def test_output_subscription_with_multiple_attachments(session_with_attachment):
         ),
         client_id=client_id,
     )
-    attachment_id_2 = result_2.attachment.id
     
     # Client should still receive output (first attachment wants it)
     assert runtime.receives_terminal(session_id, client_id)

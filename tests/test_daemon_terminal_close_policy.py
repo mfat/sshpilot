@@ -1,7 +1,7 @@
 """Test daemon terminal close policy behavior."""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from sshpilot.daemon_terminal_policy import TerminalClosePolicy
 

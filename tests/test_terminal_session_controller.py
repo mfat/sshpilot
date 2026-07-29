@@ -1,11 +1,11 @@
 """Test terminal session controller state machine with mocked client/bridge."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
 from sshpilot.api.models.common import AttachmentId, ConnectionId, SessionId
-from sshpilot.api.models.sessions import AttachmentInfo, SessionSummary, SessionState
+from sshpilot.api.models.sessions import AttachmentInfo
 from sshpilot.api.models.terminal import TerminalDimensions, TerminalOutput
 from sshpilot.terminal_session_controller import (
     DaemonTerminalSessionController,

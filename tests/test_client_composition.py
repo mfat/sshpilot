@@ -61,6 +61,9 @@ class _CompositionWindow:
             )
         )
         self.warnings = []
+        self.config = SimpleNamespace(
+            get_setting=lambda key, default=None: default,
+        )
 
     def get_application(self):
         return self._app
@@ -69,6 +72,9 @@ class _CompositionWindow:
         self.warnings.append(self._client_mode_warning)
         self._client_mode_warning = None
         return False
+
+    def _maybe_restore_daemon_sessions(self):
+        return None
 
 
 class _EventApplication:
