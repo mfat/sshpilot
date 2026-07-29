@@ -34,6 +34,21 @@ deprecated nickname-hash IDs remain accepted as lookup aliases during the
 bounded v1 window. A capability is unnecessary because correct clients do not
 branch on ID syntax.
 
+The daemon session-lifecycle foundation is also an additive Protocol v1
+extension. Older clients do not advertise or call the new methods and may
+ignore the new event types; newer clients require `sessions.read`,
+`sessions.write`, and `sessions.events` before using them. `SessionId` is
+daemon-lifetime opaque identity and resets across daemon restart. No terminal
+byte, PTY, prompt, replay, or persistent-session compatibility is implied.
+
+API implementation 0.6 deliberately replaces the former schema-only session
+state vocabulary and removes caller-supplied client IDs from open/attach
+requests. This is a Python source-contract change for consumers that adopted
+the speculative models before runtime support. It is not a Protocol v1 wire
+break because no session wire method previously existed. Handshaken transport
+identity is now authoritative; accepting the old fields would create an
+impersonation-prone contract.
+
 Additive does not automatically mean safe. For example, adding an event can
 break clients that treat unknown events as fatal; that behaviour must be fixed
 and contract-tested before relying on additive compatibility.
@@ -99,8 +114,11 @@ Daemon-only handshake, framing, correlation, timeout, socket security,
 lifecycle, event multiplexing, bounded event/byte backpressure, mutation
 ambiguity, and multi-client sequence rules have focused transport tests.
 Connection event parity is covered under `connections.events`. Terminal-byte,
-replay, prompt, and cancellation parity
-remain out of scope because the daemon does not advertise those capabilities.
+replay, prompt, and cancellation parity remain out of scope because the daemon
+does not advertise those capabilities. Session lifecycle is intentionally
+daemon-only in API 0.6: `InProcessClient` continues to return
+`unsupported_capability`, while daemon integration contracts cover lifecycle,
+attachment, multi-client event, shutdown, and process-ownership semantics.
 The [public API snapshot](../../tests/api/snapshots/public_api.json) is a review
 aid for structural changes, not proof of semantic compatibility.
 

@@ -21,18 +21,19 @@ documented model surface.
 | Type | Purpose | Required form | Runtime status |
 | --- | --- | --- | --- |
 | `ConnectionId` | Saved connection identity | Non-empty opaque string | Implemented; stable UUID-backed ID |
-| `SessionId` | Runtime session identity | Non-empty opaque string | Schema only |
+| `SessionId` | Daemon-lifetime runtime session identity | `session:<canonical UUID>` | Daemon implemented |
 | `RequestId` | Request correlation | Non-empty opaque string | Schema only |
 | `InteractionId` | Interaction identity | Non-empty opaque string | Schema only |
 | `TransferId` | Transfer identity | Non-empty opaque string | Schema only |
-| `ClientId` | Frontend identity | Non-empty opaque string | Schema only |
-| `AttachmentId` | Session attachment identity | Non-empty opaque string | Schema only |
+| `ClientId` | Handshaken frontend identity | Non-empty opaque string | Daemon implemented |
+| `AttachmentId` | Logical session attachment identity | Non-empty opaque string | Daemon implemented |
 
 The aliases are `typing.NewType` wrappers over `str`; they add static intent,
 not runtime serialization. Consumers must not parse their contents.
-`ConnectionId` is currently rendered as `connection:<canonical UUID>`, remains
-stable across rename and reload, and is validated by centralized internal
-helpers.
+`ConnectionId` is rendered as `connection:<canonical UUID>`, remains stable
+across rename and reload, and is validated by centralized internal helpers.
+`SessionId` is rendered as `session:<canonical UUID>` and is unique only for
+one daemon lifetime; consumers must not infer cross-restart persistence.
 
 ## Discovery and event envelopes
 
@@ -42,7 +43,7 @@ helpers.
 | `CoreInfo` | Core name/version/implementation | Implemented through `get_capabilities` |
 | `CompatibilityResult` | Compatibility decision and safe message | Implemented; currently always compatible v1 in-process |
 | `Capabilities` | Version, endpoint, compatibility, and supported-set result | Implemented |
-| `CoreEvent` | Typed payload plus sequence/timestamp/correlation | Partially implemented; connection events only |
+| `CoreEvent` | Typed payload plus sequence/timestamp/correlation | Implemented for connection and session lifecycle events |
 
 `ClientInfo` and `CoreInfo` reject empty required strings. `CoreEvent.sequence`
 must be non-negative. Timestamps default to aware UTC values.
@@ -80,20 +81,22 @@ booleans, not paths.
 
 | Model | Purpose | Runtime support |
 | --- | --- | --- |
-| `OpenSessionRequest` | Connection/client pair for a future session | Schema only |
-| `InputOwner` | Client and attachment allowed to send input | Schema only |
-| `SessionCapabilities` | Per-session feature strings | Schema only |
-| `SessionExitInfo` | Exit code, signal, and safe reason | Schema only |
-| `SessionSummary` | Runtime session snapshot | Schema only |
-| `AttachSessionRequest` | Attach a client and optionally request input | Schema only |
-| `AttachmentInfo` | Attachment identity and ownership result | Schema only |
-| `AttachSessionResult` | Session plus attachment | Schema only |
-| `DetachSessionRequest` | Remove one attachment | Schema only |
-| `CloseSessionRequest` | Close one runtime session | Schema only |
+| `OpenSessionRequest` | Stable connection reference for daemon session creation | Daemon implemented |
+| `InputOwner` | Reserved input-ownership projection | Schema only |
+| `SessionCapabilities` | Per-session feature strings | Daemon implemented; empty until terminal transport |
+| `SessionExitInfo` | Safe exit code, signal, and reason | Daemon implemented |
+| `SessionFailure` | Sanitised stable failure code and message | Daemon implemented |
+| `SessionSummary` | Immutable public lifecycle snapshot | Daemon implemented |
+| `AttachSessionRequest` | Logical caller attachment request | Daemon implemented |
+| `AttachmentInfo` | Server-derived caller attachment | Daemon implemented |
+| `AttachSessionResult` | Session plus logical attachment | Daemon implemented |
+| `DetachSessionRequest` | Remove the caller's logical attachment | Daemon implemented |
+| `CloseSessionRequest` | Request bounded session closure | Daemon implemented |
 
 All present IDs must be non-empty. `created_at` defaults to aware UTC.
-`request_input=True` requests ownership but does not define arbitration; no
-runtime currently implements it.
+`request_input=True` remains a forward-compatible request, but Phase 6 always
+returns `input_owner=False`: logical attachment does not imply terminal input.
+`attachment_count` is bookkeeping independent of process state.
 
 ## Terminal and replay models
 
@@ -154,12 +157,12 @@ handling is not defined until a transport codec exists.
 
 | Enum | Values | Runtime support |
 | --- | --- | --- |
-| `Capability` | Connection, terminal, interaction, transfer, plugin, and secret feature groups | `connections.read`, `connections.events`, and `connections.write` advertised |
-| `EventType` | `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `error.occurred` | First three emitted |
+| `Capability` | Connection, session, terminal, interaction, transfer, plugin, and secret feature groups | Daemon advertises the three connection and three session lifecycle capabilities |
+| `EventType` | `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `error.occurred` | Connection events and four non-byte session lifecycle events emitted |
 | `ErrorCode` | `unsupported_capability`, `invalid_request`, `validation_failed`, `connection_not_found`, `session_not_found`, `interaction_not_found`, `interaction_already_answered`, `permission_denied`, `operation_cancelled`, `operation_timed_out`, `internal_error` | See [errors](errors.md) |
 | `ConnectionHealth` | `unknown`, `checking`, `reachable`, `unreachable` | DTO runtime always reports `unknown` |
 | `AuthenticationMethod` | `key`, `password` | Implemented safe projection |
-| `SessionState` | `creating`, `connecting`, `waiting_for_interaction`, `connected`, `reconnecting`, `disconnected`, `failed`, `closing`, `closed` | Schema only |
+| `SessionState` | `created`, `starting`, `running`, `closing`, `exited`, `failed`, `closed` | Daemon implemented |
 | `InteractionKind` | `password`, `key_passphrase`, `host_key_confirmation`, `keyboard_interactive`, `overwrite_confirmation`, `plugin_question` | Schema only |
 | `InteractionStatus` | `pending`, `answered`, `cancelled`, `timed_out`, `rejected` | Schema only |
 | `TransferDirection` | `upload`, `download` | Schema only |

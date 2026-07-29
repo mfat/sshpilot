@@ -1,8 +1,9 @@
 # Local daemon transport
 
-The current experimental path provides Linux per-user connection snapshots,
-basic metadata mutations, and unsolicited connection lifecycle events.
-Production composition remains in-process by default.
+The current experimental path provides Linux per-user connection CRUD/events
+plus daemon-lifetime session lifecycle control/events. Production composition
+remains in-process by default, and normal GTK terminals remain on their legacy
+in-process path.
 
 Linux is the supported platform for this phase. Unix-socket primitives may be
 present elsewhere, but macOS lifecycle integration and Windows named pipes are
@@ -13,8 +14,8 @@ DaemonClient
     -> one persistent AF_UNIX socket
     -> sshpilot.daemon selector loop
     -> explicit RequestDispatcher
-    -> InProcessClient
-    -> existing ConnectionManager
+       -> InProcessClient -> existing ConnectionManager
+       -> SessionRuntime -> owned session records/process-runner boundary
 ```
 
 ## Ownership and threading
@@ -24,6 +25,11 @@ the selector and dispatches requests. This preserves `InProcessClient` and
 GObject manager owner-thread rules. One selector loop handles multiple client
 sockets without a thread per client, a thread per request, `asyncio.run()`, or a
 per-call event loop.
+
+The selector thread also owns `SessionRuntime` commands. One runtime lock
+serializes state/attachment mutations; one shared process reaper reports exits
+without a thread per event or byte. Event callbacks are never invoked while
+runtime or transport locks are held.
 
 `DaemonClient` presents synchronous methods, but exactly one persistent reader
 thread owns socket receive. Callers register pending request IDs and serialize
@@ -135,8 +141,10 @@ access exists.
 ## Lifecycle
 
 The server owns its listener, wakeup pair, active client sockets, dispatcher,
-and core client. `shutdown()` wakes the selector, stops accepting work, closes
-active peers, closes the core client on its owner thread, and removes its socket.
+session runtime, and core client. `shutdown()` wakes the selector, stops new
+work/events, closes exact owned session resources under a global bounded
+deadline, closes peers and the core client on its owner thread, and removes its
+socket.
 The module entry point maps SIGINT and SIGTERM to this path. It does not install
 or supervise a service.
 
@@ -183,12 +191,31 @@ There is no automatic reconnect. GTK stops trusting cached live state and shows
 the safe unavailable state. Restarting the application re-runs daemon
 selection; a future explicit reconnect must take a fresh list snapshot.
 
+## Session lifecycle foundation
+
+The explicit session methods are `sessions.list`, `sessions.get`,
+`sessions.open`, `sessions.attach`, `sessions.detach`, and `sessions.close`.
+The daemon advertises `sessions.read`, `sessions.write`, and `sessions.events`.
+One random `session:<uuid>` identifies a record for the daemon lifetime.
+
+Logical attachment uses the handshaken peer ID. Peer disconnect detaches it
+from every session without terminating the resource. Open/close transport
+ambiguity is never retried automatically. Four typed events share the existing
+daemon-global sequence and bounded peer queues with connection events.
+
+The production Phase 6 process runner deliberately produces a safe failed
+session because prompt/secret/PTY startup is not yet supported. Tests inject
+the concrete owned-subprocess runner or deterministic handles to prove
+running/exit/terminate/kill/reaping behaviour. See
+[session runtime](session-runtime.md).
+
 ## Current boundary
 
 Handshake, capability discovery, connection list/get/create/update/delete, and
 `connection.created`/`connection.updated`/`connection.deleted` cross the
-daemon. The advertised feature set is exactly `connections.read`,
-`connections.events`, and `connections.write`.
+daemon. Session control and lifecycle events also cross it. The daemon
+advertises the three connection capabilities plus `sessions.read`,
+`sessions.write`, and `sessions.events`.
 
 The write contract intentionally contains only nickname, hostname, username,
 port, and SSH protocol creation. Existing advanced SSH settings are preserved
@@ -200,8 +227,8 @@ snapshot refresh; it never removes or changes rows optimistically.
 Write requests are not automatically retried. If the transport closes after a
 request may have reached the daemon, `mutation_ambiguous` requires a fresh
 snapshot before explicit user action. There is no exactly-once/idempotency-key
-contract yet. Terminal/session runtime, PTYs, secrets, prompts, SFTP,
-forwarding, plugins, and binary channels remain in-process and out of scope.
+contract yet. PTYs, terminal bytes/input/resize/replay, secrets, prompts, SFTP,
+forwarding, plugins, and binary channels remain out of scope.
 
 ## Packaging and lifecycle backlog
 

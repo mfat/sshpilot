@@ -63,16 +63,31 @@ def test_protocol_version_and_changelog_are_documented():
 def test_runtime_capability_markers_match_the_provider(
     fake_manager,
     client_factory,
+    client_backend,
 ):
     client = client_factory(fake_manager)
-    documented = _markers(_read("capabilities.md"), "runtime-capability")
+    marker = (
+        "daemon-runtime-capability"
+        if client_backend == "daemon"
+        else "runtime-capability"
+    )
+    documented = _markers(_read("capabilities.md"), marker)
     supported = {item.value for item in client.get_capabilities().supported}
 
-    assert documented == supported == {
+    expected = {
         Capability.CONNECTIONS_READ.value,
         Capability.CONNECTIONS_EVENTS.value,
         Capability.CONNECTIONS_WRITE.value,
     }
+    if client_backend == "daemon":
+        expected.update(
+            {
+                Capability.SESSIONS_READ.value,
+                Capability.SESSIONS_WRITE.value,
+                Capability.SESSIONS_EVENTS.value,
+            }
+        )
+    assert documented == supported == expected
     assert client.list_connections()
     assert client.get_connection(client.list_connections()[0].id)
 
@@ -131,25 +146,31 @@ def test_wire_framing_handshake_and_method_registry_are_documented():
     )
 
 
-def test_schema_only_capabilities_are_not_advertised(fake_manager, client_factory):
+def test_schema_only_capabilities_are_not_advertised(
+    fake_manager,
+    client_factory,
+    client_backend,
+):
     client = client_factory(fake_manager)
 
-    assert client.get_capabilities().supported == frozenset(
-        {
-            Capability.CONNECTIONS_READ,
-            Capability.CONNECTIONS_EVENTS,
-            Capability.CONNECTIONS_WRITE,
-        }
-    )
+    runtime_capabilities = {
+        Capability.CONNECTIONS_READ,
+        Capability.CONNECTIONS_EVENTS,
+        Capability.CONNECTIONS_WRITE,
+    }
+    if client_backend == "daemon":
+        runtime_capabilities.update(
+            {
+                Capability.SESSIONS_READ,
+                Capability.SESSIONS_WRITE,
+                Capability.SESSIONS_EVENTS,
+            }
+        )
+    assert client.get_capabilities().supported == frozenset(runtime_capabilities)
     assert all(
         not client.get_capabilities().supports(capability)
         for capability in Capability
-        if capability
-        not in {
-            Capability.CONNECTIONS_READ,
-            Capability.CONNECTIONS_EVENTS,
-            Capability.CONNECTIONS_WRITE,
-        }
+        if capability not in runtime_capabilities
     )
 
 

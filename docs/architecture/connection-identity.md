@@ -136,3 +136,7 @@ before downgrading.
 UUIDs are identifiers, not secrets. Migration never derives them from
 connection or credential material, never logs raw records, and does not widen
 file permissions.
+
+Daemon session records link to this stable `ConnectionId`; they do not copy or
+derive identity from a nickname. Session IDs are a separate daemon-lifetime
+namespace and are not persisted across daemon restarts.

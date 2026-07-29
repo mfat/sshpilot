@@ -11,11 +11,10 @@ DTOs, capabilities, events, structured errors, and the local wire envelope.
 ## Scope
 
 `InProcessClient` implements connection reads and in-process connection events.
-`DaemonClient` implements equivalent connection reads plus live connection
-events over a secure per-user Unix-domain socket. Other methods and models
-establish vocabulary but are explicitly unsupported or schema-only. Named
-pipes, TCP, WebSocket, HTTP, remote access, and terminal/session transport do
-not exist.
+`DaemonClient` additionally implements daemon-lifetime session control and
+lifecycle events over the same secure per-user Unix-domain socket. Terminal
+bytes, PTYs, prompts, secrets, replay, and session persistence remain
+unsupported. Named pipes, TCP, WebSocket, HTTP, and remote access do not exist.
 
 See [methods](methods.md) and [capabilities](capabilities.md) for the precise
 runtime matrix.
@@ -39,7 +38,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.5` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.6` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -90,12 +89,12 @@ current snapshot but must not parse them.
 | Type | Intended identity | Current stability |
 | --- | --- | --- |
 | `ConnectionId` | Saved connection | Stable opaque `connection:<uuid>` backed by an immutable persisted UUID |
-| `SessionId` | Runtime terminal session | Schema only; no allocation or persistence guarantee |
+| `SessionId` | Daemon-lifetime runtime session | Stable `session:<uuid>` for one daemon process; not persisted across restart |
 | `RequestId` | Operation/request correlation | Random UUID hex per daemon request; never reused on a connection |
 | `InteractionId` | One frontend interaction | Schema only; no allocator |
 | `TransferId` | One transfer | Schema only; no allocator |
 | `ClientId` | One frontend client | Random per `DaemonClient`; enforced after handshake |
-| `AttachmentId` | One client/session attachment | Schema only; no allocator |
+| `AttachmentId` | One logical client/session attachment | Random UUID-backed value; removed on detach/socket close |
 
 All new responses and events emit UUID-backed IDs. Rename and mutable metadata
 changes retain identity; reload and daemon restart reproduce the same ID.
@@ -103,6 +102,7 @@ Parsing is strict and centralized, although consumers must treat the value as
 opaque.
 
 <!-- api-connection-id: persisted-uuid-v1 -->
+<!-- api-session-id: daemon-uuid-v1 -->
 
 Former `connection:v1:<hash>` IDs are deprecated input-only lookup aliases
 during Protocol v1. They resolve only when the hash matches the connection's
@@ -119,8 +119,8 @@ release window. See
   unknown or omitted required fields are rejected in v1.
 - Public enums are lowercase string enums. Exact values are listed in
   [models](models.md).
-- Timestamps are timezone-aware `datetime` values. When serialized by a future
-  transport they must use RFC 3339/ISO 8601 UTC form, for example
+- Timestamps are timezone-aware `datetime` values. Session summaries serialize
+  them using RFC 3339/ISO 8601 UTC form, for example
   `2030-01-01T00:00:00Z`.
 - Tuple and frozen-set fields are immutable Python collections in-process and
   encoded as JSON arrays without implying mutable core state.
@@ -157,7 +157,8 @@ implemented.
   recursively growing the callback stack.
 - The three connection events follow the order in which manager signals reach
   the adapter.
-- The daemon assigns one sequence across all accepted connection events,
+- The daemon assigns one sequence across all accepted connection and session
+  lifecycle events,
   starting at zero per daemon instance. All handshaken clients receive the same
   sequence for the same event. New clients receive no history, and daemon
   restart may reset the sequence.
@@ -170,8 +171,9 @@ implemented.
 - A successful create/update/delete emits exactly one matching connection
   event. Response and event frames share one output stream, so frontends must
   remain correct whether the response or event is delivered first.
-- Session events, terminal output ordering, and per-session replay remain
-  schema-only and have no runtime guarantee.
+- Session lifecycle events share that order. `session.created` precedes state
+  transitions; `session.exited` precedes `session.closed`. Terminal output
+  ordering and replay remain schema-only.
 
 ## Event/response multiplexing
 
@@ -181,7 +183,7 @@ The core event callback performs no socket I/O.
 
 Each `DaemonClient` socket has one persistent reader thread. Request callers
 register an opaque ID and serialize writes; only the reader decodes frames.
-Responses complete the matching pending request, while connection events enter
+Responses complete the matching pending request, while lifecycle events enter
 a separate bounded serial dispatch queue. Thus a slow subscriber does not block
 response correlation. Unknown or duplicate response IDs, malformed event
 payloads, and duplicate/regressing/gapped event sequences are protocol errors
@@ -191,10 +193,12 @@ that close the transport and wake every pending caller.
 
 Client calls are synchronous and expose no cancellation token. `DaemonClient`
 uses a finite constructor-configurable transport timeout; timeout closes the
-socket and returns `transport_timeout` for reads. After a write frame may have
-been sent, timeout or closure returns non-retryable `mutation_ambiguous`;
-clients must refresh before an explicit retry. `close()` tears down resources and can
-interrupt a blocked socket call through socket shutdown.
+socket and returns `transport_timeout` for reads. After a connection mutation
+or session open/close frame may have been sent, timeout or closure returns
+non-retryable `mutation_ambiguous`; clients must refresh the relevant snapshot
+before an explicit retry. Attach/detach are idempotent membership operations
+but are not automatically reconnected or retried. `close()` tears down
+resources and can interrupt a blocked socket call through socket shutdown.
 
 The `operation_cancelled` and `operation_timed_out` error codes are reserved
 schema vocabulary. Future cancellation must define request identity, race

@@ -21,36 +21,36 @@ terminal-derived `ConnectionState` into health. A future monitor may define
 <!-- api-state: SessionState -->
 ## Runtime session lifecycle: `SessionState`
 
-All states and transitions are schema design only. No API runtime session
-exists, no transitions are enforced, and no state is persisted.
+The daemon `SessionRuntime` enforces this lifecycle. Records are in-memory and
+survive frontend disconnect, but are not persisted across daemon restart.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> creating
-    creating --> connecting
-    connecting --> waiting_for_interaction
-    waiting_for_interaction --> connecting
-    connecting --> connected
-    connecting --> failed
-    connected --> reconnecting
-    reconnecting --> connected
-    reconnecting --> disconnected
-    connected --> disconnected
-    creating --> closing
-    connecting --> closing
-    connected --> closing
-    disconnected --> closing
-    failed --> closing
+    [*] --> created
+    created --> starting
+    created --> failed
+    created --> closed
+    starting --> running
+    starting --> closing
+    starting --> exited
+    starting --> failed
+    running --> closing
+    running --> exited
+    running --> failed
+    closing --> exited
+    closing --> failed
     closing --> closed
+    exited --> closed
+    failed --> closed
 ```
 
-The diagram records the intended vocabulary only; it is not yet a normative
-transition table. Before runtime support, valid transitions, reconnect policy,
-exit/close ordering, attachment ownership, persistence, and invalid-transition
-errors must be made contract-tested. `closed` is intended terminal.
-
-Related schema events are `session.created`, `session.state_changed`,
-`session.exited`, and `session.closed`; none is emitted.
+The table is normative and contract-tested. `closed` is final; no transition
+returns to `running`. Invalid internal transitions are programming errors.
+Frontend requests against absent/final records use structured public errors.
+Repeated close is idempotent. `session.created`, `session.state_changed`,
+`session.exited`, and `session.closed` each represent at most one accepted
+transition. Process exit information is separate from safe startup failure
+metadata. There is no reconnect, replay, prompt, PTY, or terminal-byte state.
 
 <!-- api-state: InteractionStatus -->
 ## Interaction lifecycle: `InteractionStatus`

@@ -113,9 +113,18 @@ connections.events
 connections.write
 ```
 
-They do not advertise terminal, attach, replay,
-interactions, SFTP, forwarding, plugins or secrets. Those schemas exist to
-stabilize vocabulary, not to claim a runtime.
+The daemon additionally advertises:
+
+```text
+sessions.read
+sessions.write
+sessions.events
+```
+
+`InProcessClient` deliberately returns `unsupported_capability` for session
+control because current GTK terminal ownership has not moved. Neither provider
+advertises terminal bytes/resize/replay, interactions, SFTP, forwarding,
+plugins, or secrets.
 
 The write DTO intentionally contains only basic connection metadata. Daemon
 GTK mode rejects secret, key/certificate, advanced SSH, group/tag, and
@@ -161,6 +170,16 @@ in Protocol v2. See
 terminal-derived `ConnectionState` is not converted into reachability;
 `InProcessClient` reports connection health as `unknown`.
 
+## Session DTOs and IDs
+
+Daemon sessions use strict opaque `session:<uuid>` IDs unique for one daemon
+process. `SessionSummary` exposes lifecycle state, creation time, safe
+exit/failure metadata, empty terminal capabilities, and logical attachment
+count. It never exposes a process/PID, command, environment, PTY, secret, or
+internal record. Client identity for attach/detach comes from the completed
+handshake, not request-controlled metadata. See
+[daemon session runtime](session-runtime.md).
+
 ## Errors
 
 `SshPilotError` carries:
@@ -196,9 +215,13 @@ Current runtime events:
 - `connection.created`
 - `connection.updated`
 - `connection.deleted`
+- `session.created` (daemon)
+- `session.state_changed` (daemon)
+- `session.exited` (daemon)
+- `session.closed` (daemon)
 
-Schema-only event types include session creation/state/output/interaction/exit/
-close and core errors.
+Schema-only event types still include session output and interaction requests.
+`error.occurred` is a local safe `DaemonClient` continuity notification.
 
 Subscribers receive accepted in-process events in publisher-global sequence
 order and subscriber-registration order. The first active publisher drains the
@@ -207,12 +230,12 @@ delivery. Subscriber failure is isolated. `Subscription.unsubscribe()` and
 `close()` are idempotent. The client disconnects manager signal handlers during
 shutdown.
 
-The daemon forwards only those three connection events. It assigns a
-daemon-global sequence starting at zero, encodes only `ConnectionSummary`, and
-uses bounded per-peer queues. An overflowed peer is disconnected instead of
-continuing with a silent gap. `DaemonClient` checks sequence continuity and
-publishes decoded events through the same subscription API on its event
-dispatcher thread.
+The daemon forwards the three connection and four session lifecycle events. It
+assigns one daemon-global sequence starting at zero, uses explicit typed
+codecs, and keeps bounded per-peer queues. An overflowed peer is disconnected
+instead of continuing with a silent gap. `DaemonClient` checks sequence
+continuity and publishes decoded events through the same subscription API on
+its event dispatcher thread.
 
 GTK owns one application-scoped daemon subscription. It marshals event types to
 the main context and coalesces bursts into one asynchronous
@@ -220,9 +243,9 @@ the main context and coalesces bursts into one asynchronous
 a refresh is active. Transport/continuity failure replaces live cached state
 with the existing safe unavailable view; no automatic reconnect loop runs.
 
-Terminal output must not use this simple synchronous publisher. Before terminal
-runtime support, add bounded per-session queues, batching, per-session sequence
-ordering, replay bounds, truncation, and slow-client policy.
+Terminal output must not use this control-plane publisher. Before streaming,
+add bounded per-session byte queues, batching, per-session sequence ordering,
+replay bounds, truncation, and a binary slow-client policy.
 
 ## Terminal and interaction rules
 

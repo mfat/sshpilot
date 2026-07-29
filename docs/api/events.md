@@ -30,9 +30,10 @@ subscriber that is absent or already closed does not receive prior events.
 
 <!-- api-daemon-event-semantics: global-sequence-bounded-v1 -->
 
-The daemon subscribes once to its `InProcessClient` publisher and accepts only
-the three typed connection events. It replaces the source publisher's
-process-local sequence with one daemon-global sequence that begins at `0`.
+The daemon subscribes to its `InProcessClient` connection publisher and its
+owned `SessionRuntime` publisher. It accepts three connection events and four
+session lifecycle events. It replaces each source publisher's process-local
+sequence with one daemon-global sequence that begins at `0`.
 Every healthy, handshaken peer receives the same sequence for the same accepted
 event, in daemon acceptance order. Sequence assignment and peer enqueueing are
 atomic. A daemon restart may reset the counter; Protocol v1 has no cross-restart
@@ -70,12 +71,12 @@ local `error.occurred` continuity notification where delivery remains possible.
 | `connection.created` | Implemented in-process and daemon | `connections.events` | Manager `connection-added` signal | `ConnectionSummary` |
 | `connection.updated` | Implemented in-process and daemon | `connections.events` | Manager `connection-updated` signal | `ConnectionSummary` |
 | `connection.deleted` | Implemented in-process and daemon | `connections.events` | Manager `connection-removed` signal | `ConnectionSummary` |
-| `session.created` | Schema only | `terminal` | Future session creation | Intended `SessionSummary` |
-| `session.state_changed` | Schema only | `terminal` | Future state transition | `SessionSummary` |
+| `session.created` | Daemon implemented | `sessions.events` | Session record allocation | `SessionSummary` |
+| `session.state_changed` | Daemon implemented | `sessions.events` | Accepted lifecycle transition other than exit/close | `SessionSummary` |
 | `session.output` | Schema only | `terminal` | Future PTY output | Intended `TerminalOutput` |
 | `session.interaction_requested` | Schema only | `interactions` | Future core prompt | Intended `InteractionRequest` |
-| `session.exited` | Schema only | `terminal` | Future child exit | Intended `SessionExitInfo` |
-| `session.closed` | Schema only | `terminal` | Future session cleanup | `SessionSummary` |
+| `session.exited` | Daemon implemented | `sessions.events` | Owned runtime resource exit | `SessionExitInfo` plus envelope session ID |
+| `session.closed` | Daemon implemented | `sessions.events` | Final in-memory lifecycle transition | `SessionSummary` |
 | `error.occurred` | Local runtime transport-continuity signal in `DaemonClient` | None fixed | Daemon transport/protocol continuity failure | Safe structured error envelope dictionary |
 
 <!-- api-event: connection.created -->
@@ -115,20 +116,22 @@ local `error.occurred` continuity notification where delivery remains possible.
 <!-- api-event: session.created -->
 ## `session.created`
 
-- **Status / introduced:** Schema only / v1
-- **Capability / intended trigger:** `terminal`; successful future session
-  creation.
-- **Payload / IDs:** Intended `SessionSummary` with session and connection IDs.
-- **Guarantees:** None until runtime implementation and contract tests exist.
+- **Status / introduced:** Daemon implemented / v1, API 0.6.
+- **Capability / trigger:** `sessions.events`; allocation of one durable
+  daemon-lifetime session record.
+- **Payload / IDs:** `SessionSummary`; session and stable connection IDs are
+  populated.
+- **Guarantees:** Exactly once per accepted open, before later state events.
 
 <!-- api-event: session.state_changed -->
 ## `session.state_changed`
 
-- **Status / introduced:** Schema only / v1
-- **Capability / intended trigger:** `terminal`; a runtime session transition.
-- **Payload / IDs:** `SessionSummary`; session ID is intended.
-- **Guarantees:** No transition, ordering, coalescing, or delivery semantics are
-  implemented.
+- **Status / introduced:** Daemon implemented / v1, API 0.6.
+- **Capability / trigger:** `sessions.events`; entry into `starting`,
+  `running`, `closing`, or `failed`.
+- **Payload / IDs:** Immutable `SessionSummary` and session/connection IDs.
+- **Guarantees:** One event per accepted transition, in the shared daemon
+  sequence. Attachment count changes do not emit lifecycle events.
 
 <!-- api-event: session.output -->
 ## `session.output`
@@ -152,18 +155,23 @@ local `error.occurred` continuity notification where delivery remains possible.
 <!-- api-event: session.exited -->
 ## `session.exited`
 
-- **Status / introduced:** Schema only / v1
-- **Capability / intended trigger:** `terminal`; child process exit.
-- **Payload / IDs:** Intended `SessionExitInfo` and session ID.
-- **Guarantees:** None; exit-versus-close ordering is not defined.
+- **Status / introduced:** Daemon implemented / v1, API 0.6.
+- **Capability / trigger:** `sessions.events`; an exact owned resource exits.
+- **Payload / IDs:** Typed `SessionExitInfo`; the envelope reconstructs the
+  public `CoreEvent.session_id`.
+- **Guarantees:** Emitted once before `session.closed`. Exit code and signal are
+  deliberate fields; no command, environment, process path, or exception is
+  exposed.
 
 <!-- api-event: session.closed -->
 ## `session.closed`
 
-- **Status / introduced:** Schema only / v1
-- **Capability / intended trigger:** `terminal`; final session cleanup.
-- **Payload / IDs:** `SessionSummary`; session ID is intended.
-- **Guarantees:** None; no terminal-state delivery or replay promise.
+- **Status / introduced:** Daemon implemented / v1, API 0.6.
+- **Capability / trigger:** `sessions.events`; entry into final `closed`.
+- **Payload / IDs:** Final `SessionSummary` and IDs.
+- **Guarantees:** Emitted once after exit when a process existed, or directly
+  after close for a failed/resource-free record. Closed records are retained
+  in memory up to the documented count; events are never replayed.
 
 <!-- api-event: error.occurred -->
 ## `error.occurred`

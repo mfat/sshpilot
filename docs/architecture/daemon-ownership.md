@@ -1,8 +1,9 @@
 # Daemon and frontend ownership
 
 This document defines the intended ownership boundary. The local daemon
-currently owns connection CRUD and connection-event forwarding; terminal and
-session ownership remain future work.
+currently owns connection CRUD/events and the daemon-lifetime session
+lifecycle. PTY/terminal streams, prompts, secrets, and normal GTK terminal
+migration remain future work.
 
 The concrete current client contract is maintained in the
 [API reference](../api/README.md). This document describes intended ownership;
@@ -15,7 +16,7 @@ GTK / Tauri / CLI
        -> SshPilotClient
        -> InProcessClient by default
        -> DaemonClient in experimental opt-in mode
-       -> sshpilotd for connection CRUD/events
+       -> sshpilotd for connection CRUD/events and session lifecycle
 ```
 
 Protocol models are independent from the in-process adapter and any future Unix
@@ -56,12 +57,13 @@ not the canonical domain contract.
 
 ## Protocol v1 session decisions
 
-- The core owns the SSH process and PTY.
+- The daemon owns Phase 6 session records and exact runner handles. Future
+  terminal-capable sessions will also own the SSH process and PTY.
 - A session may live without a frontend.
 - Attachment and session lifetime are separate. Detaching does not close a
   session; closing is explicit.
-- Initially one attachment owns terminal input. Observer support can be added
-  later without weakening that rule.
+- Phase 6 attachments are logical observers only. Input ownership is false
+  until terminal transport defines its arbitration contract.
 - Terminal output is bytes and is ordered per session.
 - A bounded per-session replay buffer is required in the daemon phase.
 - Prompts are routed to the client that initiated the relevant operation.
@@ -124,8 +126,9 @@ not the canonical domain contract.
 
 - Commands are synchronous for `InProcessClient`, with a frontend-neutral event
   subscription. Calling convention and wire protocol are separate decisions.
-- `connections.read`, `connections.events`, and `connections.write` are the
-  only advertised runtime capabilities.
+- In-process advertises only the three connection capabilities. The daemon
+  additionally advertises `sessions.read`, `sessions.write`, and
+  `sessions.events`.
 - Terminal, interaction, SFTP, forwarding, plugin, and secret models do not
   imply runtime support.
 - Unsupported methods raise `unsupported_capability`, never
@@ -154,8 +157,10 @@ not the canonical domain contract.
 - Subscriber exceptions are isolated and logged.
 - Unsubscribe and close are idempotent; client close removes manager handlers,
   rejects new events, and lets already accepted events finish.
-- Delivery is not durable and slow subscribers block later subscribers. This
-  limitation must change before terminal streams or daemon delivery.
+- Daemon session and connection lifecycle events share one global sequence and
+  bounded per-peer queues. Client callback dispatch is separate from socket
+  reading, so slow subscribers cannot block responses.
+- Delivery is not durable and has no reconnect replay.
 
 ## Current behaviour conflicts
 
@@ -173,26 +178,21 @@ current behaviour.
 
 ## Next-phase backlog
 
-1. Extract a headless terminal-session service around the existing native SSH
-   builder without changing authentication.
-2. Move SSH process and PTY ownership behind that service.
-3. Add session open/attach/detach/close and one-input-owner enforcement.
+1. Extend the process-runner boundary to the existing native SSH builder
+   without changing authentication.
+2. Add PTY ownership and binary terminal input/output/resize framing.
+3. Define one-input-owner arbitration and replay bounds.
 4. Add byte output batching, bounded queues, replay bounds and truncation.
 5. Route prompts through interaction IDs with timeout/cancellation.
-6. Specify a versioned message envelope and Unix-domain socket framing.
-7. Add Windows named-pipe transport requirements.
-8. Implement `DaemonClient`, then `sshpilotd`, and reuse the connection contract
-   tests against it.
-9. Add per-user socket security, version negotiation, stale-daemon and
-   single-instance handling.
-10. Migrate GTK terminal rendering to the byte-stream contract, initially with
-    the existing renderers; phase VTE out only after parity.
-11. Add `sshpilotctl` and interactive CLI attach/detach/resize.
-12. Split core plugin execution from frontend UI contributions.
-13. Define daemon lifecycle, idle shutdown and session expiry.
-14. Update Flatpak, DEB/RPM, Homebrew, macOS and Windows packaging only after
+6. Add Windows named-pipe transport requirements.
+7. Migrate GTK terminal rendering to the byte-stream contract, initially with
+   the existing renderers; phase VTE out only after parity.
+8. Add `sshpilotctl` and interactive CLI attach/detach/resize.
+9. Split core plugin execution from frontend UI contributions.
+10. Define daemon lifecycle, idle shutdown and session expiry.
+11. Update Flatpak, DEB/RPM, Homebrew, macOS and Windows packaging only after
     lifecycle and transport are stable.
-15. Build the Svelte/Tauri frontend after protocol negotiation and terminal
+12. Build the Svelte/Tauri frontend after protocol negotiation and terminal
     streaming are contract-tested.
-16. Design separately secured remote/mobile access only as a later, explicit
+13. Design separately secured remote/mobile access only as a later, explicit
     project.

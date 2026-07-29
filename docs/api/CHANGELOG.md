@@ -37,13 +37,25 @@ notes remain separate.
   UUID-based group, metadata, and saved-layout references.
 - Added stable `connection:<uuid>` public IDs plus deprecated Protocol v1
   lookup compatibility for the former nickname-derived ID form.
+- Added daemon-owned `session:<uuid>` lifecycle records, an explicit
+  `created`/`starting`/`running`/`closing`/`exited`/`failed`/`closed` state
+  machine, bounded closed-record retention, and logical multi-client
+  attachment bookkeeping.
+- Added Protocol v1 `sessions.list`, `sessions.get`, `sessions.open`,
+  `sessions.attach`, `sessions.detach`, and `sessions.close`, plus truthful
+  `sessions.read`, `sessions.write`, and `sessions.events` capabilities.
+- Added typed `session.created`, `session.state_changed`, `session.exited`, and
+  `session.closed` forwarding on the existing daemon-global event sequence.
+- Added a daemon-internal process-runner boundary with exact process ownership,
+  one shared reaper, bounded terminate/kill shutdown, and a production-safe
+  unsupported runner until prompt-safe PTY startup exists.
 - Added the schema-only `replay_terminal` client operation and complete
   package-level convenience exports for all documented model types.
 - Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
 
 ### Changed
 
-- Increased `API_IMPLEMENTATION_VERSION` to `0.5`; `PROTOCOL_VERSION` remains
+- Increased `API_IMPLEMENTATION_VERSION` to `0.6`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon
   response and advertises only contract-tested runtime capabilities.
@@ -67,6 +79,14 @@ notes remain separate.
 - Renaming through `update_connection` returns and emits the same stable ID.
   Mutation requests are never automatically retried after ambiguous transport
   failure.
+- `sessions.open` returns the current record after bounded startup initiation;
+  later state changes arrive as events. Open/close are not automatically
+  retried after ambiguous transport loss, while logical attach/detach are
+  idempotent set operations on one connection.
+- Replaced the pre-runtime schema-only session states with the seven-state
+  daemon lifecycle and removed caller-supplied client IDs from open/attach
+  requests. This is an API 0.6 Python source change but not a Protocol v1 wire
+  break because the former models had no implemented session wire methods.
 
 ### Deprecated
 
@@ -98,6 +118,10 @@ notes remain separate.
 - Event payloads are now bound to approved public payload types and excluded
   from event `repr`; structured error details accept only validated safe values
   and exclude details from error `repr`.
+- Session wire payloads expose only stable IDs, typed state, timestamps, safe
+  exit information, sanitised failures, capabilities, and attachment counts;
+  command lines, environments, process handles, PTY paths, prompts, and secret
+  material remain private or absent.
 
 ## Protocol v1 — Initial documented baseline
 

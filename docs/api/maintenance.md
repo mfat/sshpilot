@@ -106,6 +106,14 @@ rename tests proving response/event/GTK identity remains unchanged. Migration
 tests must use isolated temporary configuration roots and never a developer's
 real SSH configuration.
 
+Session lifecycle changes additionally require the complete transition matrix,
+strict session-ID and request codecs, runner startup/failure/exit races,
+bounded exact-process termination, attachment idempotency and disconnect
+cleanup, closed-record retention, response/event interleaving, multi-client
+event delivery, mutation-ambiguity behaviour, and daemon shutdown with no
+owned process leaks. Terminal byte methods must remain unsupported until their
+own transport and backpressure contract is implemented.
+
 ## Example: connection health monitoring
 
 Ownership and flow should be:

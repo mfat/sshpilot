@@ -32,11 +32,16 @@ the validated internal envelope.
 | `connection_already_exists` | Implemented | No until nickname changes | `create_connection`, `update_connection` | Keep the editor open and request another nickname |
 | `connection_not_found` | Implemented | No without refreshed ID | Connection get/update/delete | Refresh the snapshot; transitional aliases may expire after rename |
 | `persistence_failed` | Implemented | No automatic retry | Connection writes | Keep current UI state and let the user retry explicitly |
-| `mutation_ambiguous` | Implemented locally | No automatic retry | Daemon connection writes | Refresh snapshot before any explicit retry |
-| `session_not_found` | Schema only | No without refreshed state | Future session/terminal operations | Remove stale session UI |
+| `mutation_ambiguous` | Implemented locally | No automatic retry | Daemon connection writes and session open/close | Refresh the corresponding snapshot before explicit retry |
+| `session_not_found` | Implemented | No without refreshed state | Session get/attach/detach/close | Refresh `sessions.list` |
+| `session_already_closed` | Implemented | No | Attach to exited/failed/closed session | Refresh session state; do not attach |
+| `session_invalid_state` | Reserved public code | No | Session lifecycle | Refresh state; report an implementation defect if repeated |
+| `session_startup_failed` | Implemented | No automatic retry | Session process-runner startup | Show safe failure and leave record inspectable |
+| `session_termination_failed` | Implemented | Explicit retry only | Bounded session close | Warn safely; daemon retains the exact handle for close/shutdown retry |
+| `unsupported_session_protocol` | Implemented | No | Session open | Disable session runtime for that connection protocol |
 | `interaction_not_found` | Schema only | No | Future interaction response | Dismiss stale prompt |
 | `interaction_already_answered` | Schema only | No | Future interaction response | Treat the prompt as complete |
-| `permission_denied` | Schema only | Depends on policy change | Future transport/plugin/secret operations | Explain denied action without exposing policy internals |
+| `permission_denied` | Implemented | Depends on policy change | Attachment ownership and future protected operations | Explain denied action without exposing policy internals |
 | `operation_cancelled` | Schema only | Caller-dependent | Future cancellable operations | Return UI to idle; retry only on explicit user action |
 | `operation_timed_out` | Schema only | Operation-dependent | Future bounded operations | Use `retryable`; preserve safe context |
 | `internal_error` | Implemented | Read `retryable` | Manager read translation and future adapters | Show generic failure and keep detailed diagnostics in logs |
@@ -98,14 +103,47 @@ exception type; the public error contains no path, parser output, or payload.
 
 The daemon transport timed out or closed after a mutation frame may have been
 sent. The server may already have committed the change. `retryable` is false:
-clients must obtain a fresh `connections.list` snapshot before offering an
-explicit retry. The error carries the request ID and, for update/delete, the
-safe connection ID, but never the request payload.
+clients must obtain a fresh `connections.list` or `sessions.list` snapshot
+before offering an explicit retry. The error carries safe correlation IDs but
+never the request payload.
 
 <!-- api-error: session_not_found -->
 ## `session_not_found`
 
-Schema-only code for a missing runtime session.
+The strict session ID does not identify a retained daemon session.
+
+<!-- api-error: session_already_closed -->
+## `session_already_closed`
+
+A logical attachment was requested after the session stopped accepting
+attachments. Refresh state rather than retrying automatically.
+
+<!-- api-error: session_invalid_state -->
+## `session_invalid_state`
+
+Reserved stable code for a public lifecycle conflict. Internal invalid
+transition attempts are programming errors and are not exposed with raw state.
+
+<!-- api-error: session_startup_failed -->
+## `session_startup_failed`
+
+The daemon could not establish an owned runtime resource. The safe failure may
+be represented in `SessionSummary.failure`; raw command, environment, process
+path, secret backend, and exception text are excluded.
+
+<!-- api-error: session_termination_failed -->
+## `session_termination_failed`
+
+The exact owned resource did not terminate within the bounded graceful/kill
+policy. It is not safe to retry blindly; inspect a fresh session snapshot. A
+later explicit user-directed close retries the same handle, and daemon shutdown
+also performs bounded cleanup before closing the process runner.
+
+<!-- api-error: unsupported_session_protocol -->
+## `unsupported_session_protocol`
+
+The referenced connection protocol has no daemon session runner. The error may
+carry the safe connection ID and never reflects arbitrary executable input.
 
 <!-- api-error: interaction_not_found -->
 ## `interaction_not_found`
@@ -120,8 +158,8 @@ Schema-only code for a response race after an interaction became terminal.
 <!-- api-error: permission_denied -->
 ## `permission_denied`
 
-Schema-only code for an authenticated caller that lacks permission. Protocol v1
-currently has no transport authentication or remote access.
+An authenticated local peer attempted to detach an attachment owned by another
+handshaken client. Protocol v1 still has no remote access.
 
 <!-- api-error: operation_cancelled -->
 ## `operation_cancelled`

@@ -4,10 +4,10 @@ Capabilities report implemented runtime support. The existence of a method,
 event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
-`InProcessClient` and the negotiated daemon endpoint currently advertise
-exactly `connections.read`, `connections.events`, and `connections.write`.
-`DaemonClient.get_capabilities()` returns the daemon response rather than a
-hard-coded local assumption.
+`InProcessClient` advertises exactly the three connection capabilities. The
+daemon additionally advertises `sessions.read`, `sessions.write`, and
+`sessions.events`; `DaemonClient` returns that negotiated response rather than
+a hard-coded local assumption.
 
 Stable IDs do not add a capability: `ConnectionId` was already opaque, all
 current providers emit the stable form, and clients must not branch on its
@@ -20,6 +20,12 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-runtime-capability: connections.read -->
 <!-- api-runtime-capability: connections.events -->
 <!-- api-runtime-capability: connections.write -->
+<!-- api-daemon-runtime-capability: connections.read -->
+<!-- api-daemon-runtime-capability: connections.events -->
+<!-- api-daemon-runtime-capability: connections.write -->
+<!-- api-daemon-runtime-capability: sessions.read -->
+<!-- api-daemon-runtime-capability: sessions.write -->
+<!-- api-daemon-runtime-capability: sessions.events -->
 
 ## Inventory
 
@@ -28,8 +34,11 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `connections.read` | Read saved connection DTO snapshots | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | Existing `ConnectionManager` through `InProcessClient` | v1 |
 | `connections.events` | Subscribe to live connection lifecycle events | `InProcessClient` and daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
 | `connections.write` | Create, update, and delete basic saved connection metadata | `InProcessClient` and daemon: Implemented | `create_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | Existing `ConnectionManager` through `InProcessClient` | v1 |
-| `terminal` | Open/close sessions and send input/resize | Unsupported | Session and terminal methods | Intended session lifecycle/output | Core session, PTY, process, SSH/auth services | v1 |
-| `terminal.attach` | Attach/detach clients and assign input ownership | Unsupported | `attach_session`, `detach_session` | No dedicated event currently defined | Runtime session service | v1 |
+| `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented; in-process unsupported | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
+| `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented; in-process unsupported | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
+| `sessions.events` | Receive daemon session lifecycle events | Daemon: Implemented | `subscribe_events` | `session.created`, `session.state_changed`, `session.exited`, `session.closed` | Existing bounded event multiplexing | v1 / API 0.6 |
+| `terminal` | Send terminal input and resize a PTY | Unsupported | Terminal byte/resize methods | Intended terminal output | PTY and binary terminal transport | v1 |
+| `terminal.attach` | Attach a terminal byte stream and assign input ownership | Unsupported | No implemented operation | No dedicated event currently defined | PTY stream transport | v1 |
 | `terminal.replay` | Replay retained terminal bytes | Unsupported schema-only method | `replay_terminal` with `ReplayRequest`/`ReplayResult` | `session.output` is schema only | Bounded per-session replay buffer | v1 |
 | `interactions` | Present and answer core-requested user interactions | Unsupported | `respond_to_interaction` | `session.interaction_requested` | Interaction broker and secret-safe frontend bridge | v1 |
 | `sftp` | Frontend-neutral remote file operations | Schema only; no client method | None | None defined | Core OpenSSH SFTP service | v1 |
@@ -64,18 +73,39 @@ the write DTO and are never silently discarded. Experimental GTK daemon mode
 requires this capability together with `connections.read` and
 `connections.events`; otherwise it falls back fully to in-process mode.
 
+<!-- api-capability: sessions.read -->
+## `sessions.read`
+
+Daemon-only and contract-tested. Records are in-memory, creation-ordered, and
+use `session:<uuid>` identifiers unique for one daemon lifetime. Closed records
+are capped at 100 and are not persisted across restart.
+
+<!-- api-capability: sessions.write -->
+## `sessions.write`
+
+Daemon-only and contract-tested for lifecycle control and logical attachment
+bookkeeping. It does not imply successful SSH startup, PTY allocation, terminal
+bytes, prompts, replay, or secrets. The production runner currently reports
+safe failed startup until those later capabilities exist.
+
+<!-- api-capability: sessions.events -->
+## `sessions.events`
+
+Daemon-only delivery of four typed lifecycle events through the same global
+sequence and bounded queues as connection events. It provides no replay or
+cross-restart continuity.
+
 <!-- api-capability: terminal -->
 ## `terminal`
 
-Unsupported. Session creation/closure, terminal input, and resize methods fail
-with `unsupported_capability`. Existing GTK terminal behaviour is not exposed
-through this API yet.
+Unsupported. Terminal input and resize fail with `unsupported_capability`.
+Session control being implemented does not imply terminal transport.
 
 <!-- api-capability: terminal.attach -->
 ## `terminal.attach`
 
-Unsupported. Attachment and input-ownership schemas exist, but no runtime
-session service owns them.
+Unsupported for terminal streams/input ownership. Phase 6 logical attachment
+bookkeeping is separately guarded by `sessions.write`.
 
 <!-- api-capability: terminal.replay -->
 ## `terminal.replay`

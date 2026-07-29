@@ -1,8 +1,8 @@
 # Client methods
 
-`SshPilotClient` is synchronous. Both `InProcessClient` and `DaemonClient`
-implement the connection read/write contract. “Unsupported” means both clients
-implement the method only to raise `unsupported_capability`.
+`SshPilotClient` is synchronous. Both clients implement connection CRUD.
+Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
+`unsupported_capability` for the corresponding `sessions.*` capability.
 
 ## Runtime summary
 
@@ -14,10 +14,12 @@ implement the method only to raise `unsupported_capability`.
 | `create_connection` | Implemented | `connections.write` |
 | `update_connection` | Implemented | `connections.write` |
 | `delete_connection` | Implemented | `connections.write` |
-| `open_session` | Unsupported | `terminal` |
-| `attach_session` | Unsupported | `terminal.attach` |
-| `detach_session` | Unsupported | `terminal.attach` |
-| `close_session` | Unsupported | `terminal` |
+| `list_sessions` | Daemon only | `sessions.read` |
+| `get_session` | Daemon only | `sessions.read` |
+| `open_session` | Daemon only | `sessions.write` |
+| `attach_session` | Daemon only | `sessions.write` |
+| `detach_session` | Daemon only | `sessions.write` |
+| `close_session` | Daemon only | `sessions.write` |
 | `send_terminal_input` | Unsupported | `terminal` |
 | `resize_terminal` | Unsupported | `terminal` |
 | `replay_terminal` | Schema only / unsupported | `terminal.replay` |
@@ -25,16 +27,18 @@ implement the method only to raise `unsupported_capability`.
 | `subscribe_events` | Implemented | Bootstrap; event availability follows capabilities |
 | `close` | Implemented | None |
 
-<!-- api-method-contract: attach_session status=schema-only capability=terminal.attach -->
+<!-- api-method-contract: attach_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: close status=implemented capability=none -->
-<!-- api-method-contract: close_session status=schema-only capability=terminal -->
+<!-- api-method-contract: close_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
-<!-- api-method-contract: detach_session status=schema-only capability=terminal.attach -->
+<!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
+<!-- api-method-contract: get_session status=daemon-only capability=sessions.read -->
 <!-- api-method-contract: list_connections status=implemented capability=connections.read -->
-<!-- api-method-contract: open_session status=schema-only capability=terminal -->
+<!-- api-method-contract: list_sessions status=daemon-only capability=sessions.read -->
+<!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: replay_terminal status=schema-only capability=terminal.replay -->
 <!-- api-method-contract: resize_terminal status=schema-only capability=terminal -->
 <!-- api-method-contract: respond_to_interaction status=schema-only capability=interactions -->
@@ -55,18 +59,29 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.create` | `connections.write` | Implemented |
 | `connections.update` | `connections.write` | Implemented |
 | `connections.delete` | `connections.write` | Implemented |
+| `sessions.list` | `sessions.read` | Implemented |
+| `sessions.get` | `sessions.read` | Implemented |
+| `sessions.open` | `sessions.write` | Implemented |
+| `sessions.attach` | `sessions.write` | Implemented |
+| `sessions.detach` | `sessions.write` | Implemented |
+| `sessions.close` | `sessions.write` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
+<!-- api-daemon-method: sessions.attach capability=sessions.write -->
+<!-- api-daemon-method: sessions.close capability=sessions.write -->
+<!-- api-daemon-method: sessions.detach capability=sessions.write -->
+<!-- api-daemon-method: sessions.get capability=sessions.read -->
+<!-- api-daemon-method: sessions.list capability=sessions.read -->
+<!-- api-daemon-method: sessions.open capability=sessions.write -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
 
-Unknown wire methods return `unsupported_method`. Public schema-only client
-methods fail locally with `unsupported_capability` and are not exposed as hidden
-daemon methods.
+Unknown wire methods return `unsupported_method`. Terminal byte, resize,
+replay, and interaction methods remain local `unsupported_capability` failures.
 
 <!-- api-method: get_capabilities -->
 ## `get_capabilities`
@@ -206,69 +221,85 @@ client.update_connection(
 client.delete_connection(DeleteConnectionRequest(connection_id))
 ```
 
+<!-- api-method: list_sessions -->
+## `list_sessions`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.6.
+- **Capability / purpose:** `sessions.read`; return one creation-ordered,
+  secret-free snapshot including retained closed records.
+- **Parameters / return:** None; returns `list[SessionSummary]`.
+- **Errors:** `unsupported_capability` from `InProcessClient`; daemon
+  transport/protocol lifecycle errors.
+- **Threading:** Synchronous; GTK diagnostics submit it through
+  `GtkClientBridge`.
+
+<!-- api-method: get_session -->
+## `get_session`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.6.
+- **Capability / purpose:** `sessions.read`; inspect one daemon-lifetime
+  session by strict opaque `SessionId`.
+- **Errors:** `session_not_found`, `invalid_request`, and transport errors.
+- **Security:** No process handle, command, environment, PTY path, or secret is
+  exposed.
+
 <!-- api-method: open_session -->
 ## `open_session`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `terminal`; intended creation of a core-owned
-  terminal session.
-- **Parameters / return:** `OpenSessionRequest`; intended return is
-  `SessionSummary`.
-- **Errors:** Always `unsupported_capability` for `terminal`.
-- **Events:** Intended `session.created` and later state events; none now.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** No SSH process or PTY is created.
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.6.
+- **Capability / purpose:** `sessions.write`; allocate a daemon-owned session
+  record and initiate the configured process runner.
+- **Parameters / return:** `OpenSessionRequest(connection_id)`; returns the
+  current `SessionSummary`, which may already be `running` or `failed`.
+- **Errors:** Missing connection, unsupported protocol, daemon shutdown, or
+  transport errors. A lost response after send becomes non-retryable
+  `mutation_ambiguous`; refresh `sessions.list` before user-directed retry.
+- **Events:** `session.created`, then state changes. Current event frames are
+  normally queued before the response, but clients must accept either
+  response/event interleaving.
+- **Security:** The frontend supplies no argv or environment. Phase 6's
+  production runner fails safely until prompt-safe PTY startup exists; it does
+  not fake `running`.
 
 ```python
-client.open_session(OpenSessionRequest(connection_id, client_id))
+session = client.open_session(OpenSessionRequest(connection_id))
 ```
 
 <!-- api-method: attach_session -->
 ## `attach_session`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `terminal.attach`; intended attachment to an
-  existing runtime session.
-- **Parameters / return:** `AttachSessionRequest`; intended return is
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.6.
+- **Capability / purpose:** `sessions.write`; add the handshaken client to the
+  session's logical attachment set.
+- **Parameters / return:** `AttachSessionRequest(session_id)` returns
   `AttachSessionResult`.
-- **Errors:** Always `unsupported_capability` for `terminal.attach`.
-- **Events:** None now.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** No attachment or input ownership is created.
-
-```python
-client.attach_session(AttachSessionRequest(session_id, client_id))
-```
+- **Semantics:** Idempotent for one client/session pair. The daemon derives
+  client identity; callers cannot attach for another client. `input_owner` is
+  always false and no terminal bytes flow in this phase.
 
 <!-- api-method: detach_session -->
 ## `detach_session`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `terminal.attach`; intended attachment cleanup.
-- **Parameters / return:** `DetachSessionRequest`; intended return is `None`.
-- **Errors:** Always `unsupported_capability` for `terminal.attach`.
-- **Events:** None now.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** None.
-
-```python
-client.detach_session(DetachSessionRequest(session_id, attachment_id))
-```
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.6.
+- **Capability / purpose:** `sessions.write`; remove the caller's attachment.
+- **Semantics:** Repeated detach is safe. A mismatched attachment ID returns
+  `permission_denied`. Socket closure detaches that peer automatically and
+  never closes the session.
 
 <!-- api-method: close_session -->
 ## `close_session`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `terminal`; intended explicit session shutdown.
-- **Parameters / return:** `CloseSessionRequest`; intended return is `None`.
-- **Errors:** Always `unsupported_capability` for `terminal`.
-- **Events:** Intended `session.closed`; none now.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** No process is signalled.
-
-```python
-client.close_session(CloseSessionRequest(session_id))
-```
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.6.
+- **Capability / purpose:** `sessions.write`; request bounded termination of
+  the exact owned runtime resource.
+- **Semantics:** Repeated close is idempotent. The runtime enters `closing`,
+  requests termination, escalates only for its exact handle, records exit, and
+  emits `session.exited` and `session.closed`. If both bounded attempts fail,
+  the daemon retains the exact handle in `failed`; a later explicit close
+  retries it rather than forgetting an owned resource.
+- **Errors:** `session_not_found`, `session_termination_failed`, shutdown and
+  transport errors. Lost responses are `mutation_ambiguous`; there is no
+  automatic retry.
 
 <!-- api-method: send_terminal_input -->
 ## `send_terminal_input`
