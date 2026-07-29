@@ -190,6 +190,11 @@ def _read_server_instance_id(client) -> tuple[Optional[str], Optional[DaemonTerm
         return None, DaemonTerminalReadinessReason.CLIENT_UNAVAILABLE
     if not hasattr(client, "open_session"):
         return None, DaemonTerminalReadinessReason.CLIENT_UNAVAILABLE
+    # Use identity checks so MagicMock test doubles are not treated as closed.
+    if getattr(client, "is_closed", None) is True or getattr(
+        client, "transport_failed", None
+    ) is True:
+        return None, DaemonTerminalReadinessReason.CLIENT_UNAVAILABLE
     try:
         instance_id = getattr(client, "server_instance_id")
     except AttributeError:

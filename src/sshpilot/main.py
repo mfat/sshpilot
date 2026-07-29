@@ -492,6 +492,15 @@ class SshPilotApplication(Adw.Application):
 
         self.clear_api_event_subscription()
 
+        set_lost = getattr(client, "set_on_transport_lost", None)
+        if callable(set_lost):
+            set_lost(
+                lambda error: GLib.idle_add(
+                    self._on_daemon_transport_lost,
+                    error,
+                )
+            )
+
         def _on_event(event):
             from .api.events import EventType
 
@@ -518,6 +527,157 @@ class SshPilotApplication(Adw.Application):
                 "Application API event subscription failed type=%s",
                 type(error).__name__,
             )
+
+    def _on_daemon_transport_lost(self, error) -> bool:
+        """Schedule a bounded daemon reconnect after unexpected transport loss."""
+
+        if self.window is not None and getattr(self.window, "_is_quitting", False):
+            return False
+        code = getattr(getattr(error, "code", None), "value", None)
+        logger.warning(
+            "Daemon transport lost code=%s; scheduling reconnect",
+            code or type(error).__name__,
+        )
+        self.request_daemon_reconnect(
+            reason="transport_loss",
+            immediate=False,
+        )
+        return False
+
+    def _ensure_daemon_reconnect_helper(self):
+        helper = getattr(self, "_api_daemon_reconnect_helper", None)
+        if helper is not None:
+            return helper
+        from .api.daemon_reconnect import DaemonReconnectHelper
+        from .daemon.launcher import DaemonLauncher
+
+        launcher = getattr(self, "_api_daemon_launcher", None)
+        if launcher is None:
+            launcher = DaemonLauncher()
+            self._api_daemon_launcher = launcher
+        helper = DaemonReconnectHelper(launcher=launcher)
+        self._api_daemon_reconnect_helper = helper
+        return helper
+
+    def request_daemon_reconnect(
+        self,
+        *,
+        reason: str = "transport_loss",
+        immediate: bool = False,
+    ) -> None:
+        """Reconnect or start a compatible daemon without restoring live resources.
+
+        ``immediate`` skips backoff (used after an explicit in-app restart).
+        Concurrent requests are coalesced.
+        """
+
+        if self.window is not None and getattr(self.window, "_is_quitting", False):
+            return
+        if getattr(self, "_daemon_reconnect_in_progress", False):
+            logger.debug(
+                "daemon reconnect already in progress; ignoring reason=%s",
+                reason,
+            )
+            return
+        self._daemon_reconnect_in_progress = True
+        helper = self._ensure_daemon_reconnect_helper()
+        helper.note_transport_loss()
+        bridge = getattr(self, "_api_client_bridge", None)
+
+        def _run():
+            try:
+                result = helper.reconnect(wait_for_backoff=not immediate)
+            except Exception as error:
+                logger.error(
+                    "daemon reconnect worker failed type=%s",
+                    type(error).__name__,
+                    exc_info=True,
+                )
+                GLib.idle_add(self._finish_daemon_reconnect, None)
+                return None
+            GLib.idle_add(self._finish_daemon_reconnect, result)
+            return None
+
+        if bridge is not None and hasattr(bridge, "submit"):
+            try:
+                bridge.submit(
+                    _run,
+                    on_success=lambda _value: None,
+                    on_error=lambda error: GLib.idle_add(
+                        self._finish_daemon_reconnect,
+                        None,
+                    ),
+                )
+                return
+            except Exception:
+                logger.debug(
+                    "bridge submit for daemon reconnect failed; using thread",
+                    exc_info=True,
+                )
+        thread = threading.Thread(
+            target=_run,
+            name="sshpilot-daemon-reconnect",
+            daemon=True,
+        )
+        thread.start()
+
+    def _finish_daemon_reconnect(self, result) -> bool:
+        self._daemon_reconnect_in_progress = False
+        if result is None or getattr(result, "client", None) is None:
+            decision = getattr(result, "decision", None) if result is not None else None
+            message = getattr(decision, "message", None) if decision is not None else None
+            logger.warning(
+                "daemon reconnect did not restore a client message=%s",
+                message or "unavailable",
+            )
+            return False
+
+        from .api.client_factory import ClientMode, ClientSelection
+
+        launched = getattr(result, "launched", None)
+        process = getattr(launched, "process", None) if launched is not None else None
+        selection = ClientSelection(
+            client=result.client,
+            mode=ClientMode.DAEMON,
+            daemon_process=process,
+        )
+        previous = None
+        existing = getattr(self, "_api_client_selection", None)
+        if existing is not None:
+            previous = getattr(existing, "client", None)
+        self._api_client_selection = selection
+        try:
+            self.install_api_event_subscription(result.client)
+        except Exception:
+            logger.debug(
+                "Failed to reinstall API events after daemon reconnect",
+                exc_info=True,
+            )
+        window = self.window
+        if window is not None and not getattr(window, "_is_quitting", False):
+            window.client = result.client
+            welcome = getattr(window, "welcome_view", None)
+            if welcome is not None and hasattr(welcome, "set_client"):
+                try:
+                    welcome.set_client(
+                        result.client,
+                        bridge=getattr(self, "_api_client_bridge", None),
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to refresh welcome client after reconnect",
+                        exc_info=True,
+                    )
+        if previous is not None and previous is not result.client:
+            try:
+                previous.close()
+            except Exception:
+                pass
+        logger.info(
+            "daemon reconnect applied instance=%s",
+            getattr(result.client, "server_instance_id", ""),
+        )
+        return False
 
     def _handle_api_session_event(self, event) -> bool:
         """Record daemon session state on GTK's main context for diagnostics."""

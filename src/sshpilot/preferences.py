@@ -794,7 +794,7 @@ class PreferencesWindow(Adw.NavigationPage):
         restart_row = Adw.ActionRow()
         restart_row.set_title(_("Restart daemon"))
         restart_row.set_subtitle(
-            _("Stops the daemon process; the app will start a new instance on demand. "
+            _("Stops the daemon and reconnects automatically. "
               "Live sessions cannot survive a restart.")
         )
         restart_btn = Gtk.Button(label=_("Restart"))
@@ -3463,11 +3463,14 @@ class PreferencesWindow(Adw.NavigationPage):
                                 forced.close()
                         except Exception as exc:
                             logger.error("Forced daemon restart failed: %s", exc)
+                        self._schedule_daemon_reconnect_after_restart()
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
                     warn.present(self)
                     return
+                if result.accepted:
+                    self._schedule_daemon_reconnect_after_restart()
                 _ = status
             finally:
                 client.close()
@@ -3482,6 +3485,22 @@ class PreferencesWindow(Adw.NavigationPage):
             err.set_close_response('ok')
             err.present(self)
         self._refresh_daemon_status_row()
+
+    def _schedule_daemon_reconnect_after_restart(self) -> None:
+        """Ask the running application to spawn/reconnect after an explicit restart."""
+
+        app = self.get_application()
+        request = getattr(app, "request_daemon_reconnect", None) if app else None
+        if not callable(request):
+            logger.debug("No application reconnect hook after daemon restart")
+            return
+        try:
+            request(reason="preferences_restart", immediate=True)
+        except Exception:
+            logger.debug(
+                "Failed to schedule daemon reconnect after restart",
+                exc_info=True,
+            )
 
     def _set_shortcut_controls_enabled(self, enabled: bool):
         for widget in (getattr(self, '_shortcuts_row', None), getattr(self, '_shortcuts_button', None)):

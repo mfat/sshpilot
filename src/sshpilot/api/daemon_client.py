@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, NoReturn, Optional, Union
+from typing import Callable, Dict, List, NoReturn, Optional, Union
 
 from sshpilot import __version__ as sshpilot_version
 
@@ -312,6 +312,7 @@ class DaemonClient:
         self._closed = False
         self._close_complete = False
         self._transport_failed = False
+        self._on_transport_lost: Optional[Callable[[SshPilotError], None]] = None
         self._socket: Optional[socket.socket] = None
         self._reader_thread: Optional[threading.Thread] = None
         self._event_thread: Optional[threading.Thread] = None
@@ -1020,6 +1021,32 @@ class DaemonClient:
         except RuntimeError:
             raise self._closed_error() from None
 
+    @property
+    def is_closed(self) -> bool:
+        """True after intentional close or transport failure."""
+
+        with self._state_lock:
+            return self._closed
+
+    @property
+    def transport_failed(self) -> bool:
+        """True when the Unix transport failed unexpectedly."""
+
+        with self._state_lock:
+            return self._transport_failed
+
+    def set_on_transport_lost(
+        self, callback: Optional[Callable[[SshPilotError], None]]
+    ) -> None:
+        """Register a best-effort callback for unexpected transport failure.
+
+        The callback must not block and must not call back into this client
+        synchronously. Intentional :meth:`close` does not invoke it.
+        """
+
+        with self._state_lock:
+            self._on_transport_lost = callback
+
     def close(self) -> None:
         with self._state_lock:
             if self._close_complete:
@@ -1639,6 +1666,8 @@ class DaemonClient:
             self._socket = None
             pending = tuple(self._pending_requests.items())
             self._pending_requests.clear()
+            lost_handler = self._on_transport_lost
+            self._on_transport_lost = None
         if timeout_diagnostics is not None:
             logger.debug(
                 "Failing daemon transport on timeout: %s",
@@ -1656,6 +1685,14 @@ class DaemonClient:
             request.completed.set()
         self._replace_event_queue_with_failure(error)
         self._stop_terminal_dispatch()
+        if lost_handler is not None:
+            try:
+                lost_handler(error)
+            except Exception:
+                logger.debug(
+                    "daemon transport-lost handler failed",
+                    exc_info=True,
+                )
 
     def _replace_event_queue_with_failure(self, error: SshPilotError) -> None:
         while True:

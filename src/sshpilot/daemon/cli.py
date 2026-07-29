@@ -117,6 +117,7 @@ def run_server(
     serve_forever: Callable[..., None],
     shutdown: Callable[[], None],
     startup_error: Optional[BaseException],
+    restart_requested: Optional[Callable[[], bool]] = None,
 ) -> int:
     _configure_logging(verbose)
 
@@ -128,6 +129,10 @@ def run_server(
     serve_forever()
     if startup_error is not None:
         raise startup_error
+    if restart_requested is not None and restart_requested():
+        from .lifecycle_policy import RESTART_EXIT_CODE
+
+        return RESTART_EXIT_CODE
     return 0
 
 
@@ -201,6 +206,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             serve_forever=server.serve_forever,
             shutdown=_shutdown,
             startup_error=server._startup_error,
+            restart_requested=lambda: bool(
+                server._lifecycle is not None and server._lifecycle.restart_requested
+            ),
         )
     return _run_management(args)
 

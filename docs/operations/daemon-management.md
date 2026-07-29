@@ -8,6 +8,10 @@ Day-to-day operations for the local sshPilot daemon on Linux.
 active, the application calls `DaemonLauncher.connect_or_start()` and starts the
 daemon only if no compatible instance is already listening.
 
+After an explicit **Restart daemon** (Preferences) or unexpected transport loss,
+the GTK app schedules `DaemonReconnectHelper` with bounded backoff and starts a
+new compatible instance. Live sessions/transfers are not restored.
+
 **Manual / persistent:**
 
 ```bash
@@ -56,13 +60,16 @@ would add a second activation path without removing launcher logic.
 
 ## After transport loss (clients)
 
-There is no silent auto-reconnect in Protocol v1. Client code should:
+Protocol v1 does not restore live resources after daemon loss. The GTK app does
+perform **bounded availability reconnect**:
 
-- show a safe unavailable state;
-- use `DaemonReconnectHelper` with bounded backoff;
+- show a safe unavailable state for old session/SFTP/transfer IDs;
+- use `DaemonReconnectHelper` / `request_daemon_reconnect()` with backoff;
 - refresh snapshots after a successful handshake;
-- not assume sessions survived restart.
+- never assume sessions survived restart.
 
+Supervisors may also respawn on exit status `75` (`RESTART_EXIT_CODE`) when a
+restart was requested.
 ## Environment overrides
 
 | Variable | Effect |
