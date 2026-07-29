@@ -282,11 +282,61 @@ def _redact_config(obj):
     return obj
 
 
+def _collect_daemon_diagnostics_snapshot() -> dict:
+    """Return a sanitized daemon diagnostics snapshot when reachable."""
+
+    try:
+        from sshpilot.api.daemon_client import DaemonClient
+        from sshpilot.api.errors import ErrorCode, SshPilotError
+        from sshpilot.api.transport.codec import daemon_diagnostics_to_wire
+        from sshpilot.daemon.lifecycle import resolve_socket_path
+    except Exception as error:  # pragma: no cover - defensive
+        return {
+            "available": False,
+            "reason": "import_failed",
+            "detail": type(error).__name__,
+        }
+
+    client = DaemonClient(
+        socket_path=resolve_socket_path(None),
+        timeout=2.0,
+        client_name="sshpilot-diagnostics",
+        frontend_type="diagnostics",
+    )
+    try:
+        diagnostics = client.get_daemon_diagnostics()
+    except SshPilotError as error:
+        reason = (
+            "unavailable"
+            if error.code is ErrorCode.DAEMON_UNAVAILABLE
+            else error.code.value
+        )
+        return {
+            "available": False,
+            "reason": reason,
+            "message": error.message,
+        }
+    except Exception as error:  # pragma: no cover - defensive
+        return {
+            "available": False,
+            "reason": type(error).__name__,
+        }
+    finally:
+        client.close()
+
+    # Wire encoding is already secret-free: no paths, terminal bytes, or env.
+    return {
+        "available": True,
+        "diagnostics": daemon_diagnostics_to_wire(diagnostics),
+    }
+
+
 def build_diagnostics_zip(dest_path: str) -> str:
     """Write a self-contained diagnostics ZIP to dest_path and return it.
 
     Contents: logs/ (all log files incl. crash reports), system-info.txt
-    (platform/runtime/tool details), version.txt, and a redacted config.json.
+    (platform/runtime/tool details), version.txt, a redacted config.json, and
+    a sanitized daemon diagnostics snapshot when the local daemon is reachable.
     Connection lists / ssh_config are intentionally excluded for privacy.
     """
     from .platform_utils import get_config_dir, APP_ID
@@ -331,6 +381,11 @@ def build_diagnostics_zip(dest_path: str) -> str:
                             json.dumps(_redact_config(data), indent=2, default=str))
         except Exception as exc:
             zf.writestr('config.json', "(could not read/redact config: %s)" % exc)
+
+        zf.writestr(
+            'daemon-diagnostics.json',
+            json.dumps(_collect_daemon_diagnostics_snapshot(), indent=2, default=str),
+        )
 
     return dest_path
 
