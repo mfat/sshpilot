@@ -139,3 +139,8 @@ When the snapshot changes:
    `python3 scripts/generate_api_artifacts.py`;
 6. increment Protocol v1 only if this policy has first been revised, or create
    Protocol v2 for an incompatible contract.
+
+Daemon-owned external reload does not change Protocol v1. It uses the existing
+connection DTOs, UUID-backed opaque IDs, connection event names, and
+`connections.read`/`connections.events` capabilities. Existing clients already
+reconcile correctly by refreshing their snapshot after an event.

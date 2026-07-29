@@ -159,3 +159,11 @@ shutdown. It does not create or attach a terminal widget.
 - askpass, prompts, secret lookup, authentication interaction;
 - SFTP, forwarding, plugins and remote access;
 - migration of normal GTK terminal launch to daemon sessions.
+
+## Connection reload interaction
+
+Session records keep their stable launch-time connection ID. An external edit
+does not mutate an owned process, and deleting the saved connection does not
+close an active session. A later `sessions.open` resolves the latest committed
+daemon snapshot. Configuration reload uses a distinct executor key and never
+runs on the selector thread.

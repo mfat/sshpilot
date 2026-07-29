@@ -140,3 +140,10 @@ file permissions.
 Daemon session records link to this stable `ConnectionId`; they do not copy or
 derive identity from a nickname. Session IDs are a separate daemon-lifetime
 namespace and are not persisted across daemon restarts.
+
+After readiness, the daemon continues to own identity repair for external
+configuration edits. GTK keeps migration disabled. A newly added host without a
+marker is assigned and durably written a UUID before the daemon publishes it.
+A single-host block whose UUID marker still names its pre-rename token retains
+that UUID and has the marker rewritten. Reload migration emits no event storm:
+only the stable-ID semantic diff is published.

@@ -7,9 +7,16 @@ notes remain separate.
 
 ### Added
 
+- Added daemon-owned monitoring for the SSH root, resolved includes, wildcard
+  include directories, and JSON-backed connection metadata.
+- Added debounced authoritative reload with last-known-good rollback and
+  stable-ID semantic diff publication through existing connection events.
+- Added single-token stale UUID-marker recognition for rename-safe external
+  edits.
 - Added `DaemonClient`, the `python -m sshpilot.daemon` development entry point,
   secure per-user Unix-socket lifecycle, strict length-prefixed JSON envelopes,
   Protocol v1 handshake, request correlation, and structured transport errors.
+
 - Added explicit daemon methods `system.handshake`,
   `system.get_capabilities`, `connections.list`, and `connections.get`.
 - Added shared connection contracts across `InProcessClient` and
@@ -60,6 +67,9 @@ notes remain separate.
 
 ### Changed
 
+- Daemon connection mutations now share a bounded configuration command lane
+  with external reload. Self-write notifications reconcile as semantic no-ops,
+  so Protocol v1 methods, capabilities, DTOs, and event names are unchanged.
 - Increased `API_IMPLEMENTATION_VERSION` to `0.7`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon

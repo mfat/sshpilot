@@ -328,3 +328,8 @@ The concrete, maintained contract is indexed in
 [`docs/api/README.md`](../api/README.md). Use the architecture documents for
 rationale and the API reference for exact methods, models, capabilities,
 events, errors, state semantics, and compatibility rules.
+
+In experimental daemon mode, connection events also cover committed external
+configuration reloads. GTK treats them like CRUD events: it coalesces an
+asynchronous `connections.list` refresh, preserves selection by stable ID, and
+never parses or migrates the local SSH configuration itself.

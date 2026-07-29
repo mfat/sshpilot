@@ -262,3 +262,13 @@ forwarding, plugins, and binary channels remain out of scope.
 - define a separate binary terminal channel, PTY ownership, and prompt routing;
 - keep daemon mode experimental until extended GTK lifecycle testing is
   complete; production-default selection is a separate decision.
+
+## External configuration synchronization
+
+The selector does not parse or persist configuration. A headless watcher marks
+the configuration dirty, a 200 ms coordinator debounce coalesces bursts, and
+the bounded daemon executor runs reload under the same keyed lane used by
+connection mutations. Handshakes, socket I/O, events, and unrelated session
+command lanes remain responsive. See
+[configuration reload](configuration-reload.md) for watch-set, rollback,
+self-write, and shutdown rules.

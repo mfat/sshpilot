@@ -164,3 +164,9 @@ terminal session state as host reachability.
 - Schema-only elements remain visibly labelled until runtime support ships.
 - Snapshot approval is deliberate: regeneration never substitutes for
   compatibility review.
+
+For persistence changes, run the external-reload regression suite. New
+authoritative files must join the daemon watch set, be strictly validated
+before commit, participate in last-known-good rollback, and have atomic
+replacement plus self-write no-op coverage. GTK must not gain a daemon-mode
+migration bypass.

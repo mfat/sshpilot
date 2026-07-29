@@ -219,3 +219,9 @@ closes peers and the core client.
 
 Callbacks must marshal to their frontend thread when the dispatcher thread is
 unsuitable. The API does not import GTK or implicitly call `GLib.idle_add`.
+
+Daemon-authoritative external reload uses the existing connection events.
+Diffs are keyed by stable connection ID: rename is `connection.updated`, while
+no-op/self-write reloads emit nothing. A committed batch is accepted in
+deterministic deleted, created, updated order and then joins the daemon-global
+event sequence.
