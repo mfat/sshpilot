@@ -5,13 +5,15 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, Dict, Optional, TypeVar
+from collections import deque
+from typing import Callable, Deque, Dict, Optional, TypeVar
 
 from gi.repository import GLib
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+DEFAULT_GTK_TERMINAL_PENDING_BYTES = 1024 * 1024
 
 
 class GtkClientRequest:
@@ -44,10 +46,46 @@ class GtkClientBridge:
             max_workers=max_workers,
             thread_name_prefix="sshpilot-api",
         )
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._closed = False
         self._requests: Dict[Future, GtkClientRequest] = {}
         self._active_requests = set()
+        self._terminal_bindings = set()
+
+    def bind_terminal(
+        self,
+        client,
+        session_id,
+        *,
+        on_output,
+        on_continuity_lost=None,
+        on_eof=None,
+        on_error=None,
+        max_pending_bytes: int = DEFAULT_GTK_TERMINAL_PENDING_BYTES,
+    ):
+        """Coalesce daemon terminal callbacks onto GTK's main context."""
+
+        binding = GtkTerminalBinding(
+            client,
+            session_id,
+            dispatcher=self._dispatcher,
+            on_output=on_output,
+            on_continuity_lost=on_continuity_lost,
+            on_eof=on_eof,
+            on_error=on_error,
+            max_pending_bytes=max_pending_bytes,
+            on_close=lambda item: self._discard_terminal_binding(item),
+        )
+        with self._lock:
+            if self._closed:
+                binding.close()
+                raise RuntimeError("GTK client bridge is closed")
+            self._terminal_bindings.add(binding)
+        return binding
+
+    def _discard_terminal_binding(self, binding) -> None:
+        with self._lock:
+            self._terminal_bindings.discard(binding)
 
     def submit(
         self,
@@ -150,8 +188,139 @@ class GtkClientBridge:
             self._requests.clear()
             active_requests = list(self._active_requests)
             self._active_requests.clear()
+            terminal_bindings = tuple(self._terminal_bindings)
+            self._terminal_bindings.clear()
         for request in active_requests:
             request.cancel()
         for future, request in requests:
             future.cancel()
+        for binding in terminal_bindings:
+            binding.close()
         self._executor.shutdown(wait=False, cancel_futures=True)
+
+
+class GtkTerminalBinding:
+    """One bounded, coalesced terminal-to-GLib handoff."""
+
+    def __init__(
+        self,
+        client,
+        session_id,
+        *,
+        dispatcher,
+        on_output,
+        on_continuity_lost,
+        on_eof,
+        on_error,
+        max_pending_bytes,
+        on_close,
+    ) -> None:
+        if (
+            type(max_pending_bytes) is not int
+            or max_pending_bytes < 1
+        ):
+            raise ValueError("GTK terminal pending byte limit must be positive")
+        self._dispatcher = dispatcher
+        self._on_output = on_output
+        self._on_continuity_lost = on_continuity_lost
+        self._on_eof = on_eof
+        self._on_error = on_error
+        self._max_pending_bytes = max_pending_bytes
+        self._on_close = on_close
+        self._lock = threading.Lock()
+        self._pending: Deque = deque()
+        self._pending_bytes = 0
+        self._scheduled = False
+        self._closed = False
+        self._continuity_lost = None
+        self._subscription = client.subscribe_terminal(
+            session_id,
+            self._receive_output,
+            on_continuity_lost=self._receive_continuity,
+            on_eof=self._receive_eof,
+            on_error=self._receive_error,
+        )
+
+    def _receive_output(self, output) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            if self._pending_bytes + len(output.data) > self._max_pending_bytes:
+                self._pending.clear()
+                self._pending_bytes = 0
+                self._continuity_lost = (
+                    output.session_id,
+                    output.sequence,
+                    output.next_sequence,
+                )
+            else:
+                self._pending.append(("output", output))
+                self._pending_bytes += len(output.data)
+            self._schedule_locked()
+
+    def _receive_continuity(
+        self,
+        session_id,
+        expected_sequence,
+        available_sequence,
+    ) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._continuity_lost = (
+                session_id,
+                expected_sequence,
+                available_sequence,
+            )
+            self._schedule_locked()
+
+    def _receive_eof(self, session_id, sequence) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._pending.append(("eof", session_id, sequence))
+            self._schedule_locked()
+
+    def _receive_error(self, error) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._pending.append(("error", error))
+            self._schedule_locked()
+
+    def _schedule_locked(self) -> None:
+        if self._scheduled:
+            return
+        self._scheduled = True
+        self._dispatcher(self._drain)
+
+    def _drain(self) -> bool:
+        with self._lock:
+            if self._closed:
+                return False
+            pending = tuple(self._pending)
+            self._pending.clear()
+            self._pending_bytes = 0
+            continuity = self._continuity_lost
+            self._continuity_lost = None
+            self._scheduled = False
+        if continuity is not None and callable(self._on_continuity_lost):
+            self._on_continuity_lost(*continuity)
+        for item in pending:
+            if item[0] == "output":
+                self._on_output(item[1])
+            elif item[0] == "eof" and callable(self._on_eof):
+                self._on_eof(item[1], item[2])
+            elif item[0] == "error" and callable(self._on_error):
+                self._on_error(item[1])
+        return False
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._pending.clear()
+            self._pending_bytes = 0
+        self._subscription.close()
+        self._on_close(self)
