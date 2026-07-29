@@ -6,7 +6,8 @@ bytes (typically the stdin/stdout pipes of an ``ssh host -s sftp`` subprocess).
 
 Everything here is pure and unit-testable: packet build/parse and attribute
 encode/decode. The live client (subprocess + threads) lives in
-``openssh_backend.py``.
+``sshpilot.sftp.client`` (re-exported for the file manager via
+``sshpilot.file_manager.openssh_backend``).
 """
 
 from __future__ import annotations
