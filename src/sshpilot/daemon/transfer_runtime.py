@@ -7,7 +7,10 @@ that service's other operations). Unlike sessions/SFTP/forwards, a transfer's
 actual byte-copy loop runs on a dedicated per-transfer thread rather than a
 ``BoundedCommandExecutor`` worker, since a large transfer can run for minutes
 and must not starve the shared command queue; the executor operation merely
-starts that thread and returns immediately (see ``run_transfer``).
+hands work to the bounded transfer worker pool and returns immediately (see
+``run_transfer``). At most ``max_concurrent_transfers`` copy threads run at
+once; additional accepted transfers wait in ``_pending_run`` up to the
+combined in-flight capacity.
 """
 
 from __future__ import annotations
@@ -47,6 +50,8 @@ from .sftp_runtime import SftpServiceRuntime
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_CONCURRENT_TRANSFERS = 4
+DEFAULT_MAX_QUEUED_TRANSFERS = 32
 DEFAULT_MAX_RETAINED_COMPLETED_TRANSFERS = 200
 DEFAULT_CHUNK_SIZE = 32768
 DEFAULT_PROGRESS_MIN_INTERVAL_SECONDS = 0.2
@@ -145,6 +150,8 @@ class TransferRuntime:
         monotonic: Callable[[], float] = time.monotonic,
         uuid_factory: Callable[[], TransferId] = new_transfer_id,
         shutdown_timeout_seconds: float = 5.0,
+        max_concurrent_transfers: int = DEFAULT_MAX_CONCURRENT_TRANSFERS,
+        max_queued_transfers: int = DEFAULT_MAX_QUEUED_TRANSFERS,
         max_retained_completed_transfers: int = DEFAULT_MAX_RETAINED_COMPLETED_TRANSFERS,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         progress_min_interval_seconds: float = DEFAULT_PROGRESS_MIN_INTERVAL_SECONDS,
@@ -152,6 +159,10 @@ class TransferRuntime:
     ) -> None:
         if shutdown_timeout_seconds < 0:
             raise ValueError("transfer shutdown timeout must not be negative")
+        if type(max_concurrent_transfers) is not int or max_concurrent_transfers < 1:
+            raise ValueError("max concurrent transfers must be a positive int")
+        if type(max_queued_transfers) is not int or max_queued_transfers < 1:
+            raise ValueError("max queued transfers must be a positive int")
         if (
             type(max_retained_completed_transfers) is not int
             or max_retained_completed_transfers < 0
@@ -164,6 +175,8 @@ class TransferRuntime:
         self._monotonic = monotonic
         self._uuid_factory = uuid_factory
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
+        self._max_concurrent_transfers = max_concurrent_transfers
+        self._max_queued_transfers = max_queued_transfers
         self._max_retained_completed_transfers = max_retained_completed_transfers
         self._chunk_size = chunk_size
         self._progress_min_interval_seconds = float(progress_min_interval_seconds)
@@ -173,6 +186,7 @@ class TransferRuntime:
         self._records: Dict[TransferId, _TransferRecord] = {}
         self._creation_order: List[TransferId] = []
         self._worker_threads: Dict[TransferId, threading.Thread] = {}
+        self._pending_run: List[TransferId] = []
         self._accepting_commands = True
         self._closed = False
 
@@ -243,6 +257,13 @@ class TransferRuntime:
         )
         with self._lock:
             self._require_accepting_commands_locked()
+            capacity = self._max_concurrent_transfers + self._max_queued_transfers
+            if self._count_inflight_locked() >= capacity:
+                raise SshPilotError(
+                    ErrorCode.SERVER_BUSY,
+                    "The transfer queue is full; try again when an in-flight transfer finishes",
+                    retryable=True,
+                )
             if transfer_id in self._records:
                 raise RuntimeError("transfer UUID factory reused an active identifier")
             self._records[transfer_id] = record
@@ -254,9 +275,10 @@ class TransferRuntime:
             return self._summary_locked(record)
 
     def run_transfer(self, transfer_id: TransferId) -> None:
-        """Fast executor operation: hand the copy loop to a dedicated thread."""
+        """Fast executor operation: schedule the copy loop on the worker pool."""
 
         events: List[Optional[CoreEvent]] = []
+        thread_to_start: Optional[threading.Thread] = None
         with self._lock:
             record = self._record_locked(transfer_id)
             if record.state is TransferState.CANCELLING:
@@ -265,20 +287,12 @@ class TransferRuntime:
             elif record.state is TransferState.STARTING:
                 record.started_at = self._clock()
                 events.append(self._transition_locked(record, TransferState.RUNNING))
+                thread_to_start = self._schedule_or_queue_locked(transfer_id)
             else:
                 return
         self._publish(events)
-        if any(event is not None and event.type is EventType.TRANSFER_CANCELLED for event in events):
-            return
-        thread = threading.Thread(
-            target=self._transfer_worker,
-            args=(transfer_id,),
-            name=f"sshpilot-transfer-{transfer_id}",
-            daemon=True,
-        )
-        with self._lock:
-            self._worker_threads[transfer_id] = thread
-        thread.start()
+        if thread_to_start is not None:
+            thread_to_start.start()
 
     def reject_pending_start(self, transfer_id: TransferId) -> None:
         self.fail_pending_start(
@@ -328,8 +342,14 @@ class TransferRuntime:
         else:
             self._finish_completed(record)
         finally:
+            thread_to_start: Optional[threading.Thread] = None
             with self._lock:
                 self._worker_threads.pop(transfer_id, None)
+                next_id = self._take_next_runnable_locked()
+                if next_id is not None:
+                    thread_to_start = self._register_worker_thread_locked(next_id)
+            if thread_to_start is not None:
+                thread_to_start.start()
 
     def _run_download(self, record: _TransferRecord, client) -> None:
         local_path = self._resolve_local_destination(record)
@@ -539,13 +559,24 @@ class TransferRuntime:
     def _finish_cancelled(self, record: _TransferRecord) -> None:
         self._cleanup_local_temp(record)
         self._cleanup_remote_temp(record)
+        events: List[Optional[CoreEvent]] = []
         with self._lock:
             if record.state in {TransferState.CANCELLED, TransferState.FAILED, TransferState.COMPLETED}:
                 return
+            # Shutdown (and any cancel_requested path) may still be RUNNING /
+            # STARTING / QUEUED; walk through CANCELLING before CANCELLED.
+            if record.state in {
+                TransferState.QUEUED,
+                TransferState.STARTING,
+                TransferState.RUNNING,
+            }:
+                events.append(self._transition_locked(record, TransferState.CANCELLING))
+            if record.state is not TransferState.CANCELLING:
+                return
             record.completed_at = self._clock()
             record.cancel_requested = False
-            event = self._transition_locked(record, TransferState.CANCELLED)
-        self._publish((event,))
+            events.append(self._transition_locked(record, TransferState.CANCELLED))
+        self._publish(events)
 
     def _fail(self, record: _TransferRecord, code, message: str) -> None:
         self._cleanup_local_temp(record)
@@ -573,6 +604,7 @@ class TransferRuntime:
                 ErrorCode.INVALID_REQUEST,
                 "A cancel transfer request is required",
             )
+        events: List[Optional[CoreEvent]] = []
         with self._lock:
             self._require_accepting_commands_locked()
             record = self._record_locked(request.transfer_id)
@@ -580,8 +612,13 @@ class TransferRuntime:
             if record.state in _TERMINAL_STATES or record.state is TransferState.CANCELLING:
                 return False
             record.cancel_requested = True
-            event = self._transition_locked(record, TransferState.CANCELLING)
-        self._publish((event,))
+            events.append(self._transition_locked(record, TransferState.CANCELLING))
+            # Queued-but-not-started transfers finish without a worker thread.
+            if request.transfer_id in self._pending_run:
+                self._pending_run.remove(request.transfer_id)
+                record.completed_at = self._clock()
+                events.append(self._transition_locked(record, TransferState.CANCELLED))
+        self._publish(events)
         return True
 
     # -- shutdown -----------------------------------------------------
@@ -590,6 +627,7 @@ class TransferRuntime:
             if self._closed:
                 return
             self._accepting_commands = False
+            self._pending_run.clear()
             for record in self._records.values():
                 if record.state not in _TERMINAL_STATES:
                     record.cancel_requested = True
@@ -615,6 +653,37 @@ class TransferRuntime:
         self._publisher.close()
 
     # -- helpers ------------------------------------------------------
+    def _count_inflight_locked(self) -> int:
+        return sum(
+            1 for record in self._records.values() if record.state not in _TERMINAL_STATES
+        )
+
+    def _schedule_or_queue_locked(self, transfer_id: TransferId) -> Optional[threading.Thread]:
+        if len(self._worker_threads) < self._max_concurrent_transfers:
+            return self._register_worker_thread_locked(transfer_id)
+        self._pending_run.append(transfer_id)
+        return None
+
+    def _register_worker_thread_locked(self, transfer_id: TransferId) -> threading.Thread:
+        thread = threading.Thread(
+            target=self._transfer_worker,
+            args=(transfer_id,),
+            name=f"sshpilot-transfer-{transfer_id}",
+            daemon=True,
+        )
+        self._worker_threads[transfer_id] = thread
+        return thread
+
+    def _take_next_runnable_locked(self) -> Optional[TransferId]:
+        while self._pending_run:
+            transfer_id = self._pending_run.pop(0)
+            record = self._records.get(transfer_id)
+            if record is None:
+                continue
+            if record.state is TransferState.RUNNING and not record.cancel_requested:
+                return transfer_id
+        return None
+
     @staticmethod
     def _require_owner(record: _TransferRecord, client_id: ClientId) -> None:
         if record.owner_client_id != client_id:

@@ -392,13 +392,15 @@ class InProcessClient:
                 rule,
                 "-o",
                 "ExitOnForwardFailure=yes",
-                "-o",
-                "ClearAllForwardings=yes",
+                # Note: do not set ClearAllForwardings=yes here. OpenSSH treats
+                # that option as a sticky clear of *all* forwards (including
+                # subsequent -L/-R/-D on the same argv), which would leave the
+                # dedicated forward process with no listener.
             ],
             interaction_policy=interaction_policy,
         )
         prepared = build_ssh_connection(ctx)
-        argv = tuple(prepared.command)
+        argv = list(prepared.command)
         environment = dict(prepared.env)
         if not argv:
             raise SshPilotError(
@@ -406,6 +408,11 @@ class InProcessClient:
                 "The forward could not be prepared",
                 connection_id=connection_id,
             )
+        # OpenSSH's ClearAllForwardings=yes also wipes subsequent -L/-R/-D on
+        # the same argv. Isolate instead: launch against a temp config that
+        # omits config-static Local/Remote/Dynamic forwards so only the
+        # daemon-owned ad-hoc rule applies.
+        argv = self._argv_with_forward_isolated_config(argv)
         executable = shutil.which(argv[0], path=environment.get("PATH"))
         if executable is None:
             raise SshPilotError(
@@ -414,6 +421,54 @@ class InProcessClient:
                 connection_id=connection_id,
             )
         return (executable, *argv[1:]), environment
+
+    @staticmethod
+    def _argv_with_forward_isolated_config(argv: list) -> list:
+        """Rewrite ``-F <config>`` to a sibling file without *Forward lines."""
+
+        try:
+            flag_index = argv.index("-F")
+        except ValueError:
+            return argv
+        if flag_index + 1 >= len(argv):
+            return argv
+        from pathlib import Path
+
+        source = Path(argv[flag_index + 1])
+        if not source.is_file():
+            return argv
+        try:
+            original = source.read_text(encoding="utf-8")
+        except OSError:
+            return argv
+        _FORWARD_PREFIXES = (
+            "localforward",
+            "remoteforward",
+            "dynamicforward",
+        )
+        kept: list[str] = []
+        stripped = False
+        for line in original.splitlines():
+            stripped_line = line.lstrip()
+            if stripped_line.startswith("#") or not stripped_line:
+                kept.append(line)
+                continue
+            key = stripped_line.split(None, 1)[0].lower()
+            if key in _FORWARD_PREFIXES:
+                stripped = True
+                continue
+            kept.append(line)
+        if not stripped:
+            return argv
+        isolated = source.with_name(f"{source.name}.sshpilot-forward-isolated")
+        try:
+            isolated.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            isolated.chmod(0o600)
+        except OSError:
+            return argv
+        rewritten = list(argv)
+        rewritten[flag_index + 1] = str(isolated)
+        return rewritten
 
     def lookup_daemon_password(self, connection_id: ConnectionId) -> Optional[str]:
         connection = self._find_connection(connection_id)

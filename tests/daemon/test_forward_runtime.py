@@ -140,3 +140,34 @@ def test_client_can_interact_only_owner():
     summary = runtime.prepare_open_forward(_open_request(), client_id=owner)
     assert runtime.client_can_interact(summary.id, owner) is True
     assert runtime.client_can_interact(summary.id, other) is False
+
+
+def test_local_forward_not_active_without_bind():
+    """Local ACTIVE requires a listening bind — process-alive alone is insufficient."""
+
+    import socket
+
+    runner = _FakeForwardRunner()
+    runtime = ForwardRuntime(_CoreClient(), runner=runner, active_timeout_seconds=0.15)
+    owner = ClientId("client:owner")
+    # Bind an ephemeral port, note it, then release so nothing listens.
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    bind_port = int(probe.getsockname()[1])
+    probe.close()
+    request = OpenForwardRequest(
+        connection_id=ConnectionId("connection:demo"),
+        type=ForwardType.LOCAL,
+        bind_host="127.0.0.1",
+        bind_port=bind_port,
+        destination_host="internal.test",
+        destination_port=80,
+    )
+    summary = runtime.prepare_open_forward(request, client_id=owner)
+    runtime.start_forward(summary.id)
+    assert runtime.get_forward(summary.id).state is ForwardState.FAILED
+    assert runtime.get_forward(summary.id).failure is not None
+    assert (
+        str(runtime.get_forward(summary.id).failure.code)
+        == ErrorCode.FORWARD_STARTUP_FAILED.value
+    )

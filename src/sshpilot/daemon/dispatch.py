@@ -1086,10 +1086,12 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         runtime = self._required_transfer_runtime()
         cancel_request = cancel_transfer_request_from_wire(request.params)
+
+        def _cancel() -> None:
+            runtime.prepare_cancel_transfer(cancel_request, client_id=client_id)
+
         return DeferredResult(
-            operation=lambda: runtime.prepare_cancel_transfer(
-                cancel_request, client_id=client_id
-            ),
+            operation=_cancel,
             command_key=cancel_request.transfer_id,
             on_rejected=lambda: None,
         )

@@ -392,9 +392,13 @@ class InteractionBroker:
 
     def _effective_ssh_config(self, argv: Sequence[str]) -> dict[str, str]:
         target = argv[-1]
+        # ``ssh … -s <host> sftp`` (and any pre-host ``-s``) must not be fed to
+        # ``ssh -G`` — OpenSSH treats ``-s`` as a subsystem request and the
+        # probe can hang instead of dumping config.
+        probe = tuple(argument for argument in argv[:-1] if argument != "-s")
         try:
             completed = subprocess.run(
-                (*argv[:-1], "-G", target),
+                (*probe, "-G", target),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,

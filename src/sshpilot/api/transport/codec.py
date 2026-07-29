@@ -144,6 +144,29 @@ def _identifier(value: Any, context: str) -> str:
     return _text(value, context)
 
 
+def _interaction_scope_id(value: Any, context: str) -> SessionId:
+    """Parse interaction scope ids used for eligibility (session/sftp/forward).
+
+    Terminal interactions use ``session:``; SFTP and forwards reuse their public
+    service ids as the broker session_id so ownership checks stay unified.
+    """
+
+    text = _identifier(value, context)
+    try:
+        return SessionId(session_id_from_uuid(session_uuid_from_id(text)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return SessionId(str(sftp_id_from_uuid(sftp_uuid_from_id(text))))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return SessionId(str(forward_id_from_uuid(forward_uuid_from_id(text))))
+    except (TypeError, ValueError):
+        pass
+    raise ValueError(f"{context} is malformed") from None
+
+
 def _session_id(value: Any, context: str) -> SessionId:
     text = _identifier(value, context)
     try:
@@ -1718,7 +1741,7 @@ def interaction_summary_from_wire(value: Any) -> InteractionSummary:
     responder = data["responder_client_id"]
     return InteractionSummary(
         id=InteractionId(_identifier(data["id"], "interaction id")),
-        session_id=_session_id(data["session_id"], "session id"),
+        session_id=_interaction_scope_id(data["session_id"], "session id"),
         connection_id=ConnectionId(
             _identifier(data["connection_id"], "connection id")
         ),

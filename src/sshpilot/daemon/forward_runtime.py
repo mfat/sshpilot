@@ -53,7 +53,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RETAINED_CLOSED_FORWARDS = 100
 DEFAULT_TERMINATE_GRACE_SECONDS = 2.0
-DEFAULT_FORWARD_ACTIVE_TIMEOUT_SECONDS = 2.0
+# Local/dynamic ACTIVE waits for a real bind; auth + host-key prompts need
+# headroom comparable to SFTP connect (not a short process-alive smoke window).
+DEFAULT_FORWARD_ACTIVE_TIMEOUT_SECONDS = 30.0
+# Remote forwards bind on the SSH server. After ExitOnForwardFailure=yes, a
+# short process-alive window is the honest client-visible ACTIVE signal.
+DEFAULT_REMOTE_FORWARD_STABLE_SECONDS = 0.5
 _BIND_ANY_HOSTS = frozenset({"", "*", "0.0.0.0", "::"})
 
 ForwardExitCallback = Callable[[Optional[int]], None]
@@ -291,6 +296,7 @@ class ForwardRuntime:
         shutdown_timeout_seconds: float = 3.0,
         max_retained_closed_forwards: int = DEFAULT_MAX_RETAINED_CLOSED_FORWARDS,
         active_timeout_seconds: float = DEFAULT_FORWARD_ACTIVE_TIMEOUT_SECONDS,
+        remote_stable_seconds: float = DEFAULT_REMOTE_FORWARD_STABLE_SECONDS,
     ) -> None:
         if shutdown_timeout_seconds < 0:
             raise ValueError("forward shutdown timeout must not be negative")
@@ -298,6 +304,8 @@ class ForwardRuntime:
             raise ValueError("closed-forward retention limit must not be negative")
         if active_timeout_seconds <= 0:
             raise ValueError("forward active-detection timeout must be positive")
+        if remote_stable_seconds < 0:
+            raise ValueError("remote forward stable window must not be negative")
         self._core_client = core_client
         self._runner: Any = runner or UnsupportedForwardProcessRunner()
         self._clock = clock
@@ -306,6 +314,7 @@ class ForwardRuntime:
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_retained_closed_forwards = max_retained_closed_forwards
         self._active_timeout_seconds = float(active_timeout_seconds)
+        self._remote_stable_seconds = float(remote_stable_seconds)
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[ForwardId, _ForwardRecord] = {}
@@ -489,19 +498,37 @@ class ForwardRuntime:
             probe.close()
 
     def _detect_active(self, record: _ForwardRecord) -> bool:
-        deadline = self._monotonic() + self._active_timeout_seconds
+        """Wait until the forward is truthfully usable.
+
+        Local and dynamic forwards must accept a TCP connect on the bind
+        address before ``ACTIVE`` — process-alive alone is not enough
+        (auth can still be in progress). Remote forwards bind on the SSH
+        server, so a short process-alive window after
+        ``ExitOnForwardFailure=yes`` is the honest signal OpenSSH exposes.
+        """
+
+        started = self._monotonic()
+        deadline = started + self._active_timeout_seconds
         check_bind = record.forward_type is not ForwardType.REMOTE
+        remote_ready_at = started + self._remote_stable_seconds
         while self._monotonic() < deadline:
             with self._lock:
                 handle = record.handle
             if handle is None or handle.poll() is not None:
                 return False
-            if check_bind and self._can_connect(record.bind_host, record.bind_port):
+            if check_bind:
+                if self._can_connect(record.bind_host, record.bind_port):
+                    return True
+            elif self._monotonic() >= remote_ready_at:
                 return True
             time.sleep(0.05)
         with self._lock:
             handle = record.handle
-        return handle is not None and handle.poll() is None
+        if handle is None or handle.poll() is not None:
+            return False
+        if check_bind:
+            return self._can_connect(record.bind_host, record.bind_port)
+        return True
 
     @staticmethod
     def _can_connect(host: str, port: int) -> bool:

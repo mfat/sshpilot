@@ -1612,8 +1612,7 @@ class DaemonServer:
                     and event.session_id is not None
                     and (
                         state.protocol.client_id is None
-                        or self._session_runtime is None
-                        or not self._session_runtime.client_can_interact(
+                        or not self._client_can_interact(
                             event.session_id,
                             state.protocol.client_id,
                         )

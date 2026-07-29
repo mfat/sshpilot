@@ -1,6 +1,7 @@
 """Minimal lifecycle coverage for TransferRuntime with a mocked SFTP client."""
 
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 
@@ -71,6 +72,31 @@ class _FakeSftpClient:
         self.files.pop(path, None)
 
 
+class _BlockingSftpClient(_FakeSftpClient):
+    """Blocks the first write until released so concurrency can be observed."""
+
+    def __init__(self):
+        super().__init__()
+        self.write_started = threading.Event()
+        self.allow_write = threading.Event()
+        self.active_writes = 0
+        self._active_lock = threading.Lock()
+        self.max_active_writes = 0
+
+    def write(self, handle, offset, chunk):
+        with self._active_lock:
+            self.active_writes += 1
+            self.max_active_writes = max(self.max_active_writes, self.active_writes)
+        self.write_started.set()
+        try:
+            if not self.allow_write.wait(timeout=5.0):
+                raise TimeoutError("blocking SFTP write was not released")
+            super().write(handle, offset, chunk)
+        finally:
+            with self._active_lock:
+                self.active_writes -= 1
+
+
 class _FakeSftpHandle:
     def __init__(self, client):
         self.client = client
@@ -94,8 +120,8 @@ class _FakeSftpRunner:
         return None
 
 
-def _make_ready_sftp_service(owner):
-    client = _FakeSftpClient()
+def _make_ready_sftp_service(owner, client=None):
+    client = client if client is not None else _FakeSftpClient()
     sftp_runtime = SftpServiceRuntime(_CoreClient(), runner=_FakeSftpRunner(client))
     summary = sftp_runtime.prepare_open_service(
         OpenSftpRequest(connection_id=ConnectionId("connection:demo")),
@@ -103,6 +129,22 @@ def _make_ready_sftp_service(owner):
     )
     sftp_runtime.start_service(summary.id)
     return sftp_runtime, summary.id, client
+
+
+def _upload_request(service_id, local_path, remote_path="/remote/file.txt"):
+    return StartTransferRequest(
+        connection_id=ConnectionId("connection:demo"),
+        sftp_service_id=service_id,
+        direction=TransferDirection.UPLOAD,
+        remote_path=remote_path,
+        local_path=local_path,
+    )
+
+
+def _temp_source(payload=b"hello world"):
+    with tempfile.NamedTemporaryFile(delete=False) as source:
+        source.write(payload)
+        return source.name
 
 
 def _wait_for_terminal_state(runtime, transfer_id, timeout=2.0):
@@ -115,21 +157,23 @@ def _wait_for_terminal_state(runtime, transfer_id, timeout=2.0):
     raise AssertionError("transfer did not reach a terminal state in time")
 
 
+def _wait_until(predicate, timeout=2.0, message="condition not met in time"):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError(message)
+
+
 def test_prepare_start_transfer_returns_starting_summary():
     owner = ClientId("client:owner")
     sftp_runtime, service_id, _client = _make_ready_sftp_service(owner)
     transfer_runtime = TransferRuntime(sftp_runtime)
-    with tempfile.NamedTemporaryFile(delete=False) as source:
-        source.write(b"hello world")
-        local_path = source.name
-    request = StartTransferRequest(
-        connection_id=ConnectionId("connection:demo"),
-        sftp_service_id=service_id,
-        direction=TransferDirection.UPLOAD,
-        remote_path="/remote/file.txt",
-        local_path=local_path,
+    local_path = _temp_source()
+    summary = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path), client_id=owner
     )
-    summary = transfer_runtime.prepare_start_transfer(request, client_id=owner)
     assert summary.state is TransferState.STARTING
 
 
@@ -137,17 +181,10 @@ def test_run_transfer_completes_upload():
     owner = ClientId("client:owner")
     sftp_runtime, service_id, client = _make_ready_sftp_service(owner)
     transfer_runtime = TransferRuntime(sftp_runtime)
-    with tempfile.NamedTemporaryFile(delete=False) as source:
-        source.write(b"hello world")
-        local_path = source.name
-    request = StartTransferRequest(
-        connection_id=ConnectionId("connection:demo"),
-        sftp_service_id=service_id,
-        direction=TransferDirection.UPLOAD,
-        remote_path="/remote/file.txt",
-        local_path=local_path,
+    local_path = _temp_source()
+    prepared = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path), client_id=owner
     )
-    prepared = transfer_runtime.prepare_start_transfer(request, client_id=owner)
     transfer_runtime.run_transfer(prepared.id)
     summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
     assert summary.state is TransferState.COMPLETED
@@ -158,17 +195,10 @@ def test_cancel_before_run_marks_transfer_cancelled():
     owner = ClientId("client:owner")
     sftp_runtime, service_id, _client = _make_ready_sftp_service(owner)
     transfer_runtime = TransferRuntime(sftp_runtime)
-    with tempfile.NamedTemporaryFile(delete=False) as source:
-        source.write(b"hello world")
-        local_path = source.name
-    request = StartTransferRequest(
-        connection_id=ConnectionId("connection:demo"),
-        sftp_service_id=service_id,
-        direction=TransferDirection.UPLOAD,
-        remote_path="/remote/file.txt",
-        local_path=local_path,
+    local_path = _temp_source()
+    prepared = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path), client_id=owner
     )
-    prepared = transfer_runtime.prepare_start_transfer(request, client_id=owner)
     assert transfer_runtime.prepare_cancel_transfer(
         CancelTransferRequest(transfer_id=prepared.id), client_id=owner
     )
@@ -182,19 +212,203 @@ def test_cancel_requires_owner():
     other = ClientId("client:other")
     sftp_runtime, service_id, _client = _make_ready_sftp_service(owner)
     transfer_runtime = TransferRuntime(sftp_runtime)
-    with tempfile.NamedTemporaryFile(delete=False) as source:
-        source.write(b"hello world")
-        local_path = source.name
-    request = StartTransferRequest(
-        connection_id=ConnectionId("connection:demo"),
-        sftp_service_id=service_id,
-        direction=TransferDirection.UPLOAD,
-        remote_path="/remote/file.txt",
-        local_path=local_path,
+    local_path = _temp_source()
+    prepared = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path), client_id=owner
     )
-    prepared = transfer_runtime.prepare_start_transfer(request, client_id=owner)
     with pytest.raises(SshPilotError) as excinfo:
         transfer_runtime.prepare_cancel_transfer(
             CancelTransferRequest(transfer_id=prepared.id), client_id=other
         )
     assert excinfo.value.code is ErrorCode.SERVICE_OWNER_REQUIRED
+
+
+def test_prepare_start_rejects_when_over_capacity():
+    owner = ClientId("client:owner")
+    sftp_runtime, service_id, _client = _make_ready_sftp_service(owner)
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=1,
+        max_queued_transfers=1,
+    )
+    local_path = _temp_source()
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path, "/remote/a.txt"), client_id=owner
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path, "/remote/b.txt"), client_id=owner
+    )
+    assert first.state is TransferState.STARTING
+    assert second.state is TransferState.STARTING
+    with pytest.raises(SshPilotError) as excinfo:
+        transfer_runtime.prepare_start_transfer(
+            _upload_request(service_id, local_path, "/remote/c.txt"), client_id=owner
+        )
+    assert excinfo.value.code is ErrorCode.SERVER_BUSY
+    assert "transfer queue is full" in excinfo.value.message
+    assert len(transfer_runtime.list_transfers()) == 2
+
+
+def test_queued_transfer_starts_after_earlier_completes():
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=1,
+        max_queued_transfers=2,
+    )
+    local_path = _temp_source(b"payload-one")
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path, "/remote/first.txt"), client_id=owner
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source(b"payload-two"), "/remote/second.txt"),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(first.id)
+    _wait_until(
+        client.write_started.is_set,
+        message="first transfer never reached write",
+    )
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: second.id in transfer_runtime._pending_run,
+        message="second transfer was not queued behind the active worker",
+    )
+    assert len(transfer_runtime._worker_threads) == 1
+    assert first.id in transfer_runtime._worker_threads
+
+    client.allow_write.set()
+    first_summary = _wait_for_terminal_state(transfer_runtime, first.id)
+    second_summary = _wait_for_terminal_state(transfer_runtime, second.id)
+    assert first_summary.state is TransferState.COMPLETED
+    assert second_summary.state is TransferState.COMPLETED
+    assert client.files["/remote/first.txt"] == b"payload-one"
+    assert client.files["/remote/second.txt"] == b"payload-two"
+
+
+def test_cancel_queued_transfer_without_worker_thread():
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=1,
+        max_queued_transfers=2,
+    )
+    local_path = _temp_source()
+    first = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path, "/remote/first.txt"), client_id=owner
+    )
+    second = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path, "/remote/second.txt"), client_id=owner
+    )
+    transfer_runtime.run_transfer(first.id)
+    _wait_until(
+        client.write_started.is_set,
+        message="first transfer never reached write",
+    )
+    transfer_runtime.run_transfer(second.id)
+    _wait_until(
+        lambda: second.id in transfer_runtime._pending_run,
+        message="second transfer was not queued",
+    )
+    assert transfer_runtime.prepare_cancel_transfer(
+        CancelTransferRequest(transfer_id=second.id), client_id=owner
+    )
+    second_summary = transfer_runtime.get_transfer(second.id)
+    assert second_summary.state is TransferState.CANCELLED
+    assert second.id not in transfer_runtime._pending_run
+    assert second.id not in transfer_runtime._worker_threads
+
+    client.allow_write.set()
+    first_summary = _wait_for_terminal_state(transfer_runtime, first.id)
+    assert first_summary.state is TransferState.COMPLETED
+
+
+def test_stress_more_starts_than_limit():
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    max_concurrent = 2
+    max_queued = 3
+    capacity = max_concurrent + max_queued
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=max_concurrent,
+        max_queued_transfers=max_queued,
+    )
+    local_path = _temp_source(b"x" * 64)
+    prepared = []
+    for index in range(capacity):
+        prepared.append(
+            transfer_runtime.prepare_start_transfer(
+                _upload_request(service_id, local_path, f"/remote/file-{index}.txt"),
+                client_id=owner,
+            )
+        )
+    with pytest.raises(SshPilotError) as excinfo:
+        transfer_runtime.prepare_start_transfer(
+            _upload_request(service_id, local_path, "/remote/overflow.txt"),
+            client_id=owner,
+        )
+    assert excinfo.value.code is ErrorCode.SERVER_BUSY
+
+    for summary in prepared:
+        transfer_runtime.run_transfer(summary.id)
+
+    _wait_until(
+        lambda: len(transfer_runtime._worker_threads) == max_concurrent,
+        message="worker pool did not fill to max concurrent",
+    )
+    assert len(transfer_runtime._pending_run) == max_queued
+    assert client.max_active_writes <= max_concurrent
+
+    client.allow_write.set()
+    for summary in prepared:
+        final = _wait_for_terminal_state(transfer_runtime, summary.id, timeout=5.0)
+        assert final.state is TransferState.COMPLETED
+
+
+def test_constructor_rejects_non_positive_limits():
+    owner = ClientId("client:owner")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    with pytest.raises(ValueError, match="max concurrent transfers"):
+        TransferRuntime(sftp_runtime, max_concurrent_transfers=0)
+    with pytest.raises(ValueError, match="max queued transfers"):
+        TransferRuntime(sftp_runtime, max_queued_transfers=0)
+
+
+def test_shutdown_cancels_active_transfer_deterministically():
+    """Race: shutdown while a transfer is mid-write must finish terminal."""
+
+    owner = ClientId("client:owner")
+    client = _BlockingSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        max_concurrent_transfers=1,
+        max_queued_transfers=1,
+        shutdown_timeout_seconds=2.0,
+    )
+    local_path = _temp_source(b"shutdown-race")
+    prepared = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, local_path, "/remote/shutdown.txt"),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    _wait_until(
+        client.write_started.is_set,
+        message="transfer never reached write before shutdown",
+    )
+    # Release the write after shutdown is requested so the worker observes cancel.
+    def _release_soon():
+        time.sleep(0.05)
+        client.allow_write.set()
+
+    threading.Thread(target=_release_soon, daemon=True).start()
+    transfer_runtime.shutdown()
+    record = transfer_runtime._records[prepared.id]
+    assert record.state in _TERMINAL_STATES
+    assert record.state in {TransferState.CANCELLED, TransferState.FAILED}
