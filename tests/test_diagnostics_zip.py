@@ -43,12 +43,19 @@ def test_build_diagnostics_zip_contents_and_redaction(tmp_path, monkeypatch):
     (state / "sshpilot.log.1").write_text("rotated\n")
     (state / "crash.log.previous").write_text("Fatal Python error: ...\n")
     (config / "config.json").write_text(json.dumps({
+        "config_version": 3,
         "ui": {"theme": "dark"},
         "password": "should-not-appear",
     }))
 
     monkeypatch.setattr(log_viewer, "get_state_dir", lambda: str(state))
     monkeypatch.setattr(platform_utils, "get_config_dir", lambda: str(config))
+    # Isolate from any live user daemon socket on the machine.
+    monkeypatch.setattr(
+        log_viewer,
+        "_collect_daemon_diagnostics_snapshot",
+        lambda: {"available": False, "reason": "test-isolated"},
+    )
 
     dest = tmp_path / "diag.zip"
     log_viewer.build_diagnostics_zip(str(dest))
