@@ -18,7 +18,8 @@ from typing import Any, Callable, Deque, Dict, Optional, Set, Tuple, Union
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
-from sshpilot.api.models.common import RequestId
+from sshpilot.api.models.common import RequestId, SessionId
+from sshpilot.api.models.terminal import TerminalInput, TerminalOutput
 from sshpilot.api.transport.codec import (
     decode_envelope,
     encode_envelope,
@@ -30,7 +31,18 @@ from sshpilot.api.transport.envelopes import (
     RequestEnvelope,
     SuccessResponseEnvelope,
 )
-from sshpilot.api.transport.framing import FrameDecoder, FramingError, encode_frame
+from sshpilot.api.transport.framing import (
+    FramingError,
+    MultiplexedFrameDecoder,
+    encode_binary_frame,
+    encode_frame,
+)
+from sshpilot.api.transport.terminal_frames import (
+    TerminalFrame,
+    TerminalFrameFlags,
+    TerminalFrameKind,
+    encode_terminal_payload,
+)
 from sshpilot.api.version import PROTOCOL_VERSION
 
 from .command_executor import (
@@ -65,6 +77,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
 DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
+DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 1024 * 1024
 DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
 _FORWARDED_EVENT_TYPES = frozenset(
     {
@@ -83,6 +96,9 @@ _FORWARDED_EVENT_TYPES = frozenset(
 class _OutboundFrame:
     data: bytes
     is_event: bool = False
+    is_terminal: bool = False
+    session_id: Optional[SessionId] = None
+    terminal_sequence: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -97,14 +113,16 @@ class DaemonCore:
 class _ClientConnection:
     sock: socket.socket
     token: int = 0
-    decoder: FrameDecoder = field(default_factory=FrameDecoder)
+    decoder: MultiplexedFrameDecoder = field(default_factory=MultiplexedFrameDecoder)
     output: Deque[_OutboundFrame] = field(default_factory=deque)
     output_offset: int = 0
     queued_event_count: int = 0
     queued_outbound_bytes: int = 0
+    queued_terminal_bytes: int = 0
     protocol: ClientProtocolState = field(default_factory=ClientProtocolState)
     close_after_write: bool = False
     continuity_lost: bool = False
+    terminal_continuity_lost: Set[SessionId] = field(default_factory=set)
     closed: bool = False
     pending_request_ids: Set[RequestId] = field(default_factory=set)
 
@@ -128,6 +146,7 @@ class DaemonServer:
         socket_path: Optional[os.PathLike] = None,
         client_event_queue_limit: int = DEFAULT_CLIENT_EVENT_QUEUE_LIMIT,
         max_client_outbound_bytes: int = DEFAULT_MAX_CLIENT_OUTBOUND_BYTES,
+        max_client_terminal_bytes: int = DEFAULT_MAX_CLIENT_TERMINAL_BYTES,
         session_runtime_factory: Optional[
             Callable[[SshPilotClient], SessionRuntime]
         ] = None,
@@ -150,6 +169,11 @@ class DaemonServer:
             or max_client_outbound_bytes < 1
         ):
             raise ValueError("maximum client outbound bytes must be positive")
+        if (
+            type(max_client_terminal_bytes) is not int
+            or max_client_terminal_bytes < 1
+        ):
+            raise ValueError("maximum client terminal bytes must be positive")
         if type(session_command_workers) is not int or session_command_workers < 1:
             raise ValueError("session command worker count must be positive")
         if (
@@ -166,6 +190,7 @@ class DaemonServer:
         self.socket_path = resolve_socket_path(socket_path)
         self.client_event_queue_limit = client_event_queue_limit
         self.max_client_outbound_bytes = max_client_outbound_bytes
+        self.max_client_terminal_bytes = max_client_terminal_bytes
         self._core_factory = core_factory
         self._session_runtime_factory = session_runtime_factory
         self.session_command_workers = session_command_workers
@@ -203,6 +228,9 @@ class DaemonServer:
         self._accepting_core_events = False
         self._core_subscription: Optional[Subscription] = None
         self._session_subscription: Optional[Subscription] = None
+        self._terminal_subscription: Optional[Subscription] = None
+        self._terminal_queue: queue.Queue[TerminalOutput] = queue.Queue(maxsize=1024)
+        self._terminal_publication_lost: Set[SessionId] = set()
         self._next_event_sequence = 0
         self._session_shutdown_started = False
 
@@ -346,7 +374,23 @@ class DaemonServer:
             if callable(enable_workers):
                 enable_workers()
             if self._session_runtime_factory is None:
-                self._session_runtime = SessionRuntime(self._core_client)
+                launch_builder = getattr(
+                    self._core_client,
+                    "prepare_daemon_terminal_launch",
+                    None,
+                )
+                if callable(launch_builder):
+                    from .pty_runner import PtySessionProcessRunner
+
+                    runner = PtySessionProcessRunner(
+                        lambda spec: launch_builder(spec.connection_id)
+                    )
+                    self._session_runtime = SessionRuntime(
+                        self._core_client,
+                        runner=runner,
+                    )
+                else:
+                    self._session_runtime = SessionRuntime(self._core_client)
             else:
                 self._session_runtime = self._session_runtime_factory(
                     self._core_client
@@ -377,6 +421,9 @@ class DaemonServer:
             self._core_subscription = subscribe_events(self._on_core_event)
         self._session_subscription = self._session_runtime.subscribe_events(
             self._on_core_event
+        )
+        self._terminal_subscription = self._session_runtime.subscribe_terminal(
+            self._on_terminal_output
         )
         with self._event_lock:
             self._accepting_core_events = True
@@ -434,7 +481,65 @@ class DaemonServer:
             self._queue_protocol_error(state, exc.code, exc.message)
             return
         for message in messages:
-            self._handle_message(state, message)
+            if isinstance(message, TerminalFrame):
+                self._handle_terminal_frame(state, message)
+            else:
+                if not isinstance(message, dict):
+                    self._queue_protocol_error(
+                        state,
+                        ErrorCode.PROTOCOL_ERROR,
+                        "The transport frame type is invalid",
+                    )
+                    continue
+                self._handle_message(state, message)
+
+    def _handle_terminal_frame(
+        self,
+        state: _ClientConnection,
+        frame: TerminalFrame,
+    ) -> None:
+        runtime = self._session_runtime
+        client_id = state.protocol.client_id
+        if (
+            runtime is None
+            or client_id is None
+            or not state.protocol.handshake_completed
+            or state.protocol.client_info is None
+            or "binary-terminal-v1"
+            not in state.protocol.client_info.supported_frame_types
+            or frame.kind is not TerminalFrameKind.INPUT
+        ):
+            self._queue_protocol_error(
+                state,
+                ErrorCode.PROTOCOL_ERROR,
+                "The binary terminal frame is not permitted",
+            )
+            return
+        try:
+            attachment_id = frame.attachment_id
+            if attachment_id is None:
+                raise ValueError("terminal input attachment is missing")
+            runtime.send_terminal_input(
+                TerminalInput(
+                    session_id=frame.session_id,
+                    attachment_id=attachment_id,
+                    data=frame.data,
+                ),
+                client_id=client_id,
+            )
+        except SshPilotError as error:
+            # Binary input is fire-and-report. Return only the stable code and
+            # safe identifiers; never echo terminal input bytes.
+            self._queue_terminal_frame(
+                state,
+                TerminalFrame(
+                    kind=TerminalFrameKind.INPUT_ERROR,
+                    session_id=frame.session_id,
+                    attachment_id=frame.attachment_id,
+                    sequence=frame.sequence,
+                    data=error.code.value.encode("ascii"),
+                ),
+            )
 
     def _handle_message(self, state: _ClientConnection, message: dict) -> None:
         request_id = message.get("request_id")
@@ -479,6 +584,16 @@ class DaemonServer:
                 ),
             )
         self._queue_response(state, response)
+        if (
+            "result" in locals()
+            and isinstance(result, ImmediateResult)
+            and result.terminal_replay is not None
+        ):
+            self._queue_replay(
+                state,
+                result.terminal_session_id,
+                result.terminal_replay,
+            )
 
     def _submit_deferred(
         self,
@@ -648,11 +763,17 @@ class DaemonServer:
         with self._event_lock:
             if state.closed or state.continuity_lost:
                 return
-            overflow = not self._enqueue_frame_locked(state, frame)
+            dropped_terminal = self._make_control_room_locked(
+                state,
+                len(frame.data),
+            )
+            overflow = not self._enqueue_frame_locked(state, frame, priority=True)
         if overflow:
             logger.warning("Disconnecting daemon peer after outbound queue overflow")
             self._close_client(state)
             return
+        for session_id, sequence in dropped_terminal.items():
+            self._queue_terminal_status(state, session_id, sequence)
         selector = self._selector
         if selector is not None and state.sock.fileno() >= 0:
             self._refresh_client_interest(state)
@@ -690,6 +811,11 @@ class DaemonServer:
                 0,
                 state.queued_outbound_bytes - sent,
             )
+            if frame.is_terminal:
+                state.queued_terminal_bytes = max(
+                    0,
+                    state.queued_terminal_bytes - sent,
+                )
             if state.output_offset >= len(frame.data):
                 completed = state.output.popleft()
                 state.output_offset = 0
@@ -716,6 +842,7 @@ class DaemonServer:
             except OSError:
                 pass
         self._drain_completions()
+        self._drain_terminal_output()
         with self._event_lock:
             states = tuple(self._clients.values())
         for state in states:
@@ -763,6 +890,7 @@ class DaemonServer:
             state.output_offset = 0
             state.queued_event_count = 0
             state.queued_outbound_bytes = 0
+            state.queued_terminal_bytes = 0
             state.pending_request_ids.clear()
             self._clients.pop(file_descriptor, None)
             self._clients_by_token.pop(state.token, None)
@@ -779,6 +907,243 @@ class DaemonServer:
         session_runtime = self._session_runtime
         if session_runtime is not None:
             session_runtime.detach_client(state.protocol.client_id)
+
+    def _on_terminal_output(self, output: TerminalOutput) -> None:
+        if self._stopping.is_set():
+            return
+        try:
+            self._terminal_queue.put_nowait(output)
+        except queue.Full:
+            logger.warning(
+                "Terminal publication queue overflow session=%s",
+                output.session_id,
+            )
+            with self._event_lock:
+                self._terminal_publication_lost.add(output.session_id)
+        self._wake_selector()
+
+    def _drain_terminal_output(self) -> None:
+        runtime = self._session_runtime
+        if runtime is None:
+            return
+        with self._event_lock:
+            lost_sessions = tuple(self._terminal_publication_lost)
+            self._terminal_publication_lost.clear()
+            states = tuple(self._clients.values())
+        for session_id in lost_sessions:
+            for state in states:
+                client_id = state.protocol.client_id
+                if (
+                    client_id is not None
+                    and runtime.receives_terminal(session_id, client_id)
+                ):
+                    self._queue_terminal_status(state, session_id, 0)
+        while True:
+            try:
+                output = self._terminal_queue.get_nowait()
+            except queue.Empty:
+                return
+            flags = TerminalFrameFlags.EOF if output.eof else TerminalFrameFlags.NONE
+            frame = TerminalFrame(
+                kind=TerminalFrameKind.OUTPUT,
+                session_id=output.session_id,
+                sequence=output.sequence,
+                data=output.data,
+                flags=flags,
+            )
+            with self._event_lock:
+                states = tuple(self._clients.values())
+            for state in states:
+                client_id = state.protocol.client_id
+                if (
+                    client_id is None
+                    or state.closed
+                    or not state.protocol.handshake_completed
+                    or state.protocol.client_info is None
+                    or "binary-terminal-v1"
+                    not in state.protocol.client_info.supported_frame_types
+                    or not runtime.receives_terminal(output.session_id, client_id)
+                ):
+                    continue
+                self._queue_terminal_frame(state, frame)
+
+    def _queue_replay(
+        self,
+        state: _ClientConnection,
+        session_id: Optional[SessionId],
+        replay,
+    ) -> None:
+        if session_id is None:
+            return
+        with self._event_lock:
+            if state.closed or state.continuity_lost:
+                return
+            state.terminal_continuity_lost.discard(session_id)
+        flags = TerminalFrameFlags.REPLAY
+        if replay.truncated:
+            flags |= TerminalFrameFlags.TRUNCATED
+        maximum = 64 * 1024
+        for sequence, data in replay.chunks:
+            for offset in range(0, len(data), maximum):
+                chunk = data[offset : offset + maximum]
+                self._queue_terminal_frame(
+                    state,
+                    TerminalFrame(
+                        kind=TerminalFrameKind.OUTPUT,
+                        session_id=session_id,
+                        sequence=sequence + offset,
+                        data=chunk,
+                        flags=flags,
+                    ),
+                )
+        if replay.eof:
+            self._queue_terminal_frame(
+                state,
+                TerminalFrame(
+                    kind=TerminalFrameKind.OUTPUT,
+                    session_id=session_id,
+                    sequence=replay.returned_end,
+                    flags=TerminalFrameFlags.REPLAY | TerminalFrameFlags.EOF,
+                ),
+            )
+
+    def _queue_terminal_frame(
+        self,
+        state: _ClientConnection,
+        terminal_frame: TerminalFrame,
+    ) -> None:
+        try:
+            encoded = encode_binary_frame(
+                encode_terminal_payload(terminal_frame)
+            )
+        except (FramingError, TypeError, ValueError):
+            self._close_client(state)
+            return
+        outbound = _OutboundFrame(
+            encoded,
+            is_terminal=True,
+            session_id=terminal_frame.session_id,
+            terminal_sequence=terminal_frame.sequence,
+        )
+        with self._event_lock:
+            if state.closed or state.continuity_lost:
+                return
+            if (
+                terminal_frame.session_id in state.terminal_continuity_lost
+                and not terminal_frame.flags & TerminalFrameFlags.REPLAY
+            ):
+                return
+            if (
+                state.queued_terminal_bytes + len(encoded)
+                > self.max_client_terminal_bytes
+                or state.queued_outbound_bytes + len(encoded)
+                > self.max_client_outbound_bytes
+            ):
+                self._drop_terminal_session_locked(
+                    state,
+                    terminal_frame.session_id,
+                )
+                overflow = True
+            else:
+                overflow = not self._enqueue_frame_locked(state, outbound)
+        if overflow:
+            self._queue_terminal_status(
+                state,
+                terminal_frame.session_id,
+                terminal_frame.sequence,
+            )
+        self._refresh_client_interest(state)
+
+    def _queue_terminal_status(
+        self,
+        state: _ClientConnection,
+        session_id: SessionId,
+        sequence: int,
+    ) -> None:
+        try:
+            encoded = encode_binary_frame(
+                encode_terminal_payload(
+                    TerminalFrame(
+                        kind=TerminalFrameKind.CONTINUITY_LOST,
+                        session_id=session_id,
+                        sequence=sequence,
+                    )
+                )
+            )
+        except (FramingError, TypeError, ValueError):
+            return
+        with self._event_lock:
+            if state.closed or state.continuity_lost:
+                return
+            state.terminal_continuity_lost.add(session_id)
+            if not self._enqueue_frame_locked(
+                state,
+                _OutboundFrame(encoded, session_id=session_id),
+                priority=True,
+            ):
+                state.continuity_lost = True
+        self._wake_selector()
+
+    @staticmethod
+    def _drop_terminal_session_locked(
+        state: _ClientConnection,
+        session_id: SessionId,
+    ) -> Optional[int]:
+        kept: Deque[_OutboundFrame] = deque()
+        terminal_removed = 0
+        outbound_removed = 0
+        first_dropped_sequence: Optional[int] = None
+        for index, frame in enumerate(state.output):
+            if (
+                frame.is_terminal
+                and frame.session_id == session_id
+                and not (index == 0 and state.output_offset)
+            ):
+                terminal_removed += len(frame.data)
+                outbound_removed += len(frame.data)
+                if (
+                    first_dropped_sequence is None
+                    and frame.terminal_sequence is not None
+                ):
+                    first_dropped_sequence = frame.terminal_sequence
+                continue
+            kept.append(frame)
+        state.output = kept
+        state.queued_terminal_bytes = max(
+            0,
+            state.queued_terminal_bytes - terminal_removed,
+        )
+        state.queued_outbound_bytes = max(
+            0,
+            state.queued_outbound_bytes - outbound_removed,
+        )
+        return first_dropped_sequence
+
+    def _make_control_room_locked(
+        self,
+        state: _ClientConnection,
+        required: int,
+    ) -> dict[SessionId, int]:
+        dropped: dict[SessionId, int] = {}
+        if state.queued_outbound_bytes + required <= self.max_client_outbound_bytes:
+            return dropped
+        session_ids = tuple(
+            dict.fromkeys(
+                frame.session_id
+                for frame in state.output
+                if frame.is_terminal and frame.session_id is not None
+            )
+        )
+        for session_id in session_ids:
+            sequence = self._drop_terminal_session_locked(state, session_id)
+            if sequence is not None:
+                dropped[session_id] = sequence
+            if (
+                state.queued_outbound_bytes + required
+                <= self.max_client_outbound_bytes
+            ):
+                return dropped
+        return dropped
 
     def _cleanup(self) -> None:
         self._stop_configuration_reload()
@@ -903,10 +1268,12 @@ class DaemonServer:
                     state.output_offset = 0
                     state.queued_event_count = 0
                     state.queued_outbound_bytes = 0
+                    state.queued_terminal_bytes = 0
                     continue
                 if not self._enqueue_frame_locked(
                     state,
                     _OutboundFrame(frame, is_event=True),
+                    priority=True,
                 ):
                     continue
         self._wake_selector()
@@ -915,6 +1282,8 @@ class DaemonServer:
         self,
         state: _ClientConnection,
         frame: _OutboundFrame,
+        *,
+        priority: bool = False,
     ) -> bool:
         """Queue one complete frame while enforcing total per-peer memory."""
 
@@ -927,9 +1296,21 @@ class DaemonServer:
             state.output_offset = 0
             state.queued_event_count = 0
             state.queued_outbound_bytes = 0
+            state.queued_terminal_bytes = 0
             return False
-        state.output.append(frame)
+        if priority and state.output:
+            index = 1 if state.output_offset else 0
+            if frame.is_event:
+                # Preserve lifecycle FIFO behind control/status frames while
+                # overtaking queued terminal data.
+                while index < len(state.output) and not state.output[index].is_terminal:
+                    index += 1
+            state.output.insert(index, frame)
+        else:
+            state.output.append(frame)
         state.queued_outbound_bytes += len(frame.data)
+        if frame.is_terminal:
+            state.queued_terminal_bytes += len(frame.data)
         if frame.is_event:
             state.queued_event_count += 1
         return True
@@ -964,7 +1345,11 @@ class DaemonServer:
             self._core_subscription = None
             session_subscription = self._session_subscription
             self._session_subscription = None
+            terminal_subscription = self._terminal_subscription
+            self._terminal_subscription = None
         if subscription is not None:
             subscription.unsubscribe()
         if session_subscription is not None:
             session_subscription.unsubscribe()
+        if terminal_subscription is not None:
+            terminal_subscription.unsubscribe()

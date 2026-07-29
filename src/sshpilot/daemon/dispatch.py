@@ -33,6 +33,9 @@ from sshpilot.api.transport.codec import (
     handshake_request_from_wire,
     handshake_result_to_wire,
     open_session_request_from_wire,
+    replay_request_from_wire,
+    replay_result_to_wire,
+    resize_terminal_request_from_wire,
     session_summary_to_wire,
     update_connection_request_from_wire,
 )
@@ -40,6 +43,7 @@ from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, 
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
 from sshpilot.daemon.session_runtime import SessionRuntime
+from sshpilot.daemon.terminal_stream import ReplaySlice
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "sessions.attach": Capability.SESSIONS_WRITE,
     "sessions.detach": Capability.SESSIONS_WRITE,
     "sessions.close": Capability.SESSIONS_WRITE,
+    "terminal.replay": Capability.TERMINAL_REPLAY,
+    "terminal.resize": Capability.TERMINAL_RESIZE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -75,6 +81,8 @@ class ImmediateResult:
     """A selector-safe handler result."""
 
     value: Any
+    terminal_replay: Optional[ReplaySlice] = None
+    terminal_session_id: Optional[SessionId] = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +136,8 @@ class RequestDispatcher:
             "sessions.attach": self._handle_attach_session,
             "sessions.detach": self._handle_detach_session,
             "sessions.close": self._handle_close_session,
+            "terminal.replay": self._handle_replay_terminal,
+            "terminal.resize": self._handle_resize_terminal,
         }
 
     def begin_shutdown(self) -> None:
@@ -181,6 +191,8 @@ class RequestDispatcher:
             )
         try:
             result = handler(request, state)
+            if isinstance(result, ImmediateResult):
+                return result
             if isinstance(result, DeferredResult):
                 if request.method not in DEFERRED_DAEMON_METHODS:
                     raise RuntimeError("immediate daemon method returned deferred work")
@@ -383,14 +395,34 @@ class RequestDispatcher:
         self,
         request: RequestEnvelope,
         state: ClientProtocolState,
-    ) -> dict:
+    ) -> ImmediateResult:
         client_id = self._required_client_id(state)
         session_request = attach_session_request_from_wire(request.params)
-        return attach_session_result_to_wire(
-            self._session_runtime.attach_session(
-                session_request,
-                client_id=client_id,
+        if (
+            session_request.want_terminal_output
+            and (
+                state.client_info is None
+                or "binary-terminal-v1"
+                not in state.client_info.supported_frame_types
             )
+        ):
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Binary terminal transport was not negotiated",
+                session_id=session_request.session_id,
+            )
+        result, replay = self._session_runtime.attach_replay(
+            session_request,
+            client_id=client_id,
+        )
+        return ImmediateResult(
+            attach_session_result_to_wire(result),
+            terminal_replay=replay if session_request.want_terminal_output else None,
+            terminal_session_id=(
+                session_request.session_id
+                if session_request.want_terminal_output
+                else None
+            ),
         )
 
     def _handle_detach_session(
@@ -428,6 +460,40 @@ class RequestDispatcher:
             ),
         )
 
+    def _handle_resize_terminal(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        self._session_runtime.resize_terminal(
+            resize_terminal_request_from_wire(request.params),
+            client_id=self._required_client_id(state),
+        )
+        return None
+
+    def _handle_replay_terminal(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> ImmediateResult:
+        if (
+            state.client_info is None
+            or "binary-terminal-v1" not in state.client_info.supported_frame_types
+        ):
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Binary terminal transport was not negotiated",
+            )
+        result, replay = self._session_runtime.replay_terminal(
+            replay_request_from_wire(request.params),
+            client_id=self._required_client_id(state),
+        )
+        return ImmediateResult(
+            replay_result_to_wire(result),
+            terminal_replay=replay,
+            terminal_session_id=result.session_id,
+        )
+
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
         if metadata is None or state.client_id is None:
@@ -449,7 +515,13 @@ class RequestDispatcher:
                 version=core.core.version,
                 implementation="daemon",
             ),
-            supported=self._safe_capabilities(core.supported),
+            supported=self._safe_capabilities(
+                core.supported,
+                terminal_frames=(
+                    "binary-terminal-v1" in metadata.supported_frame_types
+                    and self._session_runtime.terminal_supported
+                ),
+            ),
             compatibility=CompatibilityResult(
                 compatible=True,
                 protocol_version=PROTOCOL_VERSION,
@@ -459,6 +531,8 @@ class RequestDispatcher:
     @staticmethod
     def _safe_capabilities(
         supported: FrozenSet[Capability],
+        *,
+        terminal_frames: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -471,13 +545,23 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_WRITE,
             }
         )
-        return connection_capabilities | frozenset(
+        daemon_capabilities = connection_capabilities | frozenset(
             {
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,
             }
         )
+        if terminal_frames:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.TERMINAL_OUTPUT,
+                    Capability.TERMINAL_INPUT,
+                    Capability.TERMINAL_RESIZE,
+                    Capability.TERMINAL_REPLAY,
+                }
+            )
+        return daemon_capabilities
 
     @staticmethod
     def _require_empty_params(request: RequestEnvelope) -> None:
