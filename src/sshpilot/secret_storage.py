@@ -2291,14 +2291,11 @@ class SecretManager:
 
     def selected_needs_unlock(self) -> bool:
         """True when the selected backend is session-backed and currently locked,
-        so the GTK layer should drive an unlock prompt."""
-        backend = self.selected_backend()
-        return bool(
-            backend is not None
-            and getattr(backend, "session_backed", False)
-            and backend.is_available()
-            and not backend.is_unlocked()
-        )
+        so the GTK layer should drive an unlock prompt.
+
+        Delegates to core ``decide_unlock`` via :meth:`needs_unlock`.
+        """
+        return self.needs_unlock()
 
     def selected_needs_login(self) -> bool:
         """True when the selected session backend has no authenticated account, so
@@ -2312,14 +2309,47 @@ class SecretManager:
         except Exception:
             return False
 
+    def needs_unlock(self) -> bool:
+        """True when the selected session backend is locked (core policy)."""
+        from sshpilot.core.secrets import decide_unlock
+
+        backend = self.selected_backend()
+        if backend is None:
+            return False
+        decision = decide_unlock(
+            backend=getattr(backend, "name", "") or self._selected,
+            session_backed=bool(getattr(backend, "session_backed", False)),
+            is_unlocked=bool(backend.is_unlocked()) if hasattr(backend, "is_unlocked") else True,
+            available=bool(backend.is_available()) if hasattr(backend, "is_available") else False,
+        )
+        from sshpilot.core.secrets import SecretDecisionKind
+
+        return decision.kind == SecretDecisionKind.UNLOCK_REQUIRED
+
     def unlock_selected(self, secret: str, progress=None) -> bool:
         """Unlock the selected session-backed backend (no-op otherwise).
 
         ``progress(stage: str)`` is forwarded to the backend for staged UI reporting
         (e.g. a startup spinner); passing nothing keeps the simple two-arg call so
-        backends without a ``progress`` parameter still work."""
+        backends without a ``progress`` parameter still work.
+
+        GTK unlock UI lives in ``secret_unlock_dialog`` / ``gtk`` — this method
+        never opens dialogs.
+        """
+        from sshpilot.core.secrets import SecretDecisionKind, decide_unlock
+
         backend = self.selected_backend()
         if backend is None or not getattr(backend, "session_backed", False):
+            return True
+        decision = decide_unlock(
+            backend=getattr(backend, "name", "") or self._selected,
+            session_backed=True,
+            is_unlocked=bool(backend.is_unlocked()),
+            available=bool(backend.is_available()),
+        )
+        if decision.kind == SecretDecisionKind.BACKEND_UNAVAILABLE:
+            return False
+        if decision.kind == SecretDecisionKind.READY:
             return True
         if progress is None:
             return backend.unlock(secret)

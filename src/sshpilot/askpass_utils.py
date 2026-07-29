@@ -1123,10 +1123,34 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     hint = (os.environ.get("SSH_ASKPASS_PROMPT") or "").strip().lower()
     _log(f"ASKPASS called with prompt: {prompt!r} hint={hint!r}")
 
+    # Core interaction policy drives classification / headless refusal.
+    from sshpilot.core.interaction import (
+        PromptKind,
+        build_request_from_prompt,
+        decide_headless,
+    )
+
+    interaction_request = build_request_from_prompt(
+        prompt,
+        hostname=(os.environ.get("SSHPILOT_PASSWORD_HOSTS") or "").split(",")[0].strip(),
+        username=(os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip(),
+        ssh_askpass_prompt=hint,
+    )
+    if (os.environ.get("SSHPILOT_ASKPASS_NO_UI") or "").strip() == "1":
+        response = decide_headless(interaction_request)
+        if response.secret:
+            return response.secret
+        _log(f"ASKPASS: NO_UI policy → {response.outcome.value}")
+        return None
+
     # Background/passive spawns (e.g. the autocomplete history fetch) set
     # AUTOFILL_ONLY: answer silently from stored secrets, never show UI.
     if (os.environ.get("SSHPILOT_ASKPASS_AUTOFILL_ONLY") or "").strip() == "1":
-        only_kind = classify_prompt(prompt)
+        only_kind = (
+            interaction_request.kind.value
+            if interaction_request.kind is not PromptKind.UNKNOWN
+            else classify_prompt(prompt)
+        )
         lowered = prompt.lower()
         if _looks_like_login_password(prompt, only_kind):
             value = _resolve_askpass_password(_log)
@@ -1157,7 +1181,11 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         _log("ASKPASS: SSH_ASKPASS_PROMPT=confirm (yes/no)")
         return _handle_confirm_prompt(prompt, _log)
 
-    kind = classify_prompt(prompt)
+    kind = (
+        interaction_request.kind.value
+        if interaction_request.kind is not PromptKind.UNKNOWN
+        else classify_prompt(prompt)
+    )
     if kind == 'presence':
         _log("ASKPASS: presence prompt (classifier); reminder UI")
         return _handle_presence_prompt(prompt, _log)

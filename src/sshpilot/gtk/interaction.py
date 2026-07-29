@@ -1,11 +1,12 @@
 """GTK interaction provider that turns core InteractionRequests into dialogs.
 
 Daemon and headless code must depend on ``sshpilot.core.interaction`` models,
-not this module.
+not this module. Wire via :func:`set_default_provider` from window startup.
 """
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from sshpilot.core.interaction import (
     InteractionOutcome,
@@ -19,13 +20,20 @@ from sshpilot.core.interaction import (
 
 logger = logging.getLogger(__name__)
 
+_default_provider: Optional["GtkInteractionProvider"] = None
+
+
+def get_default_provider() -> Optional["GtkInteractionProvider"]:
+    return _default_provider
+
+
+def set_default_provider(provider: Optional["GtkInteractionProvider"]) -> None:
+    global _default_provider
+    _default_provider = provider
+
 
 class GtkInteractionProvider:
-    """Maps typed interaction requests to existing GTK password/askpass dialogs.
-
-    Runs on the GTK main thread. Returns structured responses for the core policy
-    layer; never imports into ``sshpilot.core``.
-    """
+    """Maps typed interaction requests to existing GTK password/askpass dialogs."""
 
     def __init__(self, *, parent_widget=None, connection_manager=None):
         self.parent_widget = parent_widget
@@ -46,8 +54,6 @@ class GtkInteractionProvider:
         if request.kind in {PromptKind.PASSWORD, PromptKind.PASSPHRASE, PromptKind.VAULT_UNLOCK}:
             return self._secret_prompt(request)
         if request.kind == PromptKind.HOST_KEY:
-            # Host-key confirmation is normally handled by OpenSSH askpass /
-            # daemon broker; this provider declines unless a parent is set.
             return InteractionResponse(
                 outcome=InteractionOutcome.UNAVAILABLE,
                 message="Host-key confirmation requires daemon broker or askpass",
@@ -67,6 +73,9 @@ class GtkInteractionProvider:
             from_widget=parent,
             connection=None,
             connection_manager=self.connection_manager,
+            host=request.hostname or None,
+            username=request.username or None,
+            display_name=request.key_display or request.hostname or "",
         )
         if not password:
             return InteractionResponse(

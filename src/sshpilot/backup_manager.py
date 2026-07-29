@@ -509,16 +509,28 @@ class BackupManager:
     def export_configuration(self, export_path: str) -> Tuple[bool, Optional[str]]:
         """Export all configuration to a plain JSON file (legacy format; no secrets)."""
         try:
+            from sshpilot.core.import_export import atomic_write_json
+
             export_data = self._build_export_data()
             export_path = os.path.expanduser(export_path)
-            with open(export_path, 'w', encoding='utf-8') as f:
-                json.dump(export_data, f, indent=2)
+            atomic_write_json(export_path, export_data)
             logger.info(f"Configuration exported successfully to {export_path}")
             return True, None
         except Exception as e:
             error_msg = f"Failed to export configuration: {e}"
             logger.error(error_msg)
             return False, error_msg
+
+    def plan_configuration_import(self, import_data: Dict[str, Any], *, mode: str = 'merge'):
+        """Dry-run import plan via core.import_export (no GTK, no mutation)."""
+        from sshpilot.core.import_export import MergeStrategy, plan_import
+
+        strategy = {
+            'replace': MergeStrategy.REPLACE,
+            'merge': MergeStrategy.MERGE,
+            'skip': MergeStrategy.SKIP,
+        }.get(mode, MergeStrategy.MERGE)
+        return plan_import(import_data, strategy=strategy, include_secrets=False)
 
     def _gather_credentials(self, connections) -> List[Dict[str, Any]]:
         """Serialized credentials (password/sudo/key passphrase) for the given connections —

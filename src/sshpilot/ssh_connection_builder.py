@@ -842,46 +842,40 @@ def build_ssh_connection(
     # that every caller (terminal, scp, ssh-copy-id) can use without rebuilding
     # the command or re-deriving the auth env.
     if ctx.native_mode:
-        base_cmd = ['ssh']
+        # Resolve auth first — env + extra_opts are runtime concerns owned by
+        # this adapter; argv composition is delegated to core.ssh.
+        from .core.ssh import (
+            AuthMethod,
+            HostKeyMode,
+            LaunchMode,
+            SSHLaunchRequest,
+            build_ssh_process_spec,
+        )
+
         config_override = None
         if hasattr(connection, '_resolve_config_override_path'):
             try:
                 config_override = connection._resolve_config_override_path()
             except Exception:
                 config_override = None
-        if config_override:
-            base_cmd.extend(['-F', config_override])
 
-        # App-level SSH settings. ssh_overrides carries the user's global SSH
-        # options (verbosity, ConnectTimeout, ServerAlive*, etc.); append verbatim.
         app_ssh_config = {}
+        overrides: List[str] = []
         if app_config:
             try:
                 app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
             except Exception:
                 app_ssh_config = {}
-            overrides = app_ssh_config.get('ssh_overrides', [])
-            if isinstance(overrides, (list, tuple)):
-                for entry in overrides:
-                    if entry:
-                        base_cmd.append(str(entry))
+            raw_overrides = app_ssh_config.get('ssh_overrides', [])
+            if isinstance(raw_overrides, (list, tuple)):
+                overrides = [str(entry) for entry in raw_overrides if entry]
 
-            # Default keepalive: when neither the user's app settings nor their
-            # ~/.ssh/config define ServerAliveInterval for this host, inject a
-            # sane default so a dead link (laptop sleep, VPN drop, cable pull)
-            # is detected instead of the connection lingering "green" forever.
-            # Honors docs/architecture.md: this is a runtime option that doesn't live in
-            # ~/.ssh/config, applied via -o like the rest of ssh_overrides, and
-            # any explicit user/per-host value wins.
-            _maybe_append_default_keepalive(base_cmd, overrides, app_ssh_config)
+        # Default keepalive injection into the overrides list (core builder
+        # appends ssh_overrides verbatim).
+        keepalive_cmd: List[str] = []
+        _maybe_append_default_keepalive(keepalive_cmd, overrides, app_ssh_config)
+        overrides = list(overrides) + keepalive_cmd
 
-        # File manager / SFTP / non-interactive transfers: one askpass cancel
-        # ends auth. Interactive terminals keep OpenSSH's default (3).
-        if ctx.command_type in ('scp', 'ssh-copy-id', 'sftp'):
-            _append_single_password_prompt(base_cmd)
-
-        # Authentication is resolved by the single shared helper so the terminal,
-        # SCP, and ssh-copy-id all authenticate identically.
         auth = resolve_native_auth(
             connection,
             connection_manager,
@@ -889,28 +883,25 @@ def build_ssh_connection(
             interaction_policy=ctx.interaction_policy,
         )
 
-        # BatchMode preference — never when askpass may need to answer a prompt
-        # (or a stored password / password method is in play).
-        if ctx.interaction_policy == "none":
-            if "BatchMode=yes" not in base_cmd:
-                base_cmd.extend(["-o", "BatchMode=yes"])
-            # BatchMode does not suppress the unknown-host confirmation. Until
-            # the daemon has a typed trust-prompt channel, require an already
-            # trusted host instead of leaving an invisible prompt on its PTY.
-            if "StrictHostKeyChecking=yes" not in base_cmd:
-                base_cmd.extend(["-o", "StrictHostKeyChecking=yes"])
-        elif (bool(app_ssh_config.get('batch_mode', False))
-                and not auth.password_mode
-                and not auth.use_askpass
-                and not auth.password):
-            if 'BatchMode=yes' not in base_cmd:
-                base_cmd.extend(['-o', 'BatchMode=yes'])
-
-        base_cmd.extend(auth.extra_opts)
-        # Extra CLI flags (rare; before the host).
+        extra_options: List[str] = list(auth.extra_opts or [])
+        if ctx.command_type in ('scp', 'ssh-copy-id', 'sftp'):
+            if not any('NumberOfPasswordPrompts' in str(e) for e in extra_options + overrides):
+                extra_options.extend(['-o', 'NumberOfPasswordPrompts=1'])
         if extra_args:
-            base_cmd.extend(extra_args)
-        env = auth.env
+            extra_options.extend(str(a) for a in extra_args if a)
+
+        batch_mode = False
+        host_key_mode = None
+        if ctx.interaction_policy == "none":
+            batch_mode = True
+            host_key_mode = HostKeyMode.YES
+        elif (
+            bool(app_ssh_config.get('batch_mode', False))
+            and not auth.password_mode
+            and not auth.use_askpass
+            and not auth.password
+        ):
+            batch_mode = True
 
         native_target = host_label
         if hasattr(connection, 'resolve_host_identifier'):
@@ -920,16 +911,38 @@ def build_ssh_connection(
                     native_target = resolved
             except Exception:
                 pass
-        base_cmd.append(native_target)
 
-        # A raw one-shot remote command (e.g. reading the remote working dir for
-        # follow-mode) is appended after the host. Interactive saved connections
-        # don't use this — their remote command lives in ~/.ssh/config.
-        if ctx.remote_command:
-            base_cmd.append(ctx.remote_command)
+        launch_mode = LaunchMode.INTERACTIVE
+        if ctx.command_type == 'scp':
+            launch_mode = LaunchMode.SCP
+        elif ctx.command_type == 'sftp':
+            launch_mode = LaunchMode.SFTP
+        elif ctx.command_type == 'ssh-copy-id':
+            launch_mode = LaunchMode.COPY_ID
+        if ctx.interaction_policy == "none":
+            launch_mode = LaunchMode.BATCH
+
+        req = SSHLaunchRequest(
+            destination=native_target,
+            config_file=config_override,
+            ssh_overrides=overrides,
+            extra_options=extra_options,
+            batch_mode=batch_mode,
+            host_key_mode=host_key_mode,
+            remote_command=ctx.remote_command,
+            askpass_required=bool(auth.use_askpass),
+            env=dict(auth.env or {}),
+            auth_method=(
+                AuthMethod.PASSWORD if auth.password_mode else AuthMethod.PUBLIC_KEY
+            ),
+            launch_mode=launch_mode,
+        )
+        spec = build_ssh_process_spec(req)
+        env = dict(spec.env)
+        env.update(dict(auth.env or {}))
 
         return SSHConnectionCommand(
-            command=base_cmd,
+            command=list(spec.argv),
             env=env,
             use_sshpass=auth.use_sshpass,
             password=auth.password,
