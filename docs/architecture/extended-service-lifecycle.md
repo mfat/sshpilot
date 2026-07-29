@@ -44,3 +44,13 @@ orphaned actives.
 6. Close workers and descriptors
 
 Bounded, idempotent, no orphan SSH processes.
+
+## Phase 10.1 race coverage
+
+Ephemeral-daemon integration repeats (5× each, barrier-style waits):
+
+- SFTP open + close during startup
+- transfer complete vs cancel
+- forward ACTIVE + close (no `ssh -N` leak)
+- combined shutdown with SFTP + transfer + dynamic forward (idempotent
+  second `shutdown()`, socket removed)

@@ -235,4 +235,11 @@ Daemon ownership now also covers:
 - Port forwards (`docs/architecture/port-forwarding.md`)
 - Cross-cutting lifecycle (`docs/architecture/extended-service-lifecycle.md`)
 
-Terminal PTY transport is unchanged.
+Production GTK routes (file manager, uploads/downloads, plugin
+`ensure_local_forward`) use the daemon when capabilities are present. Silent
+local process fallback is forbidden; see `sshpilot.extended_service_policy`
+and the legacy settings documented in the service architecture notes.
+
+Terminal PTY transport is unchanged. Config-static Host forwards remain
+bound to the interactive terminal process. Ordinary SCP UI is gated behind
+`file_manager.legacy_scp` until migrated.

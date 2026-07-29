@@ -43,8 +43,9 @@ use protocol metadata, not scraped `ls` text.
 ## Operations
 
 Typed methods: list, stat, lstat, realpath, mkdir, rmdir, rename, remove,
-chmod, symlink, readlink. Listings are bounded (default 2000) with truncation
-metadata.
+chmod, symlink, readlink. Listings are bounded (default **2000** entries)
+with truncation metadata; the GTK file manager must treat truncation as a
+hard UI bound (no unbounded frame).
 
 ## Ownership / attachment
 
@@ -56,3 +57,21 @@ Panel teardown calls `sftp.detach`; explicit Disconnect calls `sftp.close`.
 
 Up to 50 closed service summaries are retained in memory. Daemon restart
 clears all.
+
+## Legacy gating
+
+Production file-manager routing (`sshpilot.extended_service_policy`) selects
+daemon ownership when a `DaemonClient` advertises SFTP capabilities. There is
+**no silent fallback** to `OpenSSHSFTPManager`. Explicit
+`file_manager.legacy_local_sftp` (or in-process client mode) is required for
+GTK-owned `ssh -s sftp`. Ordinary SCP UI requires `file_manager.legacy_scp`.
+
+## Phase 10.1 validation (exercised)
+
+Real OpenSSH Alpine fixture + ephemeral daemon:
+
+- password auth to `READY`; process cmdline contains `sftp`
+- filesystem ops + unusual filenames (spaces, quotes, Unicode, emoji, leading dash, shell metacharacters)
+- listing truncation metadata at the configured bound
+- attach / detach / close; open+close-during-startup races (5×)
+- shutdown with active SFTP leaves no orphan `ssh` process

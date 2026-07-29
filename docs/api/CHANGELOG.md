@@ -5,6 +5,21 @@ notes remain separate.
 
 ## Unreleased
 
+### Phase 10.1: Production validation and ownership completion (Changed)
+
+- GTK extended-service routing no longer silently falls back to local
+  `ssh -s sftp` / SCP / `ssh -N`; explicit legacy settings or in-process mode
+  are required (`sshpilot.extended_service_policy`).
+- Transfer runtime bounds concurrent workers (default 4) and queue depth
+  (default 32); excess `transfers.start` returns `SERVER_BUSY`.
+- `transfers.cancel` returns `null` on the wire (matches client codec).
+- Forward launch does not use `ClearAllForwardings=yes` (it wiped ad-hoc
+  `-L`/`-R`/`-D` on current OpenSSH); isolated config strips static forwards.
+- Local/dynamic `ACTIVE` requires a successful local bind probe; remote uses a
+  short process-alive window with `ExitOnForwardFailure=yes`.
+- Real OpenSSH integration tests cover SFTP, transfers, forwards, and
+  lifecycle races against an ephemeral daemon (not the user socket).
+
 ### Phase 10: SFTP, Transfers, and Forwards (Added)
 
 - Added daemon-owned SFTP service lifecycle with narrow capabilities
