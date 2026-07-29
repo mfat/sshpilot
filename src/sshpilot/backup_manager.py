@@ -936,12 +936,22 @@ class BackupManager:
         return success, error, restored, restored_keys
 
     def _validate_import_data(self, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
-        """Validate import data structure"""
+        """Validate import data structure via core import/export policy."""
         if not isinstance(data, dict):
             return False, "Import data must be a JSON object"
 
-        # Check version
-        version = data.get('version')
+        try:
+            from sshpilot.core.import_export import migrate_payload, plan_import
+            from sshpilot.core.errors import CoreError
+
+            migrated = migrate_payload(data)
+        except CoreError as exc:
+            return False, str(exc.message or exc)
+        except Exception as exc:
+            return False, str(exc)
+
+        # Check version (legacy path still requires app_config for full restores)
+        version = migrated.get('version')
         if version is None:
             return False, "Missing 'version' field in import data"
         if not isinstance(version, int) or version > BACKUP_VERSION:
@@ -954,6 +964,12 @@ class BackupManager:
 
         if not isinstance(data['app_config'], dict):
             return False, "'app_config' must be a JSON object"
+
+        # Structural connection checks (when present) via core planner.
+        if data.get('connections') is not None or data.get('hosts') is not None:
+            plan = plan_import(data)
+            if not plan.ok and plan.errors:
+                return False, plan.errors[0].message
 
         # Warn about platform/mode differences (but don't fail)
         current_isolated = self.config.get_setting('ssh.use_isolated_config', False)
