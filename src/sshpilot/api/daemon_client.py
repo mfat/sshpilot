@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import socket
 import threading
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, NoReturn, Optional, Union
 
@@ -116,6 +118,8 @@ from .transport.secret_frames import (
 )
 from .version import PROTOCOL_VERSION
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_REQUEST_TIMEOUT = 5.0
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
@@ -149,6 +153,9 @@ class _PendingRequest:
     completed: threading.Event
     response: Optional[Union[SuccessResponseEnvelope, ErrorResponseEnvelope]] = None
     error: Optional[SshPilotError] = None
+    method: Optional[str] = None
+    started_at: float = field(default_factory=time.monotonic)
+    sent: bool = False
 
 
 @dataclass(frozen=True)
@@ -225,6 +232,10 @@ class DaemonClient:
         self._capabilities: Optional[Capabilities] = None
         self._selected_protocol_version: Optional[str] = None
         self._server_instance_id: Optional[str] = None
+        self._daemon_version: Optional[str] = None
+        self._daemon_started_at: str = ""
+        self._development_revision: str = ""
+        self._daemon_api_implementation_version: str = ""
         try:
             self._connect_and_handshake()
         except BaseException:
@@ -246,6 +257,85 @@ class DaemonClient:
                 "The daemon handshake is incomplete",
             )
         return self._server_instance_id
+
+    @property
+    def daemon_version(self) -> Optional[str]:
+        return self._daemon_version
+
+    @property
+    def daemon_started_at(self) -> str:
+        return self._daemon_started_at
+
+    @property
+    def development_revision(self) -> str:
+        return self._development_revision
+
+    def build_mismatch(self) -> Optional[str]:
+        """Return a safe reason when the daemon build looks stale, else None.
+
+        Compares application version, API implementation version, and the
+        optional opaque ``SSHPILOT_DEV_REVISION`` token. Never includes paths.
+        """
+        from sshpilot import __version__ as app_version
+        from .version import API_IMPLEMENTATION_VERSION
+
+        if self._daemon_version and self._daemon_version != app_version:
+            return "daemon_version"
+        caps = self._capabilities
+        if caps is not None and caps.api_implementation_version != API_IMPLEMENTATION_VERSION:
+            return "api_implementation_version"
+        if (
+            self._daemon_api_implementation_version
+            and self._daemon_api_implementation_version != API_IMPLEMENTATION_VERSION
+        ):
+            return "api_implementation_version"
+        local_revision = (os.environ.get("SSHPILOT_DEV_REVISION") or "").strip()
+        if (
+            local_revision
+            and self._development_revision
+            and local_revision != self._development_revision
+        ):
+            return "development_revision"
+        return None
+
+    def _log_daemon_identity(self) -> None:
+        mismatch = self.build_mismatch()
+        logger.info(
+            "Daemon handshake identity version=%s api=%s instance=%s "
+            "started_at=%s revision=%s mismatch=%s",
+            self._daemon_version or "",
+            self._daemon_api_implementation_version
+            or (
+                self._capabilities.api_implementation_version
+                if self._capabilities is not None
+                else ""
+            ),
+            self._server_instance_id or "",
+            self._daemon_started_at or "",
+            self._development_revision or "",
+            mismatch or "none",
+        )
+        if mismatch:
+            logger.warning(
+                "Daemon build metadata differs from this application "
+                "(%s). Restart sshpilotd before testing new daemon code.",
+                mismatch,
+            )
+
+    def threads_alive(self) -> dict:
+        """Return reader/event/terminal thread liveness for watchdog assertions."""
+        return {
+            "reader": bool(
+                self._reader_thread is not None and self._reader_thread.is_alive()
+            ),
+            "event": bool(
+                self._event_thread is not None and self._event_thread.is_alive()
+            ),
+            "terminal": bool(
+                self._terminal_thread is not None
+                and self._terminal_thread.is_alive()
+            ),
+        }
 
     def get_capabilities(self) -> Capabilities:
         capabilities = self._capabilities
@@ -671,11 +761,18 @@ class DaemonClient:
             self._fail_protocol("The daemon selected an incompatible protocol")
         self._selected_protocol_version = handshake.selected_protocol_version
         self._server_instance_id = handshake.server_instance_id
+        self._daemon_version = handshake.daemon_version
+        self._daemon_started_at = handshake.daemon_started_at
+        self._development_revision = handshake.development_revision
+        self._daemon_api_implementation_version = (
+            handshake.api_implementation_version
+        )
         capabilities = self._request("system.get_capabilities", {})
         try:
             self._capabilities = capabilities_from_wire(capabilities)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid capabilities")
+        self._log_daemon_identity()
 
     def _request(
         self,
@@ -706,8 +803,12 @@ class DaemonClient:
                 params=params,
                 client_id=self._client_id,
             )
-            pending = _PendingRequest(completed=threading.Event())
+            pending = _PendingRequest(
+                completed=threading.Event(),
+                method=method,
+            )
             mutation_may_have_been_sent = False
+            sent = False
             with self._state_lock:
                 if self._closed or self._socket is not transport:
                     raise self._closed_error()
@@ -721,6 +822,8 @@ class DaemonClient:
                         or session_mutation
                     )
                     transport.sendall(frame)
+                    sent = True
+                    pending.sent = True
             except (FramingError, TypeError, ValueError):
                 self._fail_transport(
                     SshPilotError(
@@ -745,6 +848,17 @@ class DaemonClient:
                         pending.response is not None or pending.error is not None
                     )
                 if not response_arrived:
+                    elapsed = time.monotonic() - pending.started_at
+                    diagnostics = self._transport_diagnostics(
+                        request_id=request_id,
+                        method=method,
+                        elapsed=elapsed,
+                        sent=sent,
+                    )
+                    logger.warning(
+                        "Daemon request timed out: %s",
+                        diagnostics,
+                    )
                     self._fail_transport(
                         SshPilotError(
                             ErrorCode.TRANSPORT_TIMEOUT,
@@ -878,6 +992,10 @@ class DaemonClient:
                     None,
                 )
             if pending is None:
+                logger.debug(
+                    "Late or unknown daemon response for cleared request id %s",
+                    envelope.request_id,
+                )
                 self._fail_protocol_from_reader(
                     "The daemon response has an unknown request ID"
                 )
@@ -1101,16 +1219,91 @@ class DaemonClient:
     def _fail_protocol_from_reader(self, message: str) -> None:
         self._fail_transport(SshPilotError(ErrorCode.PROTOCOL_ERROR, message))
 
+    def _transport_diagnostics(
+        self,
+        *,
+        request_id: Optional[RequestId] = None,
+        method: Optional[str] = None,
+        elapsed: Optional[float] = None,
+        sent: Optional[bool] = None,
+    ) -> dict:
+        """Return safe fields for transport timeout / failure diagnostics."""
+        with self._state_lock:
+            transport = self._socket
+            pending_count = len(self._pending_requests)
+            server_instance_id = self._server_instance_id
+            client_id = self._client_id
+        if transport is None:
+            socket_state = "none"
+        else:
+            try:
+                socket_state = "closed" if transport.fileno() < 0 else "open"
+            except OSError:
+                socket_state = "closed"
+        try:
+            event_queue_depth = self._event_queue.qsize()
+        except NotImplementedError:
+            event_queue_depth = -1
+        try:
+            terminal_queue_depth = self._terminal_queue.qsize()
+        except NotImplementedError:
+            terminal_queue_depth = -1
+        threads = self.threads_alive()
+        return {
+            "request_id": request_id,
+            "method": method,
+            "elapsed": elapsed,
+            "client_id": client_id,
+            "server_instance_id": server_instance_id,
+            "socket_state": socket_state,
+            "pending_request_count": pending_count,
+            "event_queue_depth": event_queue_depth,
+            "terminal_queue_depth": terminal_queue_depth,
+            "sent": sent,
+            "reader_thread_alive": threads["reader"],
+            "event_thread_alive": threads["event"],
+            "terminal_thread_alive": threads["terminal"],
+            "transport_open": socket_state == "open",
+        }
+
     def _fail_transport(self, error: SshPilotError) -> None:
+        timeout_diagnostics: Optional[dict] = None
         with self._state_lock:
             if self._transport_failed or self._close_complete:
                 return
+            if error.code is ErrorCode.TRANSPORT_TIMEOUT:
+                timed_out: Optional[_PendingRequest] = None
+                for request_id, request in self._pending_requests.items():
+                    if (
+                        error.request_id is not None
+                        and request_id == error.request_id
+                    ):
+                        timed_out = request
+                        break
+                elapsed = None
+                method = None
+                sent = None
+                if timed_out is not None:
+                    elapsed = time.monotonic() - timed_out.started_at
+                    method = timed_out.method
+                    sent = timed_out.sent
+                timeout_diagnostics = self._transport_diagnostics(
+                    request_id=error.request_id,
+                    method=method,
+                    elapsed=elapsed,
+                    sent=sent,
+                )
             self._transport_failed = True
             self._closed = True
             transport = self._socket
             self._socket = None
             pending = tuple(self._pending_requests.items())
             self._pending_requests.clear()
+        if timeout_diagnostics is not None:
+            logger.debug(
+                "Failing daemon transport on timeout: %s",
+                timeout_diagnostics,
+            )
         self._close_transport(transport)
         for request_id, request in pending:
             request.error = SshPilotError(

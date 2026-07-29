@@ -169,6 +169,11 @@ class HandshakeResult:
     daemon_capabilities: FrozenSet[Capability]
     compatibility_status: str
     server_instance_id: str
+    # Optional development-safe metadata (empty when unset). Never carries
+    # repository paths — only an opaque revision token and UTC start time.
+    daemon_started_at: str = ""
+    development_revision: str = ""
+    api_implementation_version: str = ""
 
     def __post_init__(self) -> None:
         require_identifier(self.daemon_version, "daemon version")
@@ -180,3 +185,9 @@ class HandshakeResult:
             not isinstance(item, Capability) for item in self.daemon_capabilities
         ):
             raise TypeError("daemon capabilities must contain Capability values")
+        if type(self.daemon_started_at) is not str:
+            raise TypeError("daemon_started_at must be a string")
+        if type(self.development_revision) is not str:
+            raise TypeError("development_revision must be a string")
+        if type(self.api_implementation_version) is not str:
+            raise TypeError("api_implementation_version must be a string")

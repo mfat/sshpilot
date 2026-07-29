@@ -140,8 +140,27 @@ def select_client(
         )
 
     logger.info("Experimental daemon client mode is active")
+    mismatch = None
+    if hasattr(launched.client, "build_mismatch"):
+        try:
+            mismatch = launched.client.build_mismatch()
+        except Exception:
+            mismatch = None
+    if mismatch:
+        logger.warning(
+            "Connected daemon build metadata differs from this application "
+            "(%s). Restart the SSH Pilot service before relying on new "
+            "daemon behavior.",
+            mismatch,
+        )
     return ClientSelection(
         client=launched.client,
         mode=ClientMode.DAEMON,
         daemon_process=launched.process,
+        warning=(
+            "The running SSH Pilot service does not match this application "
+            "build. Restart the service after updating daemon code."
+            if mismatch
+            else None
+        ),
     )

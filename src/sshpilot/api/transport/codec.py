@@ -509,7 +509,7 @@ def handshake_request_from_wire(value: Any) -> HandshakeRequest:
 
 
 def handshake_result_to_wire(result: HandshakeResult) -> Dict[str, Any]:
-    return {
+    payload = {
         "daemon_version": result.daemon_version,
         "core_version": result.core_version,
         "selected_protocol_version": result.selected_protocol_version,
@@ -517,6 +517,13 @@ def handshake_result_to_wire(result: HandshakeResult) -> Dict[str, Any]:
         "compatibility_status": result.compatibility_status,
         "server_instance_id": result.server_instance_id,
     }
+    if result.daemon_started_at:
+        payload["daemon_started_at"] = result.daemon_started_at
+    if result.development_revision:
+        payload["development_revision"] = result.development_revision
+    if result.api_implementation_version:
+        payload["api_implementation_version"] = result.api_implementation_version
+    return payload
 
 
 def handshake_result_from_wire(value: Any) -> HandshakeResult:
@@ -530,6 +537,11 @@ def handshake_result_from_wire(value: Any) -> HandshakeResult:
             "compatibility_status",
             "server_instance_id",
         },
+        optional={
+            "daemon_started_at",
+            "development_revision",
+            "api_implementation_version",
+        },
         context="handshake result",
     )
     capabilities = data["daemon_capabilities"]
@@ -539,6 +551,21 @@ def handshake_result_from_wire(value: Any) -> HandshakeResult:
         supported = frozenset(Capability(item) for item in capabilities)
     except (TypeError, ValueError):
         raise ValueError("handshake contains an unknown capability") from None
+    started_at = data.get("daemon_started_at", "")
+    if started_at is None:
+        started_at = ""
+    if type(started_at) is not str:
+        raise ValueError("daemon_started_at must be a string")
+    revision = data.get("development_revision", "")
+    if revision is None:
+        revision = ""
+    if type(revision) is not str:
+        raise ValueError("development_revision must be a string")
+    api_impl = data.get("api_implementation_version", "")
+    if api_impl is None:
+        api_impl = ""
+    if type(api_impl) is not str:
+        raise ValueError("api_implementation_version must be a string")
     return HandshakeResult(
         daemon_version=_identifier(data["daemon_version"], "daemon version"),
         core_version=_identifier(data["core_version"], "core version"),
@@ -555,6 +582,9 @@ def handshake_result_from_wire(value: Any) -> HandshakeResult:
             data["server_instance_id"],
             "server instance id",
         ),
+        daemon_started_at=started_at.strip(),
+        development_revision=revision.strip(),
+        api_implementation_version=api_impl.strip(),
     )
 
 

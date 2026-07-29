@@ -719,15 +719,21 @@ Synthetic representation:
 | `daemon_capabilities` | `FrozenSet[Capability]` | Yes | — | No |
 | `compatibility_status` | `str` | Yes | — | No |
 | `server_instance_id` | `str` | Yes | — | No |
+| `daemon_started_at` | `str` | No | `` | No |
+| `development_revision` | `str` | No | `` | No |
+| `api_implementation_version` | `str` | No | `` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "api_implementation_version": "",
   "compatibility_status": {},
   "core_version": {},
   "daemon_capabilities": {},
+  "daemon_started_at": "",
   "daemon_version": {},
+  "development_revision": "",
   "selected_protocol_version": {},
   "server_instance_id": {}
 }

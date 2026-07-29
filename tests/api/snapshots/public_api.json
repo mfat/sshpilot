@@ -835,7 +835,10 @@
       "selected_protocol_version",
       "daemon_capabilities",
       "compatibility_status",
-      "server_instance_id"
+      "server_instance_id",
+      "daemon_started_at",
+      "development_revision",
+      "api_implementation_version"
     ],
     "HostKeyPrompt": [
       "hostname",

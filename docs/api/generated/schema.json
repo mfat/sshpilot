@@ -1250,6 +1250,27 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": "",
+          "name": "daemon_started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "development_revision",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "api_implementation_version",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"

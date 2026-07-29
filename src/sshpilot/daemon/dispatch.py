@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Hashable, Optional, Set, Union
 
 from sshpilot import __version__ as sshpilot_version
@@ -148,6 +150,13 @@ class RequestDispatcher:
         self._session_runtime = session_runtime or SessionRuntime(core_client)
         self._interaction_broker = interaction_broker
         self.server_instance_id = uuid.uuid4().hex
+        self._daemon_started_at = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        # Opaque development token only — never a filesystem or git path.
+        self._development_revision = (
+            os.environ.get("SSHPILOT_DEV_REVISION", "").strip()
+        )
         self._shutting_down = False
         self.HANDLERS: Dict[str, Callable[[RequestEnvelope, ClientProtocolState], Any]] = {
             "system.handshake": self._handle_handshake,
@@ -297,6 +306,9 @@ class RequestDispatcher:
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
+            daemon_started_at=self._daemon_started_at,
+            development_revision=self._development_revision,
+            api_implementation_version=API_IMPLEMENTATION_VERSION,
         )
         return handshake_result_to_wire(result)
 
