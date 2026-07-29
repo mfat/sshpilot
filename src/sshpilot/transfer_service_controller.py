@@ -6,6 +6,10 @@ via daemon ``transfer.*`` events, filtered per-transfer so many concurrent
 uploads/downloads can share one controller instance. Used directly by
 :mod:`sshpilot.daemon_sftp_backend` for uploads/downloads, and is reusable for
 a future transfer-queue UI.
+
+Reusable overwrite/path/progress policy lives in ``sshpilot.core.transfers``;
+this controller is the GTK/API adapter that submits ``StartTransferRequest``
+wire models to the daemon.
 """
 
 from __future__ import annotations
