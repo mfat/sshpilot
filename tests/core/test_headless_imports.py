@@ -1,29 +1,18 @@
-"""Headless import gate: core / api / daemon must not touch ``gi``."""
+"""Headless import gate: core / api / daemon must not touch ``gi``.
+
+Uses a fresh subprocess so already-loaded modules cannot hide violations.
+Also asserts that plain ``import gi`` fails under the blocker (not a fake module).
+"""
 from __future__ import annotations
 
-import importlib
+import os
+import subprocess
 import sys
-from types import ModuleType
-
-import pytest
+from pathlib import Path
 
 
-FORBIDDEN_ROOTS = (
-    "gi",
-    "gi.repository",
-)
-
-
-class _BlockedGi(ModuleType):
-    """Module stand-in that fails on any attribute access."""
-
-    def __init__(self, name: str) -> None:
-        super().__init__(name)
-        self.__path__ = []  # type: ignore[attr-defined]
-
-    def __getattr__(self, item: str):
-        raise ImportError(f"gi is blocked in headless tests ({self.__name__}.{item})")
-
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
 
 HEADLESS_MODULES = (
     "sshpilot.core",
@@ -37,53 +26,100 @@ HEADLESS_MODULES = (
     "sshpilot.core.forwards",
     "sshpilot.core.import_export",
     "sshpilot.core.ssh",
+    "sshpilot.core.connections",
+    "sshpilot.core.transfers",
+    "sshpilot.core.interaction",
     "sshpilot.core.cli",
     "sshpilot.api",
     "sshpilot.daemon",
 )
 
+_SUBPROCESS_SCRIPT = r"""
+import builtins
+import importlib
+import sys
 
-@pytest.fixture
-def blocked_gi():
-    saved = {
-        name: mod
-        for name, mod in list(sys.modules.items())
-        if name == "gi"
-        or name.startswith("gi.")
-        or name.startswith("sshpilot.core")
-        or name.startswith("sshpilot.api")
-        or name.startswith("sshpilot.daemon")
-    }
-    for name in list(saved):
-        sys.modules.pop(name, None)
+sys.path.insert(0, %r)
 
-    for name in FORBIDDEN_ROOTS + (
-        "gi.repository.Gtk",
-        "gi.repository.Gdk",
-        "gi.repository.Adw",
-        "gi.repository.GLib",
-        "gi.repository.Gio",
-        "gi.repository.GObject",
-        "gi.repository.Vte",
-        "gi.repository.Secret",
-    ):
-        sys.modules[name] = _BlockedGi(name)
+_real_import = builtins.__import__
 
-    try:
-        yield
-    finally:
-        for name in list(sys.modules):
-            if (
-                name == "gi"
-                or name.startswith("gi.")
-                or name.startswith("sshpilot.core")
-                or name.startswith("sshpilot.api")
-                or name.startswith("sshpilot.daemon")
-            ):
-                sys.modules.pop(name, None)
-        sys.modules.update(saved)
+def _blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+    root = name.split(".", 1)[0]
+    if root == "gi" or name == "gi" or name.startswith("gi."):
+        raise ImportError(f"gi is blocked in headless tests ({name})")
+    return _real_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = _blocked_import
+sys.modules.pop("gi", None)
+for key in list(sys.modules):
+    if key == "gi" or key.startswith("gi."):
+        sys.modules.pop(key, None)
+
+# Plain import gi must fail hard (not return a permissive fake).
+try:
+    import gi  # noqa: F401
+except ImportError:
+    pass
+else:
+    raise SystemExit("import gi unexpectedly succeeded under blocker")
+
+modules = %r
+for mod_name in modules:
+    importlib.import_module(mod_name)
+print("OK")
+"""
 
 
-def test_headless_core_api_daemon_import_without_gi(blocked_gi):
-    for mod_name in HEADLESS_MODULES:
-        importlib.import_module(mod_name)
+def test_headless_core_api_daemon_import_without_gi_subprocess():
+    env = os.environ.copy()
+    env.pop("DISPLAY", None)
+    env.pop("WAYLAND_DISPLAY", None)
+    # -I ignores PYTHONPATH; inject SRC inside the script instead.
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            _SUBPROCESS_SCRIPT % (str(SRC), HEADLESS_MODULES),
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    assert "OK" in proc.stdout
+
+
+def test_cli_subprocess_without_display():
+    env = os.environ.copy()
+    env.pop("DISPLAY", None)
+    env.pop("WAYLAND_DISPLAY", None)
+    script = ROOT / "sshpilot-core"
+    proc = subprocess.run(
+        [
+            "env",
+            "-u",
+            "DISPLAY",
+            "-u",
+            "WAYLAND_DISPLAY",
+            sys.executable,
+            "-I",
+            str(script),
+            "validate-connection",
+            "--nickname",
+            "Demo",
+            "--host",
+            "example.com",
+            "--user",
+            "alice",
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # sshpilot-core launcher adds src to sys.path itself.
+    assert proc.returncode == 0, proc.stderr
