@@ -118,15 +118,17 @@ class CredentialsError(Exception):
 
 
 def _get_secret():
-    """Return the ``gi.repository.Secret`` module, or ``None`` if unavailable."""
+    """Return the ``gi.repository.Secret`` module, or ``None`` if unavailable.
+
+    The ``gi`` import lives in ``sshpilot.platform.linux.libsecret`` so this
+    module stays AST-clean for the headless core boundary.
+    """
     global Secret
     if Secret is _UNSET:
         try:  # pragma: no cover - optional dependency
-            import gi
+            from sshpilot.platform.linux.libsecret import load_secret_module
 
-            gi.require_version("Secret", "1")
-            from gi.repository import Secret as _mod
-            Secret = _mod
+            Secret = load_secret_module()
         except Exception:  # pragma: no cover - optional dependency
             Secret = None
     return Secret
@@ -2127,17 +2129,23 @@ class SecretManager:
         self._backends[name] = backend
 
     def set_selected(self, name: Optional[str]) -> None:
-        self._selected = (name or "auto").strip().lower()
+        from sshpilot.core.secrets import normalize_backend_name
+
+        self._selected = normalize_backend_name(name)
 
     def _selected_name(self) -> str:
         if self._selected is None:
+            from sshpilot.core.secrets import normalize_backend_name
+
             env = os.environ.get("SSHPILOT_SECRET_BACKEND")
-            self._selected = (env or "auto").strip().lower()
+            self._selected = normalize_backend_name(env or "auto")
         return self._selected
 
     @staticmethod
     def _platform_default_order() -> List[str]:
-        return ["keyring"] if is_macos() else ["libsecret", "keyring"]
+        from sshpilot.core.secrets import platform_default_order
+
+        return platform_default_order()
 
     # -- platform keyring (selection-independent) -------------------------
     # Used for the session vault's master password, which must be stored in the OS
