@@ -5047,43 +5047,27 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.config.set_setting('ssh.controlmaster', controlmaster_enabled)
 
             overrides: List[str] = []
-            if batch_mode_enabled:
-                overrides.extend(['-o', 'BatchMode=yes'])
-            if connect_timeout is not None:
-                overrides.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            if connection_attempts is not None:
-                overrides.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            if keepalive_interval is not None:
-                overrides.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            if keepalive_count is not None:
-                overrides.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-            if strict_host_value:
-                overrides.extend(['-o', f'StrictHostKeyChecking={strict_host_value}'])
-            if compression_enabled:
-                overrides.append('-C')
+            from sshpilot.core.settings import compose_ssh_overrides
 
-            safe_verbosity = max(0, min(3, verbosity_value))
-            for _unused in range(safe_verbosity):
-                overrides.append('-v')
-
-            log_level = None
-            if safe_verbosity == 1:
-                log_level = 'VERBOSE'
-            elif safe_verbosity == 2:
-                log_level = 'DEBUG2'
-            elif safe_verbosity >= 3:
-                log_level = 'DEBUG3'
-            elif debug_enabled:
-                log_level = 'DEBUG'
-
-            if log_level:
-                overrides.extend(['-o', f'LogLevel={log_level}'])
-
-            # Connection multiplexing applies to every connection via the same
-            # shared socket the per-plugin pool uses, so they never conflict.
+            ssh_fragment = {
+                'batch_mode': batch_mode_enabled,
+                'connection_timeout': connect_timeout,
+                'connection_attempts': connection_attempts,
+                'keepalive_interval': keepalive_interval,
+                'keepalive_count_max': keepalive_count,
+                'strict_host_key_checking': strict_host_value,
+                'compression': compression_enabled,
+                'verbosity': verbosity_value,
+                'debug_enabled': debug_enabled,
+                'controlmaster': controlmaster_enabled,
+            }
+            controlmaster_extra = None
             if controlmaster_enabled:
                 from .ssh_multiplex import controlmaster_args
-                overrides.extend(controlmaster_args())
+                controlmaster_extra = controlmaster_args()
+            overrides = compose_ssh_overrides(
+                ssh_fragment, controlmaster_extra=controlmaster_extra
+            )
 
             self.config.set_setting('ssh.ssh_overrides', overrides)
             # Global SSH options changed: retire live ControlMasters so new
