@@ -71,8 +71,8 @@ not the canonical domain contract.
 - A session may live without a frontend.
 - Attachment and session lifetime are separate. Detaching does not close a
   session; closing is explicit.
-- Phase 6 attachments are logical observers only. Input ownership is false
-  until terminal transport defines its arbitration contract.
+- The first eligible terminal attachment is the daemon-authoritative input
+  owner; later attachments are view-only until ownership is released.
 - Terminal output is bytes and is ordered per session.
 - A bounded per-session replay buffer is required in the daemon phase.
 - Prompts are routed to the client that initiated the relevant operation.
@@ -87,7 +87,9 @@ not the canonical domain contract.
 
 ### Terminal stream rules
 
-- Terminal input and output remain `bytes` in Python.
+Terminal input and output remain `bytes` in Python. PTY/process-group ownership,
+binary framing, replay, and slow-peer isolation are defined in
+[terminal streaming](terminal-streaming.md).
 - Invalid UTF-8 is preserved.
 - Public models carry sequence metadata, never PTY descriptors.
 - Future transports may use binary frames; Base64 JSON is not required.

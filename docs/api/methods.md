@@ -20,9 +20,10 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `attach_session` | Daemon only | `sessions.write` |
 | `detach_session` | Daemon only | `sessions.write` |
 | `close_session` | Daemon only | `sessions.write` |
-| `send_terminal_input` | Unsupported | `terminal` |
-| `resize_terminal` | Unsupported | `terminal` |
-| `replay_terminal` | Schema only / unsupported | `terminal.replay` |
+| `send_terminal_input` | Daemon only | `terminal.input` |
+| `resize_terminal` | Daemon only | `terminal.resize` |
+| `replay_terminal` | Daemon only | `terminal.replay` |
+| `subscribe_terminal` | Daemon only | `terminal.output` |
 | `respond_to_interaction` | Unsupported | `interactions` |
 | `subscribe_events` | Implemented | Bootstrap; event availability follows capabilities |
 | `close` | Implemented | None |
@@ -39,10 +40,11 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: list_connections status=implemented capability=connections.read -->
 <!-- api-method-contract: list_sessions status=daemon-only capability=sessions.read -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
-<!-- api-method-contract: replay_terminal status=schema-only capability=terminal.replay -->
-<!-- api-method-contract: resize_terminal status=schema-only capability=terminal -->
+<!-- api-method-contract: replay_terminal status=daemon-only capability=terminal.replay -->
+<!-- api-method-contract: resize_terminal status=daemon-only capability=terminal.resize -->
 <!-- api-method-contract: respond_to_interaction status=schema-only capability=interactions -->
-<!-- api-method-contract: send_terminal_input status=schema-only capability=terminal -->
+<!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
 <!-- api-method-contract: update_connection status=implemented capability=connections.write -->
 
@@ -65,6 +67,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sessions.attach` | `sessions.write` | Implemented |
 | `sessions.detach` | `sessions.write` | Implemented |
 | `sessions.close` | `sessions.write` | Implemented |
+| `terminal.replay` | `terminal.replay` | Implemented |
+| `terminal.resize` | `terminal.resize` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
@@ -77,11 +81,14 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sessions.get capability=sessions.read -->
 <!-- api-daemon-method: sessions.list capability=sessions.read -->
 <!-- api-daemon-method: sessions.open capability=sessions.write -->
+<!-- api-daemon-method: terminal.replay capability=terminal.replay -->
+<!-- api-daemon-method: terminal.resize capability=terminal.resize -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
 
-Unknown wire methods return `unsupported_method`. Terminal byte, resize,
-replay, and interaction methods remain local `unsupported_capability` failures.
+Unknown wire methods return `unsupported_method`. Terminal output and input use
+the negotiated binary frame path; resize and replay metadata use the two
+explicit wire methods above. Interactions remain unsupported.
 
 <!-- api-method: get_capabilities -->
 ## `get_capabilities`
@@ -315,16 +322,18 @@ session = client.open_session(OpenSessionRequest(connection_id))
 <!-- api-method: send_terminal_input -->
 ## `send_terminal_input`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `terminal`; intended byte input from the owning
-  attachment.
-- **Parameters / return:** `TerminalInput`; intended return is `None`.
-- **Errors:** Always `unsupported_capability` for `terminal`.
-- **Events:** None.
-- **Cancellation / ordering / threading:** Immediate unsupported failure; no
-  byte ordering is established.
-- **Side effects / security:** No bytes are written. Future implementations
-  must never log input or decode it as text.
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.8.
+- **Capability / purpose:** `terminal.input`; enqueue byte input from the
+  session's single input-owning attachment.
+- **Parameters / return:** `TerminalInput`; returns after the bounded binary
+  frame is sent.
+- **Errors:** Local capability/lifecycle validation is synchronous. Daemon-side
+  attachment, ownership, running-state, and input-backpressure rejection is
+  delivered asynchronously to the terminal subscription's safe error callback.
+- **Ordering / threading:** Writes are serialized by the client send lock and
+  by the daemon's per-session PTY input queue. Partial non-blocking PTY writes
+  preserve order.
+- **Side effects / security:** Bytes are never decoded or logged.
 
 ```python
 client.send_terminal_input(TerminalInput(session_id, attachment_id, b"ls\r"))
@@ -333,13 +342,15 @@ client.send_terminal_input(TerminalInput(session_id, attachment_id, b"ls\r"))
 <!-- api-method: resize_terminal -->
 ## `resize_terminal`
 
-- **Status / introduced:** Unsupported / Protocol v1 schema
-- **Capability / purpose:** `terminal`; intended PTY dimension update.
-- **Parameters / return:** `ResizeTerminalRequest`; intended return is `None`.
-- **Errors:** Always `unsupported_capability` for `terminal`.
-- **Events:** None.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** No PTY is changed.
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.8.
+- **Capability / purpose:** `terminal.resize`; apply terminal rows and columns
+  for the input-owning attachment.
+- **Parameters / return:** `ResizeTerminalRequest`; returns `None`.
+- **Errors:** Invalid dimensions, missing attachment, input ownership,
+  unavailable PTY, and session-state errors.
+- **Ordering / threading:** A pre-start resize becomes the latest pending
+  initial size. Running sessions use `TIOCSWINSZ`; repeated size is a no-op.
+- **Side effects / security:** Dimensions are limited to 1–1000.
 
 ```python
 client.resize_terminal(
@@ -350,20 +361,37 @@ client.resize_terminal(
 <!-- api-method: replay_terminal -->
 ## `replay_terminal`
 
-- **Status / introduced:** Schema only and unsupported / Protocol v1 schema
-- **Capability / purpose:** `terminal.replay`; intended bounded replay of
-  retained terminal output after an optional sequence.
-- **Parameters / return:** `ReplayRequest`; intended return is `ReplayResult`.
-- **Errors:** Always `unsupported_capability` for `terminal.replay`.
-- **Events:** None. Replay does not substitute for live `session.output`.
-- **Cancellation / ordering / threading:** Immediate unsupported failure.
-- **Side effects / security:** No bytes are read. Future implementations must
-  preserve bytes, bounds, and truncation metadata and must never log replay
-  content.
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.8.
+- **Capability / purpose:** `terminal.replay`; request retained output from an
+  absolute per-session byte offset.
+- **Parameters / return:** `ReplayRequest` identifies the owned attachment,
+  offset, and bounded maximum. `ReplayResult` carries metadata only; raw bytes
+  arrive through replay-flagged terminal frames.
+- **Errors:** Attachment, replay availability, sequence range, capability, and
+  transport errors.
+- **Ordering / threading:** The replay snapshot is immutable. Live/replay
+  overlap is permitted and deduplicated by byte sequence; silent gaps are not.
+- **Side effects / security:** Replay data is raw, bounded, and never logged.
 
 ```python
-client.replay_terminal(ReplayRequest(session_id, after_sequence=42))
+client.replay_terminal(
+    ReplayRequest(session_id, attachment_id, after_sequence=42)
+)
 ```
+
+<!-- api-method: subscribe_terminal -->
+## `subscribe_terminal`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.8.
+- **Capability / purpose:** `terminal.output`; register frontend-neutral raw
+  output, continuity-loss, and EOF callbacks for one session.
+- **Parameters / return:** Session ID and callbacks; returns an idempotent
+  `TerminalSubscription`.
+- **Ordering / threading:** One bounded client dispatch thread isolates the
+  socket reader from slow subscribers. Output is serialized per session and
+  carries absolute byte offsets.
+- **Side effects / security:** Callbacks receive immutable byte DTOs; GTK must
+  marshal them through its bridge.
 
 <!-- api-method: respond_to_interaction -->
 ## `respond_to_interaction`

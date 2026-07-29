@@ -81,7 +81,7 @@ local `error.occurred` continuity notification where delivery remains possible.
 | `connection.deleted` | Implemented in-process and daemon | `connections.events` | Manager `connection-removed` signal | `ConnectionSummary` |
 | `session.created` | Daemon implemented | `sessions.events` | Session record allocation | `SessionSummary` |
 | `session.state_changed` | Daemon implemented | `sessions.events` | Accepted lifecycle transition other than exit/close | `SessionSummary` |
-| `session.output` | Schema only | `terminal` | Future PTY output | Intended `TerminalOutput` |
+| `session.output` | Legacy schema only; not emitted | `terminal.output` | None | Terminal bytes use dedicated binary frames |
 | `session.interaction_requested` | Schema only | `interactions` | Future core prompt | Intended `InteractionRequest` |
 | `session.exited` | Daemon implemented | `sessions.events` | Owned runtime resource exit | `SessionExitInfo` plus envelope session ID |
 | `session.closed` | Daemon implemented | `sessions.events` | Final in-memory lifecycle transition | `SessionSummary` |
@@ -144,11 +144,14 @@ local `error.occurred` continuity notification where delivery remains possible.
 <!-- api-event: session.output -->
 ## `session.output`
 
-- **Status / introduced:** Schema only / v1
-- **Capability / intended trigger:** `terminal`; PTY output bytes.
-- **Payload / IDs:** Intended `TerminalOutput` and session ID.
-- **Guarantees:** No batching, replay, backpressure, retention, or slow-client
-  policy exists. Do not infer these from the schema.
+- **Status / introduced:** Legacy schema only / v1.
+- **Capability / intended trigger:** None. Runtime PTY output deliberately does
+  not use `CoreEvent`.
+- **Payload / IDs:** Terminal subscriptions receive `TerminalOutput` DTOs from
+  `binary-terminal-v1` frames.
+- **Guarantees:** See
+  [terminal streaming](../architecture/terminal-streaming.md) for sequencing,
+  replay, backpressure, and continuity rules.
 
 <!-- api-event: session.interaction_requested -->
 ## `session.interaction_requested`

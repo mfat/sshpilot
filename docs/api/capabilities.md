@@ -5,9 +5,10 @@ event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
 `InProcessClient` advertises exactly the three connection capabilities. The
-daemon additionally advertises `sessions.read`, `sessions.write`, and
-`sessions.events`; `DaemonClient` returns that negotiated response rather than
-a hard-coded local assumption.
+daemon additionally advertises session lifecycle and four narrow terminal
+capabilities when its PTY runner is available and the client negotiated
+`binary-terminal-v1`; `DaemonClient` returns that negotiated response rather
+than a hard-coded local assumption.
 
 Stable IDs do not add a capability: `ConnectionId` was already opaque, all
 current providers emit the stable form, and clients must not branch on its
@@ -26,6 +27,10 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: sessions.read -->
 <!-- api-daemon-runtime-capability: sessions.write -->
 <!-- api-daemon-runtime-capability: sessions.events -->
+<!-- api-daemon-runtime-capability: terminal.output -->
+<!-- api-daemon-runtime-capability: terminal.input -->
+<!-- api-daemon-runtime-capability: terminal.resize -->
+<!-- api-daemon-runtime-capability: terminal.replay -->
 
 ## Inventory
 
@@ -37,9 +42,12 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented; in-process unsupported | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
 | `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented; in-process unsupported | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
 | `sessions.events` | Receive daemon session lifecycle events | Daemon: Implemented | `subscribe_events` | `session.created`, `session.state_changed`, `session.exited`, `session.closed` | Existing bounded event multiplexing | v1 / API 0.6 |
-| `terminal` | Send terminal input and resize a PTY | Unsupported | Terminal byte/resize methods | Intended terminal output | PTY and binary terminal transport | v1 |
-| `terminal.attach` | Attach a terminal byte stream and assign input ownership | Unsupported | No implemented operation | No dedicated event currently defined | PTY stream transport | v1 |
-| `terminal.replay` | Replay retained terminal bytes | Unsupported schema-only method | `replay_terminal` with `ReplayRequest`/`ReplayResult` | `session.output` is schema only | Bounded per-session replay buffer | v1 |
+| `terminal` | Legacy broad terminal identifier | Deprecated and never advertised | None | None | Replaced by narrow capabilities | v1 |
+| `terminal.attach` | Legacy attach identifier | Deprecated and never advertised | None | None | Attachment remains under `sessions.write` | v1 |
+| `terminal.output` | Receive raw PTY output | Daemon: Implemented after binary-frame negotiation | `subscribe_terminal`; output-enabled `attach_session` | Dedicated binary frames, not CoreEvents | PTY runner and bounded terminal queues | v1 / API 0.8 |
+| `terminal.input` | Send raw bytes to the owned PTY | Daemon: Implemented after binary-frame negotiation | `send_terminal_input` | None | Input-owner attachment and bounded PTY input queue | v1 / API 0.8 |
+| `terminal.resize` | Resize the owned PTY | Daemon: Implemented after binary-frame negotiation | `resize_terminal`; wire `terminal.resize` | None | Attached input owner and `TIOCSWINSZ` | v1 / API 0.8 |
+| `terminal.replay` | Replay retained terminal bytes | Daemon: Implemented after binary-frame negotiation | `replay_terminal`; wire `terminal.replay` | Dedicated replay binary frames | Bounded per-session replay ring | v1 / API 0.8 |
 | `interactions` | Present and answer core-requested user interactions | Unsupported | `respond_to_interaction` | `session.interaction_requested` | Interaction broker and secret-safe frontend bridge | v1 |
 | `sftp` | Frontend-neutral remote file operations | Schema only; no client method | None | None defined | Core OpenSSH SFTP service | v1 |
 | `port_forwarding` | Manage runtime forwards | Schema only; no client method | None | None defined | Session/forward lifecycle service | v1 |
@@ -98,22 +106,41 @@ cross-restart continuity.
 <!-- api-capability: terminal -->
 ## `terminal`
 
-Unsupported. Terminal input and resize fail with `unsupported_capability`.
-Session control being implemented does not imply terminal transport.
+Deprecated compatibility identifier. It is never advertised; clients must use
+the narrow output/input/resize/replay capabilities.
 
 <!-- api-capability: terminal.attach -->
 ## `terminal.attach`
 
-Unsupported for terminal streams/input ownership. Phase 6 logical attachment
-bookkeeping is separately guarded by `sessions.write`.
+Deprecated compatibility identifier. Logical attachment remains guarded by
+`sessions.write`; binary output requires `terminal.output`.
+
+<!-- api-capability: terminal.output -->
+## `terminal.output`
+
+Daemon-only raw PTY output over `binary-terminal-v1`. A client negotiates the
+frame type, subscribes locally, and attaches with `want_terminal_output=True`.
+Output uses per-session absolute byte offsets and never enters the CoreEvent
+queue.
+
+<!-- api-capability: terminal.input -->
+## `terminal.input`
+
+Daemon-only raw-byte input from the single daemon-authoritative input owner.
+Input is bounded, ordered, never decoded, and never logged.
+
+<!-- api-capability: terminal.resize -->
+## `terminal.resize`
+
+Daemon-only PTY resizing for the input-owning attachment. Rows and columns are
+strictly limited to 1–1000.
 
 <!-- api-capability: terminal.replay -->
 ## `terminal.replay`
 
-Schema-only and not advertised. `SshPilotClient.replay_terminal` accepts
-`ReplayRequest` and returns `ReplayResult` in the future wire contract; the
-current provider always returns `unsupported_capability` for
-`terminal.replay`.
+Daemon-only bounded replay. The JSON response carries retained-range and
+truncation metadata; replay bytes use the same binary output frames as live
+data. `InProcessClient` remains unsupported.
 
 <!-- api-capability: interactions -->
 ## `interactions`

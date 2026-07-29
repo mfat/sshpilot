@@ -39,6 +39,15 @@ the validated internal envelope.
 | `session_startup_failed` | Implemented | No automatic retry | Session process-runner startup | Show safe failure and leave record inspectable |
 | `session_termination_failed` | Implemented | Explicit retry only | Bounded session close | Warn safely; daemon retains the exact handle for close/shutdown retry |
 | `unsupported_session_protocol` | Implemented | No | Session open | Disable session runtime for that connection protocol |
+| `terminal_attachment_required` | Implemented | No until attach | Terminal input, resize, replay | Attach to the session and retry explicitly |
+| `terminal_input_owner_required` | Implemented | No until ownership changes | Terminal input and resize | Keep the attachment view-only or reattach after owner release |
+| `terminal_input_backpressure` | Implemented | Yes after drain | Terminal input | Pause input and retry without duplicating accepted bytes |
+| `terminal_invalid_dimensions` | Implemented | No until corrected | Terminal resize | Clamp rows and columns to the documented range |
+| `terminal_unavailable` | Implemented | No for current state | Terminal operations | Show lifecycle state; do not pretend a PTY exists |
+| `terminal_replay_unavailable` | Implemented | No for current attachment/session | Terminal replay | Reattach or show retained history is unavailable |
+| `terminal_sequence_out_of_range` | Implemented | No until offset changes | Terminal replay | Use the returned replay bounds |
+| `terminal_continuity_lost` | Implemented status | Recover through replay | Slow-client overflow | Request retained replay or show truncation |
+| `pty_allocation_failed` | Implemented | Explicit retry only | Session startup | Show safe startup failure without OS details |
 | `interaction_not_found` | Schema only | No | Future interaction response | Dismiss stale prompt |
 | `interaction_already_answered` | Schema only | No | Future interaction response | Treat the prompt as complete |
 | `permission_denied` | Implemented | Depends on policy change | Attachment ownership and future protected operations | Explain denied action without exposing policy internals |
@@ -145,6 +154,58 @@ also performs bounded cleanup before closing the process runner.
 
 The referenced connection protocol has no daemon session runner. The error may
 carry the safe connection ID and never reflects arbitrary executable input.
+
+<!-- api-error: terminal_attachment_required -->
+## `terminal_attachment_required`
+
+Terminal output, input, resize, and replay are scoped to an active logical
+attachment. The daemon derives client identity from the handshaken peer.
+
+<!-- api-error: terminal_input_owner_required -->
+## `terminal_input_owner_required`
+
+The attachment exists but is view-only. The first eligible attachment owns
+input until detach or disconnect; clients cannot claim another attachment.
+
+<!-- api-error: terminal_input_backpressure -->
+## `terminal_input_backpressure`
+
+The bounded per-session PTY input queue is full. No input contents are included
+in errors or logs.
+
+<!-- api-error: terminal_invalid_dimensions -->
+## `terminal_invalid_dimensions`
+
+Rows or columns are outside 1–1000. Only safe numeric bounds may be exposed.
+
+<!-- api-error: terminal_unavailable -->
+## `terminal_unavailable`
+
+The session has no live PTY or is no longer in a terminal-writable state.
+
+<!-- api-error: terminal_replay_unavailable -->
+## `terminal_replay_unavailable`
+
+The session or attachment cannot provide retained output. Replay is never
+persistent across daemon restart.
+
+<!-- api-error: terminal_sequence_out_of_range -->
+## `terminal_sequence_out_of_range`
+
+The requested absolute byte offset is beyond the current output end. Valid
+retained bounds may be returned as safe integer details.
+
+<!-- api-error: terminal_continuity_lost -->
+## `terminal_continuity_lost`
+
+A peer-specific terminal queue overflow created an output gap. The control
+channel remains usable; recovery uses replay if retained bytes cover the gap.
+
+<!-- api-error: pty_allocation_failed -->
+## `pty_allocation_failed`
+
+The daemon could not establish the owned PTY. No device path, descriptor,
+command, environment, or raw OS exception crosses the API boundary.
 
 <!-- api-error: interaction_not_found -->
 ## `interaction_not_found`

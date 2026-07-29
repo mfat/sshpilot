@@ -1,8 +1,9 @@
 # Daemon session runtime
 
-Phase 6 introduces daemon-owned session control without terminal transport.
-API 0.7 hardens its command execution so process start, terminate, kill, and
-wait never run on the daemon selector thread.
+Phase 6 introduced daemon-owned session control, and API 0.7 moved blocking
+runner work off the selector. Phase 7/API 0.8 adds the concrete PTY runner and
+binary terminal data plane described in
+[terminal streaming](terminal-streaming.md).
 `SessionManager` remains the GTK saved-layout store and is unrelated to live
 runtime records.
 
@@ -12,7 +13,7 @@ runtime records.
 DaemonServer
     owns SessionRuntime
         owns SessionRecord
-            may own one SessionProcessHandle
+            may own one PTY-backed SessionProcessHandle
 ```
 
 `RequestDispatcher` delegates the six explicit `sessions.*` methods to this

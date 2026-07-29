@@ -83,7 +83,7 @@ booleans, not paths.
 | --- | --- | --- |
 | `OpenSessionRequest` | Stable connection reference for daemon session creation | Daemon implemented |
 | `InputOwner` | Reserved input-ownership projection | Schema only |
-| `SessionCapabilities` | Per-session feature strings | Daemon implemented; empty until terminal transport |
+| `SessionCapabilities` | Per-session feature strings | Daemon implemented; PTY sessions report narrow terminal features |
 | `SessionExitInfo` | Safe exit code, signal, and reason | Daemon implemented |
 | `SessionFailure` | Sanitised stable failure code and message | Daemon implemented |
 | `SessionSummary` | Immutable public lifecycle snapshot | Daemon implemented |

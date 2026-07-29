@@ -94,7 +94,7 @@ four-worker, 64-command keyed executor. The selector reserves the request and
 later drains a bounded completion queue; workers never write sockets. Commands
 for one session serialize, while slow work for one session does not delay
 handshake, reads, attachments, or commands for other sessions. Connection
-mutations remain synchronous persistence operations in API 0.7.
+mutations remain synchronous persistence operations in API 0.8.
 
 ## Versioning and compatibility
 
@@ -126,12 +126,17 @@ The daemon additionally advertises:
 sessions.read
 sessions.write
 sessions.events
+terminal.output
+terminal.input
+terminal.resize
+terminal.replay
 ```
 
-`InProcessClient` deliberately returns `unsupported_capability` for session
-control because current GTK terminal ownership has not moved. Neither provider
-advertises terminal bytes/resize/replay, interactions, SFTP, forwarding,
-plugins, or secrets.
+`InProcessClient` deliberately returns `unsupported_capability` for session and
+terminal control because current production GTK terminal ownership has not
+moved. Daemon terminal capabilities require `binary-terminal-v1` negotiation.
+Neither provider advertises interactions, SFTP, forwarding, plugins, or
+secrets.
 
 The write DTO intentionally contains only basic connection metadata. Daemon
 GTK mode rejects secret, key/certificate, advanced SSH, group/tag, and

@@ -113,14 +113,18 @@ The reusable connection contract suite runs against both `DaemonClient` and
 Daemon-only handshake, framing, correlation, timeout, socket security,
 lifecycle, event multiplexing, bounded event/byte backpressure, mutation
 ambiguity, and multi-client sequence rules have focused transport tests.
-Connection event parity is covered under `connections.events`. Terminal-byte,
-replay, prompt, and cancellation parity remain out of scope because the daemon
-does not advertise those capabilities. Session lifecycle is intentionally
-daemon-only in API 0.7: `InProcessClient` continues to return
+Connection event parity is covered under `connections.events`. Prompt and
+cancellation parity remain out of scope. Terminal byte/replay contracts are
+daemon-only and capability-gated in API 0.8. Session lifecycle is intentionally
+daemon-only: `InProcessClient` continues to return
 `unsupported_capability`, while daemon integration contracts cover lifecycle,
 attachment, multi-client event, shutdown, and process-ownership semantics.
-API 0.7 changes daemon execution ownership, not Protocol v1 request/response
-shapes: open/close remain synchronous `DaemonClient` calls while the daemon
+API 0.8 adds optional terminal DTO fields and a negotiated binary frame while
+retaining Protocol v1 control compatibility. Old clients do not advertise
+`binary-terminal-v1`, never receive terminal frames, and can continue
+connection/session control. API 0.7 changed daemon execution ownership without
+changing Protocol v1 request/response shapes: open/close remain synchronous
+`DaemonClient` calls while the daemon
 completes them from a bounded worker path. The open response is deliberately
 the `starting` acceptance snapshot. Clients were already required to reconcile
 later state through events or session reads, so Protocol remains `1.0`.

@@ -220,23 +220,22 @@ before submitting bounded terminate/wait/kill and responds when that worker
 step finishes. A full 64-command executor returns retryable `server_busy`
 without blocking the selector. Immediate reads, handshake, attachment
 bookkeeping, and capability discovery remain on the selector because they are
-bounded. Connection persistence mutations also remain synchronous in API 0.7;
+bounded. Connection persistence mutations also remain synchronous in API 0.8;
 the selector is therefore hardened against session runner blocking, not claimed
 to be free of every possible filesystem delay.
 
-The production Phase 6 process runner deliberately produces a safe failed
-session because prompt/secret/PTY startup is not yet supported. Tests inject
-the concrete owned-subprocess runner or deterministic handles to prove
-running/exit/terminate/kill/reaping behaviour. See
-[session runtime](session-runtime.md).
+The production runner now owns a real Unix PTY and non-interactive OpenSSH
+child. Prompt- or secret-dependent startup still fails safely. See
+[session runtime](session-runtime.md) and
+[terminal streaming](terminal-streaming.md).
 
 ## Current boundary
 
 Handshake, capability discovery, connection list/get/create/update/delete, and
 `connection.created`/`connection.updated`/`connection.deleted` cross the
-daemon. Session control and lifecycle events also cross it. The daemon
-advertises the three connection capabilities plus `sessions.read`,
-`sessions.write`, and `sessions.events`.
+daemon. Session control, lifecycle events, and negotiated terminal data also
+cross it. The daemon advertises connection/session capabilities plus the four
+narrow terminal capabilities for binary-terminal peers.
 
 The write contract intentionally contains only nickname, hostname, username,
 port, and SSH protocol creation. Existing advanced SSH settings are preserved
@@ -248,8 +247,8 @@ snapshot refresh; it never removes or changes rows optimistically.
 Write requests are not automatically retried. If the transport closes after a
 request may have reached the daemon, `mutation_ambiguous` requires a fresh
 snapshot before explicit user action. There is no exactly-once/idempotency-key
-contract yet. PTYs, terminal bytes/input/resize/replay, secrets, prompts, SFTP,
-forwarding, plugins, and binary channels remain out of scope.
+contract yet. Secrets, prompts, SFTP, forwarding, plugins, remote transport,
+and interaction channels remain out of scope.
 
 ## Packaging and lifecycle backlog
 

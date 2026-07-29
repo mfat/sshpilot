@@ -7,6 +7,17 @@ notes remain separate.
 
 ### Added
 
+- Added daemon-owned Unix PTYs with exact child/process-group ownership, one
+  shared non-blocking PTY I/O owner, bounded input, and final-output draining.
+- Added negotiated `binary-terminal-v1` frames, per-session absolute byte
+  sequences, bounded 2 MiB replay rings, attach-time replay, and explicit
+  slow-peer continuity loss.
+- Added truthful `terminal.output`, `terminal.input`, `terminal.resize`, and
+  `terminal.replay` capabilities plus daemon terminal subscriptions, input,
+  resize, and replay operations.
+- Added a development-only VTE feed integration through the bounded GTK bridge;
+  the normal terminal launch path remains unchanged.
+
 - Added daemon-owned monitoring for the SSH root, resolved includes, wildcard
   include directories, and JSON-backed connection metadata.
 - Added debounced authoritative reload with last-known-good rollback and
@@ -54,8 +65,8 @@ notes remain separate.
 - Added typed `session.created`, `session.state_changed`, `session.exited`, and
   `session.closed` forwarding on the existing daemon-global event sequence.
 - Added a daemon-internal process-runner boundary with exact process ownership,
-  one shared reaper, bounded terminate/kill shutdown, and a production-safe
-  unsupported runner until prompt-safe PTY startup exists.
+  one shared reaper, and bounded terminate/kill shutdown; Phase 7 supplies the
+  non-interactive PTY runner.
 - Added a daemon-scoped four-worker session command executor with a hard
   64-command bound, per-session serialization, stable internal peer tokens,
   selector-owned deferred response completion, and bounded shutdown draining.
@@ -70,7 +81,7 @@ notes remain separate.
 - Daemon connection mutations now share a bounded configuration command lane
   with external reload. Self-write notifications reconcile as semantic no-ops,
   so Protocol v1 methods, capabilities, DTOs, and event names are unchanged.
-- Increased `API_IMPLEMENTATION_VERSION` to `0.7`; `PROTOCOL_VERSION` remains
+- Increased `API_IMPLEMENTATION_VERSION` to `0.8`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon
   response and advertises only contract-tested runtime capabilities.

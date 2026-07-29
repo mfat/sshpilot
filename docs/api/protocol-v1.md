@@ -12,8 +12,9 @@ DTOs, capabilities, events, structured errors, and the local wire envelope.
 
 `InProcessClient` implements connection reads and in-process connection events.
 `DaemonClient` additionally implements daemon-lifetime session control and
-lifecycle events over the same secure per-user Unix-domain socket. Terminal
-bytes, PTYs, prompts, secrets, replay, and session persistence remain
+lifecycle events over the same secure per-user Unix-domain socket. Capability-
+gated clients may also use daemon-owned Unix PTYs and the binary terminal
+stream. Prompts, secrets, reconnect replay, and session persistence remain
 unsupported. Named pipes, TCP, WebSocket, HTTP, and remote access do not exist.
 
 See [methods](methods.md) and [capabilities](capabilities.md) for the precise
@@ -38,7 +39,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.7` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.8` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -47,14 +48,17 @@ capabilities. Application versions are diagnostic identity only and never
 substitute for protocol negotiation.
 
 <!-- api-wire-framing: length-prefixed-json-v1 -->
+<!-- api-terminal-framing: binary-terminal-v1 -->
 <!-- api-handshake: required-once-before-ordinary-methods -->
 
 ## Wire framing and envelopes
 
 Each local IPC message is four unsigned big-endian bytes followed by that many
-UTF-8 JSON bytes. Payload length must be between 1 and 1,048,576 bytes. Frames
+payload bytes. Control payloads are UTF-8 JSON and remain limited to 1,048,576
+bytes. Negotiated terminal payloads begin with binary magic `SPTB`, use stream
+version 1, and are limited to a 48-byte header plus 65,536 raw bytes. Frames
 may be fragmented or coalesced by the socket. Empty, oversized, incomplete,
-non-UTF-8, invalid-JSON, and non-object frames are rejected. Pickle, marshal,
+invalid JSON, and malformed binary frames are rejected. Pickle, marshal,
 arbitrary class serialization, and object `repr` are never used.
 
 Every envelope has a strict `type` and rejects missing or extra fields:
@@ -64,13 +68,16 @@ Every envelope has a strict `type` and rejects missing or extra fields:
 - error: `protocol_version`, `request_id`, structured `error`;
 - event: `protocol_version`, `event`, `sequence`, `payload`.
 
-JSON is the control-plane encoding. Future terminal bytes require a separate
-binary frame type or channel and are not base64-encoded by this implementation.
+JSON remains the control-plane encoding. Terminal output/input use the
+capability-gated `binary-terminal-v1` format documented in
+[terminal streaming](../architecture/terminal-streaming.md); raw bytes are
+never base64-encoded.
 
 ## Handshake and correlation
 
 The first request supplies client name/version, supported protocol versions,
-claimed client capabilities, and optional frontend type. The daemon returns its
+claimed client capabilities, optional frontend type, and supported binary frame
+types. The daemon returns its
 application/core versions, selected protocol, implemented daemon capabilities,
 compatibility status, and a random per-process server instance ID.
 
@@ -131,9 +138,8 @@ release window. See
   `2030-01-01T00:00:00Z`.
 - Tuple and frozen-set fields are immutable Python collections in-process and
   encoded as JSON arrays without implying mutable core state.
-- Sequences are non-negative integers. `CoreEvent.sequence` is global only to
-  one `EventPublisher`; terminal sequences are schema-only and intended to be
-  per session.
+- Sequences are non-negative integers. `CoreEvent.sequence` is daemon-global;
+  terminal sequence is a per-session absolute byte offset beginning at zero.
 - Protocol v1 envelope and connection/capability DTO codecs reject unknown fields
   and enum values. Additive wire evolution therefore requires an explicit
   compatibility change or a new tolerant envelope/version policy.
@@ -143,13 +149,11 @@ types, defaults, required flags, and sensitive classifications.
 
 ## Terminal bytes
 
-Terminal input, output, and replay payloads are `bytes`. PTY output must never
-be assumed to be UTF-8. In-process APIs preserve bytes exactly. A future
-transport should prefer binary frames; base64 is acceptable only inside a text
-envelope. Frontends own decoding strategy, terminal emulation, and rendering.
-
-No runtime terminal streaming, batching, replay, or slow-consumer policy is
-implemented.
+Terminal input, output, and replay payloads are raw `bytes`. PTY output is not
+assumed to be UTF-8 and the transport never decodes or normalizes it. Output
+uses absolute byte offsets, a bounded 2 MiB per-session replay ring, and a
+separate bounded peer queue. Frontends own decoding state, emulation, and
+rendering. See [terminal streaming](../architecture/terminal-streaming.md).
 
 ## Ordering
 
@@ -179,8 +183,8 @@ implemented.
   event. Response and event frames share one output stream, so frontends must
   remain correct whether the response or event is delivered first.
 - Session lifecycle events share that order. `session.created` precedes state
-  transitions; `session.exited` precedes `session.closed`. Terminal output
-  ordering and replay remain schema-only.
+  transitions. Final PTY output and EOF are accepted before `session.exited`,
+  which precedes `session.closed`.
 - Open preparation accepts `session.created` and `starting` before deferred
   startup. The response contains that captured `starting` snapshot, but later
   `running`/`failed` events may be processed before it because the worker
@@ -190,17 +194,19 @@ implemented.
 
 ## Event/response multiplexing
 
-The server places complete framed responses and events onto the same ordered
-per-peer output deque and uses selector write readiness for partial writes.
-The core event callback performs no socket I/O.
+The server queues complete response, event, and terminal frames and uses
+selector write readiness for partial writes. Control and lifecycle traffic has
+priority over separately accounted terminal traffic. The core and PTY
+callbacks perform no socket I/O.
 
 Each `DaemonClient` socket has one persistent reader thread. Request callers
 register an opaque ID and serialize writes; only the reader decodes frames.
-Responses complete the matching pending request, while lifecycle events enter
-a separate bounded serial dispatch queue. Thus a slow subscriber does not block
-response correlation. Unknown or duplicate response IDs, malformed event
-payloads, and duplicate/regressing/gapped event sequences are protocol errors
-that close the transport and wake every pending caller.
+Responses complete the matching pending request, lifecycle events enter one
+bounded serial queue, and terminal frames enter a separate bounded terminal
+dispatch queue. Thus a slow event or terminal subscriber does not block response
+correlation. Unknown or duplicate response IDs, malformed event payloads, and
+duplicate/regressing/gapped event sequences are protocol errors that close the
+transport and wake every pending caller.
 
 The server has a separate bounded command plane for blocking session work:
 four daemon-owned workers, at most 64 outstanding commands, keyed FIFO
@@ -208,7 +214,7 @@ serialization per session, and a bounded completion queue. Workers call no
 socket or selector API. They enqueue immutable success/error completions and
 wake the selector; the selector validates peer token and request reservation,
 then queues the response. A full command plane returns retryable
-`server_busy` immediately. Connection mutations remain synchronous in API 0.7
+`server_busy` immediately. Connection mutations remain synchronous in API 0.8
 and may still perform bounded persistence work on the selector.
 
 ## Cancellation and timeouts
