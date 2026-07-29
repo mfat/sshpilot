@@ -176,3 +176,62 @@ def test_askpass_cancel_versus_submit_five_times():
         assert len(outs) == 2
 
     _run_five(once)
+
+
+def test_gtk_adapter_disposal_while_core_event_five_times():
+    """Domain listeners must tolerate disposal mid-emit (no deadlock/exception)."""
+
+    def once():
+        svc = ConnectionService(autosave=False)
+        dead = {"gone": False}
+        barrier = threading.Barrier(2)
+
+        def listener(_event):
+            barrier.wait()
+            if dead["gone"]:
+                return
+            dead["gone"] = True
+
+        svc.add_listener(listener)
+
+        def mutator():
+            svc.create({"nickname": "Disp", "hostname": "d.test", "username": "u"})
+
+        t = threading.Thread(target=mutator)
+        t.start()
+        barrier.wait()
+        svc.remove_listener(listener)
+        t.join()
+
+    _run_five(once)
+
+
+def test_plugin_unload_while_connection_mutation_five_times():
+    """Simulated plugin unload (listener removal) during mutation."""
+
+    def once():
+        svc = ConnectionService(autosave=False)
+        barrier = threading.Barrier(3)
+        seen = []
+
+        def plugin_listener(event):
+            seen.append(event.kind)
+
+        svc.add_listener(plugin_listener)
+
+        def mutate():
+            barrier.wait()
+            svc.create({"nickname": "Plug", "hostname": "p.test", "username": "u"})
+
+        def unload():
+            barrier.wait()
+            svc.remove_listener(plugin_listener)
+
+        threads = [threading.Thread(target=mutate), threading.Thread(target=unload)]
+        for t in threads:
+            t.start()
+        barrier.wait()
+        for t in threads:
+            t.join()
+
+    _run_five(once)
