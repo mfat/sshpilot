@@ -100,12 +100,13 @@ request data. Duplicate requests, unknown response IDs, and response protocol
 mismatches are protocol errors. A timed-out `DaemonClient` closes its socket so
 a late response cannot be correlated with later work.
 
-The daemon reserves request IDs for deferred `sessions.open` and
-`sessions.close` until selector-owned completion or peer closure. Each accepted
-peer also receives an internal monotonically allocated token that is never
-sent over the wire. Deferred completions match this token as well as the
-request ID, preventing an old completion from reaching a new socket after file
-descriptor reuse.
+The daemon reserves request IDs for deferred `sessions.close` until
+selector-owned completion or peer closure. `sessions.open` acknowledges on
+executor admission and therefore does not reserve the request ID through
+process startup. Each accepted peer also receives an internal monotonically
+allocated token that is never sent over the wire. Deferred completions match
+this token as well as the request ID, preventing an old completion from
+reaching a new socket after file descriptor reuse.
 
 ## Identifiers
 
@@ -198,12 +199,12 @@ rendering. See [terminal streaming](../architecture/terminal-streaming.md).
 - Session lifecycle events share that order. `session.created` precedes state
   transitions. Final PTY output and EOF are accepted before `session.exited`,
   which precedes `session.closed`.
-- Open preparation accepts `session.created` and `starting` before deferred
-  startup. The response contains that captured `starting` snapshot, but later
-  `running`/`failed` events may be processed before it because the worker
-  completion is queued independently. Close accepts `closing` before its
-  deferred response and emits exit/closed events during worker completion.
-  Frontends reconcile all of these by session ID rather than byte arrival.
+- Open preparation accepts `session.created` and `starting`, then acknowledges
+  the open RPC as soon as the executor admits startup. Later `running`/`failed`
+  events arrive asynchronously and are never a second response for the same
+  open. Close accepts `closing` before its deferred response and emits
+  exit/closed events during worker completion. Frontends reconcile all of these
+  by session ID rather than byte arrival.
 
 ## Event/response multiplexing
 

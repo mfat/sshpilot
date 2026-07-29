@@ -5,6 +5,24 @@ notes remain separate.
 
 ## Unreleased
 
+### Phase 9.2: Non-Blocking Session Open Acknowledgement (Changed)
+
+- `sessions.open` now returns the accepted `starting` `SessionSummary` as soon
+  as the bounded executor admits startup work. It no longer waits for PTY
+  allocation, OpenSSH launch, host-key/password/passphrase interaction, or
+  `running`.
+- Startup failures after acknowledgement are reported only through session
+  lifecycle events and `sessions.get`/`sessions.list`, never as a second RPC
+  response for the same open.
+- Executor admission rejection still returns retryable `server_busy` and marks
+  the prepared record `failed` without a misleading `starting` summary.
+- GTK `DaemonTerminalSessionController` treats `STARTING` as a successful open,
+  attaches immediately, and updates the existing tab from asynchronous
+  `failed`/`exited`/`closed` events.
+- The normal five-second `DEFAULT_REQUEST_TIMEOUT` is unchanged.
+- Follow-up: optional client-generated `client_open_token` for idempotent open
+  reconciliation after genuine transport loss.
+
 ### Phase 9.1: Strict Terminal Routing (Added)
 
 - Separated SSH terminal route selection (`SshTerminalRoute`) from daemon
@@ -159,10 +177,11 @@ notes remain separate.
   failure.
 - `sessions.open` and `sessions.close` process-runner work no longer executes
   on the daemon selector. Open returns the captured `starting` acceptance
-  snapshot after deferred startup completion; later state changes arrive as
-  events. Close responds after bounded worker termination. Neither mutation is
-  automatically retried after ambiguous transport loss, while logical
-  attach/detach remain idempotent set operations on one connection.
+  snapshot as soon as the executor admits startup; later state changes arrive
+  as events and never as a second open response. Close responds after bounded
+  worker termination. Neither mutation is automatically retried after ambiguous
+  transport loss, while logical attach/detach remain idempotent set operations
+  on one connection.
 - Replaced the pre-runtime schema-only session states with the seven-state
   daemon lifecycle and removed caller-supplied client IDs from open/attach
   requests. This is an API 0.6 Python source change but not a Protocol v1 wire

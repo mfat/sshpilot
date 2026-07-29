@@ -93,23 +93,25 @@ Phase 6 has no input/output channel.
 ## Concurrency
 
 The daemon selector thread owns socket reads/writes, envelope validation,
-immediate bounded handlers, deferred-request reservation, and final response
-queueing. It never calls `SessionProcessRunner.start()`, `terminate()`, `kill()`,
-or `wait()`.
+immediate bounded handlers, deferred-request reservation for close, immediate
+open acknowledgement on executor admission, and final response queueing. It
+never calls `SessionProcessRunner.start()`, `terminate()`, `kill()`, or
+`wait()`.
 
 One daemon-scoped keyed executor owns four daemon worker threads and accepts at
 most 64 outstanding session commands, including running commands. Submission
 never waits for capacity. Equal session IDs form one serial lane; commands for
 different sessions may use different workers. A close accepted while startup
 is blocked therefore runs only after that startup step reconciles its handle.
-Open commands use their newly allocated session ID as the lane key.
+Open commands use their newly allocated session ID as the lane key and report
+completion through session state rather than a deferred RPC response.
 
-Worker completions enter a bounded thread-safe completion queue and wake the
-selector. Only the selector validates the immutable peer token and pending
-request ID, constructs a response envelope, updates selector interest, and
-writes the frame. A worker never touches a socket or selector registration.
-The monotonically allocated peer token is independent of the file descriptor,
-so a late completion cannot reach a new peer after descriptor reuse.
+Worker completions for deferred close enter a bounded thread-safe completion
+queue and wake the selector. Only the selector validates the immutable peer
+token and pending request ID, constructs a response envelope, updates selector
+interest, and writes the frame. A worker never touches a socket or selector
+registration. The monotonically allocated peer token is independent of the file
+descriptor, so a late completion cannot reach a new peer after descriptor reuse.
 
 `SessionRuntime` uses one re-entrant lock to serialize record transitions and
 attachment membership. It does not hold that lock while starting, terminating,

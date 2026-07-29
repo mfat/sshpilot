@@ -11,11 +11,13 @@ GTK Terminal Request
     ↓
 DaemonClient.sessions.open(connection_id, dimensions)
     ↓
-Daemon spawns SSH PTY process
+Daemon acknowledges STARTING session (before PTY/OpenSSH/auth)
     ↓
-GTK calls attach() with want_output=True, request_input=True
+GTK attaches immediately while state may still be STARTING
     ↓
-Daemon establishes attachment and grants input ownership
+Daemon worker allocates PTY / launches OpenSSH / brokers interactions
+    ↓
+Lifecycle events report RUNNING or FAILED asynchronously
     ↓
 VTE receives terminal output via bridge.bind_terminal()
     ↓

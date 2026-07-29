@@ -214,15 +214,20 @@ ambiguity is never retried automatically. Four typed events share the existing
 daemon-global sequence and bounded peer queues with connection events.
 
 `sessions.open` and `sessions.close` are the explicit deferred method class.
-The former prepares a `starting` record before submitting startup and returns
-that captured snapshot after worker completion. The latter enters `closing`
-before submitting bounded terminate/wait/kill and responds when that worker
-step finishes. A full 64-command executor returns retryable `server_busy`
-without blocking the selector. Immediate reads, handshake, attachment
-bookkeeping, and capability discovery remain on the selector because they are
-bounded. Connection persistence mutations also remain synchronous in API 0.9;
-the selector is therefore hardened against session runner blocking, not claimed
-to be free of every possible filesystem delay.
+`sessions.open` prepares a `starting` record, submits startup on the bounded
+keyed executor, and returns that captured `starting` snapshot as soon as
+admission succeeds. PTY allocation, OpenSSH launch, host-key/password/
+passphrase interaction, and the transition to `running` or `failed` continue
+asynchronously and are reported through session lifecycle events and
+`sessions.get`/`sessions.list`. A later startup failure is never a second RPC
+response for the same open. `sessions.close` enters `closing` before submitting
+bounded terminate/wait/kill and responds when that worker step finishes. A full
+64-command executor returns retryable `server_busy` without blocking the
+selector and without leaving a misleading `starting` summary. Immediate reads,
+handshake, attachment bookkeeping, and capability discovery remain on the
+selector because they are bounded. Connection persistence mutations also remain
+synchronous in API 0.9; the selector is therefore hardened against session
+runner blocking, not claimed to be free of every possible filesystem delay.
 
 The production runner owns a real Unix PTY and canonical OpenSSH child.
 Control-only clients retain safe non-interactive failure. A

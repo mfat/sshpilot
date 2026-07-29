@@ -90,11 +90,15 @@ refresh/window destruction. GLib remains outside `DaemonClient`, and
 `InProcessClient` stays on its construction/main thread.
 
 Inside the daemon, `sessions.open` and `sessions.close` are deferred through a
-four-worker, 64-command keyed executor. The selector reserves the request and
-later drains a bounded completion queue; workers never write sockets. Commands
-for one session serialize, while slow work for one session does not delay
-handshake, reads, attachments, or commands for other sessions. Connection
-mutations remain synchronous persistence operations in API 0.9.
+four-worker, 64-command keyed executor. `sessions.open` acknowledges the
+accepted `starting` session immediately when the executor admits the startup
+command; PTY/OpenSSH work and authentication interactions proceed in the
+background and never hold the five-second control RPC deadline. The selector
+reserves deferred close responses and drains a bounded completion queue;
+workers never write sockets. Commands for one session serialize, while slow
+work for one session does not delay handshake, reads, attachments, or commands
+for other sessions. Connection mutations remain synchronous persistence
+operations in API 0.9.
 
 ## Versioning and compatibility
 

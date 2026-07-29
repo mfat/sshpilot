@@ -333,25 +333,35 @@ the send attempt; the operation is never retried.
 - **Capability / purpose:** `sessions.write`; allocate a daemon-owned session
   record and initiate the configured process runner.
 - **Parameters / return:** `OpenSessionRequest(connection_id)`; returns the
-  immutable `starting` `SessionSummary` captured when the record is accepted.
+  immutable `starting` `SessionSummary` as soon as the startup command is
+  accepted by the bounded executor. The response does not wait for PTY
+  allocation, OpenSSH launch, host-key/password/passphrase interaction,
+  network negotiation, or `running`.
 - **Errors:** Missing connection, unsupported protocol, daemon shutdown, or
-  transport errors. `server_busy` means the bounded worker admission failed.
-  A lost response after send becomes non-retryable `mutation_ambiguous`;
-  refresh `sessions.list` before user-directed retry.
-- **Events:** `session.created`, then state changes. Current event frames are
-  accepted before the response, but worker completion and transport
-  multiplexing mean a later state event may be processed first. Clients
-  reconcile by session ID and must accept either response/event interleaving.
-- **Threading:** Preparation is bounded on the selector. Runner startup executes
-  on the daemon's bounded keyed executor; only the selector completes the
-  request from its bounded completion queue. A slow startup does not delay
-  another peer's handshake or read requests.
+  transport errors. `server_busy` means the bounded worker admission failed;
+  the prepared record is marked `failed` and no misleading `starting` summary
+  is returned. A lost response after send becomes non-retryable
+  `mutation_ambiguous`; refresh `sessions.list` before user-directed retry.
+  Authentication and process-startup deadlines belong to the interaction
+  broker and session lifecycle, not the five-second control RPC timeout.
+- **Events:** `session.created`, then state changes. Clients may observe
+  `starting`→`running` or `starting`→`failed` after the open response.
+  Startup failure after acknowledgement is delivered only through session
+  state/events, never as a second RPC response for the same open.
+- **Threading:** Preparation and admission are bounded on the selector. Runner
+  startup executes on the daemon's bounded keyed executor independently of the
+  RPC response. A slow or interactive startup does not delay another peer's
+  handshake or read requests.
+- **Reconciliation follow-up:** A client-generated `client_open_token` for
+  idempotent open retry after genuine transport loss is deferred; immediate
+  acknowledgement removes the common authentication-timeout ambiguity.
 - **Security:** The frontend supplies no argv or environment. Phase 6's
   production runner fails safely until prompt-safe PTY startup exists; it does
   not fake `running`.
 
 ```python
 session = client.open_session(OpenSessionRequest(connection_id))
+assert session.state is SessionState.STARTING
 ```
 
 <!-- api-method: attach_session -->
