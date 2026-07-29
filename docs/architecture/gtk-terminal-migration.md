@@ -1,0 +1,364 @@
+# GTK Terminal Migration to Daemon Sessions (Phase 9)
+
+Phase 9 implements the production daemon-backed SSH terminal path with multi-attachment support, input ownership management, and session persistence across GTK restarts. This document covers the complete activation flow, state management, and architectural decisions.
+
+## Production Activation Flow
+
+The daemon SSH terminal path follows this activation sequence:
+
+```
+GTK Terminal Request
+    ↓
+DaemonClient.sessions.open(connection_id, dimensions)
+    ↓
+Daemon spawns SSH PTY process
+    ↓
+GTK calls attach() with want_output=True, request_input=True
+    ↓
+Daemon establishes attachment and grants input ownership
+    ↓
+VTE receives terminal output via bridge.bind_terminal()
+    ↓
+VTE displays interactive SSH session
+```
+
+### Key Components
+
+- **TerminalSessionController**: Frontend-neutral session controller interface
+- **DaemonTerminalSessionController**: Production implementation using DaemonClient + GtkClientBridge
+- **DaemonTerminalTabState**: Per-tab state tracking for sessions, attachments, and input ownership
+- **GtkClientBridge**: Async bridge connecting daemon operations to GTK main thread
+
+## Tab/Session/Attachment Mapping
+
+Each daemon SSH terminal tab maintains state through `DaemonTerminalTabState`:
+
+```python
+@dataclass
+class DaemonTerminalTabState:
+    view_id: str                    # GTK tab identifier
+    session_id: SessionId | None    # Daemon session ID
+    attachment_id: AttachmentId | None  # This tab's attachment ID
+    connection_id: ConnectionId     # SSH connection identifier
+    daemon_instance_id: str         # Daemon instance for restart detection
+    expected_sequence: int = 0      # Next expected terminal output sequence
+    input_owner: bool = False       # Whether this tab owns input
+    state: TerminalSessionState     # Current session state
+```
+
+### State Machine
+
+The daemon terminal state progresses through these stages:
+
+- **IDLE**: Initial state, no session
+- **OPENING**: Session creation in progress
+- **ATTACHING**: Attachment creation in progress
+- **REPLAYING**: Receiving replay data from daemon buffer
+- **ACTIVE**: Live terminal session with real-time I/O
+- **DETACHED**: Session exists but tab is detached
+- **CLOSING**: Session termination in progress
+- **FAILED**: Operation failed
+- **CLOSED**: Session terminated
+
+## Emulator Decision: VTE is Production
+
+**VTE feed + commit is the production daemon SSH emulator.** PyXtermJS remains available via `terminal.backend` setting for local terminals only. The daemon SSH path uses one unified VTE-based production emulator:
+
+- **Daemon SSH**: VTE receives output via `terminal.feed()` and `terminal.commit()`
+- **Local terminals**: Can use VTE or PyXtermJS via user setting
+- **External terminals**: Remain process-owned outside sshPilot
+
+This design ensures:
+- Consistent daemon SSH experience across all installations
+- Reliable terminal replay and continuity features
+- Single production code path for testing and maintenance
+
+## Close Policies
+
+Daemon SSH terminals support three close policies configurable via settings:
+
+### Tab Close Policy (`terminal.daemon_tab_close_policy`)
+
+- **DETACH** (default): Tab close detaches from session without terminating
+- **TERMINATE**: Tab close terminates the SSH session
+- **ASK**: Prompt user for detach vs terminate choice
+
+### App Close Policy (`terminal.daemon_app_close_policy`)
+
+- **DETACH** (default): App exit detaches all sessions, leaves them running
+- **TERMINATE**: App exit terminates all SSH sessions
+- **ASK**: Prompt user for global detach vs terminate choice
+
+### Policy Resolution
+
+```python
+def resolve_tab_close_policy(config) -> TerminalClosePolicy:
+    return resolve_close_policy(config, "terminal.daemon_tab_close_policy")
+
+def resolve_app_close_policy(config) -> TerminalClosePolicy:
+    return resolve_close_policy(config, "terminal.daemon_app_close_policy")
+```
+
+## Input Ownership and Claim/Release
+
+Daemon terminals implement exclusive input ownership with explicit claim/release:
+
+### Input Ownership Rules
+
+- **One input owner per session**: Only one attachment can own input at a time
+- **Resize authority**: Input owner controls terminal resize operations
+- **Ownership transfer**: Input can be claimed by other attachments
+- **Broadcast limitation**: Only input-owning terminals receive broadcast commands
+
+### API Methods
+
+```python
+# Claim input ownership for this attachment
+def claim_terminal_input(
+    session_id: SessionId,
+    attachment_id: AttachmentId
+) -> None
+
+# Release input ownership
+def release_terminal_input(
+    session_id: SessionId,
+    attachment_id: AttachmentId
+) -> None
+```
+
+### Controller Interface
+
+```python
+@property
+def input_owner(self) -> bool:
+    """Whether this controller owns input."""
+    return self._tab_state.input_owner
+
+def send_input(self, data: bytes) -> None:
+    """Send input data. Requires input ownership."""
+    if not self._tab_state.input_owner:
+        return
+    # Send input...
+
+def resize(self, dimensions: TerminalDimensions) -> None:
+    """Resize terminal. Requires input ownership."""
+    if not self._tab_state.input_owner:
+        return
+    # Resize terminal...
+```
+
+## Split Panes: Multi-Attachment Support
+
+Split panes create multiple attachments to the same daemon session:
+
+### Architecture
+
+- **One attachment per pane**: Each split pane gets its own attachment ID
+- **Shared session**: Multiple panes can attach to the same SSH session
+- **Independent input ownership**: Each pane can claim/release input independently
+- **Synchronized output**: All attachments receive the same terminal output
+
+### Creation Flow
+
+```python
+def create_terminal_for_pane(self, connection, on_connected=None):
+    """Create terminal for split pane - no tab_view integration."""
+    terminal = TerminalWidget(connection, config, connection_manager)
+
+    # Start daemon session if enabled
+    if use_daemon:
+        terminal.start_daemon_session(client, bridge, connection_id)
+
+    return terminal
+```
+
+## Continuity Loss and Local Markers
+
+### Continuity Loss Detection
+
+When daemon buffer truncation causes output gaps, the system handles this gracefully:
+
+- **Daemon detection**: Daemon detects when expected sequence doesn't match available replay
+- **GTK notification**: `on_continuity_lost` callback notifies GTK layer
+- **Local marker**: GTK shows local "output truncated" marker in terminal
+- **Never propagated**: Continuity markers never enter daemon replay buffer
+
+### Implementation
+
+```python
+def _handle_continuity_lost(self, session_id, expected, available) -> None:
+    """Handle terminal continuity loss."""
+    if self._on_continuity_lost:
+        self._on_continuity_lost()  # GTK shows local marker
+
+# In TerminalWidget
+def _on_continuity_lost(self):
+    """Show local continuity loss marker."""
+    marker = "\r\n[sshPilot: Terminal output was truncated]\r\n"
+    if self.backend:
+        self.backend.feed(marker.encode())
+        self.backend.commit()
+```
+
+## Legacy Fallback: Explicit Only
+
+Legacy local SSH fallback is **explicit user choice only**:
+
+- **Default behavior**: `terminal.daemon_backed_ssh = True` (Stage C rollout)
+- **Explicit fallback**: `terminal.legacy_local_ssh_fallback = True` disables daemon path
+- **Never silent**: No automatic mid-session fallback from daemon to local
+- **Clear error**: Daemon failures show explicit error dialog
+
+### Decision Logic
+
+```python
+def should_use_daemon_ssh_terminal(window_or_config, connection, *, client=None) -> bool:
+    """Return whether SSH activation should use daemon."""
+    config = _config_of(window_or_config)
+
+    # User explicitly requested legacy fallback
+    if config.get_setting("terminal.legacy_local_ssh_fallback", False):
+        return False
+
+    # User disabled daemon SSH
+    if not config.get_setting("terminal.daemon_backed_ssh", True):
+        return False
+
+    # Check daemon capabilities
+    if daemon_terminal_capabilities_missing(client):
+        return False
+
+    return True
+```
+
+## Terminal Type Ownership
+
+### Local Terminals: GTK-Owned
+
+- **Process ownership**: GTK spawns and owns local shell processes
+- **Backend choice**: User can select VTE or PyXtermJS via `terminal.backend`
+- **No daemon involvement**: Local terminals bypass daemon entirely
+- **Direct VTE**: Local terminals use direct VTE spawn_async
+
+### External Terminals: External Process
+
+- **System ownership**: External terminal application owns process
+- **No sshPilot control**: No terminal emulator, replay, or session management
+- **SSH command only**: sshPilot builds SSH command, external terminal executes
+
+### Daemon SSH Terminals: Daemon-Owned
+
+- **Daemon ownership**: Daemon spawns and owns SSH processes
+- **VTE emulation**: GTK receives output via VTE feed API
+- **Session persistence**: Sessions survive GTK restart
+- **Multi-attachment**: Multiple GTK tabs can attach to same session
+
+## Rollout Stage C: Default On
+
+Phase 9 implements Stage C rollout policy:
+
+- **Default enabled**: `terminal.daemon_backed_ssh = True` by default
+- **Capability gated**: Auto-disabled if daemon lacks required capabilities
+- **User choice preserved**: Legacy fallback available via explicit setting
+- **Smooth upgrade**: Existing users get daemon SSH automatically
+
+## Daemon Lifecycle
+
+### Startup Behavior
+
+- **On-demand start**: Daemon starts when first SSH terminal requested
+- **Capability check**: GTK verifies required capabilities before activation
+- **Bridge initialization**: GtkClientBridge connects daemon to GTK main thread
+
+### Persistence Behavior
+
+- **Survive GTK exit**: Daemon remains alive after GTK closes if sessions exist
+- **Session retention**: Live SSH sessions continue running in daemon
+- **Idle exit**: Daemon shuts down when no sessions remain (deferred to Phase 10)
+- **Restart recovery**: GTK startup can reattach to surviving daemon sessions
+
+### Error Handling
+
+```python
+def _show_daemon_error_dialog(self, window, message):
+    """Show error for daemon terminal failures."""
+    dialog = Adw.AlertDialog.new("Daemon Terminal Error", message)
+    dialog.add_response("ok", "OK")
+    dialog.present(window)
+```
+
+## Required Capabilities
+
+Daemon SSH terminals require these capabilities:
+
+```python
+REQUIRED_DAEMON_TERMINAL_CAPABILITIES = frozenset({
+    Capability.SESSIONS_READ,
+    Capability.SESSIONS_WRITE,
+    Capability.SESSIONS_EVENTS,
+    Capability.TERMINAL_OUTPUT,
+    Capability.TERMINAL_INPUT,
+    Capability.TERMINAL_RESIZE,
+    Capability.TERMINAL_REPLAY,
+    Capability.INTERACTIONS_READ,
+    Capability.INTERACTIONS_RESPOND,
+    Capability.INTERACTIONS_EVENTS,
+    Capability.INTERACTIONS_HOST_KEY,
+    Capability.INTERACTIONS_PASSWORD,
+    Capability.INTERACTIONS_PASSPHRASE,
+})
+```
+
+### Capability Gating
+
+```python
+def daemon_terminal_capabilities_missing(client) -> frozenset[Capability]:
+    """Return missing required capabilities."""
+    required = required_daemon_terminal_capabilities()
+    supported = client.get_capabilities().supported
+    return required - supported
+```
+
+## SSH Options Compatibility Matrix
+
+| SSH Option Category | Support Status | Notes |
+|-------------------|----------------|-------|
+| **Core Connection** | ✅ Supported | Host, Port, User, IdentityFile |
+| **Authentication** | ✅ Supported | Passwords, keys, certificates, agent |
+| **Host Key Verification** | ✅ Supported | StrictHostKeyChecking, UserKnownHostsFile |
+| **Connection Multiplexing** | ✅ Supported | ControlMaster, ControlPath, ControlPersist |
+| **Forwarding** | ⏸️ Phase 10 | LocalForward, RemoteForward, DynamicForward |
+| **X11 Forwarding** | ⏸️ Phase 10 | ForwardX11, ForwardX11Trusted |
+| **Agent Forwarding** | ⏸️ Phase 10 | ForwardAgent |
+| **Proxy/Jump** | ✅ Supported | ProxyJump, ProxyCommand |
+| **Advanced Options** | ✅ Supported | ConnectTimeout, ServerAliveInterval, etc. |
+| **Custom Commands** | ❌ Deferred | RemoteCommand handled by daemon |
+
+### SFTP/Forwarding Boundary
+
+SFTP file manager and port forwarding are **explicitly deferred to Phase 10**:
+
+- **Current scope**: Interactive SSH terminal sessions only
+- **SFTP status**: Remains on local SSH path for Phase 9
+- **Forwarding status**: Local/remote/dynamic forwarding deferred
+- **Future integration**: Phase 10 will integrate SFTP and forwarding with daemon
+
+## Implementation Files
+
+### Core Controller
+- `src/sshpilot/terminal_session_controller.py` - Controller interface and daemon implementation
+- `src/sshpilot/daemon_terminal_policy.py` - Policy resolution and settings
+- `src/sshpilot/daemon_session_restore.py` - Session persistence across restarts
+- `src/sshpilot/daemon_sessions_dialog.py` - Live session management dialog
+
+### Terminal Integration
+- `src/sshpilot/terminal.py` - TerminalWidget daemon session integration
+- `src/sshpilot/terminal_manager.py` - Daemon path activation logic
+
+### API Models
+- `src/sshpilot/api/models/terminal.py` - Terminal I/O and claim/release requests
+- `src/sshpilot/api/models/sessions.py` - Session lifecycle models
+
+### Daemon Runtime
+- `src/sshpilot/daemon/session_runtime.py` - Daemon session lifecycle
+- `src/sshpilot/daemon/interaction_broker.py` - Authentication interaction handling

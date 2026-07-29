@@ -292,6 +292,19 @@ They use separately negotiated binary frame types and bounded ownership paths.
 7. Advertise the capability only after the implementation passes those tests.
 8. Migrate one frontend caller without rewriting adjacent subsystems.
 
+## Phase 9: GTK Terminal Migration
+
+Phase 9 introduces production daemon-backed SSH terminals with VTE emulation:
+
+- **Production path**: GTK → DaemonClient.sessions.open → PTY → attach → VTE feed
+- **Multi-attachment**: Multiple GTK tabs can attach to same daemon session
+- **Input ownership**: Exclusive input ownership with claim/release API
+- **Session persistence**: Sessions survive GTK restart with detach/reattach
+- **VTE emulation**: Unified VTE-based production emulator for daemon SSH
+- **Legacy fallback**: Explicit `terminal.legacy_local_ssh_fallback` only
+
+See [GTK Terminal Migration](gtk-terminal-migration.md) and [Session Reattachment](session-reattachment.md).
+
 ## Adding an event
 
 1. Add a stable event identifier and typed payload.

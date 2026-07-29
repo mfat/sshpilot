@@ -1,9 +1,20 @@
 # Daemon terminal streaming
 
 Phase 7 adds an experimental Unix PTY data plane without changing the default
-GTK terminal path. The daemon owns each PTY master, child process, process
+GTK terminal path. Phase 9 makes this the production GTK terminal path with
+VTE integration. The daemon owns each PTY master, child process, process
 group, replay buffer, attachment, and terminal sequence. GTK never receives a
 file descriptor.
+
+## Phase 9: Production VTE Integration
+
+Phase 9 establishes daemon terminal streaming as the production path for GTK SSH terminals:
+
+- **VTE emulation**: GTK receives daemon output via VTE `feed()` and `commit()` calls
+- **Multi-attachment**: Multiple GTK tabs can stream from same daemon session simultaneously
+- **Input ownership**: Only one attachment owns input/resize authority per session
+- **Session persistence**: Terminal streams survive GTK restarts through reattachment
+- **Continuity handling**: Local markers shown for replay buffer gaps, never sent to daemon
 
 ## Ownership and launch
 

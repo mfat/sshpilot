@@ -2,8 +2,17 @@
 
 This document defines the intended ownership boundary. The local daemon
 currently owns connection CRUD/events, daemon-lifetime sessions, PTYs,
-terminal streams, and typed authentication/trust brokering. Normal GTK terminal
-migration remains future work.
+terminal streams, and typed authentication/trust brokering.
+
+## Phase 9: GTK Terminal Migration Complete
+
+Phase 9 completes the GTK terminal migration to daemon ownership:
+
+- **Production SSH terminals**: Daemon now owns SSH processes and PTY lifecycle for production GTK terminals
+- **Multi-attachment**: Multiple GTK tabs can attach to the same daemon session
+- **Session persistence**: SSH sessions survive GTK restarts through detach/reattach
+- **Input ownership**: Exclusive input control with claim/release API
+- **VTE emulation**: Unified VTE-based terminal emulation for all daemon SSH sessions
 
 The concrete current client contract is maintained in the
 [API reference](../api/README.md). This document describes intended ownership;

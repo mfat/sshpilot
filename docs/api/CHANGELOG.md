@@ -5,6 +5,30 @@ notes remain separate.
 
 ## Unreleased
 
+### Phase 9: GTK Terminal Migration (Added)
+
+- Added production GTK daemon SSH terminal path with VTE emulation as default
+- Added multi-attachment support allowing multiple GTK tabs per daemon session
+- Added exclusive input ownership with `claim_terminal_input` and `release_terminal_input` APIs
+- Added session persistence across GTK restarts through detach/reattach mechanism
+- Added `DaemonTerminalTabState` for per-tab session state tracking
+- Added `TerminalSessionController` interface with `DaemonTerminalSessionController` implementation
+- Added session restoration manager with safe metadata persistence (no secrets/output)
+- Added live daemon sessions dialog for developer session discovery and reattachment
+- Added continuity loss detection with local GTK markers (never sent to daemon)
+- Added Stage C rollout: `terminal.daemon_backed_ssh` defaults to `True`
+- Added explicit legacy fallback via `terminal.legacy_local_ssh_fallback` setting
+- Added daemon terminal close policies: detach (default), terminate, or ask
+- Added broadcast command integration limited to input-owning terminals
+- Added VTE as unified daemon SSH emulator (PyXtermJS remains for local terminals)
+
+### Phase 9: Behavior Changes
+
+- **Breaking**: `terminal.daemon_backed_ssh` now defaults to `True` (was `False`)
+- Changed daemon SSH from experimental to production for SSH terminal sessions
+- Changed terminal activation to prefer daemon when capabilities available
+- Changed close behavior to detach by default (preserves running sessions)
+
 ### Added
 
 - Added daemon-owned typed host-key, password, and private-key-passphrase

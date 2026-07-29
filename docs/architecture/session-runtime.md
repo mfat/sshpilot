@@ -6,8 +6,19 @@ binary terminal data plane described in
 [terminal streaming](terminal-streaming.md).
 Phase 8/API 0.9 adds daemon-owned typed authentication/trust interactions
 without changing session identity or persistence.
+Phase 9 implements multi-attachment support with exclusive input ownership.
 `SessionManager` remains the GTK saved-layout store and is unrelated to live
 runtime records.
+
+## Phase 9: Multi-Attachment Support
+
+Phase 9 extends session runtime to support multiple GTK attachments per session:
+
+- **Multiple attachments**: Each session can have multiple active attachments from different GTK instances
+- **Input ownership**: Exactly one attachment owns input and resize authority per session
+- **Ownership tracking**: Session records track which attachment currently owns input
+- **Claim/release API**: Attachments can explicitly claim or release input ownership
+- **Broadcast integration**: Only input-owning attachments receive broadcast commands
 
 ## Ownership
 

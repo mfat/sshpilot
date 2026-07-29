@@ -1,9 +1,9 @@
 # Typed interaction broker
 
-Phase 8 makes authentication and trust interaction state daemon-owned. It does
-not parse terminal output. OpenSSH invokes a private askpass helper, the helper
-contacts `InteractionBroker`, and the broker publishes only typed safe
-metadata:
+Phase 8 makes authentication and trust interaction state daemon-owned. Phase 9
+integrates this with production GTK SSH terminals. It does not parse terminal
+output. OpenSSH invokes a private askpass helper, the helper contacts
+`InteractionBroker`, and the broker publishes only typed safe metadata:
 
 ```text
 OpenSSH -> private askpass helper -> InteractionBroker

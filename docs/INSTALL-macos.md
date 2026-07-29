@@ -178,6 +178,3 @@ For development work, use Option B (virtual environment) and run:
 ```
 
 This sets up the development environment with all necessary dependencies and environment variables.
-
-
-
