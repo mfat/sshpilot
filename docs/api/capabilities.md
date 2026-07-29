@@ -5,10 +5,11 @@ event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
 `InProcessClient` advertises exactly the three connection capabilities. The
-daemon additionally advertises session lifecycle and four narrow terminal
-capabilities when its PTY runner is available and the client negotiated
-`binary-terminal-v1`; `DaemonClient` returns that negotiated response rather
-than a hard-coded local assumption.
+daemon additionally advertises session lifecycle, narrow terminal/interaction
+capabilities, and Phase 10 SFTP/transfer/forward capabilities when the
+corresponding runtimes are available and the client negotiated the required
+binary frames; `DaemonClient` returns that negotiated response rather than a
+hard-coded local assumption.
 
 Stable IDs do not add a capability: `ConnectionId` was already opaque, all
 current providers emit the stable form, and clients must not branch on its
@@ -37,6 +38,22 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: interactions.host_key -->
 <!-- api-daemon-runtime-capability: interactions.password -->
 <!-- api-daemon-runtime-capability: interactions.passphrase -->
+<!-- api-daemon-runtime-capability: sftp.read -->
+<!-- api-daemon-runtime-capability: sftp.write -->
+<!-- api-daemon-runtime-capability: sftp.events -->
+<!-- api-daemon-runtime-capability: sftp.metadata -->
+<!-- api-daemon-runtime-capability: sftp.mutate -->
+<!-- api-daemon-runtime-capability: transfers.read -->
+<!-- api-daemon-runtime-capability: transfers.write -->
+<!-- api-daemon-runtime-capability: transfers.events -->
+<!-- api-daemon-runtime-capability: transfers.upload -->
+<!-- api-daemon-runtime-capability: transfers.download -->
+<!-- api-daemon-runtime-capability: forwards.read -->
+<!-- api-daemon-runtime-capability: forwards.write -->
+<!-- api-daemon-runtime-capability: forwards.events -->
+<!-- api-daemon-runtime-capability: forwards.local -->
+<!-- api-daemon-runtime-capability: forwards.remote -->
+<!-- api-daemon-runtime-capability: forwards.dynamic -->
 
 ## Inventory
 
@@ -61,8 +78,24 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `interactions.host_key` | Strict unknown-host trust decisions | Daemon implemented | Typed host-key decisions | Interaction lifecycle events | Key scan plus exact session pinning | v1 / API 0.9 |
 | `interactions.password` | Typed login-password askpass | Daemon implemented | One-use secret response | Interaction lifecycle events | Daemon askpass helper and selected secret backend | v1 / API 0.9 |
 | `interactions.passphrase` | Typed private-key passphrase askpass | Daemon implemented | One-use secret response | Interaction lifecycle events | Daemon askpass helper and selected secret backend | v1 / API 0.9 |
-| `sftp` | Frontend-neutral remote file operations | Schema only; no client method | None | None defined | Core OpenSSH SFTP service | v1 |
-| `port_forwarding` | Manage runtime forwards | Schema only; no client method | None | None defined | Session/forward lifecycle service | v1 |
+| `sftp` | Legacy broad SFTP identifier | Deprecated and never advertised | None | None | Replaced by narrow `sftp.*` capabilities | v1 |
+| `sftp.read` | List SFTP services and remote directories | Daemon: Implemented when SFTP runtime present | `list_sftp_services`, `get_sftp_service`, `sftp_list_directory` | None required | Daemon `SftpRuntime` | v1 / API 0.10 |
+| `sftp.write` | Open, attach, detach, and close SFTP services | Daemon: Implemented when SFTP runtime present | `open_sftp`, `attach_sftp`, `detach_sftp`, `close_sftp` | SFTP lifecycle events | Daemon `SftpRuntime` | v1 / API 0.10 |
+| `sftp.events` | Observe SFTP service lifecycle | Daemon: Implemented | `subscribe_events` | `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed` | Bounded daemon event stream | v1 / API 0.10 |
+| `sftp.metadata` | Stat, lstat, realpath, and readlink | Daemon: Implemented when SFTP runtime present | `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink` | None | Ready SFTP service | v1 / API 0.10 |
+| `sftp.mutate` | mkdir, rmdir, remove, rename, chmod, symlink | Daemon: Implemented when SFTP runtime present | `sftp_mkdir`, `sftp_rmdir`, `sftp_remove`, `sftp_rename`, `sftp_chmod`, `sftp_symlink` | None | Ready SFTP service | v1 / API 0.10 |
+| `transfers.read` | List and inspect transfer records | Daemon: Implemented when transfer runtime present | `list_transfers`, `get_transfer` | None required | Daemon `TransferRuntime` | v1 / API 0.10 |
+| `transfers.write` | Start and cancel transfers | Daemon: Implemented when transfer runtime present | `start_transfer`, `cancel_transfer` | Transfer lifecycle events | Daemon `TransferRuntime` and ready SFTP service | v1 / API 0.10 |
+| `transfers.events` | Observe transfer lifecycle and progress | Daemon: Implemented | `subscribe_events` | `transfer.*` lifecycle events | Bounded daemon event stream | v1 / API 0.10 |
+| `transfers.upload` | Upload direction for `start_transfer` | Daemon: Implemented when transfer runtime present | `start_transfer` with `upload` | Transfer lifecycle events | Daemon path local mode | v1 / API 0.10 |
+| `transfers.download` | Download direction for `start_transfer` | Daemon: Implemented when transfer runtime present | `start_transfer` with `download` | Transfer lifecycle events | Daemon path local mode | v1 / API 0.10 |
+| `port_forwarding` | Legacy broad forward identifier | Deprecated and never advertised | None | None | Replaced by narrow `forwards.*` capabilities | v1 |
+| `forwards.read` | List and inspect runtime forwards | Daemon: Implemented when forward runtime present | `list_forwards`, `get_forward` | None required | Daemon `ForwardRuntime` | v1 / API 0.10 |
+| `forwards.write` | Open and close runtime forwards | Daemon: Implemented when forward runtime present | `open_forward`, `close_forward` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
+| `forwards.events` | Observe forward lifecycle | Daemon: Implemented | `subscribe_events` | `forward.*` lifecycle events | Bounded daemon event stream | v1 / API 0.10 |
+| `forwards.local` | Local TCP forwards | Daemon: Implemented when forward runtime present | `open_forward` with `local` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
+| `forwards.remote` | Remote TCP forwards | Daemon: Implemented when forward runtime present | `open_forward` with `remote` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
+| `forwards.dynamic` | Dynamic SOCKS forwards | Daemon: Implemented when forward runtime present | `open_forward` with `dynamic` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
 | `plugins` | Invoke core plugin operations | Schema only; no client method | None | None defined | Split core plugin service | v1 |
 | `secrets` | Core-mediated secret operations/interactions | Schema only; no client method | None | No dedicated event; interaction schemas may be used later | Secret service and permissions | v1 |
 
@@ -198,14 +231,105 @@ separate local UI concern.
 <!-- api-capability: sftp -->
 ## `sftp`
 
-Schema only. Existing SFTP implementation is not reachable through
-`SshPilotClient`; only transport-neutral entry/list request models exist.
+Deprecated compatibility identifier. It is never advertised; clients must use
+the narrow `sftp.read` / `sftp.write` / `sftp.events` / `sftp.metadata` /
+`sftp.mutate` capabilities.
+
+<!-- api-capability: sftp.read -->
+## `sftp.read`
+
+Daemon-only listing of SFTP services and remote directories when the SFTP
+runtime is present. `InProcessClient` returns `unsupported_capability`.
+
+<!-- api-capability: sftp.write -->
+## `sftp.write`
+
+Daemon-only open/attach/detach/close of SFTP services. Service identity is
+daemon-lifetime opaque (`sftp:<uuid>`).
+
+<!-- api-capability: sftp.events -->
+## `sftp.events`
+
+Daemon delivery of SFTP service lifecycle events through the shared global
+sequence and bounded queues.
+
+<!-- api-capability: sftp.metadata -->
+## `sftp.metadata`
+
+Daemon-only path metadata operations against a ready SFTP service: `stat`,
+`lstat`, `realpath`, and `readlink`.
+
+<!-- api-capability: sftp.mutate -->
+## `sftp.mutate`
+
+Daemon-only mutating remote filesystem operations: `mkdir`, `rmdir`, `remove`,
+`rename`, `chmod`, and `symlink`.
+
+<!-- api-capability: transfers.read -->
+## `transfers.read`
+
+Daemon-only list/get of transfer records when the transfer runtime is present.
+
+<!-- api-capability: transfers.write -->
+## `transfers.write`
+
+Daemon-only start/cancel of uploads and downloads. Transfer identity is
+daemon-lifetime opaque (`transfer:<uuid>`).
+
+<!-- api-capability: transfers.events -->
+## `transfers.events`
+
+Daemon delivery of transfer lifecycle and progress events through the shared
+global sequence.
+
+<!-- api-capability: transfers.upload -->
+## `transfers.upload`
+
+Advertises that `start_transfer` accepts the upload direction. Requires
+`transfers.write` for the mutation itself.
+
+<!-- api-capability: transfers.download -->
+## `transfers.download`
+
+Advertises that `start_transfer` accepts the download direction. Requires
+`transfers.write` for the mutation itself.
 
 <!-- api-capability: port_forwarding -->
 ## `port_forwarding`
 
-Schema only. Forward summary/state models exist; there are no client methods or
-events.
+Deprecated compatibility identifier. It is never advertised; clients must use
+the narrow `forwards.*` capabilities.
+
+<!-- api-capability: forwards.read -->
+## `forwards.read`
+
+Daemon-only list/get of runtime forwards when the forward runtime is present.
+
+<!-- api-capability: forwards.write -->
+## `forwards.write`
+
+Daemon-only open/close of runtime forwards. Forward identity is daemon-lifetime
+opaque (`forward:<uuid>`).
+
+<!-- api-capability: forwards.events -->
+## `forwards.events`
+
+Daemon delivery of forward lifecycle events through the shared global sequence.
+
+<!-- api-capability: forwards.local -->
+## `forwards.local`
+
+Advertises local TCP forward support for `open_forward`.
+
+<!-- api-capability: forwards.remote -->
+## `forwards.remote`
+
+Advertises remote TCP forward support for `open_forward`.
+
+<!-- api-capability: forwards.dynamic -->
+## `forwards.dynamic`
+
+Advertises dynamic SOCKS forward support for `open_forward`.
 
 <!-- api-capability: plugins -->
 ## `plugins`

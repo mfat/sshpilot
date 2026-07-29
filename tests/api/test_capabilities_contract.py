@@ -21,8 +21,24 @@ from sshpilot.api.models import (
 from sshpilot.api.models.common import (
     AttachmentId,
     ConnectionId,
+    ForwardId,
     InteractionId,
     SessionId,
+    SftpServiceId,
+    TransferId,
+)
+from sshpilot.api.models.operations import (
+    AttachSftpRequest,
+    CloseForwardRequest,
+    CloseSftpRequest,
+    ForwardType,
+    ListDirectoryRequest,
+    OpenForwardRequest,
+    OpenSftpRequest,
+    SftpChmodRequest,
+    SftpPathRequest,
+    SftpRenameRequest,
+    SftpSymlinkRequest,
 )
 from sshpilot.api.models.sessions import (
     AttachSessionRequest,
@@ -31,6 +47,46 @@ from sshpilot.api.models.sessions import (
     OpenSessionRequest,
 )
 from sshpilot.api.models.terminal import ReplayRequest, ResizeTerminalRequest
+from sshpilot.api.models.transfers import (
+    CancelTransferRequest,
+    StartTransferRequest,
+    TransferDirection,
+)
+
+
+DAEMON_RUNTIME_CAPABILITIES = frozenset(
+    {
+        Capability.SESSIONS_READ,
+        Capability.SESSIONS_WRITE,
+        Capability.SESSIONS_EVENTS,
+        Capability.TERMINAL_OUTPUT,
+        Capability.TERMINAL_INPUT,
+        Capability.TERMINAL_RESIZE,
+        Capability.TERMINAL_REPLAY,
+        Capability.INTERACTIONS_READ,
+        Capability.INTERACTIONS_RESPOND,
+        Capability.INTERACTIONS_EVENTS,
+        Capability.INTERACTIONS_HOST_KEY,
+        Capability.INTERACTIONS_PASSWORD,
+        Capability.INTERACTIONS_PASSPHRASE,
+        Capability.SFTP_READ,
+        Capability.SFTP_WRITE,
+        Capability.SFTP_EVENTS,
+        Capability.SFTP_METADATA,
+        Capability.SFTP_MUTATE,
+        Capability.TRANSFERS_READ,
+        Capability.TRANSFERS_WRITE,
+        Capability.TRANSFERS_EVENTS,
+        Capability.TRANSFERS_UPLOAD,
+        Capability.TRANSFERS_DOWNLOAD,
+        Capability.FORWARDS_READ,
+        Capability.FORWARDS_WRITE,
+        Capability.FORWARDS_EVENTS,
+        Capability.FORWARDS_LOCAL,
+        Capability.FORWARDS_REMOTE,
+        Capability.FORWARDS_DYNAMIC,
+    }
+)
 
 
 UNSUPPORTED_OPERATION_CASES = [
@@ -193,6 +249,216 @@ UNSUPPORTED_OPERATION_CASES.extend(
             lambda client: client.get_session(SessionId("session:test")),
             Capability.SESSIONS_READ,
         ),
+        (
+            "list_sftp_services",
+            lambda client: client.list_sftp_services(),
+            Capability.SFTP_READ,
+        ),
+        (
+            "get_sftp_service",
+            lambda client: client.get_sftp_service(SftpServiceId("sftp:test")),
+            Capability.SFTP_READ,
+        ),
+        (
+            "open_sftp",
+            lambda client: client.open_sftp(
+                OpenSftpRequest(connection_id=ConnectionId("connection:v1:test"))
+            ),
+            Capability.SFTP_WRITE,
+        ),
+        (
+            "attach_sftp",
+            lambda client: client.attach_sftp(
+                AttachSftpRequest(service_id=SftpServiceId("sftp:test"))
+            ),
+            Capability.SFTP_WRITE,
+        ),
+        (
+            "detach_sftp",
+            lambda client: client.detach_sftp(SftpServiceId("sftp:test")),
+            Capability.SFTP_WRITE,
+        ),
+        (
+            "close_sftp",
+            lambda client: client.close_sftp(
+                CloseSftpRequest(service_id=SftpServiceId("sftp:test"))
+            ),
+            Capability.SFTP_WRITE,
+        ),
+        (
+            "sftp_list_directory",
+            lambda client: client.sftp_list_directory(
+                ListDirectoryRequest(
+                    connection_id=ConnectionId("connection:v1:test"),
+                    path="/",
+                )
+            ),
+            Capability.SFTP_READ,
+        ),
+        (
+            "sftp_stat",
+            lambda client: client.sftp_stat(
+                SftpPathRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/",
+                )
+            ),
+            Capability.SFTP_METADATA,
+        ),
+        (
+            "sftp_lstat",
+            lambda client: client.sftp_lstat(
+                SftpPathRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/",
+                )
+            ),
+            Capability.SFTP_METADATA,
+        ),
+        (
+            "sftp_realpath",
+            lambda client: client.sftp_realpath(
+                SftpPathRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/",
+                )
+            ),
+            Capability.SFTP_METADATA,
+        ),
+        (
+            "sftp_readlink",
+            lambda client: client.sftp_readlink(
+                SftpPathRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/link",
+                )
+            ),
+            Capability.SFTP_METADATA,
+        ),
+        (
+            "sftp_mkdir",
+            lambda client: client.sftp_mkdir(
+                SftpPathRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/tmp",
+                )
+            ),
+            Capability.SFTP_MUTATE,
+        ),
+        (
+            "sftp_rmdir",
+            lambda client: client.sftp_rmdir(
+                SftpPathRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/tmp",
+                )
+            ),
+            Capability.SFTP_MUTATE,
+        ),
+        (
+            "sftp_remove",
+            lambda client: client.sftp_remove(
+                SftpPathRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/tmp/file",
+                )
+            ),
+            Capability.SFTP_MUTATE,
+        ),
+        (
+            "sftp_rename",
+            lambda client: client.sftp_rename(
+                SftpRenameRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    source_path="/a",
+                    destination_path="/b",
+                )
+            ),
+            Capability.SFTP_MUTATE,
+        ),
+        (
+            "sftp_chmod",
+            lambda client: client.sftp_chmod(
+                SftpChmodRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    path="/tmp/file",
+                    mode=0o644,
+                )
+            ),
+            Capability.SFTP_MUTATE,
+        ),
+        (
+            "sftp_symlink",
+            lambda client: client.sftp_symlink(
+                SftpSymlinkRequest(
+                    service_id=SftpServiceId("sftp:test"),
+                    link_path="/link",
+                    target_path="/target",
+                )
+            ),
+            Capability.SFTP_MUTATE,
+        ),
+        (
+            "list_transfers",
+            lambda client: client.list_transfers(),
+            Capability.TRANSFERS_READ,
+        ),
+        (
+            "get_transfer",
+            lambda client: client.get_transfer(TransferId("transfer:test")),
+            Capability.TRANSFERS_READ,
+        ),
+        (
+            "start_transfer",
+            lambda client: client.start_transfer(
+                StartTransferRequest(
+                    connection_id=ConnectionId("connection:v1:test"),
+                    sftp_service_id=SftpServiceId("sftp:test"),
+                    direction=TransferDirection.DOWNLOAD,
+                    remote_path="/remote",
+                    local_path="/local",
+                )
+            ),
+            Capability.TRANSFERS_WRITE,
+        ),
+        (
+            "cancel_transfer",
+            lambda client: client.cancel_transfer(
+                CancelTransferRequest(transfer_id=TransferId("transfer:test"))
+            ),
+            Capability.TRANSFERS_WRITE,
+        ),
+        (
+            "list_forwards",
+            lambda client: client.list_forwards(),
+            Capability.FORWARDS_READ,
+        ),
+        (
+            "get_forward",
+            lambda client: client.get_forward(ForwardId("forward:test")),
+            Capability.FORWARDS_READ,
+        ),
+        (
+            "open_forward",
+            lambda client: client.open_forward(
+                OpenForwardRequest(
+                    connection_id=ConnectionId("connection:v1:test"),
+                    type=ForwardType.LOCAL,
+                    bind_host="127.0.0.1",
+                    bind_port=8080,
+                    destination_host="127.0.0.1",
+                    destination_port=80,
+                )
+            ),
+            Capability.FORWARDS_WRITE,
+        ),
+        (
+            "close_forward",
+            lambda client: client.close_forward(
+                CloseForwardRequest(forward_id=ForwardId("forward:test"))
+            ),
+            Capability.FORWARDS_WRITE,
+        ),
     ]
 )
 
@@ -212,23 +478,7 @@ def test_capabilities_advertise_only_contract_tested_runtime(
         Capability.CONNECTIONS_WRITE,
     }
     if client_backend == "daemon":
-        expected.update(
-            {
-                Capability.SESSIONS_READ,
-                Capability.SESSIONS_WRITE,
-                Capability.SESSIONS_EVENTS,
-                Capability.TERMINAL_OUTPUT,
-                Capability.TERMINAL_INPUT,
-                Capability.TERMINAL_RESIZE,
-                Capability.TERMINAL_REPLAY,
-                Capability.INTERACTIONS_READ,
-                Capability.INTERACTIONS_RESPOND,
-                Capability.INTERACTIONS_EVENTS,
-                Capability.INTERACTIONS_HOST_KEY,
-                Capability.INTERACTIONS_PASSWORD,
-                Capability.INTERACTIONS_PASSPHRASE,
-            }
-        )
+        expected.update(DAEMON_RUNTIME_CAPABILITIES)
     assert capabilities.supported == frozenset(expected)
     assert capabilities.supports(Capability.CONNECTIONS_READ)
     assert capabilities.supports(Capability.CONNECTIONS_EVENTS)
@@ -276,23 +526,7 @@ def test_advertised_capabilities_have_implemented_operations(
         if capability is not None
     }
     if client_backend == "daemon":
-        implemented_capabilities.update(
-            {
-                Capability.SESSIONS_READ,
-                Capability.SESSIONS_WRITE,
-                Capability.SESSIONS_EVENTS,
-                Capability.TERMINAL_OUTPUT,
-                Capability.TERMINAL_INPUT,
-                Capability.TERMINAL_RESIZE,
-                Capability.TERMINAL_REPLAY,
-                Capability.INTERACTIONS_READ,
-                Capability.INTERACTIONS_RESPOND,
-                Capability.INTERACTIONS_EVENTS,
-                Capability.INTERACTIONS_HOST_KEY,
-                Capability.INTERACTIONS_PASSWORD,
-                Capability.INTERACTIONS_PASSPHRASE,
-            }
-        )
+        implemented_capabilities.update(DAEMON_RUNTIME_CAPABILITIES)
     assert client.get_capabilities().supported <= implemented_capabilities
 
 

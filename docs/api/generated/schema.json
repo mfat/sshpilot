@@ -1,12 +1,20 @@
 {
-  "api_implementation_version": "0.9",
+  "api_implementation_version": "0.10",
   "client_method_contract": {
     "attach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
     },
+    "attach_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
     "cancel_interaction": {
       "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "cancel_transfer": {
+      "capability": "transfers.write",
       "status": "daemon-only"
     },
     "claim_interaction": {
@@ -21,8 +29,16 @@
       "capability": null,
       "status": "implemented"
     },
+    "close_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
     "close_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "close_sftp": {
+      "capability": "sftp.write",
       "status": "daemon-only"
     },
     "create_connection": {
@@ -37,6 +53,10 @@
       "capability": "sessions.write",
       "status": "daemon-only"
     },
+    "detach_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -44,6 +64,10 @@
     "get_connection": {
       "capability": "connections.read",
       "status": "implemented"
+    },
+    "get_forward": {
+      "capability": "forwards.read",
+      "status": "daemon-only"
     },
     "get_interaction": {
       "capability": "interactions.read",
@@ -53,9 +77,21 @@
       "capability": "sessions.read",
       "status": "daemon-only"
     },
+    "get_sftp_service": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "get_transfer": {
+      "capability": "transfers.read",
+      "status": "daemon-only"
+    },
     "list_connections": {
       "capability": "connections.read",
       "status": "implemented"
+    },
+    "list_forwards": {
+      "capability": "forwards.read",
+      "status": "daemon-only"
     },
     "list_interactions": {
       "capability": "interactions.read",
@@ -65,8 +101,24 @@
       "capability": "sessions.read",
       "status": "daemon-only"
     },
+    "list_sftp_services": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "list_transfers": {
+      "capability": "transfers.read",
+      "status": "daemon-only"
+    },
+    "open_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
     "open_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "open_sftp": {
+      "capability": "sftp.write",
       "status": "daemon-only"
     },
     "release_interaction": {
@@ -97,6 +149,54 @@
       "capability": "terminal.input",
       "status": "daemon-only"
     },
+    "sftp_chmod": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_list_directory": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "sftp_lstat": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_mkdir": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_readlink": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_realpath": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_remove": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_rename": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_rmdir": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_stat": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_symlink": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "start_transfer": {
+      "capability": "transfers.write",
+      "status": "daemon-only"
+    },
     "subscribe_events": {
       "capability": "connections.events",
       "status": "implemented"
@@ -125,6 +225,18 @@
     },
     "connections.update": {
       "capability": "connections.write"
+    },
+    "forwards.close": {
+      "capability": "forwards.write"
+    },
+    "forwards.get": {
+      "capability": "forwards.read"
+    },
+    "forwards.list": {
+      "capability": "forwards.read"
+    },
+    "forwards.open": {
+      "capability": "forwards.write"
     },
     "interactions.cancel": {
       "capability": "interactions.respond"
@@ -162,6 +274,57 @@
     "sessions.open": {
       "capability": "sessions.write"
     },
+    "sftp.attach": {
+      "capability": "sftp.write"
+    },
+    "sftp.chmod": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.close": {
+      "capability": "sftp.write"
+    },
+    "sftp.detach": {
+      "capability": "sftp.write"
+    },
+    "sftp.get_service": {
+      "capability": "sftp.read"
+    },
+    "sftp.list": {
+      "capability": "sftp.read"
+    },
+    "sftp.list_services": {
+      "capability": "sftp.read"
+    },
+    "sftp.lstat": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.mkdir": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.open": {
+      "capability": "sftp.write"
+    },
+    "sftp.readlink": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.realpath": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.remove": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.rename": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.rmdir": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.stat": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.symlink": {
+      "capability": "sftp.mutate"
+    },
     "system.get_capabilities": {
       "capability": null
     },
@@ -179,6 +342,18 @@
     },
     "terminal.resize": {
       "capability": "terminal.resize"
+    },
+    "transfers.cancel": {
+      "capability": "transfers.write"
+    },
+    "transfers.get": {
+      "capability": "transfers.read"
+    },
+    "transfers.list": {
+      "capability": "transfers.read"
+    },
+    "transfers.start": {
+      "capability": "transfers.write"
     }
   },
   "enums": {
@@ -207,7 +382,23 @@
       "interactions.password",
       "interactions.passphrase",
       "sftp",
+      "sftp.read",
+      "sftp.write",
+      "sftp.events",
+      "sftp.metadata",
+      "sftp.mutate",
+      "transfers.read",
+      "transfers.write",
+      "transfers.events",
+      "transfers.upload",
+      "transfers.download",
       "port_forwarding",
+      "forwards.read",
+      "forwards.write",
+      "forwards.events",
+      "forwards.local",
+      "forwards.remote",
+      "forwards.dynamic",
       "plugins",
       "secrets"
     ],
@@ -259,6 +450,29 @@
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
+      "sftp_service_not_found",
+      "sftp_service_not_ready",
+      "sftp_command_failed",
+      "sftp_protocol_lost",
+      "sftp_protocol_error",
+      "remote_path_not_found",
+      "remote_path_exists",
+      "remote_permission_denied",
+      "remote_not_directory",
+      "remote_is_directory",
+      "remote_directory_not_empty",
+      "remote_unsupported_operation",
+      "transfer_not_found",
+      "transfer_conflict",
+      "transfer_cancelled",
+      "transfer_io_failed",
+      "transfer_disk_full",
+      "forward_not_found",
+      "forward_bind_failed",
+      "forward_destination_invalid",
+      "forward_startup_failed",
+      "forward_not_active",
+      "service_owner_required",
       "internal_error",
       "daemon_unavailable",
       "transport_closed",
@@ -284,6 +498,22 @@
       "session.closed",
       "interaction.created",
       "interaction.state_changed",
+      "sftp.created",
+      "sftp.state_changed",
+      "sftp.closed",
+      "sftp.failed",
+      "transfer.created",
+      "transfer.started",
+      "transfer.progress",
+      "transfer.item_completed",
+      "transfer.completed",
+      "transfer.cancelled",
+      "transfer.failed",
+      "forward.created",
+      "forward.starting",
+      "forward.active",
+      "forward.closed",
+      "forward.failed",
       "error.occurred"
     ],
     "FileEntryKind": [
@@ -292,17 +522,20 @@
       "symlink",
       "other"
     ],
-    "ForwardKind": [
-      "local",
-      "remote",
-      "dynamic"
-    ],
     "ForwardState": [
+      "created",
       "starting",
       "active",
+      "closing",
+      "closed",
       "failed",
       "stopping",
       "stopped"
+    ],
+    "ForwardType": [
+      "local",
+      "remote",
+      "dynamic"
     ],
     "HostKeyDecision": [
       "accept_once",
@@ -348,6 +581,16 @@
       "replace_stored_after_success",
       "delete_stored_secret"
     ],
+    "RemoteFileType": [
+      "regular",
+      "directory",
+      "symlink",
+      "socket",
+      "fifo",
+      "block",
+      "character",
+      "unknown"
+    ],
     "SecretDecision": [
       "submit",
       "cancel"
@@ -361,17 +604,37 @@
       "failed",
       "closed"
     ],
+    "SftpServiceState": [
+      "created",
+      "starting",
+      "ready",
+      "closing",
+      "closed",
+      "failed"
+    ],
+    "TransferConflictPolicy": [
+      "fail",
+      "overwrite",
+      "skip",
+      "rename"
+    ],
     "TransferDirection": [
       "upload",
       "download"
     ],
+    "TransferLocalMode": [
+      "daemon_path",
+      "binary_stream"
+    ],
     "TransferState": [
       "queued",
+      "starting",
       "running",
       "paused",
+      "cancelling",
+      "cancelled",
       "completed",
-      "failed",
-      "cancelled"
+      "failed"
     ]
   },
   "format": "sshpilot-api-schema-v1",
@@ -379,9 +642,11 @@
     "AttachmentId",
     "ClientId",
     "ConnectionId",
+    "ForwardId",
     "InteractionId",
     "RequestId",
     "SessionId",
+    "SftpServiceId",
     "TransferId"
   ],
   "models": {
@@ -465,6 +730,18 @@
       ],
       "status": "Implemented"
     },
+    "AttachSftpRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        }
+      ],
+      "status": "Implemented"
+    },
     "AttachmentInfo": {
       "fields": [
         {
@@ -494,6 +771,18 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CancelTransferRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "transfer_id",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferId"
         }
       ],
       "status": "Implemented"
@@ -590,6 +879,18 @@
       ],
       "status": "Implemented"
     },
+    "CloseForwardRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "forward_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardId"
+        }
+      ],
+      "status": "Implemented"
+    },
     "CloseSessionRequest": {
       "fields": [
         {
@@ -598,6 +899,18 @@
           "required": true,
           "sensitive": false,
           "type": "SessionId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CloseSftpRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
         }
       ],
       "status": "Implemented"
@@ -1141,6 +1454,109 @@
       ],
       "status": "Implemented"
     },
+    "ForwardSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardType"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardState"
+        },
+        {
+          "default": null,
+          "name": "bind_host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "bind_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "destination_host",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "destination_port",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "active_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "closed_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SessionId]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "GroupReference": {
       "fields": [
         {
@@ -1669,9 +2085,110 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": null,
+          "name": "service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": null,
+          "name": "cursor",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "limit",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
+    },
+    "ListDirectoryResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "entries",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[RemoteFileEntry, ...]"
+        },
+        {
+          "default": false,
+          "name": "truncated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "next_cursor",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "OpenForwardRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardType"
+        },
+        {
+          "default": null,
+          "name": "bind_host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "bind_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "destination_host",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "destination_port",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
     },
     "OpenSessionRequest": {
       "fields": [
@@ -1688,6 +2205,18 @@
           "required": false,
           "sensitive": false,
           "type": "TerminalDimensions | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "OpenSftpRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
         }
       ],
       "status": "Implemented"
@@ -1833,7 +2362,7 @@
           "name": "arguments",
           "required": false,
           "sensitive": false,
-          "type": "tuple[PluginArgument, ...]"
+          "type": "Tuple[PluginArgument, ...]"
         }
       ],
       "status": "Schema only"
@@ -1859,7 +2388,7 @@
           "name": "values",
           "required": false,
           "sensitive": true,
-          "type": "tuple[tuple[str, str], ...]"
+          "type": "Tuple[Tuple[str, str], ...]"
         }
       ],
       "status": "Schema only"
@@ -1920,7 +2449,7 @@
           "name": "target_port",
           "required": false,
           "sensitive": false,
-          "type": "int | None"
+          "type": "Optional[int]"
         }
       ],
       "status": "Schema only"
@@ -1943,6 +2472,74 @@
         }
       ],
       "status": "Schema only"
+    },
+    "RemoteFileEntry": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "file_type",
+          "required": true,
+          "sensitive": false,
+          "type": "RemoteFileType"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "uid",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "gid",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "modified_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "link_target",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
     },
     "ReplayBounds": {
       "fields": [
@@ -2123,6 +2720,25 @@
       ],
       "status": "Schema only"
     },
+    "ServiceFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
     "SessionCapabilities": {
       "fields": [
         {
@@ -2250,6 +2866,32 @@
       ],
       "status": "Implemented"
     },
+    "SftpChmodRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
     "SftpEntry": {
       "fields": [
         {
@@ -2278,10 +2920,217 @@
           "name": "size",
           "required": false,
           "sensitive": false,
-          "type": "int | None"
+          "type": "Optional[int]"
         }
       ],
       "status": "Schema only"
+    },
+    "SftpPathRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpRenameRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "source_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "destination_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "overwrite",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpServiceSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceState"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "closed_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": 0,
+          "name": "attachment_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpSymlinkRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "target_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "link_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StartTransferRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "sftp_service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "direction",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferDirection"
+        },
+        {
+          "default": null,
+          "name": "remote_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "local_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "fail",
+          "name": "conflict_policy",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferConflictPolicy"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "daemon_path",
+          "name": "local_mode",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferLocalMode"
+        }
+      ],
+      "status": "Implemented"
     },
     "SuccessResponseEnvelope": {
       "fields": [
@@ -2419,6 +3268,13 @@
         },
         {
           "default": null,
+          "name": "sftp_service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
           "name": "direction",
           "required": true,
           "sensitive": false,
@@ -2432,18 +3288,32 @@
           "type": "TransferState"
         },
         {
-          "default": 0,
-          "name": "bytes_transferred",
-          "required": false,
+          "default": null,
+          "name": "source_display",
+          "required": true,
           "sensitive": false,
-          "type": "int"
+          "type": "str"
         },
         {
           "default": null,
-          "name": "total_bytes",
+          "name": "destination_display",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "bytes_total",
           "required": false,
           "sensitive": false,
-          "type": "int | None"
+          "type": "Optional[int]"
+        },
+        {
+          "default": 0,
+          "name": "bytes_completed",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
         },
         {
           "default": "<UTC timestamp at creation>",
@@ -2451,9 +3321,51 @@
           "required": false,
           "sensitive": false,
           "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "completed_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        },
+        {
+          "default": null,
+          "name": "bytes_transferred",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "total_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "UpdateConnectionRequest": {
       "fields": [

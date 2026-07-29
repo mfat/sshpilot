@@ -11,11 +11,12 @@ DTOs, capabilities, events, structured errors, and the local wire envelope.
 ## Scope
 
 `InProcessClient` implements connection reads and in-process connection events.
-`DaemonClient` additionally implements daemon-lifetime session control and
-lifecycle events over the same secure per-user Unix-domain socket. Capability-
-gated clients may also use daemon-owned Unix PTYs, the binary terminal stream,
-and typed authentication/trust interactions over a separate one-use secret
-frame. Unrestricted keyboard-interactive prompts, reconnect replay, and session
+`DaemonClient` additionally implements daemon-lifetime session control,
+lifecycle events, SFTP services, transfers, and port forwards over the same
+secure per-user Unix-domain socket. Capability-gated clients may also use
+daemon-owned Unix PTYs, the binary terminal stream, and typed
+authentication/trust interactions over a separate one-use secret frame.
+Unrestricted keyboard-interactive prompts, reconnect replay, and session
 persistence remain unsupported. Named pipes, TCP, WebSocket, HTTP, and remote
 access do not exist.
 
@@ -41,7 +42,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.9` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.10` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects

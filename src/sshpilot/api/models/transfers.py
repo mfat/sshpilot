@@ -1,11 +1,21 @@
-"""Schema-only file-transfer models for later protocol phases."""
+"""File-transfer models for daemon-owned upload/download operations."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from .common import ConnectionId, TransferId, require_identifier, utc_now
+from .common import (
+    ClientId,
+    ConnectionId,
+    SftpServiceId,
+    TransferId,
+    require_identifier,
+    utc_now,
+)
+from .operations import ServiceFailure
 
 
 class TransferDirection(str, Enum):
@@ -15,28 +25,118 @@ class TransferDirection(str, Enum):
 
 class TransferState(str, Enum):
     QUEUED = "queued"
+    STARTING = "starting"
     RUNNING = "running"
     PAUSED = "paused"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+
+
+class TransferConflictPolicy(str, Enum):
+    FAIL = "fail"
+    OVERWRITE = "overwrite"
+    SKIP = "skip"
+    RENAME = "rename"
+
+
+class TransferLocalMode(str, Enum):
+    """How local bytes are supplied or received for a transfer."""
+
+    DAEMON_PATH = "daemon_path"
+    BINARY_STREAM = "binary_stream"
 
 
 @dataclass(frozen=True)
 class TransferSummary:
     id: TransferId
     connection_id: ConnectionId
+    sftp_service_id: SftpServiceId
     direction: TransferDirection
     state: TransferState
-    bytes_transferred: int = 0
-    total_bytes: Optional[int] = None
+    source_display: str
+    destination_display: str
+    bytes_total: Optional[int] = None
+    bytes_completed: int = 0
     created_at: datetime = field(default_factory=utc_now)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    owner_client_id: Optional[ClientId] = None
+    failure: Optional[ServiceFailure] = None
+    # Legacy field retained for older schema readers.
+    bytes_transferred: Optional[int] = None
+    total_bytes: Optional[int] = None
 
     def __post_init__(self) -> None:
         require_identifier(self.id, "transfer id")
         require_identifier(self.connection_id, "connection id")
-        if self.bytes_transferred < 0:
-            raise ValueError("transferred byte count must not be negative")
-        if self.total_bytes is not None and self.total_bytes < 0:
+        require_identifier(self.sftp_service_id, "SFTP service id")
+        if not isinstance(self.direction, TransferDirection):
+            raise TypeError("transfer direction must be a TransferDirection")
+        if not isinstance(self.state, TransferState):
+            raise TypeError("transfer state must be a TransferState")
+        if type(self.source_display) is not str or not self.source_display:
+            raise ValueError("source_display must be a non-empty string")
+        if type(self.destination_display) is not str or not self.destination_display:
+            raise ValueError("destination_display must be a non-empty string")
+        completed = self.bytes_completed
+        if self.bytes_transferred is not None:
+            completed = self.bytes_transferred
+        if type(completed) is not int or completed < 0:
+            raise ValueError("completed byte count must not be negative")
+        total = self.bytes_total if self.bytes_total is not None else self.total_bytes
+        if total is not None and (type(total) is not int or total < 0):
             raise ValueError("total byte count must not be negative")
+        if type(self.created_at) is not datetime or self.created_at.tzinfo is None:
+            raise ValueError("transfer creation time must be timezone-aware")
+        if self.started_at is not None and (
+            type(self.started_at) is not datetime or self.started_at.tzinfo is None
+        ):
+            raise ValueError("transfer started_at must be timezone-aware or None")
+        if self.completed_at is not None and (
+            type(self.completed_at) is not datetime or self.completed_at.tzinfo is None
+        ):
+            raise ValueError("transfer completed_at must be timezone-aware or None")
+        if self.owner_client_id is not None:
+            require_identifier(self.owner_client_id, "transfer owner client id")
+        if self.failure is not None and type(self.failure) is not ServiceFailure:
+            raise TypeError("transfer failure must be ServiceFailure or None")
 
+
+@dataclass(frozen=True)
+class StartTransferRequest:
+    connection_id: ConnectionId
+    sftp_service_id: SftpServiceId
+    direction: TransferDirection
+    remote_path: str
+    local_path: str
+    conflict_policy: TransferConflictPolicy = TransferConflictPolicy.FAIL
+    recursive: bool = False
+    local_mode: TransferLocalMode = TransferLocalMode.DAEMON_PATH
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        require_identifier(self.sftp_service_id, "SFTP service id")
+        if not isinstance(self.direction, TransferDirection):
+            raise TypeError("transfer direction must be a TransferDirection")
+        if not self.remote_path or "\x00" in self.remote_path:
+            raise ValueError("remote_path must be a non-empty NUL-free string")
+        if not self.local_path or "\x00" in self.local_path:
+            raise ValueError("local_path must be a non-empty NUL-free string")
+        if not isinstance(self.conflict_policy, TransferConflictPolicy):
+            raise TypeError("conflict_policy must be a TransferConflictPolicy")
+        if type(self.recursive) is not bool:
+            raise TypeError("recursive must be a boolean")
+        if not isinstance(self.local_mode, TransferLocalMode):
+            raise TypeError("local_mode must be a TransferLocalMode")
+        if self.local_mode is not TransferLocalMode.DAEMON_PATH:
+            raise ValueError("binary streaming mode is not implemented in Phase 10")
+
+
+@dataclass(frozen=True)
+class CancelTransferRequest:
+    transfer_id: TransferId
+
+    def __post_init__(self) -> None:
+        require_identifier(self.transfer_id, "transfer id")

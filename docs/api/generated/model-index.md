@@ -84,6 +84,28 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: AttachSftpRequest -->
+## `AttachSftpRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** AttachSftpRequest(service_id: 'SftpServiceId')
+
+**Related methods:** `attach_sftp`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "service_id": {}
+}
+```
+
 <!-- api-model: AttachmentInfo -->
 ## `AttachmentInfo`
 
@@ -109,6 +131,28 @@ Synthetic representation:
   "id": "id:example",
   "input_owner": false,
   "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+<!-- api-model: CancelTransferRequest -->
+## `CancelTransferRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** CancelTransferRequest(transfer_id: 'TransferId')
+
+**Related methods:** `cancel_transfer`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `transfer_id` | `TransferId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "transfer_id": "transfer:example"
 }
 ```
 
@@ -206,6 +250,28 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: CloseForwardRequest -->
+## `CloseForwardRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** CloseForwardRequest(forward_id: 'ForwardId')
+
+**Related methods:** `close_forward`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `forward_id` | `ForwardId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "forward_id": {}
+}
+```
+
 <!-- api-model: CloseSessionRequest -->
 ## `CloseSessionRequest`
 
@@ -225,6 +291,28 @@ Synthetic representation:
 ```json
 {
   "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+<!-- api-model: CloseSftpRequest -->
+## `CloseSftpRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** CloseSftpRequest(service_id: 'SftpServiceId')
+
+**Related methods:** `close_sftp`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "service_id": {}
 }
 ```
 
@@ -402,7 +490,7 @@ Synthetic representation:
 **Purpose:** CoreEvent(type: sshpilot.api.events.EventType, payload: ~PayloadT, sequence: int, timestamp: datetime.datetime = <factory>, request_id: sshpilot.api.models.common.RequestId | None = None, connection_id: sshpilot.api.models.common.ConnectionId | None = None, session_id: sshpilot.api.models.common.SessionId | None = None)
 
 **Related methods:** `subscribe_events`
-**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `error.occurred`
+**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `error.occurred`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
@@ -642,6 +730,54 @@ Synthetic representation:
   "payload": "<sensitive value omitted>",
   "protocol_version": {},
   "sequence": 0
+}
+```
+
+<!-- api-model: ForwardSummary -->
+## `ForwardSummary`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** ForwardSummary(id: 'ForwardId', connection_id: 'ConnectionId', type: 'ForwardType', state: 'ForwardState', bind_host: 'str', bind_port: 'int', destination_host: 'Optional[str]' = None, destination_port: 'Optional[int]' = None, created_at: 'datetime' = <factory>, active_at: 'Optional[datetime]' = None, closed_at: 'Optional[datetime]' = None, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None, session_id: 'Optional[SessionId]' = None)
+
+**Related methods:** `list_forwards`, `get_forward`, `open_forward`
+**Related events:** `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `id` | `ForwardId` | Yes | — | No |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `type` | `ForwardType` | Yes | — | No |
+| `state` | `ForwardState` | Yes | — | No |
+| `bind_host` | `str` | Yes | — | No |
+| `bind_port` | `int` | Yes | — | No |
+| `destination_host` | `Optional[str]` | No | `null` | No |
+| `destination_port` | `Optional[int]` | No | `null` | No |
+| `created_at` | `datetime` | No | `<UTC timestamp at creation>` | No |
+| `active_at` | `Optional[datetime]` | No | `null` | No |
+| `closed_at` | `Optional[datetime]` | No | `null` | No |
+| `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
+| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `session_id` | `Optional[SessionId]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "active_at": null,
+  "bind_host": "127.0.0.1",
+  "bind_port": 8022,
+  "closed_at": null,
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "<UTC timestamp at creation>",
+  "destination_host": null,
+  "destination_port": null,
+  "failure": null,
+  "id": "id:example",
+  "owner_client_id": null,
+  "session_id": null,
+  "state": {},
+  "type": {}
 }
 ```
 
@@ -1042,24 +1178,90 @@ Synthetic representation:
 <!-- api-model: ListDirectoryRequest -->
 ## `ListDirectoryRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** ListDirectoryRequest(connection_id: sshpilot.api.models.common.ConnectionId, path: str)
+**Purpose:** ListDirectoryRequest(connection_id: 'ConnectionId', path: 'str', service_id: 'Optional[SftpServiceId]' = None, cursor: 'Optional[str]' = None, limit: 'Optional[int]' = None)
 
-**Related methods:** None
+**Related methods:** `sftp_list_directory`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `connection_id` | `ConnectionId` | Yes | — | No |
 | `path` | `str` | Yes | — | No |
+| `service_id` | `Optional[SftpServiceId]` | No | `null` | No |
+| `cursor` | `Optional[str]` | No | `null` | No |
+| `limit` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
 ```json
 {
   "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
-  "path": "/remote/example"
+  "cursor": null,
+  "limit": null,
+  "path": "/remote/example",
+  "service_id": null
+}
+```
+
+<!-- api-model: ListDirectoryResult -->
+## `ListDirectoryResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** ListDirectoryResult(path: 'str', entries: 'Tuple[RemoteFileEntry, ...]', truncated: 'bool' = False, next_cursor: 'Optional[str]' = None)
+
+**Related methods:** `sftp_list_directory`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `path` | `str` | Yes | — | No |
+| `entries` | `Tuple[RemoteFileEntry, ...]` | Yes | — | No |
+| `truncated` | `bool` | No | `false` | No |
+| `next_cursor` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "entries": {},
+  "next_cursor": null,
+  "path": "/remote/example",
+  "truncated": false
+}
+```
+
+<!-- api-model: OpenForwardRequest -->
+## `OpenForwardRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** OpenForwardRequest(connection_id: 'ConnectionId', type: 'ForwardType', bind_host: 'str', bind_port: 'int', destination_host: 'Optional[str]' = None, destination_port: 'Optional[int]' = None)
+
+**Related methods:** `open_forward`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `type` | `ForwardType` | Yes | — | No |
+| `bind_host` | `str` | Yes | — | No |
+| `bind_port` | `int` | Yes | — | No |
+| `destination_host` | `Optional[str]` | No | `null` | No |
+| `destination_port` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "bind_host": "127.0.0.1",
+  "bind_port": 8022,
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "destination_host": null,
+  "destination_port": null,
+  "type": {}
 }
 ```
 
@@ -1084,6 +1286,28 @@ Synthetic representation:
 {
   "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "dimensions": null
+}
+```
+
+<!-- api-model: OpenSftpRequest -->
+## `OpenSftpRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** OpenSftpRequest(connection_id: 'ConnectionId')
+
+**Related methods:** `open_sftp`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -1180,7 +1404,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PluginOperationRequest(request_id: sshpilot.api.models.common.RequestId, plugin_id: str, operation: str, arguments: Tuple[sshpilot.api.models.operations.PluginArgument, ...] = ())
+**Purpose:** PluginOperationRequest(request_id: 'RequestId', plugin_id: 'str', operation: 'str', arguments: 'Tuple[PluginArgument, ...]' = ())
 
 **Related methods:** None
 **Related events:** None
@@ -1190,7 +1414,7 @@ Synthetic representation:
 | `request_id` | `RequestId` | Yes | — | No |
 | `plugin_id` | `str` | Yes | — | No |
 | `operation` | `str` | Yes | — | No |
-| `arguments` | `tuple[PluginArgument, ...]` | No | `[]` | No |
+| `arguments` | `Tuple[PluginArgument, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -1208,7 +1432,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PluginOperationResult(request_id: sshpilot.api.models.common.RequestId, plugin_id: str, values: Tuple[Tuple[str, str], ...] = ())
+**Purpose:** PluginOperationResult(request_id: 'RequestId', plugin_id: 'str', values: 'Tuple[Tuple[str, str], ...]' = ())
 
 **Related methods:** None
 **Related events:** None
@@ -1217,7 +1441,7 @@ Synthetic representation:
 | --- | --- | ---: | --- | ---: |
 | `request_id` | `RequestId` | Yes | — | No |
 | `plugin_id` | `str` | Yes | — | No |
-| `values` | `tuple[tuple[str, str], ...]` | No | `[]` | Yes |
+| `values` | `Tuple[Tuple[str, str], ...]` | No | `[]` | Yes |
 
 Synthetic representation:
 
@@ -1234,7 +1458,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PortForwardSummary(id: str, session_id: sshpilot.api.models.common.SessionId, kind: sshpilot.api.models.operations.ForwardKind, state: sshpilot.api.models.operations.ForwardState, bind_host: str, bind_port: int, target_host: str = '', target_port: int | None = None)
+**Purpose:** Legacy schema-only forward snapshot; prefer :class:`ForwardSummary`.
 
 **Related methods:** None
 **Related events:** None
@@ -1248,7 +1472,7 @@ Synthetic representation:
 | `bind_host` | `str` | Yes | — | No |
 | `bind_port` | `int` | Yes | — | No |
 | `target_host` | `str` | No | `` | No |
-| `target_port` | `int | None` | No | `null` | No |
+| `target_port` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -1257,9 +1481,9 @@ Synthetic representation:
   "bind_host": "127.0.0.1",
   "bind_port": 8022,
   "id": "id:example",
-  "kind": "local",
+  "kind": {},
   "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
-  "state": "starting",
+  "state": {},
   "target_host": "",
   "target_port": null
 }
@@ -1286,6 +1510,44 @@ Synthetic representation:
 {
   "attachment_id": "attachment:example",
   "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+<!-- api-model: RemoteFileEntry -->
+## `RemoteFileEntry`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** RemoteFileEntry(name: 'str', path: 'str', file_type: 'RemoteFileType', size: 'Optional[int]' = None, mode: 'Optional[int]' = None, uid: 'Optional[int]' = None, gid: 'Optional[int]' = None, modified_at: 'Optional[datetime]' = None, link_target: 'Optional[str]' = None)
+
+**Related methods:** `sftp_list_directory`, `sftp_stat`, `sftp_lstat`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `name` | `str` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+| `file_type` | `RemoteFileType` | Yes | — | No |
+| `size` | `Optional[int]` | No | `null` | No |
+| `mode` | `Optional[int]` | No | `null` | No |
+| `uid` | `Optional[int]` | No | `null` | No |
+| `gid` | `Optional[int]` | No | `null` | No |
+| `modified_at` | `Optional[datetime]` | No | `null` | No |
+| `link_target` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "file_type": {},
+  "gid": null,
+  "link_target": null,
+  "mode": null,
+  "modified_at": null,
+  "name": "example",
+  "path": "/remote/example",
+  "size": null,
+  "uid": null
 }
 ```
 
@@ -1440,6 +1702,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ServiceFailure -->
+## `ServiceFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-safe failure payload for extended SSH services.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `str` | Yes | — | No |
+| `message` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "message": "Example request"
+}
+```
+
 <!-- api-model: SessionCapabilities -->
 ## `SessionCapabilities`
 
@@ -1552,12 +1838,38 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpChmodRequest -->
+## `SftpChmodRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** SftpChmodRequest(service_id: 'SftpServiceId', path: 'str', mode: 'int')
+
+**Related methods:** `sftp_chmod`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+| `mode` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "mode": {},
+  "path": "/remote/example",
+  "service_id": {}
+}
+```
+
 <!-- api-model: SftpEntry -->
 ## `SftpEntry`
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpEntry(name: str, path: str, kind: sshpilot.api.models.operations.FileEntryKind, size: int | None = None)
+**Purpose:** Legacy schema-compatible SFTP entry; prefer :class:`RemoteFileEntry`.
 
 **Related methods:** None
 **Related events:** None
@@ -1567,16 +1879,168 @@ Synthetic representation:
 | `name` | `str` | Yes | — | No |
 | `path` | `str` | Yes | — | No |
 | `kind` | `FileEntryKind` | Yes | — | No |
-| `size` | `int | None` | No | `null` | No |
+| `size` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
 ```json
 {
-  "kind": "file",
+  "kind": {},
   "name": "example",
   "path": "/remote/example",
   "size": null
+}
+```
+
+<!-- api-model: SftpPathRequest -->
+## `SftpPathRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** SftpPathRequest(service_id: 'SftpServiceId', path: 'str')
+
+**Related methods:** `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink`, `sftp_mkdir`, `sftp_rmdir`, `sftp_remove`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "path": "/remote/example",
+  "service_id": {}
+}
+```
+
+<!-- api-model: SftpRenameRequest -->
+## `SftpRenameRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** SftpRenameRequest(service_id: 'SftpServiceId', source_path: 'str', destination_path: 'str', overwrite: 'bool' = False)
+
+**Related methods:** `sftp_rename`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `source_path` | `str` | Yes | — | No |
+| `destination_path` | `str` | Yes | — | No |
+| `overwrite` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "destination_path": {},
+  "overwrite": false,
+  "service_id": {},
+  "source_path": {}
+}
+```
+
+<!-- api-model: SftpServiceSummary -->
+## `SftpServiceSummary`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** SftpServiceSummary(id: 'SftpServiceId', connection_id: 'ConnectionId', state: 'SftpServiceState', created_at: 'datetime' = <factory>, started_at: 'Optional[datetime]' = None, closed_at: 'Optional[datetime]' = None, attachment_count: 'int' = 0, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None)
+
+**Related methods:** `list_sftp_services`, `get_sftp_service`, `open_sftp`, `attach_sftp`
+**Related events:** `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `id` | `SftpServiceId` | Yes | — | No |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `state` | `SftpServiceState` | Yes | — | No |
+| `created_at` | `datetime` | No | `<UTC timestamp at creation>` | No |
+| `started_at` | `Optional[datetime]` | No | `null` | No |
+| `closed_at` | `Optional[datetime]` | No | `null` | No |
+| `attachment_count` | `int` | No | `0` | No |
+| `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
+| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "attachment_count": 0,
+  "closed_at": null,
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "<UTC timestamp at creation>",
+  "failure": null,
+  "id": "id:example",
+  "owner_client_id": null,
+  "started_at": null,
+  "state": {}
+}
+```
+
+<!-- api-model: SftpSymlinkRequest -->
+## `SftpSymlinkRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** SftpSymlinkRequest(service_id: 'SftpServiceId', target_path: 'str', link_path: 'str')
+
+**Related methods:** `sftp_symlink`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `target_path` | `str` | Yes | — | No |
+| `link_path` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "link_path": {},
+  "service_id": {},
+  "target_path": {}
+}
+```
+
+<!-- api-model: StartTransferRequest -->
+## `StartTransferRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** StartTransferRequest(connection_id: 'ConnectionId', sftp_service_id: 'SftpServiceId', direction: 'TransferDirection', remote_path: 'str', local_path: 'str', conflict_policy: 'TransferConflictPolicy' = <TransferConflictPolicy.FAIL: 'fail'>, recursive: 'bool' = False, local_mode: 'TransferLocalMode' = <TransferLocalMode.DAEMON_PATH: 'daemon_path'>)
+
+**Related methods:** `start_transfer`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `sftp_service_id` | `SftpServiceId` | Yes | — | No |
+| `direction` | `TransferDirection` | Yes | — | No |
+| `remote_path` | `str` | Yes | — | No |
+| `local_path` | `str` | Yes | — | No |
+| `conflict_policy` | `TransferConflictPolicy` | No | `fail` | No |
+| `recursive` | `bool` | No | `false` | No |
+| `local_mode` | `TransferLocalMode` | No | `daemon_path` | No |
+
+Synthetic representation:
+
+```json
+{
+  "conflict_policy": "fail",
+  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "direction": {},
+  "local_mode": "daemon_path",
+  "local_path": {},
+  "recursive": false,
+  "remote_path": {},
+  "sftp_service_id": {}
 }
 ```
 
@@ -1691,33 +2155,51 @@ Synthetic representation:
 <!-- api-model: TransferSummary -->
 ## `TransferSummary`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** TransferSummary(id: sshpilot.api.models.common.TransferId, connection_id: sshpilot.api.models.common.ConnectionId, direction: sshpilot.api.models.transfers.TransferDirection, state: sshpilot.api.models.transfers.TransferState, bytes_transferred: int = 0, total_bytes: int | None = None, created_at: datetime.datetime = <factory>)
+**Purpose:** TransferSummary(id: 'TransferId', connection_id: 'ConnectionId', sftp_service_id: 'SftpServiceId', direction: 'TransferDirection', state: 'TransferState', source_display: 'str', destination_display: 'str', bytes_total: 'Optional[int]' = None, bytes_completed: 'int' = 0, created_at: 'datetime' = <factory>, started_at: 'Optional[datetime]' = None, completed_at: 'Optional[datetime]' = None, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None, bytes_transferred: 'Optional[int]' = None, total_bytes: 'Optional[int]' = None)
 
-**Related methods:** None
-**Related events:** None
+**Related methods:** `list_transfers`, `get_transfer`, `start_transfer`
+**Related events:** `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `id` | `TransferId` | Yes | — | No |
 | `connection_id` | `ConnectionId` | Yes | — | No |
+| `sftp_service_id` | `SftpServiceId` | Yes | — | No |
 | `direction` | `TransferDirection` | Yes | — | No |
 | `state` | `TransferState` | Yes | — | No |
-| `bytes_transferred` | `int` | No | `0` | No |
-| `total_bytes` | `int | None` | No | `null` | No |
+| `source_display` | `str` | Yes | — | No |
+| `destination_display` | `str` | Yes | — | No |
+| `bytes_total` | `Optional[int]` | No | `null` | No |
+| `bytes_completed` | `int` | No | `0` | No |
 | `created_at` | `datetime` | No | `<UTC timestamp at creation>` | No |
+| `started_at` | `Optional[datetime]` | No | `null` | No |
+| `completed_at` | `Optional[datetime]` | No | `null` | No |
+| `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
+| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `bytes_transferred` | `Optional[int]` | No | `null` | No |
+| `total_bytes` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
 ```json
 {
-  "bytes_transferred": 0,
+  "bytes_completed": 0,
+  "bytes_total": null,
+  "bytes_transferred": null,
+  "completed_at": null,
   "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "created_at": "<UTC timestamp at creation>",
-  "direction": "upload",
+  "destination_display": {},
+  "direction": {},
+  "failure": null,
   "id": "id:example",
-  "state": "queued",
+  "owner_client_id": null,
+  "sftp_service_id": {},
+  "source_display": {},
+  "started_at": null,
+  "state": {},
   "total_bytes": null
 }
 ```

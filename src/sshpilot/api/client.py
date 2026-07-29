@@ -41,7 +41,34 @@ from .models.terminal import (
     ResizeTerminalRequest,
     TerminalInput,
 )
-from .models.common import ConnectionId, SessionId
+from .models.common import (
+    ConnectionId,
+    ForwardId,
+    SessionId,
+    SftpServiceId,
+    TransferId,
+)
+from .models.operations import (
+    AttachSftpRequest,
+    CloseForwardRequest,
+    CloseSftpRequest,
+    ForwardSummary,
+    ListDirectoryRequest,
+    ListDirectoryResult,
+    OpenForwardRequest,
+    OpenSftpRequest,
+    RemoteFileEntry,
+    SftpChmodRequest,
+    SftpPathRequest,
+    SftpRenameRequest,
+    SftpServiceSummary,
+    SftpSymlinkRequest,
+)
+from .models.transfers import (
+    CancelTransferRequest,
+    StartTransferRequest,
+    TransferSummary,
+)
 
 
 class SshPilotClient(Protocol):
@@ -140,6 +167,81 @@ class SshPilotClient(Protocol):
         nonce: str,
         secret: bytearray,
     ) -> None:
+        ...
+
+    def list_sftp_services(self) -> List[SftpServiceSummary]:
+        ...
+
+    def get_sftp_service(self, service_id: SftpServiceId) -> SftpServiceSummary:
+        ...
+
+    def open_sftp(self, request: OpenSftpRequest) -> SftpServiceSummary:
+        ...
+
+    def attach_sftp(self, request: AttachSftpRequest) -> SftpServiceSummary:
+        ...
+
+    def detach_sftp(self, service_id: SftpServiceId) -> None:
+        ...
+
+    def close_sftp(self, request: CloseSftpRequest) -> None:
+        ...
+
+    def sftp_list_directory(self, request: ListDirectoryRequest) -> ListDirectoryResult:
+        ...
+
+    def sftp_stat(self, request: SftpPathRequest) -> RemoteFileEntry:
+        ...
+
+    def sftp_lstat(self, request: SftpPathRequest) -> RemoteFileEntry:
+        ...
+
+    def sftp_realpath(self, request: SftpPathRequest) -> str:
+        ...
+
+    def sftp_readlink(self, request: SftpPathRequest) -> str:
+        ...
+
+    def sftp_mkdir(self, request: SftpPathRequest) -> None:
+        ...
+
+    def sftp_rmdir(self, request: SftpPathRequest) -> None:
+        ...
+
+    def sftp_rename(self, request: SftpRenameRequest) -> None:
+        ...
+
+    def sftp_remove(self, request: SftpPathRequest) -> None:
+        ...
+
+    def sftp_chmod(self, request: SftpChmodRequest) -> None:
+        ...
+
+    def sftp_symlink(self, request: SftpSymlinkRequest) -> None:
+        ...
+
+    def list_transfers(self) -> List[TransferSummary]:
+        ...
+
+    def get_transfer(self, transfer_id: TransferId) -> TransferSummary:
+        ...
+
+    def start_transfer(self, request: StartTransferRequest) -> TransferSummary:
+        ...
+
+    def cancel_transfer(self, request: CancelTransferRequest) -> None:
+        ...
+
+    def list_forwards(self) -> List[ForwardSummary]:
+        ...
+
+    def get_forward(self, forward_id: ForwardId) -> ForwardSummary:
+        ...
+
+    def open_forward(self, request: OpenForwardRequest) -> ForwardSummary:
+        ...
+
+    def close_forward(self, request: CloseForwardRequest) -> None:
         ...
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:

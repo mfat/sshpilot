@@ -2,6 +2,15 @@
 
 SSH Pilot uses a deliberately simple policy:
 
+## Phase 10: Additive SFTP / transfer / forward surface
+
+Phase 10 is an additive Protocol v1 extension. Older clients ignore the new
+capabilities, methods, events, and error codes. Newer clients require the
+narrow `sftp.*`, `transfers.*`, and `forwards.*` capabilities before calling
+the matching operations. Coarse legacy `sftp` and `port_forwarding`
+identifiers remain in the schema and are never advertised.
+`API_IMPLEMENTATION_VERSION` is `0.10`.
+
 ## Phase 9 / 9.1: Default Behavior Change
 
 Phase 9 introduces a default behavior change while maintaining compatibility.

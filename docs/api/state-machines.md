@@ -97,44 +97,48 @@ public state.
 <!-- api-state: TransferState -->
 ## Transfer lifecycle: `TransferState`
 
-The enum contains `queued`, `running`, `paused`, `completed`, `failed`, and
-`cancelled`. All are schema only. The model does not enforce transitions.
-`completed`, `failed`, and `cancelled` are intended terminal; pause/resume,
-retry, persistence, and progress-event behaviour are undefined.
+The daemon `TransferRuntime` uses `queued`, `starting`, `running`, `paused`,
+`cancelling`, `cancelled`, `completed`, and `failed`. `completed`, `failed`,
+and `cancelled` are terminal. Binary streaming mode remains unimplemented;
+Phase 10 transfers use daemon-path local mode only.
 
 ```mermaid
 stateDiagram-v2
     [*] --> queued
-    queued --> running
+    queued --> starting
+    starting --> running
+    starting --> failed
     running --> paused
     paused --> running
+    running --> cancelling
+    paused --> cancelling
+    queued --> cancelled
+    cancelling --> cancelled
     running --> completed
     running --> failed
-    queued --> cancelled
-    running --> cancelled
-    paused --> cancelled
+    cancelling --> failed
 ```
-
-This is future design guidance, not current runtime behaviour.
 
 <!-- api-state: ForwardState -->
 ## Port-forward lifecycle: `ForwardState`
 
-The enum contains `starting`, `active`, `failed`, `stopping`, and `stopped`.
-All are schema only and no method or event exposes them.
+The daemon `ForwardRuntime` uses `created`, `starting`, `active`, `closing`,
+`closed`, and `failed`. Legacy schema values `stopping`/`stopped` remain in the
+enum for older readers but are not emitted by the Phase 10 runtime.
+`closed` and `failed` are terminal for practical clients; failed records may
+still be closed for cleanup.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> starting
+    [*] --> created
+    created --> starting
+    created --> closed
     starting --> active
     starting --> failed
-    active --> stopping
-    stopping --> stopped
-    failed --> stopped
+    active --> closing
+    closing --> closed
+    failed --> closed
 ```
-
-This intended shape is non-normative until a core owner and contract tests
-exist. `stopped` is intended terminal.
 
 ## Duplicate state concepts
 

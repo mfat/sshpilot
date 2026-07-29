@@ -327,6 +327,124 @@ Schema-only code. No current method accepts a cancellation token.
 
 Schema-only code. No current client method defines an API timeout.
 
+<!-- api-error: sftp_service_not_found -->
+## `sftp_service_not_found`
+
+No SFTP service exists for the requested opaque service ID.
+
+<!-- api-error: sftp_service_not_ready -->
+## `sftp_service_not_ready`
+
+The SFTP service exists but is not in the `ready` state for the requested
+operation.
+
+<!-- api-error: sftp_command_failed -->
+## `sftp_command_failed`
+
+A remote SFTP command failed with a safe translated reason.
+
+<!-- api-error: sftp_protocol_lost -->
+## `sftp_protocol_lost`
+
+The SFTP subprocess or channel lost continuity. The service transitions to a
+terminal failed/closed state.
+
+<!-- api-error: sftp_protocol_error -->
+## `sftp_protocol_error`
+
+The SFTP framing or response violated protocol expectations.
+
+<!-- api-error: remote_path_not_found -->
+## `remote_path_not_found`
+
+The requested remote path does not exist.
+
+<!-- api-error: remote_path_exists -->
+## `remote_path_exists`
+
+The remote path already exists and the operation refused to overwrite it.
+
+<!-- api-error: remote_permission_denied -->
+## `remote_permission_denied`
+
+The remote host denied the filesystem operation.
+
+<!-- api-error: remote_not_directory -->
+## `remote_not_directory`
+
+A directory operation was attempted against a non-directory path.
+
+<!-- api-error: remote_is_directory -->
+## `remote_is_directory`
+
+A file operation was attempted against a directory path.
+
+<!-- api-error: remote_directory_not_empty -->
+## `remote_directory_not_empty`
+
+A directory removal failed because the directory still contains entries.
+
+<!-- api-error: remote_unsupported_operation -->
+## `remote_unsupported_operation`
+
+The remote SFTP server rejected the operation as unsupported.
+
+<!-- api-error: transfer_not_found -->
+## `transfer_not_found`
+
+No transfer exists for the requested opaque transfer ID.
+
+<!-- api-error: transfer_conflict -->
+## `transfer_conflict`
+
+A transfer conflict policy blocked the start or continuation.
+
+<!-- api-error: transfer_cancelled -->
+## `transfer_cancelled`
+
+The transfer ended because cancellation was accepted.
+
+<!-- api-error: transfer_io_failed -->
+## `transfer_io_failed`
+
+Local or remote I/O failed during a transfer.
+
+<!-- api-error: transfer_disk_full -->
+## `transfer_disk_full`
+
+A transfer failed because local or remote storage was exhausted.
+
+<!-- api-error: forward_not_found -->
+## `forward_not_found`
+
+No forward exists for the requested opaque forward ID.
+
+<!-- api-error: forward_bind_failed -->
+## `forward_bind_failed`
+
+The forward could not bind its local or remote listen address/port.
+
+<!-- api-error: forward_destination_invalid -->
+## `forward_destination_invalid`
+
+The forward destination host/port was missing or invalid for its type.
+
+<!-- api-error: forward_startup_failed -->
+## `forward_startup_failed`
+
+Forward startup failed before the forward became active.
+
+<!-- api-error: forward_not_active -->
+## `forward_not_active`
+
+The forward exists but is not active for the requested operation.
+
+<!-- api-error: service_owner_required -->
+## `service_owner_required`
+
+The handshaken client is not the owner of the SFTP, transfer, or forward
+resource for a mutating operation.
+
 <!-- api-error: internal_error -->
 ## `internal_error`
 

@@ -14,7 +14,10 @@ from .models.common import (
     CompatibilityResult,
     ConnectionId,
     CoreInfo,
+    ForwardId,
     SessionId,
+    SftpServiceId,
+    TransferId,
 )
 from .models.connections import (
     AuthenticationMethod,
@@ -33,6 +36,22 @@ from .models.interactions import (
     InteractionId,
     InteractionSummary,
 )
+from .models.operations import (
+    AttachSftpRequest,
+    CloseForwardRequest,
+    CloseSftpRequest,
+    ForwardSummary,
+    ListDirectoryRequest,
+    ListDirectoryResult,
+    OpenForwardRequest,
+    OpenSftpRequest,
+    RemoteFileEntry,
+    SftpChmodRequest,
+    SftpPathRequest,
+    SftpRenameRequest,
+    SftpServiceSummary,
+    SftpSymlinkRequest,
+)
 from .models.sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -48,6 +67,11 @@ from .models.terminal import (
     ReplayResult,
     ResizeTerminalRequest,
     TerminalInput,
+)
+from .models.transfers import (
+    CancelTransferRequest,
+    StartTransferRequest,
+    TransferSummary,
 )
 from .terminal_events import (
     TerminalContinuityCallback,
@@ -97,6 +121,31 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
+    "list_sftp_services": Capability.SFTP_READ,
+    "get_sftp_service": Capability.SFTP_READ,
+    "open_sftp": Capability.SFTP_WRITE,
+    "attach_sftp": Capability.SFTP_WRITE,
+    "detach_sftp": Capability.SFTP_WRITE,
+    "close_sftp": Capability.SFTP_WRITE,
+    "sftp_list_directory": Capability.SFTP_READ,
+    "sftp_stat": Capability.SFTP_METADATA,
+    "sftp_lstat": Capability.SFTP_METADATA,
+    "sftp_realpath": Capability.SFTP_METADATA,
+    "sftp_readlink": Capability.SFTP_METADATA,
+    "sftp_mkdir": Capability.SFTP_MUTATE,
+    "sftp_rmdir": Capability.SFTP_MUTATE,
+    "sftp_remove": Capability.SFTP_MUTATE,
+    "sftp_rename": Capability.SFTP_MUTATE,
+    "sftp_chmod": Capability.SFTP_MUTATE,
+    "sftp_symlink": Capability.SFTP_MUTATE,
+    "list_transfers": Capability.TRANSFERS_READ,
+    "get_transfer": Capability.TRANSFERS_READ,
+    "start_transfer": Capability.TRANSFERS_WRITE,
+    "cancel_transfer": Capability.TRANSFERS_WRITE,
+    "list_forwards": Capability.FORWARDS_READ,
+    "get_forward": Capability.FORWARDS_READ,
+    "open_forward": Capability.FORWARDS_WRITE,
+    "close_forward": Capability.FORWARDS_WRITE,
 }
 
 
@@ -200,6 +249,167 @@ class InProcessClient:
         if executable is None:
             raise SshPilotError(
                 ErrorCode.SESSION_STARTUP_FAILED,
+                "The OpenSSH executable is unavailable",
+                connection_id=connection_id,
+            )
+        return (executable, *argv[1:]), environment
+
+    def prepare_daemon_sftp_launch(
+        self,
+        connection_id: ConnectionId,
+        *,
+        interaction_policy: str = "broker",
+    ) -> tuple:
+        """Internal daemon launch hook: ``ssh -s <host>`` (sftp subsystem).
+
+        Mirrors ``prepare_daemon_terminal_launch`` but requests the SFTP
+        subsystem instead of an interactive shell. Built directly from
+        ``ConnectionContext`` (the same one-off pattern the in-app SFTP file
+        manager already uses for ``ssh -s sftp`` — see
+        ``OpenSSHSFTPManager._build_argv``) rather than ``native_connect``,
+        since a subsystem request is not a login shell. The daemon appends
+        the ``sftp`` remote-command argument after host-key pinning (see
+        ``InteractionBroker.prepare_launch``'s ``trailing_args``).
+        """
+
+        import shutil
+
+        from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
+
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=connection_id,
+            )
+        try:
+            from ..config import Config
+
+            app_config = Config()
+        except Exception:
+            app_config = None
+        try:
+            connection.resolved_identity_files = (
+                connection.collect_identity_file_candidates()
+            )
+        except Exception:
+            connection.resolved_identity_files = []
+        ctx = ConnectionContext(
+            connection=connection,
+            connection_manager=self._connection_manager,
+            config=app_config,
+            command_type="sftp",
+            native_mode=True,
+            extra_args=["-s"],
+            interaction_policy=interaction_policy,
+        )
+        prepared = build_ssh_connection(ctx)
+        argv = tuple(prepared.command)
+        environment = dict(prepared.env)
+        if not argv:
+            raise SshPilotError(
+                ErrorCode.SFTP_SERVICE_NOT_READY,
+                "The SFTP session could not be prepared",
+                connection_id=connection_id,
+            )
+        executable = shutil.which(argv[0], path=environment.get("PATH"))
+        if executable is None:
+            raise SshPilotError(
+                ErrorCode.SFTP_SERVICE_NOT_READY,
+                "The OpenSSH executable is unavailable",
+                connection_id=connection_id,
+            )
+        return (executable, *argv[1:]), environment
+
+    def prepare_daemon_forward_launch(
+        self,
+        connection_id: ConnectionId,
+        *,
+        forward_type: str,
+        bind_host: str,
+        bind_port: int,
+        destination_host: Optional[str],
+        destination_port: Optional[int],
+        interaction_policy: str = "broker",
+    ) -> tuple:
+        """Internal daemon launch hook: dedicated ``ssh -N -L/-R/-D`` process.
+
+        Built directly from ``ConnectionContext`` (one-off ``extra_args``,
+        the same pattern ``native_connect`` uses for ``force_tty``'s ``-t``)
+        so the ad-hoc forward rule never touches the persisted
+        ``~/.ssh/config`` for this connection.
+        """
+
+        import shutil
+
+        from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
+
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=connection_id,
+            )
+        if forward_type == "local":
+            rule = f"{bind_host}:{bind_port}:{destination_host}:{destination_port}"
+            forward_flag = "-L"
+        elif forward_type == "remote":
+            rule = f"{bind_host}:{bind_port}:{destination_host}:{destination_port}"
+            forward_flag = "-R"
+        elif forward_type == "dynamic":
+            rule = f"{bind_host}:{bind_port}" if bind_host else str(bind_port)
+            forward_flag = "-D"
+        else:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "The requested forward type is not supported",
+                connection_id=connection_id,
+            )
+        try:
+            from ..config import Config
+
+            app_config = Config()
+        except Exception:
+            app_config = None
+        try:
+            connection.resolved_identity_files = (
+                connection.collect_identity_file_candidates()
+            )
+        except Exception:
+            connection.resolved_identity_files = []
+        ctx = ConnectionContext(
+            connection=connection,
+            connection_manager=self._connection_manager,
+            config=app_config,
+            command_type="ssh",
+            native_mode=True,
+            extra_args=[
+                "-N",
+                "-T",
+                forward_flag,
+                rule,
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-o",
+                "ClearAllForwardings=yes",
+            ],
+            interaction_policy=interaction_policy,
+        )
+        prepared = build_ssh_connection(ctx)
+        argv = tuple(prepared.command)
+        environment = dict(prepared.env)
+        if not argv:
+            raise SshPilotError(
+                ErrorCode.FORWARD_STARTUP_FAILED,
+                "The forward could not be prepared",
+                connection_id=connection_id,
+            )
+        executable = shutil.which(argv[0], path=environment.get("PATH"))
+        if executable is None:
+            raise SshPilotError(
+                ErrorCode.FORWARD_STARTUP_FAILED,
                 "The OpenSSH executable is unavailable",
                 connection_id=connection_id,
             )
@@ -505,6 +715,103 @@ class InProcessClient:
     ) -> None:
         del interaction_id, nonce, secret
         raise self._unsupported("send_interaction_secret")
+
+    def list_sftp_services(self) -> List[SftpServiceSummary]:
+        raise self._unsupported("list_sftp_services")
+
+    def get_sftp_service(self, service_id: SftpServiceId) -> SftpServiceSummary:
+        del service_id
+        raise self._unsupported("get_sftp_service")
+
+    def open_sftp(self, request: OpenSftpRequest) -> SftpServiceSummary:
+        del request
+        raise self._unsupported("open_sftp")
+
+    def attach_sftp(self, request: AttachSftpRequest) -> SftpServiceSummary:
+        del request
+        raise self._unsupported("attach_sftp")
+
+    def detach_sftp(self, service_id: SftpServiceId) -> None:
+        del service_id
+        raise self._unsupported("detach_sftp")
+
+    def close_sftp(self, request: CloseSftpRequest) -> None:
+        del request
+        raise self._unsupported("close_sftp")
+
+    def sftp_list_directory(self, request: ListDirectoryRequest) -> ListDirectoryResult:
+        del request
+        raise self._unsupported("sftp_list_directory")
+
+    def sftp_stat(self, request: SftpPathRequest) -> RemoteFileEntry:
+        del request
+        raise self._unsupported("sftp_stat")
+
+    def sftp_lstat(self, request: SftpPathRequest) -> RemoteFileEntry:
+        del request
+        raise self._unsupported("sftp_lstat")
+
+    def sftp_realpath(self, request: SftpPathRequest) -> str:
+        del request
+        raise self._unsupported("sftp_realpath")
+
+    def sftp_readlink(self, request: SftpPathRequest) -> str:
+        del request
+        raise self._unsupported("sftp_readlink")
+
+    def sftp_mkdir(self, request: SftpPathRequest) -> None:
+        del request
+        raise self._unsupported("sftp_mkdir")
+
+    def sftp_rmdir(self, request: SftpPathRequest) -> None:
+        del request
+        raise self._unsupported("sftp_rmdir")
+
+    def sftp_remove(self, request: SftpPathRequest) -> None:
+        del request
+        raise self._unsupported("sftp_remove")
+
+    def sftp_rename(self, request: SftpRenameRequest) -> None:
+        del request
+        raise self._unsupported("sftp_rename")
+
+    def sftp_chmod(self, request: SftpChmodRequest) -> None:
+        del request
+        raise self._unsupported("sftp_chmod")
+
+    def sftp_symlink(self, request: SftpSymlinkRequest) -> None:
+        del request
+        raise self._unsupported("sftp_symlink")
+
+    def list_transfers(self) -> List[TransferSummary]:
+        raise self._unsupported("list_transfers")
+
+    def get_transfer(self, transfer_id: TransferId) -> TransferSummary:
+        del transfer_id
+        raise self._unsupported("get_transfer")
+
+    def start_transfer(self, request: StartTransferRequest) -> TransferSummary:
+        del request
+        raise self._unsupported("start_transfer")
+
+    def cancel_transfer(self, request: CancelTransferRequest) -> None:
+        del request
+        raise self._unsupported("cancel_transfer")
+
+    def list_forwards(self) -> List[ForwardSummary]:
+        raise self._unsupported("list_forwards")
+
+    def get_forward(self, forward_id: ForwardId) -> ForwardSummary:
+        del forward_id
+        raise self._unsupported("get_forward")
+
+    def open_forward(self, request: OpenForwardRequest) -> ForwardSummary:
+        del request
+        raise self._unsupported("open_forward")
+
+    def close_forward(self, request: CloseForwardRequest) -> None:
+        del request
+        raise self._unsupported("close_forward")
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         if self._closed:

@@ -24,7 +24,9 @@ documented model surface.
 | `SessionId` | Daemon-lifetime runtime session identity | `session:<canonical UUID>` | Daemon implemented |
 | `RequestId` | Request correlation | Non-empty opaque string | Schema only |
 | `InteractionId` | Daemon-lifetime interaction identity | `interaction:<canonical UUID>` | Daemon implemented |
-| `TransferId` | Transfer identity | Non-empty opaque string | Schema only |
+| `TransferId` | Transfer identity | `transfer:<canonical UUID>` | Daemon implemented |
+| `SftpServiceId` | SFTP service identity | `sftp:<canonical UUID>` | Daemon implemented |
+| `ForwardId` | Forward identity | `forward:<canonical UUID>` | Daemon implemented |
 | `ClientId` | Handshaken frontend identity | Non-empty opaque string | Daemon implemented |
 | `AttachmentId` | Logical session attachment identity | Non-empty opaque string | Daemon implemented |
 
@@ -144,20 +146,36 @@ exact nonce. The retained legacy `InteractionResponse.value` is excluded from
 
 | Model | Purpose | Runtime support |
 | --- | --- | --- |
-| `TransferSummary` | Progress and state for one upload/download | Schema only |
-| `SftpEntry` | Remote directory entry | Schema only |
-| `ListDirectoryRequest` | Connection/path directory query | Schema only |
-| `PortForwardSummary` | Forward endpoint and lifecycle snapshot | Schema only |
+| `ServiceFailure` | Sanitised stable failure code and message | Daemon implemented |
+| `SftpServiceSummary` | Immutable SFTP service lifecycle snapshot | Daemon implemented |
+| `OpenSftpRequest` | Open an SFTP service for a connection | Daemon implemented |
+| `AttachSftpRequest` | Attach to an existing SFTP service | Daemon implemented |
+| `CloseSftpRequest` | Close an SFTP service | Daemon implemented |
+| `ListDirectoryRequest` | Directory listing query | Daemon implemented |
+| `ListDirectoryResult` | Typed directory listing page | Daemon implemented |
+| `RemoteFileEntry` | Typed remote filesystem entry | Daemon implemented |
+| `SftpPathRequest` | Path-scoped SFTP metadata/mutate request | Daemon implemented |
+| `SftpRenameRequest` | Rename/move request | Daemon implemented |
+| `SftpChmodRequest` | Mode-change request | Daemon implemented |
+| `SftpSymlinkRequest` | Symlink creation request | Daemon implemented |
+| `TransferSummary` | Progress and state for one upload/download | Daemon implemented |
+| `StartTransferRequest` | Start a daemon-path transfer | Daemon implemented |
+| `CancelTransferRequest` | Cancel one transfer | Daemon implemented |
+| `ForwardSummary` | Runtime forward endpoint and lifecycle snapshot | Daemon implemented |
+| `OpenForwardRequest` | Open a local/remote/dynamic forward | Daemon implemented |
+| `CloseForwardRequest` | Close one forward | Daemon implemented |
+| `SftpEntry` | Legacy remote directory entry | Schema only; prefer `RemoteFileEntry` |
+| `PortForwardSummary` | Legacy forward snapshot | Schema only; prefer `ForwardSummary` |
 | `PluginArgument` | Named plugin argument with sensitivity flag | Schema only |
 | `PluginOperationRequest` | Explicit plugin operation input | Schema only |
 | `PluginOperationResult` | Explicit plugin operation values | Schema only |
 
 Transfer byte counts and optional totals are non-negative. SFTP names/paths are
-non-empty and sizes non-negative. Forward ports are 1–65535. Plugin IDs,
-operation names, request IDs, and argument names are non-empty.
-`PluginArgument.value` and `PluginOperationResult.values` are excluded from
-`repr`; plugin result values are classified potentially sensitive because
-result semantics are plugin-defined.
+non-empty and sizes non-negative. Forward ports are 0–65535 for bind and
+1–65535 for destinations. Plugin IDs, operation names, request IDs, and
+argument names are non-empty. `PluginArgument.value` and
+`PluginOperationResult.values` are excluded from `repr`; plugin result values
+are classified potentially sensitive because result semantics are plugin-defined.
 
 ## Public enums
 
@@ -166,9 +184,9 @@ handling is not defined until a transport codec exists.
 
 | Enum | Values | Runtime support |
 | --- | --- | --- |
-| `Capability` | Connection, session, terminal, interaction, transfer, plugin, and secret feature groups | Daemon advertises narrow implemented connection/session/terminal/interaction capabilities |
-| `EventType` | Connection, session, typed interaction, and local error identifiers | Connection, four non-byte session, and two interaction lifecycle events emitted |
-| `ErrorCode` | `unsupported_capability`, `invalid_request`, `validation_failed`, `connection_not_found`, `session_not_found`, `interaction_not_found`, `interaction_already_answered`, `permission_denied`, `operation_cancelled`, `operation_timed_out`, `internal_error` | See [errors](errors.md) |
+| `Capability` | Connection, session, terminal, interaction, SFTP, transfer, forward, plugin, and secret feature groups | Daemon advertises narrow implemented connection/session/terminal/interaction/SFTP/transfer/forward capabilities |
+| `EventType` | Connection, session, interaction, SFTP, transfer, forward, and local error identifiers | Connection, session, interaction, SFTP, transfer, and forward lifecycle events emitted |
+| `ErrorCode` | `unsupported_capability`, `invalid_request`, `validation_failed`, `connection_not_found`, `session_not_found`, `interaction_not_found`, `sftp_service_not_found`, `transfer_not_found`, `forward_not_found`, and related codes | See [errors](errors.md) |
 | `ConnectionHealth` | `unknown`, `checking`, `reachable`, `unreachable` | DTO runtime always reports `unknown` |
 | `AuthenticationMethod` | `key`, `password` | Implemented safe projection |
 | `SessionState` | `created`, `starting`, `running`, `closing`, `exited`, `failed`, `closed` | Daemon implemented |
@@ -180,11 +198,15 @@ handling is not defined until a transport codec exists.
 | `HostKeyDecision` | `accept_once`, `accept_and_store`, `reject` | Daemon implemented |
 | `SecretDecision` | `submit`, `cancel` | Daemon implemented |
 | `RememberPolicy` | `do_not_store`, `store_after_success`, `replace_stored_after_success`, `delete_stored_secret` | Daemon implemented |
-| `TransferDirection` | `upload`, `download` | Schema only |
-| `TransferState` | `queued`, `running`, `paused`, `completed`, `failed`, `cancelled` | Schema only |
-| `FileEntryKind` | `file`, `directory`, `symlink`, `other` | Schema only |
-| `ForwardKind` | `local`, `remote`, `dynamic` | Schema only |
-| `ForwardState` | `starting`, `active`, `failed`, `stopping`, `stopped` | Schema only |
+| `SftpServiceState` | `created`, `starting`, `ready`, `closing`, `closed`, `failed` | Daemon implemented |
+| `RemoteFileType` | `regular`, `directory`, `symlink`, `socket`, `fifo`, `block`, `character`, `unknown` | Daemon implemented |
+| `TransferDirection` | `upload`, `download` | Daemon implemented |
+| `TransferState` | `queued`, `starting`, `running`, `paused`, `cancelling`, `cancelled`, `completed`, `failed` | Daemon implemented |
+| `TransferConflictPolicy` | `fail`, `overwrite`, `skip`, `rename` | Daemon implemented |
+| `TransferLocalMode` | `daemon_path`, `binary_stream` | Daemon implemented for `daemon_path` only |
+| `FileEntryKind` | `file`, `directory`, `symlink`, `other` | Schema only; prefer `RemoteFileType` |
+| `ForwardType` / `ForwardKind` | `local`, `remote`, `dynamic` | Daemon implemented |
+| `ForwardState` | `created`, `starting`, `active`, `closing`, `closed`, `failed` (legacy `stopping`/`stopped` retained) | Daemon implemented |
 
 ## Representation examples
 

@@ -5,6 +5,22 @@ notes remain separate.
 
 ## Unreleased
 
+### Phase 10: SFTP, Transfers, and Forwards (Added)
+
+- Added daemon-owned SFTP service lifecycle with narrow capabilities
+  (`sftp.read`, `sftp.write`, `sftp.events`, `sftp.metadata`, `sftp.mutate`)
+  and client methods for open/attach/list/metadata/mutate operations.
+- Added daemon-owned transfers with narrow capabilities
+  (`transfers.read`, `transfers.write`, `transfers.events`, `transfers.upload`,
+  `transfers.download`) for daemon-path upload/download and cancel.
+- Added daemon-owned port forwards with narrow capabilities
+  (`forwards.read`, `forwards.write`, `forwards.events`, `forwards.local`,
+  `forwards.remote`, `forwards.dynamic`) for local/remote/dynamic forwards.
+- Added matching CoreEvent types, ErrorCode values, and live DTOs; legacy coarse
+  `sftp` and `port_forwarding` capabilities remain schema-only and are never
+  advertised.
+- `API_IMPLEMENTATION_VERSION` is `0.10`. Protocol remains additive `1.0`.
+
 ### Phase 9.3: GUI Transport Stability (Changed)
 
 - PTY autofill uses the canonical `feed_child_data` widget/backend input API.

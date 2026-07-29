@@ -88,6 +88,22 @@ local `error.occurred` continuity notification where delivery remains possible.
 | `session.closed` | Daemon implemented | `sessions.events` | Final in-memory lifecycle transition | `SessionSummary` |
 | `interaction.created` | Daemon implemented | `interactions.events` | Broker accepts a typed authentication/trust interaction | `InteractionSummary` |
 | `interaction.state_changed` | Daemon implemented | `interactions.events` | Claim, release, answer, cancel, expiry, or failure | `InteractionSummary` |
+| `sftp.created` | Daemon implemented | `sftp.events` | SFTP service record allocation | `SftpServiceSummary` |
+| `sftp.state_changed` | Daemon implemented | `sftp.events` | Accepted SFTP lifecycle transition other than close/fail | `SftpServiceSummary` |
+| `sftp.closed` | Daemon implemented | `sftp.events` | Final SFTP service closure | `SftpServiceSummary` |
+| `sftp.failed` | Daemon implemented | `sftp.events` | SFTP service failure | `SftpServiceSummary` |
+| `transfer.created` | Daemon implemented | `transfers.events` | Transfer record allocation | `TransferSummary` |
+| `transfer.started` | Daemon implemented | `transfers.events` | Transfer begins moving bytes | `TransferSummary` |
+| `transfer.progress` | Daemon implemented | `transfers.events` | Bounded progress update | `TransferSummary` |
+| `transfer.item_completed` | Daemon implemented | `transfers.events` | One recursive item finished | `TransferSummary` |
+| `transfer.completed` | Daemon implemented | `transfers.events` | Transfer finished successfully | `TransferSummary` |
+| `transfer.cancelled` | Daemon implemented | `transfers.events` | Transfer cancelled | `TransferSummary` |
+| `transfer.failed` | Daemon implemented | `transfers.events` | Transfer failed | `TransferSummary` |
+| `forward.created` | Daemon implemented | `forwards.events` | Forward record allocation | `ForwardSummary` |
+| `forward.starting` | Daemon implemented | `forwards.events` | Forward bind/startup begins | `ForwardSummary` |
+| `forward.active` | Daemon implemented | `forwards.events` | Forward is listening/active | `ForwardSummary` |
+| `forward.closed` | Daemon implemented | `forwards.events` | Forward closed | `ForwardSummary` |
+| `forward.failed` | Daemon implemented | `forwards.events` | Forward failed | `ForwardSummary` |
 | `error.occurred` | Local runtime transport-continuity signal in `DaemonClient` | None fixed | Daemon transport/protocol continuity failure | Safe structured error envelope dictionary |
 
 <!-- api-event: connection.created -->
@@ -177,6 +193,120 @@ local `error.occurred` continuity notification where delivery remains possible.
 - **Guarantees / security:** Exactly one final state wins. Interaction events
   share the daemon-global sequence and bounded event queue; secret bytes use
   neither events nor replay.
+
+<!-- api-event: sftp.created -->
+## `sftp.created`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `sftp.events`; allocation of one SFTP service.
+- **Payload / IDs:** `SftpServiceSummary` with service and connection IDs.
+
+<!-- api-event: sftp.state_changed -->
+## `sftp.state_changed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `sftp.events`; entry into `starting`, `ready`, or
+  `closing`.
+- **Payload / IDs:** Immutable `SftpServiceSummary`.
+
+<!-- api-event: sftp.closed -->
+## `sftp.closed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `sftp.events`; final `closed` transition.
+- **Payload / IDs:** Final `SftpServiceSummary`.
+
+<!-- api-event: sftp.failed -->
+## `sftp.failed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `sftp.events`; service failure with safe failure
+  metadata.
+- **Payload / IDs:** `SftpServiceSummary` including optional `ServiceFailure`.
+
+<!-- api-event: transfer.created -->
+## `transfer.created`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `transfers.events`; transfer record allocation.
+- **Payload / IDs:** `TransferSummary`.
+
+<!-- api-event: transfer.started -->
+## `transfer.started`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `transfers.events`; bytes begin moving.
+- **Payload / IDs:** `TransferSummary`.
+
+<!-- api-event: transfer.progress -->
+## `transfer.progress`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `transfers.events`; bounded progress snapshot.
+- **Payload / IDs:** `TransferSummary` with completed/total byte counts.
+
+<!-- api-event: transfer.item_completed -->
+## `transfer.item_completed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `transfers.events`; one recursive item finished.
+- **Payload / IDs:** `TransferSummary`.
+
+<!-- api-event: transfer.completed -->
+## `transfer.completed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `transfers.events`; successful terminal state.
+- **Payload / IDs:** Final successful `TransferSummary`.
+
+<!-- api-event: transfer.cancelled -->
+## `transfer.cancelled`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `transfers.events`; cancelled terminal state.
+- **Payload / IDs:** Final cancelled `TransferSummary`.
+
+<!-- api-event: transfer.failed -->
+## `transfer.failed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `transfers.events`; failed terminal state.
+- **Payload / IDs:** `TransferSummary` including optional `ServiceFailure`.
+
+<!-- api-event: forward.created -->
+## `forward.created`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `forwards.events`; forward record allocation.
+- **Payload / IDs:** `ForwardSummary`.
+
+<!-- api-event: forward.starting -->
+## `forward.starting`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `forwards.events`; bind/startup begins.
+- **Payload / IDs:** `ForwardSummary`.
+
+<!-- api-event: forward.active -->
+## `forward.active`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `forwards.events`; forward is listening/active.
+- **Payload / IDs:** `ForwardSummary`.
+
+<!-- api-event: forward.closed -->
+## `forward.closed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `forwards.events`; forward closed.
+- **Payload / IDs:** Final `ForwardSummary`.
+
+<!-- api-event: forward.failed -->
+## `forward.failed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.10.
+- **Capability / trigger:** `forwards.events`; forward failed.
+- **Payload / IDs:** `ForwardSummary` including optional `ServiceFailure`.
 
 <!-- api-event: session.interaction_requested -->
 ## `session.interaction_requested`

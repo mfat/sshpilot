@@ -14,11 +14,17 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.9",
+  "api_implementation_version": "0.10",
   "capabilities": [
     "connections.events",
     "connections.read",
     "connections.write",
+    "forwards.dynamic",
+    "forwards.events",
+    "forwards.local",
+    "forwards.read",
+    "forwards.remote",
+    "forwards.write",
     "interactions",
     "interactions.events",
     "interactions.host_key",
@@ -33,20 +39,38 @@
     "sessions.read",
     "sessions.write",
     "sftp",
+    "sftp.events",
+    "sftp.metadata",
+    "sftp.mutate",
+    "sftp.read",
+    "sftp.write",
     "terminal",
     "terminal.attach",
     "terminal.input",
     "terminal.output",
     "terminal.replay",
-    "terminal.resize"
+    "terminal.resize",
+    "transfers.download",
+    "transfers.events",
+    "transfers.read",
+    "transfers.upload",
+    "transfers.write"
   ],
   "client_method_contract": {
     "attach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
     },
+    "attach_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
     "cancel_interaction": {
       "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "cancel_transfer": {
+      "capability": "transfers.write",
       "status": "daemon-only"
     },
     "claim_interaction": {
@@ -61,8 +85,16 @@
       "capability": null,
       "status": "implemented"
     },
+    "close_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
     "close_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "close_sftp": {
+      "capability": "sftp.write",
       "status": "daemon-only"
     },
     "create_connection": {
@@ -77,6 +109,10 @@
       "capability": "sessions.write",
       "status": "daemon-only"
     },
+    "detach_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -84,6 +120,10 @@
     "get_connection": {
       "capability": "connections.read",
       "status": "implemented"
+    },
+    "get_forward": {
+      "capability": "forwards.read",
+      "status": "daemon-only"
     },
     "get_interaction": {
       "capability": "interactions.read",
@@ -93,9 +133,21 @@
       "capability": "sessions.read",
       "status": "daemon-only"
     },
+    "get_sftp_service": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "get_transfer": {
+      "capability": "transfers.read",
+      "status": "daemon-only"
+    },
     "list_connections": {
       "capability": "connections.read",
       "status": "implemented"
+    },
+    "list_forwards": {
+      "capability": "forwards.read",
+      "status": "daemon-only"
     },
     "list_interactions": {
       "capability": "interactions.read",
@@ -105,8 +157,24 @@
       "capability": "sessions.read",
       "status": "daemon-only"
     },
+    "list_sftp_services": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "list_transfers": {
+      "capability": "transfers.read",
+      "status": "daemon-only"
+    },
+    "open_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
     "open_session": {
       "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "open_sftp": {
+      "capability": "sftp.write",
       "status": "daemon-only"
     },
     "release_interaction": {
@@ -137,6 +205,54 @@
       "capability": "terminal.input",
       "status": "daemon-only"
     },
+    "sftp_chmod": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_list_directory": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "sftp_lstat": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_mkdir": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_readlink": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_realpath": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_remove": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_rename": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_rmdir": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_stat": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_symlink": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "start_transfer": {
+      "capability": "transfers.write",
+      "status": "daemon-only"
+    },
     "subscribe_events": {
       "capability": "connections.events",
       "status": "implemented"
@@ -152,22 +268,35 @@
   },
   "client_methods": [
     "attach_session",
+    "attach_sftp",
     "cancel_interaction",
+    "cancel_transfer",
     "claim_interaction",
     "claim_terminal_input",
     "close",
+    "close_forward",
     "close_session",
+    "close_sftp",
     "create_connection",
     "delete_connection",
     "detach_session",
+    "detach_sftp",
     "get_capabilities",
     "get_connection",
+    "get_forward",
     "get_interaction",
     "get_session",
+    "get_sftp_service",
+    "get_transfer",
     "list_connections",
+    "list_forwards",
     "list_interactions",
     "list_sessions",
+    "list_sftp_services",
+    "list_transfers",
+    "open_forward",
     "open_session",
+    "open_sftp",
     "release_interaction",
     "release_terminal_input",
     "replay_terminal",
@@ -175,6 +304,18 @@
     "respond_to_interaction",
     "send_interaction_secret",
     "send_terminal_input",
+    "sftp_chmod",
+    "sftp_list_directory",
+    "sftp_lstat",
+    "sftp_mkdir",
+    "sftp_readlink",
+    "sftp_realpath",
+    "sftp_remove",
+    "sftp_rename",
+    "sftp_rmdir",
+    "sftp_stat",
+    "sftp_symlink",
+    "start_transfer",
     "subscribe_events",
     "subscribe_terminal",
     "update_connection"
@@ -190,12 +331,32 @@
       ],
       "return": "AttachSessionResult"
     },
+    "attach_sftp": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "AttachSftpRequest"
+        }
+      ],
+      "return": "SftpServiceSummary"
+    },
     "cancel_interaction": {
       "parameters": [
         {
           "kind": "positional_or_keyword",
           "name": "interaction_id",
           "type": "InteractionId"
+        }
+      ],
+      "return": "None"
+    },
+    "cancel_transfer": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "CancelTransferRequest"
         }
       ],
       "return": "None"
@@ -224,12 +385,32 @@
       "parameters": [],
       "return": "None"
     },
+    "close_forward": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "CloseForwardRequest"
+        }
+      ],
+      "return": "None"
+    },
     "close_session": {
       "parameters": [
         {
           "kind": "positional_or_keyword",
           "name": "request",
           "type": "CloseSessionRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "close_sftp": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "CloseSftpRequest"
         }
       ],
       "return": "None"
@@ -264,6 +445,16 @@
       ],
       "return": "None"
     },
+    "detach_sftp": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "service_id",
+          "type": "SftpServiceId"
+        }
+      ],
+      "return": "None"
+    },
     "get_capabilities": {
       "parameters": [],
       "return": "Capabilities"
@@ -277,6 +468,16 @@
         }
       ],
       "return": "ConnectionDetails"
+    },
+    "get_forward": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "forward_id",
+          "type": "ForwardId"
+        }
+      ],
+      "return": "ForwardSummary"
     },
     "get_interaction": {
       "parameters": [
@@ -298,9 +499,33 @@
       ],
       "return": "SessionSummary"
     },
+    "get_sftp_service": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "service_id",
+          "type": "SftpServiceId"
+        }
+      ],
+      "return": "SftpServiceSummary"
+    },
+    "get_transfer": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "transfer_id",
+          "type": "TransferId"
+        }
+      ],
+      "return": "TransferSummary"
+    },
     "list_connections": {
       "parameters": [],
       "return": "list[ConnectionSummary]"
+    },
+    "list_forwards": {
+      "parameters": [],
+      "return": "list[ForwardSummary]"
     },
     "list_interactions": {
       "parameters": [],
@@ -309,6 +534,24 @@
     "list_sessions": {
       "parameters": [],
       "return": "list[SessionSummary]"
+    },
+    "list_sftp_services": {
+      "parameters": [],
+      "return": "list[SftpServiceSummary]"
+    },
+    "list_transfers": {
+      "parameters": [],
+      "return": "list[TransferSummary]"
+    },
+    "open_forward": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "OpenForwardRequest"
+        }
+      ],
+      "return": "ForwardSummary"
     },
     "open_session": {
       "parameters": [
@@ -319,6 +562,16 @@
         }
       ],
       "return": "SessionSummary"
+    },
+    "open_sftp": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "OpenSftpRequest"
+        }
+      ],
+      "return": "SftpServiceSummary"
     },
     "release_interaction": {
       "parameters": [
@@ -400,6 +653,126 @@
       ],
       "return": "None"
     },
+    "sftp_chmod": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpChmodRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "sftp_list_directory": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ListDirectoryRequest"
+        }
+      ],
+      "return": "ListDirectoryResult"
+    },
+    "sftp_lstat": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpPathRequest"
+        }
+      ],
+      "return": "RemoteFileEntry"
+    },
+    "sftp_mkdir": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpPathRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "sftp_readlink": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpPathRequest"
+        }
+      ],
+      "return": "str"
+    },
+    "sftp_realpath": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpPathRequest"
+        }
+      ],
+      "return": "str"
+    },
+    "sftp_remove": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpPathRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "sftp_rename": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpRenameRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "sftp_rmdir": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpPathRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "sftp_stat": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpPathRequest"
+        }
+      ],
+      "return": "RemoteFileEntry"
+    },
+    "sftp_symlink": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpSymlinkRequest"
+        }
+      ],
+      "return": "None"
+    },
+    "start_transfer": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "StartTransferRequest"
+        }
+      ],
+      "return": "TransferSummary"
+    },
     "subscribe_events": {
       "parameters": [
         {
@@ -472,6 +845,18 @@
     "connections.update": {
       "capability": "connections.write"
     },
+    "forwards.close": {
+      "capability": "forwards.write"
+    },
+    "forwards.get": {
+      "capability": "forwards.read"
+    },
+    "forwards.list": {
+      "capability": "forwards.read"
+    },
+    "forwards.open": {
+      "capability": "forwards.write"
+    },
     "interactions.cancel": {
       "capability": "interactions.respond"
     },
@@ -508,6 +893,57 @@
     "sessions.open": {
       "capability": "sessions.write"
     },
+    "sftp.attach": {
+      "capability": "sftp.write"
+    },
+    "sftp.chmod": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.close": {
+      "capability": "sftp.write"
+    },
+    "sftp.detach": {
+      "capability": "sftp.write"
+    },
+    "sftp.get_service": {
+      "capability": "sftp.read"
+    },
+    "sftp.list": {
+      "capability": "sftp.read"
+    },
+    "sftp.list_services": {
+      "capability": "sftp.read"
+    },
+    "sftp.lstat": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.mkdir": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.open": {
+      "capability": "sftp.write"
+    },
+    "sftp.readlink": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.realpath": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.remove": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.rename": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.rmdir": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.stat": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.symlink": {
+      "capability": "sftp.mutate"
+    },
     "system.get_capabilities": {
       "capability": null
     },
@@ -525,6 +961,18 @@
     },
     "terminal.resize": {
       "capability": "terminal.resize"
+    },
+    "transfers.cancel": {
+      "capability": "transfers.write"
+    },
+    "transfers.get": {
+      "capability": "transfers.read"
+    },
+    "transfers.list": {
+      "capability": "transfers.read"
+    },
+    "transfers.start": {
+      "capability": "transfers.write"
     }
   },
   "error_codes": [
@@ -534,6 +982,11 @@
     "connection_not_found",
     "daemon_shutting_down",
     "daemon_unavailable",
+    "forward_bind_failed",
+    "forward_destination_invalid",
+    "forward_not_active",
+    "forward_not_found",
+    "forward_startup_failed",
     "frame_too_large",
     "handshake_already_completed",
     "handshake_required",
@@ -558,14 +1011,27 @@
     "protocol_error",
     "protocol_version_unsupported",
     "pty_allocation_failed",
+    "remote_directory_not_empty",
+    "remote_is_directory",
+    "remote_not_directory",
+    "remote_path_exists",
+    "remote_path_not_found",
+    "remote_permission_denied",
+    "remote_unsupported_operation",
     "secret_backend_unavailable",
     "secret_storage_failed",
     "server_busy",
+    "service_owner_required",
     "session_already_closed",
     "session_invalid_state",
     "session_not_found",
     "session_startup_failed",
     "session_termination_failed",
+    "sftp_command_failed",
+    "sftp_protocol_error",
+    "sftp_protocol_lost",
+    "sftp_service_not_found",
+    "sftp_service_not_ready",
     "terminal_attachment_required",
     "terminal_continuity_lost",
     "terminal_input_backpressure",
@@ -575,6 +1041,11 @@
     "terminal_replay_unavailable",
     "terminal_sequence_out_of_range",
     "terminal_unavailable",
+    "transfer_cancelled",
+    "transfer_conflict",
+    "transfer_disk_full",
+    "transfer_io_failed",
+    "transfer_not_found",
     "transport_closed",
     "transport_timeout",
     "unsupported_capability",
@@ -587,6 +1058,11 @@
     "connection.deleted",
     "connection.updated",
     "error.occurred",
+    "forward.active",
+    "forward.closed",
+    "forward.created",
+    "forward.failed",
+    "forward.starting",
     "interaction.created",
     "interaction.state_changed",
     "session.closed",
@@ -594,27 +1070,44 @@
     "session.exited",
     "session.interaction_requested",
     "session.output",
-    "session.state_changed"
+    "session.state_changed",
+    "sftp.closed",
+    "sftp.created",
+    "sftp.failed",
+    "sftp.state_changed",
+    "transfer.cancelled",
+    "transfer.completed",
+    "transfer.created",
+    "transfer.failed",
+    "transfer.item_completed",
+    "transfer.progress",
+    "transfer.started"
   ],
   "identifier_types": [
     "AttachmentId",
     "ClientId",
     "ConnectionId",
+    "ForwardId",
     "InteractionId",
     "RequestId",
     "SessionId",
+    "SftpServiceId",
     "TransferId"
   ],
   "model_exports": [
     "AttachSessionRequest",
     "AttachSessionResult",
+    "AttachSftpRequest",
     "AttachmentId",
     "AttachmentInfo",
     "AuthenticationMethod",
+    "CancelTransferRequest",
     "ClaimTerminalInputRequest",
     "ClientId",
     "ClientInfo",
+    "CloseForwardRequest",
     "CloseSessionRequest",
+    "CloseSftpRequest",
     "CompatibilityResult",
     "ConnectionDetails",
     "ConnectionHealth",
@@ -628,8 +1121,11 @@
     "DeleteConnectionResult",
     "DetachSessionRequest",
     "FileEntryKind",
+    "ForwardId",
     "ForwardKind",
     "ForwardState",
+    "ForwardSummary",
+    "ForwardType",
     "GroupReference",
     "HostKeyDecision",
     "HostKeyPrompt",
@@ -650,7 +1146,10 @@
     "InteractionTimeout",
     "InteractionType",
     "ListDirectoryRequest",
+    "ListDirectoryResult",
+    "OpenForwardRequest",
     "OpenSessionRequest",
+    "OpenSftpRequest",
     "PassphrasePrompt",
     "PasswordPrompt",
     "PluginArgument",
@@ -659,24 +1158,37 @@
     "PortForwardSummary",
     "ReleaseTerminalInputRequest",
     "RememberPolicy",
+    "RemoteFileEntry",
+    "RemoteFileType",
     "ReplayBounds",
     "ReplayRequest",
     "ReplayResult",
     "RequestId",
     "ResizeTerminalRequest",
     "SecretDecision",
+    "ServiceFailure",
     "SessionCapabilities",
     "SessionExitInfo",
     "SessionFailure",
     "SessionId",
     "SessionState",
     "SessionSummary",
+    "SftpChmodRequest",
     "SftpEntry",
+    "SftpPathRequest",
+    "SftpRenameRequest",
+    "SftpServiceId",
+    "SftpServiceState",
+    "SftpServiceSummary",
+    "SftpSymlinkRequest",
+    "StartTransferRequest",
     "TerminalDimensions",
     "TerminalInput",
     "TerminalOutput",
+    "TransferConflictPolicy",
     "TransferDirection",
     "TransferId",
+    "TransferLocalMode",
     "TransferState",
     "TransferSummary",
     "UpdateConnectionRequest"
@@ -696,11 +1208,17 @@
       "replay_truncated",
       "eof"
     ],
+    "AttachSftpRequest": [
+      "service_id"
+    ],
     "AttachmentInfo": [
       "id",
       "session_id",
       "client_id",
       "input_owner"
+    ],
+    "CancelTransferRequest": [
+      "transfer_id"
     ],
     "Capabilities": [
       "protocol_version",
@@ -719,8 +1237,14 @@
       "version",
       "client_id"
     ],
+    "CloseForwardRequest": [
+      "forward_id"
+    ],
     "CloseSessionRequest": [
       "session_id"
+    ],
+    "CloseSftpRequest": [
+      "service_id"
     ],
     "CompatibilityResult": [
       "compatible",
@@ -817,6 +1341,22 @@
       "sequence",
       "payload"
     ],
+    "ForwardSummary": [
+      "id",
+      "connection_id",
+      "type",
+      "state",
+      "bind_host",
+      "bind_port",
+      "destination_host",
+      "destination_port",
+      "created_at",
+      "active_at",
+      "closed_at",
+      "owner_client_id",
+      "failure",
+      "session_id"
+    ],
     "GroupReference": [
       "id",
       "name"
@@ -909,11 +1449,31 @@
     ],
     "ListDirectoryRequest": [
       "connection_id",
-      "path"
+      "path",
+      "service_id",
+      "cursor",
+      "limit"
+    ],
+    "ListDirectoryResult": [
+      "path",
+      "entries",
+      "truncated",
+      "next_cursor"
+    ],
+    "OpenForwardRequest": [
+      "connection_id",
+      "type",
+      "bind_host",
+      "bind_port",
+      "destination_host",
+      "destination_port"
     ],
     "OpenSessionRequest": [
       "connection_id",
       "dimensions"
+    ],
+    "OpenSftpRequest": [
+      "connection_id"
     ],
     "PassphrasePrompt": [
       "key_display_name",
@@ -960,6 +1520,17 @@
       "session_id",
       "attachment_id"
     ],
+    "RemoteFileEntry": [
+      "name",
+      "path",
+      "file_type",
+      "size",
+      "mode",
+      "uid",
+      "gid",
+      "modified_at",
+      "link_target"
+    ],
     "ReplayBounds": [
       "earliest_sequence",
       "latest_sequence",
@@ -992,6 +1563,10 @@
       "attachment_id",
       "dimensions"
     ],
+    "ServiceFailure": [
+      "code",
+      "message"
+    ],
     "SessionCapabilities": [
       "supported"
     ],
@@ -1015,11 +1590,52 @@
       "failure",
       "attachment_count"
     ],
+    "SftpChmodRequest": [
+      "service_id",
+      "path",
+      "mode"
+    ],
     "SftpEntry": [
       "name",
       "path",
       "kind",
       "size"
+    ],
+    "SftpPathRequest": [
+      "service_id",
+      "path"
+    ],
+    "SftpRenameRequest": [
+      "service_id",
+      "source_path",
+      "destination_path",
+      "overwrite"
+    ],
+    "SftpServiceSummary": [
+      "id",
+      "connection_id",
+      "state",
+      "created_at",
+      "started_at",
+      "closed_at",
+      "attachment_count",
+      "owner_client_id",
+      "failure"
+    ],
+    "SftpSymlinkRequest": [
+      "service_id",
+      "target_path",
+      "link_path"
+    ],
+    "StartTransferRequest": [
+      "connection_id",
+      "sftp_service_id",
+      "direction",
+      "remote_path",
+      "local_path",
+      "conflict_policy",
+      "recursive",
+      "local_mode"
     ],
     "SuccessResponseEnvelope": [
       "protocol_version",
@@ -1046,11 +1662,20 @@
     "TransferSummary": [
       "id",
       "connection_id",
+      "sftp_service_id",
       "direction",
       "state",
+      "source_display",
+      "destination_display",
+      "bytes_total",
+      "bytes_completed",
+      "created_at",
+      "started_at",
+      "completed_at",
+      "owner_client_id",
+      "failure",
       "bytes_transferred",
-      "total_bytes",
-      "created_at"
+      "total_bytes"
     ],
     "UpdateConnectionRequest": [
       "nickname",
@@ -1086,7 +1711,23 @@
       "interactions.password",
       "interactions.passphrase",
       "sftp",
+      "sftp.read",
+      "sftp.write",
+      "sftp.events",
+      "sftp.metadata",
+      "sftp.mutate",
+      "transfers.read",
+      "transfers.write",
+      "transfers.events",
+      "transfers.upload",
+      "transfers.download",
       "port_forwarding",
+      "forwards.read",
+      "forwards.write",
+      "forwards.events",
+      "forwards.local",
+      "forwards.remote",
+      "forwards.dynamic",
       "plugins",
       "secrets"
     ],
@@ -1138,6 +1779,29 @@
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
+      "sftp_service_not_found",
+      "sftp_service_not_ready",
+      "sftp_command_failed",
+      "sftp_protocol_lost",
+      "sftp_protocol_error",
+      "remote_path_not_found",
+      "remote_path_exists",
+      "remote_permission_denied",
+      "remote_not_directory",
+      "remote_is_directory",
+      "remote_directory_not_empty",
+      "remote_unsupported_operation",
+      "transfer_not_found",
+      "transfer_conflict",
+      "transfer_cancelled",
+      "transfer_io_failed",
+      "transfer_disk_full",
+      "forward_not_found",
+      "forward_bind_failed",
+      "forward_destination_invalid",
+      "forward_startup_failed",
+      "forward_not_active",
+      "service_owner_required",
       "internal_error",
       "daemon_unavailable",
       "transport_closed",
@@ -1163,6 +1827,22 @@
       "session.closed",
       "interaction.created",
       "interaction.state_changed",
+      "sftp.created",
+      "sftp.state_changed",
+      "sftp.closed",
+      "sftp.failed",
+      "transfer.created",
+      "transfer.started",
+      "transfer.progress",
+      "transfer.item_completed",
+      "transfer.completed",
+      "transfer.cancelled",
+      "transfer.failed",
+      "forward.created",
+      "forward.starting",
+      "forward.active",
+      "forward.closed",
+      "forward.failed",
       "error.occurred"
     ],
     "FileEntryKind": [
@@ -1171,17 +1851,20 @@
       "symlink",
       "other"
     ],
-    "ForwardKind": [
-      "local",
-      "remote",
-      "dynamic"
-    ],
     "ForwardState": [
+      "created",
       "starting",
       "active",
+      "closing",
+      "closed",
       "failed",
       "stopping",
       "stopped"
+    ],
+    "ForwardType": [
+      "local",
+      "remote",
+      "dynamic"
     ],
     "HostKeyDecision": [
       "accept_once",
@@ -1227,6 +1910,16 @@
       "replace_stored_after_success",
       "delete_stored_secret"
     ],
+    "RemoteFileType": [
+      "regular",
+      "directory",
+      "symlink",
+      "socket",
+      "fifo",
+      "block",
+      "character",
+      "unknown"
+    ],
     "SecretDecision": [
       "submit",
       "cancel"
@@ -1240,17 +1933,37 @@
       "failed",
       "closed"
     ],
+    "SftpServiceState": [
+      "created",
+      "starting",
+      "ready",
+      "closing",
+      "closed",
+      "failed"
+    ],
+    "TransferConflictPolicy": [
+      "fail",
+      "overwrite",
+      "skip",
+      "rename"
+    ],
     "TransferDirection": [
       "upload",
       "download"
     ],
+    "TransferLocalMode": [
+      "daemon_path",
+      "binary_stream"
+    ],
     "TransferState": [
       "queued",
+      "starting",
       "running",
       "paused",
+      "cancelling",
+      "cancelled",
       "completed",
-      "failed",
-      "cancelled"
+      "failed"
     ]
   },
   "transport_exports": [

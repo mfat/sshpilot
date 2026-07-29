@@ -24,7 +24,15 @@ from .events import (
     Subscription,
 )
 from .in_process_client import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
-from .models.common import ClientId, ConnectionId, RequestId, SessionId
+from .models.common import (
+    ClientId,
+    ConnectionId,
+    ForwardId,
+    RequestId,
+    SessionId,
+    SftpServiceId,
+    TransferId,
+)
 from .models.connections import (
     ConnectionDetails,
     ConnectionSummary,
@@ -38,6 +46,22 @@ from .models.interactions import (
     InteractionDecisionRequest,
     InteractionId,
     InteractionSummary,
+)
+from .models.operations import (
+    AttachSftpRequest,
+    CloseForwardRequest,
+    CloseSftpRequest,
+    ForwardSummary,
+    ListDirectoryRequest,
+    ListDirectoryResult,
+    OpenForwardRequest,
+    OpenSftpRequest,
+    RemoteFileEntry,
+    SftpChmodRequest,
+    SftpPathRequest,
+    SftpRenameRequest,
+    SftpServiceSummary,
+    SftpSymlinkRequest,
 )
 from .models.sessions import (
     AttachSessionRequest,
@@ -56,6 +80,11 @@ from .models.terminal import (
     TerminalInput,
     TerminalOutput,
 )
+from .models.transfers import (
+    CancelTransferRequest,
+    StartTransferRequest,
+    TransferSummary,
+)
 from .terminal_events import (
     TerminalContinuityCallback,
     TerminalEofCallback,
@@ -66,9 +95,13 @@ from .terminal_events import (
 from .transport.codec import (
     attach_session_request_to_wire,
     attach_session_result_from_wire,
+    attach_sftp_request_to_wire,
+    cancel_transfer_request_to_wire,
     capabilities_from_wire,
     claim_terminal_input_request_to_wire,
+    close_forward_request_to_wire,
     close_session_request_to_wire,
+    close_sftp_request_to_wire,
     connection_details_from_wire,
     connection_summary_from_wire,
     create_connection_request_to_wire,
@@ -78,18 +111,31 @@ from .transport.codec import (
     detach_session_request_to_wire,
     encode_envelope,
     error_from_wire,
+    forward_summary_from_wire,
     handshake_request_to_wire,
     handshake_result_from_wire,
     interaction_claim_from_wire,
     interaction_decision_to_wire,
     interaction_summary_from_wire,
+    list_directory_request_to_wire,
+    list_directory_result_from_wire,
+    open_forward_request_to_wire,
     open_session_request_to_wire,
+    open_sftp_request_to_wire,
     public_event_from_envelope,
     release_terminal_input_request_to_wire,
+    remote_file_entry_from_wire,
     replay_request_to_wire,
     replay_result_from_wire,
     resize_terminal_request_to_wire,
     session_summary_from_wire,
+    sftp_chmod_request_to_wire,
+    sftp_path_request_to_wire,
+    sftp_rename_request_to_wire,
+    sftp_service_summary_from_wire,
+    sftp_symlink_request_to_wire,
+    start_transfer_request_to_wire,
+    transfer_summary_from_wire,
     update_connection_request_to_wire,
 )
 from .transport.envelopes import (
@@ -145,6 +191,31 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
     "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "replay_terminal": Capability.TERMINAL_REPLAY,
+    "list_sftp_services": Capability.SFTP_READ,
+    "get_sftp_service": Capability.SFTP_READ,
+    "open_sftp": Capability.SFTP_WRITE,
+    "attach_sftp": Capability.SFTP_WRITE,
+    "detach_sftp": Capability.SFTP_WRITE,
+    "close_sftp": Capability.SFTP_WRITE,
+    "sftp_list_directory": Capability.SFTP_READ,
+    "sftp_stat": Capability.SFTP_METADATA,
+    "sftp_lstat": Capability.SFTP_METADATA,
+    "sftp_realpath": Capability.SFTP_METADATA,
+    "sftp_readlink": Capability.SFTP_METADATA,
+    "sftp_mkdir": Capability.SFTP_MUTATE,
+    "sftp_rmdir": Capability.SFTP_MUTATE,
+    "sftp_remove": Capability.SFTP_MUTATE,
+    "sftp_rename": Capability.SFTP_MUTATE,
+    "sftp_chmod": Capability.SFTP_MUTATE,
+    "sftp_symlink": Capability.SFTP_MUTATE,
+    "list_transfers": Capability.TRANSFERS_READ,
+    "get_transfer": Capability.TRANSFERS_READ,
+    "start_transfer": Capability.TRANSFERS_WRITE,
+    "cancel_transfer": Capability.TRANSFERS_WRITE,
+    "list_forwards": Capability.FORWARDS_READ,
+    "get_forward": Capability.FORWARDS_READ,
+    "open_forward": Capability.FORWARDS_WRITE,
+    "close_forward": Capability.FORWARDS_WRITE,
 }
 
 
@@ -465,6 +536,219 @@ class DaemonClient:
         )
         if result is not None:
             self._fail_protocol("The daemon returned an invalid close result")
+
+    # -- SFTP services --------------------------------------------------
+    def list_sftp_services(self) -> List[SftpServiceSummary]:
+        self._require_capability(Capability.SFTP_READ)
+        result = self._request("sftp.list_services", {})
+        if type(result) is not list:
+            self._fail_protocol("The daemon returned an invalid SFTP service list")
+        try:
+            return [sftp_service_summary_from_wire(item) for item in result]
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid SFTP service list")
+
+    def get_sftp_service(self, service_id: SftpServiceId) -> SftpServiceSummary:
+        self._require_capability(Capability.SFTP_READ)
+        result = self._request("sftp.get_service", {"service_id": service_id})
+        try:
+            return sftp_service_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid SFTP service summary")
+
+    def open_sftp(self, request: OpenSftpRequest) -> SftpServiceSummary:
+        self._require_capability(Capability.SFTP_WRITE)
+        result = self._request(
+            "sftp.open",
+            open_sftp_request_to_wire(request),
+            session_mutation=True,
+        )
+        try:
+            return sftp_service_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid SFTP service summary")
+
+    def attach_sftp(self, request: AttachSftpRequest) -> SftpServiceSummary:
+        self._require_capability(Capability.SFTP_WRITE)
+        result = self._request("sftp.attach", attach_sftp_request_to_wire(request))
+        try:
+            return sftp_service_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid SFTP service summary")
+
+    def detach_sftp(self, service_id: SftpServiceId) -> None:
+        self._require_capability(Capability.SFTP_WRITE)
+        result = self._request("sftp.detach", {"service_id": service_id})
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid SFTP detach result")
+
+    def close_sftp(self, request: CloseSftpRequest) -> None:
+        self._require_capability(Capability.SFTP_WRITE)
+        result = self._request(
+            "sftp.close",
+            close_sftp_request_to_wire(request),
+            mutation_session_id=SessionId(str(request.service_id)),
+            session_mutation=True,
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid SFTP close result")
+
+    def sftp_list_directory(self, request: ListDirectoryRequest) -> ListDirectoryResult:
+        self._require_capability(Capability.SFTP_READ)
+        result = self._request("sftp.list", list_directory_request_to_wire(request))
+        try:
+            return list_directory_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid directory listing")
+
+    def sftp_stat(self, request: SftpPathRequest) -> RemoteFileEntry:
+        self._require_capability(Capability.SFTP_METADATA)
+        result = self._request("sftp.stat", sftp_path_request_to_wire(request))
+        try:
+            return remote_file_entry_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid file entry")
+
+    def sftp_lstat(self, request: SftpPathRequest) -> RemoteFileEntry:
+        self._require_capability(Capability.SFTP_METADATA)
+        result = self._request("sftp.lstat", sftp_path_request_to_wire(request))
+        try:
+            return remote_file_entry_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid file entry")
+
+    def sftp_realpath(self, request: SftpPathRequest) -> str:
+        self._require_capability(Capability.SFTP_METADATA)
+        result = self._request("sftp.realpath", sftp_path_request_to_wire(request))
+        if type(result) is not dict or type(result.get("path")) is not str:
+            self._fail_protocol("The daemon returned an invalid realpath result")
+        return result["path"]
+
+    def sftp_readlink(self, request: SftpPathRequest) -> str:
+        self._require_capability(Capability.SFTP_METADATA)
+        result = self._request("sftp.readlink", sftp_path_request_to_wire(request))
+        if type(result) is not dict or type(result.get("path")) is not str:
+            self._fail_protocol("The daemon returned an invalid readlink result")
+        return result["path"]
+
+    def sftp_mkdir(self, request: SftpPathRequest) -> None:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.mkdir", sftp_path_request_to_wire(request))
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid mkdir result")
+
+    def sftp_rmdir(self, request: SftpPathRequest) -> None:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.rmdir", sftp_path_request_to_wire(request))
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid rmdir result")
+
+    def sftp_remove(self, request: SftpPathRequest) -> None:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.remove", sftp_path_request_to_wire(request))
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid remove result")
+
+    def sftp_rename(self, request: SftpRenameRequest) -> None:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.rename", sftp_rename_request_to_wire(request))
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid rename result")
+
+    def sftp_chmod(self, request: SftpChmodRequest) -> None:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.chmod", sftp_chmod_request_to_wire(request))
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid chmod result")
+
+    def sftp_symlink(self, request: SftpSymlinkRequest) -> None:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.symlink", sftp_symlink_request_to_wire(request))
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid symlink result")
+
+    # -- transfers --------------------------------------------------------
+    def list_transfers(self) -> List[TransferSummary]:
+        self._require_capability(Capability.TRANSFERS_READ)
+        result = self._request("transfers.list", {})
+        if type(result) is not list:
+            self._fail_protocol("The daemon returned an invalid transfer list")
+        try:
+            return [transfer_summary_from_wire(item) for item in result]
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid transfer list")
+
+    def get_transfer(self, transfer_id: TransferId) -> TransferSummary:
+        self._require_capability(Capability.TRANSFERS_READ)
+        result = self._request("transfers.get", {"transfer_id": transfer_id})
+        try:
+            return transfer_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid transfer summary")
+
+    def start_transfer(self, request: StartTransferRequest) -> TransferSummary:
+        self._require_capability(Capability.TRANSFERS_WRITE)
+        result = self._request(
+            "transfers.start",
+            start_transfer_request_to_wire(request),
+            session_mutation=True,
+        )
+        try:
+            return transfer_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid transfer summary")
+
+    def cancel_transfer(self, request: CancelTransferRequest) -> None:
+        self._require_capability(Capability.TRANSFERS_WRITE)
+        result = self._request(
+            "transfers.cancel",
+            cancel_transfer_request_to_wire(request),
+            session_mutation=True,
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid cancel result")
+
+    # -- forwards -----------------------------------------------------
+    def list_forwards(self) -> List[ForwardSummary]:
+        self._require_capability(Capability.FORWARDS_READ)
+        result = self._request("forwards.list", {})
+        if type(result) is not list:
+            self._fail_protocol("The daemon returned an invalid forward list")
+        try:
+            return [forward_summary_from_wire(item) for item in result]
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid forward list")
+
+    def get_forward(self, forward_id: ForwardId) -> ForwardSummary:
+        self._require_capability(Capability.FORWARDS_READ)
+        result = self._request("forwards.get", {"forward_id": forward_id})
+        try:
+            return forward_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid forward summary")
+
+    def open_forward(self, request: OpenForwardRequest) -> ForwardSummary:
+        self._require_capability(Capability.FORWARDS_WRITE)
+        result = self._request(
+            "forwards.open",
+            open_forward_request_to_wire(request),
+            session_mutation=True,
+        )
+        try:
+            return forward_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid forward summary")
+
+    def close_forward(self, request: CloseForwardRequest) -> None:
+        self._require_capability(Capability.FORWARDS_WRITE)
+        result = self._request(
+            "forwards.close",
+            close_forward_request_to_wire(request),
+            mutation_session_id=SessionId(str(request.forward_id)),
+            session_mutation=True,
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid forward close result")
 
     def send_terminal_input(self, request: TerminalInput) -> None:
         self._require_capability(Capability.TERMINAL_INPUT)

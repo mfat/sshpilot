@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import AbstractSet, Any, Dict, Iterable, Union
+from typing import AbstractSet, Any, Dict, Iterable, Optional, Union
 
 from .._safe_values import copy_safe_details
 from ..capabilities import Capabilities, Capability
@@ -16,8 +16,11 @@ from ..models.common import (
     CompatibilityResult,
     ConnectionId,
     CoreInfo,
+    ForwardId,
     InteractionId,
     SessionId,
+    SftpServiceId,
+    TransferId,
 )
 from ..models.interactions import (
     HostKeyDecision,
@@ -67,7 +70,40 @@ from ..models.terminal import (
     ResizeTerminalRequest,
     TerminalDimensions,
 )
+from ..models.operations import (
+    AttachSftpRequest,
+    CloseSftpRequest,
+    ForwardSummary,
+    ForwardType,
+    ForwardState,
+    CloseForwardRequest,
+    ListDirectoryRequest,
+    ListDirectoryResult,
+    OpenForwardRequest,
+    OpenSftpRequest,
+    RemoteFileEntry,
+    RemoteFileType,
+    ServiceFailure,
+    SftpChmodRequest,
+    SftpPathRequest,
+    SftpRenameRequest,
+    SftpServiceState,
+    SftpServiceSummary,
+    SftpSymlinkRequest,
+)
+from ..models.transfers import (
+    CancelTransferRequest,
+    StartTransferRequest,
+    TransferConflictPolicy,
+    TransferDirection,
+    TransferLocalMode,
+    TransferState,
+    TransferSummary,
+)
+from ..forward_identity import forward_id_from_uuid, forward_uuid_from_id
 from ..session_identity import session_id_from_uuid, session_uuid_from_id
+from ..sftp_identity import sftp_id_from_uuid, sftp_uuid_from_id
+from ..transfer_identity import transfer_id_from_uuid, transfer_uuid_from_id
 from .envelopes import (
     ErrorData,
     ErrorResponseEnvelope,
@@ -112,6 +148,30 @@ def _session_id(value: Any, context: str) -> SessionId:
     text = _identifier(value, context)
     try:
         return SessionId(session_id_from_uuid(session_uuid_from_id(text)))
+    except (TypeError, ValueError):
+        raise ValueError(f"{context} is malformed") from None
+
+
+def _sftp_service_id(value: Any, context: str) -> SftpServiceId:
+    text = _identifier(value, context)
+    try:
+        return SftpServiceId(sftp_id_from_uuid(sftp_uuid_from_id(text)))
+    except (TypeError, ValueError):
+        raise ValueError(f"{context} is malformed") from None
+
+
+def _transfer_id(value: Any, context: str) -> TransferId:
+    text = _identifier(value, context)
+    try:
+        return TransferId(transfer_id_from_uuid(transfer_uuid_from_id(text)))
+    except (TypeError, ValueError):
+        raise ValueError(f"{context} is malformed") from None
+
+
+def _forward_id(value: Any, context: str) -> ForwardId:
+    text = _identifier(value, context)
+    try:
+        return ForwardId(forward_id_from_uuid(forward_uuid_from_id(text)))
     except (TypeError, ValueError):
         raise ValueError(f"{context} is malformed") from None
 
@@ -332,8 +392,41 @@ _INTERACTION_EVENT_TYPES = frozenset(
         EventType.INTERACTION_STATE_CHANGED,
     }
 )
+_SFTP_EVENT_TYPES = frozenset(
+    {
+        EventType.SFTP_CREATED,
+        EventType.SFTP_STATE_CHANGED,
+        EventType.SFTP_CLOSED,
+        EventType.SFTP_FAILED,
+    }
+)
+_TRANSFER_EVENT_TYPES = frozenset(
+    {
+        EventType.TRANSFER_CREATED,
+        EventType.TRANSFER_STARTED,
+        EventType.TRANSFER_PROGRESS,
+        EventType.TRANSFER_ITEM_COMPLETED,
+        EventType.TRANSFER_COMPLETED,
+        EventType.TRANSFER_CANCELLED,
+        EventType.TRANSFER_FAILED,
+    }
+)
+_FORWARD_EVENT_TYPES = frozenset(
+    {
+        EventType.FORWARD_CREATED,
+        EventType.FORWARD_STARTING,
+        EventType.FORWARD_ACTIVE,
+        EventType.FORWARD_CLOSED,
+        EventType.FORWARD_FAILED,
+    }
+)
 _FORWARDED_EVENT_TYPES = (
-    _CONNECTION_EVENT_TYPES | _SESSION_EVENT_TYPES | _INTERACTION_EVENT_TYPES
+    _CONNECTION_EVENT_TYPES
+    | _SESSION_EVENT_TYPES
+    | _INTERACTION_EVENT_TYPES
+    | _SFTP_EVENT_TYPES
+    | _TRANSFER_EVENT_TYPES
+    | _FORWARD_EVENT_TYPES
 )
 
 
@@ -364,6 +457,18 @@ def public_event_to_envelope(
             "session_id": event.session_id,
             "exit_info": session_exit_info_to_wire(event.payload),
         }
+    elif event.type in _SFTP_EVENT_TYPES:
+        if type(event.payload) is not SftpServiceSummary:
+            raise TypeError("SFTP event payload must be SftpServiceSummary")
+        payload = sftp_service_summary_to_wire(event.payload)
+    elif event.type in _TRANSFER_EVENT_TYPES:
+        if type(event.payload) is not TransferSummary:
+            raise TypeError("transfer event payload must be TransferSummary")
+        payload = transfer_summary_to_wire(event.payload)
+    elif event.type in _FORWARD_EVENT_TYPES:
+        if type(event.payload) is not ForwardSummary:
+            raise TypeError("forward event payload must be ForwardSummary")
+        payload = forward_summary_to_wire(event.payload)
     else:
         if type(event.payload) is not SessionSummary:
             raise TypeError("session event payload must be SessionSummary")
@@ -420,6 +525,32 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             payload=exit_info,
             sequence=envelope.sequence,
             session_id=session_id,
+        )
+    if event_type in _SFTP_EVENT_TYPES:
+        sftp_summary = sftp_service_summary_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=sftp_summary,
+            sequence=envelope.sequence,
+            connection_id=sftp_summary.connection_id,
+            session_id=SessionId(str(sftp_summary.id)),
+        )
+    if event_type in _TRANSFER_EVENT_TYPES:
+        transfer_summary = transfer_summary_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=transfer_summary,
+            sequence=envelope.sequence,
+            connection_id=transfer_summary.connection_id,
+        )
+    if event_type in _FORWARD_EVENT_TYPES:
+        forward_summary = forward_summary_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=forward_summary,
+            sequence=envelope.sequence,
+            connection_id=forward_summary.connection_id,
+            session_id=SessionId(str(forward_summary.id)),
         )
     summary = session_summary_from_wire(dict(envelope.payload))
     return CoreEvent(
@@ -1691,3 +1822,654 @@ def interaction_decision_from_wire(value: Any) -> InteractionDecisionRequest:
             _identifier(data["remember_policy"], "remember policy")
         ),
     )
+
+
+# -- SFTP / transfer / forward (Phase 10) ------------------------------------
+
+
+def _service_failure_to_wire(failure: Optional[ServiceFailure]) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is not ServiceFailure:
+        raise TypeError("service failure must be a ServiceFailure or None")
+    return {"code": failure.code, "message": failure.message}
+
+
+def _service_failure_from_wire(value: Any) -> Optional[ServiceFailure]:
+    if value is None:
+        return None
+    data = _strict_fields(value, required={"code", "message"}, context="service failure")
+    return ServiceFailure(
+        code=_identifier(data["code"], "service failure code"),
+        message=_identifier(data["message"], "service failure message"),
+    )
+
+
+def _optional_datetime_to_wire(value: Optional[datetime], context: str) -> Optional[str]:
+    return _datetime_to_wire(value, context) if value is not None else None
+
+
+def _optional_datetime_from_wire(value: Any, context: str) -> Optional[datetime]:
+    return _datetime_from_wire(value, context) if value is not None else None
+
+
+def _optional_client_id(value: Any, context: str) -> Optional[ClientId]:
+    if value is None:
+        return None
+    return ClientId(_identifier(value, context))
+
+
+def sftp_service_summary_to_wire(summary: SftpServiceSummary) -> Dict[str, Any]:
+    if type(summary) is not SftpServiceSummary:
+        raise TypeError("SFTP service summary is required")
+    return {
+        "id": summary.id,
+        "connection_id": summary.connection_id,
+        "state": summary.state.value,
+        "created_at": _datetime_to_wire(summary.created_at, "SFTP service creation time"),
+        "started_at": _optional_datetime_to_wire(summary.started_at, "SFTP service start time"),
+        "closed_at": _optional_datetime_to_wire(summary.closed_at, "SFTP service close time"),
+        "attachment_count": summary.attachment_count,
+        "owner_client_id": summary.owner_client_id,
+        "failure": _service_failure_to_wire(summary.failure),
+    }
+
+
+def sftp_service_summary_from_wire(value: Any) -> SftpServiceSummary:
+    data = _strict_fields(
+        value,
+        required={
+            "id",
+            "connection_id",
+            "state",
+            "created_at",
+            "started_at",
+            "closed_at",
+            "attachment_count",
+            "owner_client_id",
+            "failure",
+        },
+        context="SFTP service summary",
+    )
+    try:
+        state = SftpServiceState(data["state"])
+    except (TypeError, ValueError):
+        raise ValueError("SFTP service summary contains an unknown state") from None
+    return SftpServiceSummary(
+        id=_sftp_service_id(data["id"], "SFTP service id"),
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "SFTP service connection id")
+        ),
+        state=state,
+        created_at=_datetime_from_wire(data["created_at"], "SFTP service creation time"),
+        started_at=_optional_datetime_from_wire(
+            data["started_at"], "SFTP service start time"
+        ),
+        closed_at=_optional_datetime_from_wire(data["closed_at"], "SFTP service close time"),
+        attachment_count=_integer(data["attachment_count"], "SFTP attachment count"),
+        owner_client_id=_optional_client_id(
+            data["owner_client_id"], "SFTP owner client id"
+        ),
+        failure=_service_failure_from_wire(data["failure"]),
+    )
+
+
+def open_sftp_request_to_wire(request: OpenSftpRequest) -> Dict[str, Any]:
+    if type(request) is not OpenSftpRequest:
+        raise TypeError("open SFTP request is required")
+    return {"connection_id": request.connection_id}
+
+
+def open_sftp_request_from_wire(value: Any) -> OpenSftpRequest:
+    data = _strict_fields(value, required={"connection_id"}, context="open SFTP request")
+    return OpenSftpRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id"))
+    )
+
+
+def close_sftp_request_to_wire(request: CloseSftpRequest) -> Dict[str, Any]:
+    if type(request) is not CloseSftpRequest:
+        raise TypeError("close SFTP request is required")
+    return {"service_id": request.service_id}
+
+
+def close_sftp_request_from_wire(value: Any) -> CloseSftpRequest:
+    data = _strict_fields(value, required={"service_id"}, context="close SFTP request")
+    return CloseSftpRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id")
+    )
+
+
+def attach_sftp_request_to_wire(request: AttachSftpRequest) -> Dict[str, Any]:
+    if type(request) is not AttachSftpRequest:
+        raise TypeError("attach SFTP request is required")
+    return {"service_id": request.service_id}
+
+
+def attach_sftp_request_from_wire(value: Any) -> AttachSftpRequest:
+    data = _strict_fields(value, required={"service_id"}, context="attach SFTP request")
+    return AttachSftpRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id")
+    )
+
+
+def remote_file_entry_to_wire(entry: RemoteFileEntry) -> Dict[str, Any]:
+    if type(entry) is not RemoteFileEntry:
+        raise TypeError("remote file entry is required")
+    return {
+        "name": entry.name,
+        "path": entry.path,
+        "file_type": entry.file_type.value,
+        "size": entry.size,
+        "mode": entry.mode,
+        "uid": entry.uid,
+        "gid": entry.gid,
+        "modified_at": _optional_datetime_to_wire(entry.modified_at, "remote file mtime"),
+        "link_target": entry.link_target,
+    }
+
+
+def remote_file_entry_from_wire(value: Any) -> RemoteFileEntry:
+    data = _strict_fields(
+        value,
+        required={
+            "name",
+            "path",
+            "file_type",
+            "size",
+            "mode",
+            "uid",
+            "gid",
+            "modified_at",
+            "link_target",
+        },
+        context="remote file entry",
+    )
+    try:
+        file_type = RemoteFileType(data["file_type"])
+    except (TypeError, ValueError):
+        raise ValueError("remote file entry contains an unknown file type") from None
+    size = data["size"]
+    if size is not None:
+        size = _integer(size, "remote file size")
+    mode = data["mode"]
+    if mode is not None:
+        mode = _integer(mode, "remote file mode")
+    uid = data["uid"]
+    if uid is not None:
+        uid = _integer(uid, "remote file uid")
+    gid = data["gid"]
+    if gid is not None:
+        gid = _integer(gid, "remote file gid")
+    link_target = data["link_target"]
+    if link_target is not None:
+        link_target = _text(link_target, "remote file link target")
+    return RemoteFileEntry(
+        name=_text(data["name"], "remote file name"),
+        path=_text(data["path"], "remote file path"),
+        file_type=file_type,
+        size=size,
+        mode=mode,
+        uid=uid,
+        gid=gid,
+        modified_at=_optional_datetime_from_wire(data["modified_at"], "remote file mtime"),
+        link_target=link_target,
+    )
+
+
+def list_directory_request_to_wire(request: ListDirectoryRequest) -> Dict[str, Any]:
+    if type(request) is not ListDirectoryRequest:
+        raise TypeError("list directory request is required")
+    return {
+        "connection_id": request.connection_id,
+        "path": request.path,
+        "service_id": request.service_id,
+        "cursor": request.cursor,
+        "limit": request.limit,
+    }
+
+
+def list_directory_request_from_wire(value: Any) -> ListDirectoryRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "path"},
+        optional={"service_id", "cursor", "limit"},
+        context="list directory request",
+    )
+    service_id = data.get("service_id")
+    limit = data.get("limit")
+    if limit is not None:
+        limit = _integer(limit, "SFTP list limit")
+    cursor = data.get("cursor")
+    if cursor is not None:
+        cursor = _text(cursor, "SFTP list cursor", allow_empty=True)
+    return ListDirectoryRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
+        path=_text(data["path"], "SFTP path"),
+        service_id=(
+            _sftp_service_id(service_id, "SFTP service id") if service_id is not None else None
+        ),
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+def list_directory_result_to_wire(result: ListDirectoryResult) -> Dict[str, Any]:
+    if type(result) is not ListDirectoryResult:
+        raise TypeError("list directory result is required")
+    return {
+        "path": result.path,
+        "entries": [remote_file_entry_to_wire(entry) for entry in result.entries],
+        "truncated": result.truncated,
+        "next_cursor": result.next_cursor,
+    }
+
+
+def list_directory_result_from_wire(value: Any) -> ListDirectoryResult:
+    data = _strict_fields(
+        value,
+        required={"path", "entries", "truncated", "next_cursor"},
+        context="list directory result",
+    )
+    entries = data["entries"]
+    if type(entries) is not list:
+        raise ValueError("list directory entries must be an array")
+    next_cursor = data["next_cursor"]
+    if next_cursor is not None:
+        next_cursor = _text(next_cursor, "SFTP list next cursor", allow_empty=True)
+    return ListDirectoryResult(
+        path=_text(data["path"], "list directory path"),
+        entries=tuple(remote_file_entry_from_wire(item) for item in entries),
+        truncated=_boolean(data["truncated"], "truncated"),
+        next_cursor=next_cursor,
+    )
+
+
+def sftp_path_request_to_wire(request: SftpPathRequest) -> Dict[str, Any]:
+    if type(request) is not SftpPathRequest:
+        raise TypeError("SFTP path request is required")
+    return {"service_id": request.service_id, "path": request.path}
+
+
+def sftp_path_request_from_wire(value: Any) -> SftpPathRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "path"},
+        context="SFTP path request",
+    )
+    return SftpPathRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        path=_text(data["path"], "SFTP path"),
+    )
+
+
+def sftp_rename_request_to_wire(request: SftpRenameRequest) -> Dict[str, Any]:
+    if type(request) is not SftpRenameRequest:
+        raise TypeError("SFTP rename request is required")
+    return {
+        "service_id": request.service_id,
+        "source_path": request.source_path,
+        "destination_path": request.destination_path,
+        "overwrite": request.overwrite,
+    }
+
+
+def sftp_rename_request_from_wire(value: Any) -> SftpRenameRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "source_path", "destination_path"},
+        optional={"overwrite"},
+        context="SFTP rename request",
+    )
+    overwrite = data.get("overwrite", False)
+    return SftpRenameRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        source_path=_text(data["source_path"], "SFTP rename source path"),
+        destination_path=_text(
+            data["destination_path"], "SFTP rename destination path"
+        ),
+        overwrite=_boolean(overwrite, "SFTP rename overwrite"),
+    )
+
+
+def sftp_chmod_request_to_wire(request: SftpChmodRequest) -> Dict[str, Any]:
+    if type(request) is not SftpChmodRequest:
+        raise TypeError("SFTP chmod request is required")
+    return {"service_id": request.service_id, "path": request.path, "mode": request.mode}
+
+
+def sftp_chmod_request_from_wire(value: Any) -> SftpChmodRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "path", "mode"},
+        context="SFTP chmod request",
+    )
+    return SftpChmodRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        path=_text(data["path"], "SFTP path"),
+        mode=_integer(data["mode"], "SFTP chmod mode"),
+    )
+
+
+def sftp_symlink_request_to_wire(request: SftpSymlinkRequest) -> Dict[str, Any]:
+    if type(request) is not SftpSymlinkRequest:
+        raise TypeError("SFTP symlink request is required")
+    return {
+        "service_id": request.service_id,
+        "target_path": request.target_path,
+        "link_path": request.link_path,
+    }
+
+
+def sftp_symlink_request_from_wire(value: Any) -> SftpSymlinkRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "target_path", "link_path"},
+        context="SFTP symlink request",
+    )
+    return SftpSymlinkRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        target_path=_text(data["target_path"], "SFTP symlink target path"),
+        link_path=_text(data["link_path"], "SFTP symlink link path"),
+    )
+
+
+def transfer_summary_to_wire(summary: TransferSummary) -> Dict[str, Any]:
+    if type(summary) is not TransferSummary:
+        raise TypeError("transfer summary is required")
+    return {
+        "id": summary.id,
+        "connection_id": summary.connection_id,
+        "sftp_service_id": summary.sftp_service_id,
+        "direction": summary.direction.value,
+        "state": summary.state.value,
+        "source_display": summary.source_display,
+        "destination_display": summary.destination_display,
+        "bytes_total": summary.bytes_total,
+        "bytes_completed": summary.bytes_completed,
+        "created_at": _datetime_to_wire(summary.created_at, "transfer creation time"),
+        "started_at": _optional_datetime_to_wire(summary.started_at, "transfer start time"),
+        "completed_at": _optional_datetime_to_wire(
+            summary.completed_at, "transfer completion time"
+        ),
+        "owner_client_id": summary.owner_client_id,
+        "failure": _service_failure_to_wire(summary.failure),
+    }
+
+
+def transfer_summary_from_wire(value: Any) -> TransferSummary:
+    data = _strict_fields(
+        value,
+        required={
+            "id",
+            "connection_id",
+            "sftp_service_id",
+            "direction",
+            "state",
+            "source_display",
+            "destination_display",
+            "bytes_total",
+            "bytes_completed",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "owner_client_id",
+            "failure",
+        },
+        context="transfer summary",
+    )
+    try:
+        direction = TransferDirection(data["direction"])
+    except (TypeError, ValueError):
+        raise ValueError("transfer summary contains an unknown direction") from None
+    try:
+        state = TransferState(data["state"])
+    except (TypeError, ValueError):
+        raise ValueError("transfer summary contains an unknown state") from None
+    bytes_total = data["bytes_total"]
+    if bytes_total is not None:
+        bytes_total = _integer(bytes_total, "transfer total bytes")
+    return TransferSummary(
+        id=_transfer_id(data["id"], "transfer id"),
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "transfer connection id")
+        ),
+        sftp_service_id=_sftp_service_id(
+            data["sftp_service_id"], "transfer SFTP service id"
+        ),
+        direction=direction,
+        state=state,
+        source_display=_text(data["source_display"], "transfer source display"),
+        destination_display=_text(
+            data["destination_display"], "transfer destination display"
+        ),
+        bytes_total=bytes_total,
+        bytes_completed=_integer(data["bytes_completed"], "transfer completed bytes"),
+        created_at=_datetime_from_wire(data["created_at"], "transfer creation time"),
+        started_at=_optional_datetime_from_wire(data["started_at"], "transfer start time"),
+        completed_at=_optional_datetime_from_wire(
+            data["completed_at"], "transfer completion time"
+        ),
+        owner_client_id=_optional_client_id(
+            data["owner_client_id"], "transfer owner client id"
+        ),
+        failure=_service_failure_from_wire(data["failure"]),
+    )
+
+
+def start_transfer_request_to_wire(request: StartTransferRequest) -> Dict[str, Any]:
+    if type(request) is not StartTransferRequest:
+        raise TypeError("start transfer request is required")
+    return {
+        "connection_id": request.connection_id,
+        "sftp_service_id": request.sftp_service_id,
+        "direction": request.direction.value,
+        "remote_path": request.remote_path,
+        "local_path": request.local_path,
+        "conflict_policy": request.conflict_policy.value,
+        "recursive": request.recursive,
+        "local_mode": request.local_mode.value,
+    }
+
+
+def start_transfer_request_from_wire(value: Any) -> StartTransferRequest:
+    data = _strict_fields(
+        value,
+        required={
+            "connection_id",
+            "sftp_service_id",
+            "direction",
+            "remote_path",
+            "local_path",
+        },
+        optional={"conflict_policy", "recursive", "local_mode"},
+        context="start transfer request",
+    )
+    try:
+        direction = TransferDirection(_identifier(data["direction"], "transfer direction"))
+    except (TypeError, ValueError):
+        raise ValueError("start transfer request contains an unknown direction") from None
+    conflict_policy = data.get("conflict_policy")
+    try:
+        conflict_policy = (
+            TransferConflictPolicy(conflict_policy)
+            if conflict_policy is not None
+            else TransferConflictPolicy.FAIL
+        )
+    except ValueError:
+        raise ValueError(
+            "start transfer request contains an unknown conflict policy"
+        ) from None
+    local_mode = data.get("local_mode")
+    try:
+        local_mode = (
+            TransferLocalMode(local_mode)
+            if local_mode is not None
+            else TransferLocalMode.DAEMON_PATH
+        )
+    except ValueError:
+        raise ValueError("start transfer request contains an unknown local mode") from None
+    recursive = data.get("recursive", False)
+    return StartTransferRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
+        sftp_service_id=_sftp_service_id(
+            data["sftp_service_id"], "transfer SFTP service id"
+        ),
+        direction=direction,
+        remote_path=_text(data["remote_path"], "transfer remote path"),
+        local_path=_text(data["local_path"], "transfer local path"),
+        conflict_policy=conflict_policy,
+        recursive=_boolean(recursive, "transfer recursive flag"),
+        local_mode=local_mode,
+    )
+
+
+def cancel_transfer_request_to_wire(request: CancelTransferRequest) -> Dict[str, Any]:
+    if type(request) is not CancelTransferRequest:
+        raise TypeError("cancel transfer request is required")
+    return {"transfer_id": request.transfer_id}
+
+
+def cancel_transfer_request_from_wire(value: Any) -> CancelTransferRequest:
+    data = _strict_fields(
+        value,
+        required={"transfer_id"},
+        context="cancel transfer request",
+    )
+    return CancelTransferRequest(
+        transfer_id=_transfer_id(data["transfer_id"], "transfer id")
+    )
+
+
+def forward_summary_to_wire(summary: ForwardSummary) -> Dict[str, Any]:
+    if type(summary) is not ForwardSummary:
+        raise TypeError("forward summary is required")
+    return {
+        "id": summary.id,
+        "connection_id": summary.connection_id,
+        "type": summary.type.value,
+        "state": summary.state.value,
+        "bind_host": summary.bind_host,
+        "bind_port": summary.bind_port,
+        "destination_host": summary.destination_host,
+        "destination_port": summary.destination_port,
+        "created_at": _datetime_to_wire(summary.created_at, "forward creation time"),
+        "active_at": _optional_datetime_to_wire(summary.active_at, "forward active time"),
+        "closed_at": _optional_datetime_to_wire(summary.closed_at, "forward close time"),
+        "owner_client_id": summary.owner_client_id,
+        "failure": _service_failure_to_wire(summary.failure),
+        "session_id": summary.session_id,
+    }
+
+
+def forward_summary_from_wire(value: Any) -> ForwardSummary:
+    data = _strict_fields(
+        value,
+        required={
+            "id",
+            "connection_id",
+            "type",
+            "state",
+            "bind_host",
+            "bind_port",
+            "destination_host",
+            "destination_port",
+            "created_at",
+            "active_at",
+            "closed_at",
+            "owner_client_id",
+            "failure",
+            "session_id",
+        },
+        context="forward summary",
+    )
+    try:
+        forward_type = ForwardType(data["type"])
+    except (TypeError, ValueError):
+        raise ValueError("forward summary contains an unknown type") from None
+    try:
+        state = ForwardState(data["state"])
+    except (TypeError, ValueError):
+        raise ValueError("forward summary contains an unknown state") from None
+    destination_host = data["destination_host"]
+    if destination_host is not None:
+        destination_host = _text(destination_host, "forward destination host")
+    destination_port = data["destination_port"]
+    if destination_port is not None:
+        destination_port = _integer(destination_port, "forward destination port")
+    session_id = data["session_id"]
+    if session_id is not None:
+        session_id = _session_id(session_id, "forward session id")
+    return ForwardSummary(
+        id=_forward_id(data["id"], "forward id"),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "forward connection id")),
+        type=forward_type,
+        state=state,
+        bind_host=_text(data["bind_host"], "forward bind host"),
+        bind_port=_integer(data["bind_port"], "forward bind port"),
+        destination_host=destination_host,
+        destination_port=destination_port,
+        created_at=_datetime_from_wire(data["created_at"], "forward creation time"),
+        active_at=_optional_datetime_from_wire(data["active_at"], "forward active time"),
+        closed_at=_optional_datetime_from_wire(data["closed_at"], "forward close time"),
+        owner_client_id=_optional_client_id(
+            data["owner_client_id"], "forward owner client id"
+        ),
+        failure=_service_failure_from_wire(data["failure"]),
+        session_id=session_id,
+    )
+
+
+def open_forward_request_to_wire(request: OpenForwardRequest) -> Dict[str, Any]:
+    if type(request) is not OpenForwardRequest:
+        raise TypeError("open forward request is required")
+    return {
+        "connection_id": request.connection_id,
+        "type": request.type.value,
+        "bind_host": request.bind_host,
+        "bind_port": request.bind_port,
+        "destination_host": request.destination_host,
+        "destination_port": request.destination_port,
+    }
+
+
+def open_forward_request_from_wire(value: Any) -> OpenForwardRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "type", "bind_host", "bind_port"},
+        optional={"destination_host", "destination_port"},
+        context="open forward request",
+    )
+    try:
+        forward_type = ForwardType(_identifier(data["type"], "forward type"))
+    except (TypeError, ValueError):
+        raise ValueError("open forward request contains an unknown type") from None
+    destination_host = data.get("destination_host")
+    if destination_host is not None:
+        destination_host = _text(destination_host, "forward destination host")
+    destination_port = data.get("destination_port")
+    if destination_port is not None:
+        destination_port = _integer(destination_port, "forward destination port")
+    return OpenForwardRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
+        type=forward_type,
+        bind_host=_text(data["bind_host"], "forward bind host"),
+        bind_port=_integer(data["bind_port"], "forward bind port"),
+        destination_host=destination_host,
+        destination_port=destination_port,
+    )
+
+
+def close_forward_request_to_wire(request: CloseForwardRequest) -> Dict[str, Any]:
+    if type(request) is not CloseForwardRequest:
+        raise TypeError("close forward request is required")
+    return {"forward_id": request.forward_id}
+
+
+def close_forward_request_from_wire(value: Any) -> CloseForwardRequest:
+    data = _strict_fields(
+        value,
+        required={"forward_id"},
+        context="close forward request",
+    )
+    return CloseForwardRequest(forward_id=_forward_id(data["forward_id"], "forward id"))

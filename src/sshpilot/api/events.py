@@ -14,8 +14,10 @@ from ._safe_values import copy_safe_details
 from .models.common import ConnectionId, RequestId, SessionId, utc_now
 from .models.connections import ConnectionSummary
 from .models.interactions import InteractionRequest, InteractionSummary
+from .models.operations import ForwardSummary, SftpServiceSummary
 from .models.sessions import SessionExitInfo, SessionSummary
 from .models.terminal import TerminalOutput
+from .models.transfers import TransferSummary
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,22 @@ class EventType(str, Enum):
     SESSION_CLOSED = "session.closed"
     INTERACTION_CREATED = "interaction.created"
     INTERACTION_STATE_CHANGED = "interaction.state_changed"
+    SFTP_CREATED = "sftp.created"
+    SFTP_STATE_CHANGED = "sftp.state_changed"
+    SFTP_CLOSED = "sftp.closed"
+    SFTP_FAILED = "sftp.failed"
+    TRANSFER_CREATED = "transfer.created"
+    TRANSFER_STARTED = "transfer.started"
+    TRANSFER_PROGRESS = "transfer.progress"
+    TRANSFER_ITEM_COMPLETED = "transfer.item_completed"
+    TRANSFER_COMPLETED = "transfer.completed"
+    TRANSFER_CANCELLED = "transfer.cancelled"
+    TRANSFER_FAILED = "transfer.failed"
+    FORWARD_CREATED = "forward.created"
+    FORWARD_STARTING = "forward.starting"
+    FORWARD_ACTIVE = "forward.active"
+    FORWARD_CLOSED = "forward.closed"
+    FORWARD_FAILED = "forward.failed"
     ERROR_OCCURRED = "error.occurred"
 
 
@@ -87,6 +105,22 @@ _EVENT_PAYLOAD_TYPES = {
     EventType.SESSION_CLOSED: SessionSummary,
     EventType.INTERACTION_CREATED: InteractionSummary,
     EventType.INTERACTION_STATE_CHANGED: InteractionSummary,
+    EventType.SFTP_CREATED: SftpServiceSummary,
+    EventType.SFTP_STATE_CHANGED: SftpServiceSummary,
+    EventType.SFTP_CLOSED: SftpServiceSummary,
+    EventType.SFTP_FAILED: SftpServiceSummary,
+    EventType.TRANSFER_CREATED: TransferSummary,
+    EventType.TRANSFER_STARTED: TransferSummary,
+    EventType.TRANSFER_PROGRESS: TransferSummary,
+    EventType.TRANSFER_ITEM_COMPLETED: TransferSummary,
+    EventType.TRANSFER_COMPLETED: TransferSummary,
+    EventType.TRANSFER_CANCELLED: TransferSummary,
+    EventType.TRANSFER_FAILED: TransferSummary,
+    EventType.FORWARD_CREATED: ForwardSummary,
+    EventType.FORWARD_STARTING: ForwardSummary,
+    EventType.FORWARD_ACTIVE: ForwardSummary,
+    EventType.FORWARD_CLOSED: ForwardSummary,
+    EventType.FORWARD_FAILED: ForwardSummary,
     EventType.ERROR_OCCURRED: Mapping,
 }
 

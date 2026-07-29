@@ -10,6 +10,8 @@ SessionId = NewType("SessionId", str)
 RequestId = NewType("RequestId", str)
 InteractionId = NewType("InteractionId", str)
 TransferId = NewType("TransferId", str)
+SftpServiceId = NewType("SftpServiceId", str)
+ForwardId = NewType("ForwardId", str)
 ClientId = NewType("ClientId", str)
 AttachmentId = NewType("AttachmentId", str)
 

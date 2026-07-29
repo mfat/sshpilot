@@ -33,31 +33,81 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `respond_to_interaction` | Daemon only | `interactions.respond` |
 | `cancel_interaction` | Daemon only | `interactions.respond` |
 | `send_interaction_secret` | Daemon only | `interactions.respond` |
+| `list_sftp_services` | Daemon only | `sftp.read` |
+| `get_sftp_service` | Daemon only | `sftp.read` |
+| `open_sftp` | Daemon only | `sftp.write` |
+| `attach_sftp` | Daemon only | `sftp.write` |
+| `detach_sftp` | Daemon only | `sftp.write` |
+| `close_sftp` | Daemon only | `sftp.write` |
+| `sftp_list_directory` | Daemon only | `sftp.read` |
+| `sftp_stat` | Daemon only | `sftp.metadata` |
+| `sftp_lstat` | Daemon only | `sftp.metadata` |
+| `sftp_realpath` | Daemon only | `sftp.metadata` |
+| `sftp_readlink` | Daemon only | `sftp.metadata` |
+| `sftp_mkdir` | Daemon only | `sftp.mutate` |
+| `sftp_rmdir` | Daemon only | `sftp.mutate` |
+| `sftp_remove` | Daemon only | `sftp.mutate` |
+| `sftp_rename` | Daemon only | `sftp.mutate` |
+| `sftp_chmod` | Daemon only | `sftp.mutate` |
+| `sftp_symlink` | Daemon only | `sftp.mutate` |
+| `list_transfers` | Daemon only | `transfers.read` |
+| `get_transfer` | Daemon only | `transfers.read` |
+| `start_transfer` | Daemon only | `transfers.write` |
+| `cancel_transfer` | Daemon only | `transfers.write` |
+| `list_forwards` | Daemon only | `forwards.read` |
+| `get_forward` | Daemon only | `forwards.read` |
+| `open_forward` | Daemon only | `forwards.write` |
+| `close_forward` | Daemon only | `forwards.write` |
 | `subscribe_events` | Implemented | Bootstrap; event availability follows capabilities |
 | `close` | Implemented | None |
 
 <!-- api-method-contract: attach_session status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: attach_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: cancel_interaction status=daemon-only capability=interactions.respond -->
+<!-- api-method-contract: cancel_transfer status=daemon-only capability=transfers.write -->
 <!-- api-method-contract: claim_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: close status=implemented capability=none -->
+<!-- api-method-contract: close_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: close_session status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: close_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: detach_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
+<!-- api-method-contract: get_forward status=daemon-only capability=forwards.read -->
 <!-- api-method-contract: get_interaction status=daemon-only capability=interactions.read -->
 <!-- api-method-contract: get_session status=daemon-only capability=sessions.read -->
+<!-- api-method-contract: get_sftp_service status=daemon-only capability=sftp.read -->
+<!-- api-method-contract: get_transfer status=daemon-only capability=transfers.read -->
 <!-- api-method-contract: list_connections status=implemented capability=connections.read -->
+<!-- api-method-contract: list_forwards status=daemon-only capability=forwards.read -->
 <!-- api-method-contract: list_interactions status=daemon-only capability=interactions.read -->
 <!-- api-method-contract: list_sessions status=daemon-only capability=sessions.read -->
+<!-- api-method-contract: list_sftp_services status=daemon-only capability=sftp.read -->
+<!-- api-method-contract: list_transfers status=daemon-only capability=transfers.read -->
+<!-- api-method-contract: open_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: open_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: replay_terminal status=daemon-only capability=terminal.replay -->
 <!-- api-method-contract: release_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: resize_terminal status=daemon-only capability=terminal.resize -->
 <!-- api-method-contract: respond_to_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_interaction_secret status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: sftp_chmod status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_list_directory status=daemon-only capability=sftp.read -->
+<!-- api-method-contract: sftp_lstat status=daemon-only capability=sftp.metadata -->
+<!-- api-method-contract: sftp_mkdir status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_readlink status=daemon-only capability=sftp.metadata -->
+<!-- api-method-contract: sftp_realpath status=daemon-only capability=sftp.metadata -->
+<!-- api-method-contract: sftp_remove status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_rename status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_rmdir status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_stat status=daemon-only capability=sftp.metadata -->
+<!-- api-method-contract: sftp_symlink status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
 <!-- api-method-contract: claim_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: release_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
@@ -93,12 +143,41 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `terminal.resize` | `terminal.resize` | Implemented |
 | `terminal.claim_input` | `terminal.input` | Implemented |
 | `terminal.release_input` | `terminal.input` | Implemented |
+| `sftp.list_services` | `sftp.read` | Implemented |
+| `sftp.get_service` | `sftp.read` | Implemented |
+| `sftp.open` | `sftp.write` | Implemented |
+| `sftp.attach` | `sftp.write` | Implemented |
+| `sftp.detach` | `sftp.write` | Implemented |
+| `sftp.close` | `sftp.write` | Implemented |
+| `sftp.list` | `sftp.read` | Implemented |
+| `sftp.stat` | `sftp.metadata` | Implemented |
+| `sftp.lstat` | `sftp.metadata` | Implemented |
+| `sftp.realpath` | `sftp.metadata` | Implemented |
+| `sftp.readlink` | `sftp.metadata` | Implemented |
+| `sftp.mkdir` | `sftp.mutate` | Implemented |
+| `sftp.rmdir` | `sftp.mutate` | Implemented |
+| `sftp.rename` | `sftp.mutate` | Implemented |
+| `sftp.remove` | `sftp.mutate` | Implemented |
+| `sftp.chmod` | `sftp.mutate` | Implemented |
+| `sftp.symlink` | `sftp.mutate` | Implemented |
+| `transfers.list` | `transfers.read` | Implemented |
+| `transfers.get` | `transfers.read` | Implemented |
+| `transfers.start` | `transfers.write` | Implemented |
+| `transfers.cancel` | `transfers.write` | Implemented |
+| `forwards.list` | `forwards.read` | Implemented |
+| `forwards.get` | `forwards.read` | Implemented |
+| `forwards.open` | `forwards.write` | Implemented |
+| `forwards.close` | `forwards.write` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
+<!-- api-daemon-method: forwards.close capability=forwards.write -->
+<!-- api-daemon-method: forwards.get capability=forwards.read -->
+<!-- api-daemon-method: forwards.list capability=forwards.read -->
+<!-- api-daemon-method: forwards.open capability=forwards.write -->
 <!-- api-daemon-method: interactions.cancel capability=interactions.respond -->
 <!-- api-daemon-method: interactions.claim capability=interactions.respond -->
 <!-- api-daemon-method: interactions.get capability=interactions.read -->
@@ -111,10 +190,31 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sessions.get capability=sessions.read -->
 <!-- api-daemon-method: sessions.list capability=sessions.read -->
 <!-- api-daemon-method: sessions.open capability=sessions.write -->
+<!-- api-daemon-method: sftp.attach capability=sftp.write -->
+<!-- api-daemon-method: sftp.chmod capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.close capability=sftp.write -->
+<!-- api-daemon-method: sftp.detach capability=sftp.write -->
+<!-- api-daemon-method: sftp.get_service capability=sftp.read -->
+<!-- api-daemon-method: sftp.list capability=sftp.read -->
+<!-- api-daemon-method: sftp.list_services capability=sftp.read -->
+<!-- api-daemon-method: sftp.lstat capability=sftp.metadata -->
+<!-- api-daemon-method: sftp.mkdir capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.open capability=sftp.write -->
+<!-- api-daemon-method: sftp.readlink capability=sftp.metadata -->
+<!-- api-daemon-method: sftp.realpath capability=sftp.metadata -->
+<!-- api-daemon-method: sftp.remove capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.rename capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.rmdir capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.stat capability=sftp.metadata -->
+<!-- api-daemon-method: sftp.symlink capability=sftp.mutate -->
 <!-- api-daemon-method: terminal.replay capability=terminal.replay -->
 <!-- api-daemon-method: terminal.resize capability=terminal.resize -->
 <!-- api-daemon-method: terminal.claim_input capability=terminal.input -->
 <!-- api-daemon-method: terminal.release_input capability=terminal.input -->
+<!-- api-daemon-method: transfers.cancel capability=transfers.write -->
+<!-- api-daemon-method: transfers.get capability=transfers.read -->
+<!-- api-daemon-method: transfers.list capability=transfers.read -->
+<!-- api-daemon-method: transfers.start capability=transfers.write -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
 
@@ -303,6 +403,138 @@ and daemon shutdown also cancel pending interactions.
 Sends a bounded mutable byte buffer through `binary-secret-v1` after a typed
 submit action reserved the slot. The client clears the supplied buffer after
 the send attempt; the operation is never retried.
+
+<!-- api-method: list_sftp_services -->
+## `list_sftp_services`
+
+Daemon-only `sftp.read` snapshot of open SFTP services visible to the
+handshaken client.
+
+<!-- api-method: get_sftp_service -->
+## `get_sftp_service`
+
+Daemon-only lookup by strict `sftp:<uuid>` identifier.
+
+<!-- api-method: open_sftp -->
+## `open_sftp`
+
+Daemon-only `sftp.write` creation of a daemon-owned SFTP service for one
+connection. Returns `SftpServiceSummary`.
+
+<!-- api-method: attach_sftp -->
+## `attach_sftp`
+
+Attaches the handshaken client to an existing SFTP service for shared use.
+
+<!-- api-method: detach_sftp -->
+## `detach_sftp`
+
+Removes the caller's attachment from an SFTP service without closing it for
+other clients.
+
+<!-- api-method: close_sftp -->
+## `close_sftp`
+
+Requests bounded closure of an SFTP service. Repeated close is idempotent.
+
+<!-- api-method: sftp_list_directory -->
+## `sftp_list_directory`
+
+Lists a remote directory through a ready SFTP service. Returns
+`ListDirectoryResult` with typed `RemoteFileEntry` rows.
+
+<!-- api-method: sftp_stat -->
+## `sftp_stat`
+
+Follows symlinks and returns a `RemoteFileEntry` for one remote path.
+
+<!-- api-method: sftp_lstat -->
+## `sftp_lstat`
+
+Returns metadata for one remote path without following the final symlink.
+
+<!-- api-method: sftp_realpath -->
+## `sftp_realpath`
+
+Resolves a remote path to its absolute form and returns the path string.
+
+<!-- api-method: sftp_readlink -->
+## `sftp_readlink`
+
+Returns the symlink target string for one remote path.
+
+<!-- api-method: sftp_mkdir -->
+## `sftp_mkdir`
+
+Creates a remote directory.
+
+<!-- api-method: sftp_rmdir -->
+## `sftp_rmdir`
+
+Removes an empty remote directory.
+
+<!-- api-method: sftp_remove -->
+## `sftp_remove`
+
+Removes a remote file or symlink.
+
+<!-- api-method: sftp_rename -->
+## `sftp_rename`
+
+Renames or moves a remote path, optionally overwriting when requested.
+
+<!-- api-method: sftp_chmod -->
+## `sftp_chmod`
+
+Changes the remote mode bits for one path.
+
+<!-- api-method: sftp_symlink -->
+## `sftp_symlink`
+
+Creates a remote symlink from `link_path` to `target_path`.
+
+<!-- api-method: list_transfers -->
+## `list_transfers`
+
+Daemon-only `transfers.read` snapshot of transfer records.
+
+<!-- api-method: get_transfer -->
+## `get_transfer`
+
+Daemon-only lookup by strict `transfer:<uuid>` identifier.
+
+<!-- api-method: start_transfer -->
+## `start_transfer`
+
+Starts a daemon-path upload or download against a ready SFTP service. Direction
+also requires `transfers.upload` or `transfers.download`.
+
+<!-- api-method: cancel_transfer -->
+## `cancel_transfer`
+
+Requests cancellation of one transfer. Terminal states remain observable via
+events and `get_transfer`.
+
+<!-- api-method: list_forwards -->
+## `list_forwards`
+
+Daemon-only `forwards.read` snapshot of runtime forwards.
+
+<!-- api-method: get_forward -->
+## `get_forward`
+
+Daemon-only lookup by strict `forward:<uuid>` identifier.
+
+<!-- api-method: open_forward -->
+## `open_forward`
+
+Opens a local, remote, or dynamic forward. Type also requires
+`forwards.local`, `forwards.remote`, or `forwards.dynamic`.
+
+<!-- api-method: close_forward -->
+## `close_forward`
+
+Requests bounded closure of one runtime forward.
 
 <!-- api-method: list_sessions -->
 ## `list_sessions`
