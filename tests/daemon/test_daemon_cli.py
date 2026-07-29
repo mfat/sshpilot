@@ -119,6 +119,3 @@ def test_cli_server_start_uses_environment_idle_default_when_unset(monkeypatch, 
     exit_code = main(["--socket", str(tmp_path / "sshpilotd.sock")])
     assert exit_code == 0
     assert captured["idle_shutdown_seconds"] is _IDLE_SHUTDOWN_UNSET
-
-    assert result.returncode == 0
-    assert "status" in result.stdout
