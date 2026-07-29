@@ -34,10 +34,20 @@ subdir('data')
 subdir('src')
 subdir('po')
 
-# Standalone agent launcher (not generated) shipped alongside the app.
+# Standalone agent and daemon launchers (not generated) shipped alongside the app.
 install_data('sshpilot-agent',
   install_dir: bindir,
   install_mode: 'rwxr-xr-x',
+)
+install_data('sshpilot-daemon',
+  install_dir: bindir,
+  install_mode: 'rwxr-xr-x',
+)
+
+# Optional systemd user unit. Distro packagers may symlink or copy this into
+# /usr/lib/systemd/user/; upstream installs the reference unit under share/.
+install_data('packaging/systemd/sshpilot-daemon.service',
+  install_dir: datadir / 'sshpilot' / 'systemd',
 )
 
 gnome.post_install(

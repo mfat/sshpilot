@@ -1,0 +1,15 @@
+[Unit]
+Description=sshPilot local daemon
+Documentation=man:sshpilot(1)
+
+[Service]
+Type=simple
+ExecStart=sshpilot-daemon
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=sshpilot
+RuntimeDirectoryMode=0700
+# Idle shutdown remains enabled for desktop; service_mode can be set via env later
+
+[Install]
+WantedBy=default.target

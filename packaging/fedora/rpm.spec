@@ -76,7 +76,7 @@ an alternative to Putty, Termius and Mobaxterm.
 
 # Meson installs the launcher, the Python package, the compiled GResource, the
 # desktop entry and AppStream metainfo (merged from the .in templates), the icon
-# and sshpilot-agent. Nothing is replayed by hand here.
+# and sshpilot-agent / sshpilot-daemon. Nothing is replayed by hand here.
 %build
 # Keep the payload out of %%{python3_sitelib}. That path carries the Python minor
 # version (…/python3.14/site-packages), so a noarch RPM built once and installed
@@ -132,6 +132,7 @@ an alternative to Putty, Termius and Mobaxterm.
 %doc README*
 %{_bindir}/sshpilot
 %{_bindir}/sshpilot-agent
+%{_bindir}/sshpilot-daemon
 %{_datadir}/%{name}/
 %{_datadir}/io.github.mfat.sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop

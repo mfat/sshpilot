@@ -171,7 +171,7 @@ enforces this).
 **Meson is the build system for every Linux package.** It compiles the Blueprint
 `.blp` sources into the bundled GResource and installs the launcher, the Python
 package, the desktop entry, the AppStream metainfo, the icon and
-`sshpilot-agent`. Never re-implement any of that by hand in a packaging file —
+icon and `sshpilot-agent` / `sshpilot-daemon`. Never re-implement any of that by hand in a packaging file —
 that is exactly how the packaging silently desynced from the tree when the
 sources moved under `src/`.
 
