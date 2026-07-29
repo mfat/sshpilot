@@ -1,4 +1,7 @@
 import os
+import shutil
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -135,6 +138,164 @@ def test_pty_launch_failure_releases_owned_resources():
         assert runner._io._states == {}
     finally:
         runner.close()
+
+
+def test_owned_pty_streams_from_isolated_local_openssh(tmp_path):
+    ssh = shutil.which("ssh")
+    sshd = shutil.which("sshd")
+    ssh_keygen = shutil.which("ssh-keygen")
+    if not ssh or not sshd or not ssh_keygen:
+        pytest.skip("OpenSSH integration tools are unavailable")
+
+    listener = socket.socket()
+    try:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    finally:
+        listener.close()
+
+    host_key = tmp_path / "host_key"
+    client_key = tmp_path / "client_key"
+    for key_path in (host_key, client_key):
+        subprocess.run(
+            (
+                ssh_keygen,
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-f",
+                str(key_path),
+            ),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    authorized_keys = tmp_path / "authorized_keys"
+    authorized_keys.write_bytes(client_key.with_suffix(".pub").read_bytes())
+    authorized_keys.chmod(0o600)
+    username = os.environ.get("USER") or os.environ.get("LOGNAME")
+    if not username:
+        pytest.skip("Current user identity is unavailable")
+    daemon_config = tmp_path / "sshd_config"
+    daemon_config.write_text(
+        "\n".join(
+            (
+                f"Port {port}",
+                "ListenAddress 127.0.0.1",
+                f"HostKey {host_key}",
+                f"PidFile {tmp_path / 'sshd.pid'}",
+                f"AuthorizedKeysFile {authorized_keys}",
+                f"AllowUsers {username}",
+                "PubkeyAuthentication yes",
+                "PasswordAuthentication no",
+                "KbdInteractiveAuthentication no",
+                "UsePAM no",
+                "StrictModes no",
+                "LogLevel ERROR",
+            )
+        )
+        + "\n"
+    )
+    client_config = tmp_path / "ssh_config"
+    client_config.write_text(
+        "\n".join(
+            (
+                "Host phase7-test",
+                "    HostName 127.0.0.1",
+                f"    Port {port}",
+                f"    User {username}",
+                f"    IdentityFile {client_key}",
+                "    IdentitiesOnly yes",
+                "    BatchMode yes",
+                "    StrictHostKeyChecking no",
+                "    UserKnownHostsFile /dev/null",
+                "    LogLevel ERROR",
+            )
+        )
+        + "\n"
+    )
+    daemon = subprocess.Popen(
+        (sshd, "-D", "-f", str(daemon_config)),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    runner = None
+    try:
+        ready = False
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and daemon.poll() is None:
+            probe = socket.socket()
+            probe.settimeout(0.1)
+            try:
+                probe.connect(("127.0.0.1", port))
+                ready = True
+                break
+            except OSError:
+                time.sleep(0.02)
+            finally:
+                probe.close()
+        if not ready:
+            pytest.skip("Temporary sshd cannot run in this environment")
+
+        output = bytearray()
+        eof = threading.Event()
+        exited = threading.Event()
+        exit_info = []
+        runner = PtySessionProcessRunner(
+            lambda _spec: (
+                (
+                    ssh,
+                    "-F",
+                    str(client_config),
+                    "phase7-test",
+                    "printf 'SSHPILOT_OPENSSH_PTY_OK\\n'",
+                ),
+                {
+                    "HOME": str(tmp_path),
+                    "LANG": "C.UTF-8",
+                    "LOGNAME": username,
+                    "PATH": os.environ.get("PATH", ""),
+                    "TERM": "xterm-256color",
+                    "USER": username,
+                },
+            )
+        )
+        from sshpilot.api.models.common import ConnectionId, SessionId
+        from sshpilot.daemon.session_runtime import SessionLaunchSpec
+
+        runner.start(
+            SessionLaunchSpec(
+                session_id=SessionId(
+                    "session:550e8400-e29b-41d4-a716-446655440010"
+                ),
+                connection_id=ConnectionId(
+                    "connection:550e8400-e29b-41d4-a716-446655440011"
+                ),
+                protocol="ssh",
+                hostname="127.0.0.1",
+                username=username,
+                port=port,
+            ),
+            lambda info: (exit_info.append(info), exited.set()),
+            output.extend,
+            eof.set,
+        )
+        assert exited.wait(5)
+        assert eof.wait(5)
+        assert b"SSHPILOT_OPENSSH_PTY_OK" in output
+        assert exit_info[0].exit_code == 0
+    finally:
+        if runner is not None:
+            runner.close()
+        daemon.terminate()
+        try:
+            daemon.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            daemon.kill()
+            daemon.wait(timeout=1)
 
 
 def test_daemon_client_receives_replay_live_input_and_eof(daemon_factory):
