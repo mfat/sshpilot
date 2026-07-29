@@ -115,7 +115,7 @@ class GtkClientBridge:
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]] = None,
     ) -> GtkClientRequest:
-        """Run interaction control independently of a pending session open."""
+        """Run interaction control independently of terminal streaming work."""
 
         return self._submit_on(
             self._interaction_executor,

@@ -8,12 +8,15 @@ from enum import Enum
 from typing import Callable, Optional, Protocol
 
 from .api.capabilities import Capability
+from .api.errors import ErrorCode, SshPilotError
+from .api.events import EventType
 from .api.models.common import AttachmentId, ConnectionId, SessionId
 from .api.models.sessions import (
     AttachSessionRequest,
     CloseSessionRequest,
     DetachSessionRequest,
     OpenSessionRequest,
+    SessionState,
 )
 from .api.models.terminal import (
     ResizeTerminalRequest,
@@ -111,13 +114,14 @@ class TerminalSessionController(Protocol):
 
 class DaemonTerminalSessionController:
     """Production controller using DaemonClient + GtkClientBridge.
-    
+
     - Requires capabilities: sessions.*, terminal.*, interactions needed
     - open(connection_id, dimensions) -> sessions.open then attach
+    - Successful open with state STARTING is normal; RUNNING is async
     - State machine: idle→opening→attaching→replaying→active→detached|closing|failed→closed
     - One open request per activation; cancel while opening supported
     - If closed before open completes, reconcile via on_discard closing the session
-    - attach establishes replay/live boundary
+    - attach establishes replay/live boundary while session may still be STARTING
     - Interactive only after attachment exists
     - Continuity loss: call on_continuity_lost callback (GTK shows local marker; never send marker to daemon)
     - detach() detaches attachment without terminating
@@ -169,6 +173,7 @@ class DaemonTerminalSessionController:
         self._stream = None
         self._closed = False
         self._opening_session_id: Optional[SessionId] = None
+        self._event_subscription = None
 
     @property
     def tab_state(self) -> DaemonTerminalTabState:
@@ -193,7 +198,7 @@ class DaemonTerminalSessionController:
         """Start opening a new session. Async operation."""
         if self._closed:
             raise RuntimeError("Controller is closed")
-        
+
         if self._tab_state.state != TerminalSessionState.IDLE:
             raise RuntimeError(f"Cannot open session in state: {self._tab_state.state}")
 
@@ -209,6 +214,7 @@ class DaemonTerminalSessionController:
             ),
             on_success=self._on_session_opened,
             on_error=self._on_open_error,
+            on_discard=self._discard_opened_session,
         )
 
     def attach(
@@ -283,6 +289,7 @@ class DaemonTerminalSessionController:
 
         self._closed = True
         self._tab_state.state = TerminalSessionState.CLOSING
+        self._unsubscribe_events()
 
         # Close output stream first
         if self._stream:
@@ -353,26 +360,132 @@ class DaemonTerminalSessionController:
         self._on_output = callback
 
     def _on_session_opened(self, summary) -> None:
-        """Handle session open completion."""
+        """Handle accepted session open (normally STARTING)."""
         if self._closed:
-            # Session opened but we were closed - need to clean up
-            try:
-                self._bridge.submit(
-                    lambda: self._client.close_session(
-                        CloseSessionRequest(session_id=summary.id)
-                    ),
-                    on_success=lambda _: None,
-                    on_error=lambda _: None,
+            self._discard_opened_session(summary)
+            return
+
+        state = getattr(summary, "state", None)
+        if isinstance(state, SessionState) and state not in {
+            SessionState.STARTING,
+            SessionState.RUNNING,
+        }:
+            self._tab_state.session_id = summary.id
+            self._tab_state.state = TerminalSessionState.FAILED
+            failure = getattr(summary, "failure", None)
+            if failure is not None:
+                try:
+                    code = ErrorCode(failure.code)
+                except ValueError:
+                    code = ErrorCode.SESSION_STARTUP_FAILED
+                self._on_error(
+                    SshPilotError(
+                        code,
+                        failure.message,
+                        session_id=summary.id,
+                    )
                 )
-            except RuntimeError:
-                pass
+            else:
+                self._on_error(
+                    SshPilotError(
+                        ErrorCode.SESSION_STARTUP_FAILED,
+                        "The session could not be started",
+                        session_id=summary.id,
+                    )
+                )
             return
 
         self._tab_state.session_id = summary.id
         self._opening_session_id = None
+        self._subscribe_session_events(summary.id)
 
-        # Auto-attach after opening
+        # Auto-attach after opening; RUNNING is observed asynchronously.
         self.attach()
+
+    def _discard_opened_session(self, summary) -> None:
+        """Close a session accepted after the controller was cancelled."""
+        try:
+            self._bridge.submit(
+                lambda: self._client.close_session(
+                    CloseSessionRequest(session_id=summary.id)
+                ),
+                on_success=lambda _: None,
+                on_error=lambda _: None,
+            )
+        except RuntimeError:
+            pass
+
+    def _subscribe_session_events(self, session_id: SessionId) -> None:
+        subscribe = getattr(self._client, "subscribe_events", None)
+        if not callable(subscribe):
+            return
+        self._unsubscribe_events()
+
+        def _on_event(event) -> None:
+            if self._closed or event.session_id != session_id:
+                return
+            if event.type is not EventType.SESSION_STATE_CHANGED:
+                return
+            payload = event.payload
+            state = getattr(payload, "state", None)
+            if state not in {
+                SessionState.FAILED,
+                SessionState.EXITED,
+                SessionState.CLOSED,
+            }:
+                return
+            try:
+                self._bridge.submit(
+                    lambda: payload,
+                    on_success=self._on_async_session_state,
+                    on_error=lambda _: None,
+                )
+            except RuntimeError:
+                pass
+
+        self._event_subscription = subscribe(_on_event)
+
+    def _unsubscribe_events(self) -> None:
+        subscription = self._event_subscription
+        self._event_subscription = None
+        if subscription is None:
+            return
+        unsubscribe = getattr(subscription, "unsubscribe", None)
+        if callable(unsubscribe):
+            try:
+                unsubscribe()
+            except Exception:
+                logger.debug("Daemon session event unsubscription failed", exc_info=True)
+
+    def _on_async_session_state(self, summary) -> None:
+        """Apply asynchronous daemon session failure/exit to the open tab."""
+        if self._closed:
+            return
+        state = getattr(summary, "state", None)
+        if state is SessionState.FAILED:
+            self._tab_state.state = TerminalSessionState.FAILED
+            failure = getattr(summary, "failure", None)
+            code = ErrorCode.SESSION_STARTUP_FAILED
+            message = "The session process could not be started"
+            if failure is not None:
+                try:
+                    code = ErrorCode(failure.code)
+                except ValueError:
+                    code = ErrorCode.SESSION_STARTUP_FAILED
+                message = failure.message
+            self._on_error(
+                SshPilotError(
+                    code,
+                    message,
+                    session_id=self._tab_state.session_id,
+                )
+            )
+        elif state in {SessionState.EXITED, SessionState.CLOSED}:
+            if self._tab_state.state not in {
+                TerminalSessionState.CLOSING,
+                TerminalSessionState.CLOSED,
+            }:
+                self._tab_state.state = TerminalSessionState.CLOSED
 
     def _on_session_attached(self, result) -> None:
         """Handle session attach completion."""
@@ -391,6 +504,7 @@ class DaemonTerminalSessionController:
 
     def _on_session_closed(self, _result) -> None:
         """Handle session close completion."""
+        self._unsubscribe_events()
         self._tab_state.state = TerminalSessionState.CLOSED
 
     def _handle_output(self, output) -> None:
@@ -401,7 +515,7 @@ class DaemonTerminalSessionController:
         self._tab_state.expected_sequence = output.next_sequence
 
         # Transition from replaying to active when we reach live data
-        if (self._tab_state.state == TerminalSessionState.REPLAYING 
+        if (self._tab_state.state == TerminalSessionState.REPLAYING
             and not output.replay):
             self._tab_state.state = TerminalSessionState.ACTIVE
 
@@ -434,7 +548,7 @@ class DaemonTerminalSessionController:
 
 class LegacyInProcessSshController:
     """Marker/stub for legacy VTE spawn_async path.
-    
+
     Legacy path stays entirely in TerminalWidget spawn - this is just a type marker.
     """
 
