@@ -45,6 +45,14 @@ from .models.terminal import (
     ReplayResult,
     ResizeTerminalRequest,
     TerminalInput,
+    TerminalOutput,
+)
+from .terminal_events import (
+    TerminalContinuityCallback,
+    TerminalEofCallback,
+    TerminalErrorCallback,
+    TerminalOutputCallback,
+    TerminalSubscription,
 )
 from .transport.codec import (
     attach_session_request_to_wire,
@@ -64,6 +72,9 @@ from .transport.codec import (
     handshake_result_from_wire,
     open_session_request_to_wire,
     public_event_from_envelope,
+    replay_request_to_wire,
+    replay_result_from_wire,
+    resize_terminal_request_to_wire,
     session_summary_from_wire,
     update_connection_request_to_wire,
 )
@@ -74,12 +85,24 @@ from .transport.envelopes import (
     RequestEnvelope,
     SuccessResponseEnvelope,
 )
-from .transport.framing import FramingError, encode_frame, receive_frame
+from .transport.framing import (
+    FramingError,
+    encode_binary_frame,
+    encode_frame,
+    receive_multiplexed_frame,
+)
+from .transport.terminal_frames import (
+    TerminalFrame,
+    TerminalFrameFlags,
+    TerminalFrameKind,
+    encode_terminal_payload,
+)
 from .version import PROTOCOL_VERSION
 
 DEFAULT_REQUEST_TIMEOUT = 5.0
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
+receive_frame = receive_multiplexed_frame
 
 DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.SESSIONS_WRITE,
@@ -88,6 +111,10 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_session": Capability.SESSIONS_READ,
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
+    "send_terminal_input": Capability.TERMINAL_INPUT,
+    "subscribe_terminal": Capability.TERMINAL_OUTPUT,
+    "resize_terminal": Capability.TERMINAL_RESIZE,
+    "replay_terminal": Capability.TERMINAL_REPLAY,
 }
 
 
@@ -101,6 +128,14 @@ class _PendingRequest:
 @dataclass(frozen=True)
 class _TransportFailureNotice:
     error: SshPilotError
+
+
+@dataclass(frozen=True)
+class _TerminalCallbacks:
+    on_output: TerminalOutputCallback
+    on_continuity_lost: Optional[TerminalContinuityCallback]
+    on_eof: Optional[TerminalEofCallback]
+    on_error: Optional[TerminalErrorCallback]
 
 
 class DaemonClient:
@@ -135,6 +170,14 @@ class DaemonClient:
         self._publisher = EventPublisher()
         self._pending_requests: Dict[RequestId, _PendingRequest] = {}
         self._event_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
+        self._terminal_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
+        self._terminal_subscribers: Dict[
+            SessionId,
+            Dict[int, _TerminalCallbacks],
+        ] = {}
+        self._next_terminal_subscription = 1
+        self._terminal_sequences: Dict[SessionId, int] = {}
+        self._terminal_overflow: set[SessionId] = set()
         self._last_event_sequence: Optional[int] = None
         self._closed = False
         self._close_complete = False
@@ -142,6 +185,7 @@ class DaemonClient:
         self._socket: Optional[socket.socket] = None
         self._reader_thread: Optional[threading.Thread] = None
         self._event_thread: Optional[threading.Thread] = None
+        self._terminal_thread: Optional[threading.Thread] = None
         self._capabilities: Optional[Capabilities] = None
         self._selected_protocol_version: Optional[str] = None
         self._server_instance_id: Optional[str] = None
@@ -297,16 +341,93 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid close result")
 
     def send_terminal_input(self, request: TerminalInput) -> None:
-        del request
-        raise self._unsupported("send_terminal_input")
+        self._require_capability(Capability.TERMINAL_INPUT)
+        if type(request) is not TerminalInput:
+            raise TypeError("terminal input request is required")
+        frame = encode_binary_frame(
+            encode_terminal_payload(
+                TerminalFrame(
+                    kind=TerminalFrameKind.INPUT,
+                    session_id=request.session_id,
+                    attachment_id=request.attachment_id,
+                    sequence=0,
+                    data=request.data,
+                )
+            )
+        )
+        with self._send_lock:
+            with self._state_lock:
+                transport = self._socket
+                if self._closed or transport is None:
+                    raise self._closed_error()
+            try:
+                transport.sendall(frame)
+            except OSError:
+                self._fail_transport(
+                    SshPilotError(
+                        ErrorCode.TRANSPORT_CLOSED,
+                        "The daemon transport failed",
+                        retryable=True,
+                        session_id=request.session_id,
+                    )
+                )
+                raise self._closed_error() from None
 
     def resize_terminal(self, request: ResizeTerminalRequest) -> None:
-        del request
-        raise self._unsupported("resize_terminal")
+        self._require_capability(Capability.TERMINAL_RESIZE)
+        result = self._request(
+            "terminal.resize",
+            resize_terminal_request_to_wire(request),
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid resize result")
 
     def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
-        del request
-        raise self._unsupported("replay_terminal")
+        self._require_capability(Capability.TERMINAL_REPLAY)
+        result = self._request(
+            "terminal.replay",
+            replay_request_to_wire(request),
+        )
+        try:
+            return replay_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid replay result")
+
+    def subscribe_terminal(
+        self,
+        session_id: SessionId,
+        on_output: TerminalOutputCallback,
+        *,
+        on_continuity_lost: Optional[TerminalContinuityCallback] = None,
+        on_eof: Optional[TerminalEofCallback] = None,
+        on_error: Optional[TerminalErrorCallback] = None,
+    ) -> TerminalSubscription:
+        if not callable(on_output):
+            raise TypeError("terminal output callback must be callable")
+        with self._state_lock:
+            if self._closed:
+                raise self._closed_error()
+            token = self._next_terminal_subscription
+            self._next_terminal_subscription += 1
+            self._terminal_subscribers.setdefault(session_id, {})[token] = (
+                _TerminalCallbacks(
+                    on_output,
+                    on_continuity_lost,
+                    on_eof,
+                    on_error,
+                )
+            )
+
+        def _cancel() -> None:
+            with self._state_lock:
+                subscribers = self._terminal_subscribers.get(session_id)
+                if subscribers is None:
+                    return
+                subscribers.pop(token, None)
+                if not subscribers:
+                    self._terminal_subscribers.pop(session_id, None)
+
+        return TerminalSubscription(_cancel)
 
     def respond_to_interaction(self, response: InteractionResponse) -> None:
         del response
@@ -339,10 +460,13 @@ class DaemonClient:
             )
             request.completed.set()
         self._stop_event_dispatch()
+        self._stop_terminal_dispatch()
         self._publisher.close()
         self._join_thread(self._reader_thread)
         self._join_thread(self._event_thread)
+        self._join_thread(self._terminal_thread)
         with self._state_lock:
+            self._terminal_subscribers.clear()
             self._close_complete = True
 
     def _connect_and_handshake(self) -> None:
@@ -364,8 +488,16 @@ class DaemonClient:
             client_name=self._client_name,
             client_version=self._client_version,
             supported_protocol_versions=(PROTOCOL_VERSION,),
-            client_capabilities=frozenset(),
+            client_capabilities=frozenset(
+                {
+                    Capability.TERMINAL_OUTPUT.value,
+                    Capability.TERMINAL_INPUT.value,
+                    Capability.TERMINAL_RESIZE.value,
+                    Capability.TERMINAL_REPLAY.value,
+                }
+            ),
             frontend_type=self._frontend_type,
+            supported_frame_types=frozenset({"binary-terminal-v1"}),
         )
         result = self._request(
             "system.handshake",
@@ -513,7 +645,7 @@ class DaemonClient:
             if transport is None:
                 return
             try:
-                envelope = decode_envelope(receive_frame(transport))
+                incoming = receive_frame(transport)
             except EOFError:
                 with self._state_lock:
                     closing = self._closed and not self._transport_failed
@@ -555,6 +687,17 @@ class DaemonClient:
                     )
                 return
 
+            if isinstance(incoming, TerminalFrame):
+                if not self._receive_terminal(incoming):
+                    return
+                continue
+            try:
+                envelope = decode_envelope(incoming)
+            except (TypeError, ValueError):
+                self._fail_protocol_from_reader(
+                    "The daemon sent an invalid protocol envelope"
+                )
+                return
             if isinstance(envelope, EventEnvelope):
                 if not self._receive_event(envelope):
                     return
@@ -621,6 +764,164 @@ class DaemonClient:
             return False
         return True
 
+    def _receive_terminal(self, frame: TerminalFrame) -> bool:
+        if frame.kind is TerminalFrameKind.CONTINUITY_LOST:
+            with self._state_lock:
+                expected = self._terminal_sequences.get(
+                    frame.session_id,
+                    frame.sequence,
+                )
+            self._queue_terminal_item(
+                ("continuity", frame.session_id, expected, frame.sequence)
+            )
+            return True
+        if frame.kind is TerminalFrameKind.INPUT_ERROR:
+            try:
+                code = ErrorCode(frame.data.decode("ascii"))
+            except (UnicodeDecodeError, ValueError):
+                self._fail_protocol_from_reader(
+                    "The daemon sent an invalid terminal input error"
+                )
+                return False
+            self._queue_terminal_item(
+                SshPilotError(
+                    code,
+                    "The terminal input was rejected",
+                    retryable=code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                    session_id=frame.session_id,
+                )
+            )
+            return True
+        if frame.kind is not TerminalFrameKind.OUTPUT:
+            self._fail_protocol_from_reader(
+                "The daemon sent an unexpected terminal frame"
+            )
+            return False
+        with self._state_lock:
+            expected = self._terminal_sequences.get(
+                frame.session_id,
+                frame.sequence,
+            )
+        data = frame.data
+        sequence = frame.sequence
+        if sequence > expected:
+            self._queue_terminal_item(
+                ("continuity", frame.session_id, expected, sequence)
+            )
+            expected = sequence
+        elif sequence < expected:
+            overlap = expected - sequence
+            if overlap >= len(data):
+                data = b""
+            else:
+                data = data[overlap:]
+                sequence = expected
+        next_sequence = sequence + len(data)
+        with self._state_lock:
+            previous = self._terminal_sequences.get(frame.session_id, 0)
+            self._terminal_sequences[frame.session_id] = max(
+                previous,
+                next_sequence,
+            )
+        if data or frame.flags & TerminalFrameFlags.EOF:
+            self._queue_terminal_item(
+                TerminalOutput(
+                    session_id=frame.session_id,
+                    sequence=sequence,
+                    data=data,
+                    replay=bool(frame.flags & TerminalFrameFlags.REPLAY),
+                    eof=bool(frame.flags & TerminalFrameFlags.EOF),
+                )
+            )
+        if frame.flags & TerminalFrameFlags.TRUNCATED:
+            self._queue_terminal_item(
+                ("continuity", frame.session_id, frame.sequence, sequence)
+            )
+        return True
+
+    def _queue_terminal_item(self, item: object) -> None:
+        try:
+            self._terminal_queue.put_nowait(item)
+        except queue.Full:
+            if isinstance(item, TerminalOutput):
+                session_id = item.session_id
+            elif isinstance(item, tuple) and len(item) > 1:
+                session_id = SessionId(str(item[1]))
+            else:
+                return
+            with self._state_lock:
+                self._terminal_overflow.add(session_id)
+
+    def _terminal_dispatch_main(self) -> None:
+        while True:
+            item = self._terminal_queue.get()
+            if item is _EVENT_STOP:
+                return
+            with self._state_lock:
+                overflow = tuple(self._terminal_overflow)
+                self._terminal_overflow.clear()
+            for session_id in overflow:
+                self._deliver_terminal_continuity(session_id, 0, 0)
+            if isinstance(item, TerminalOutput):
+                with self._state_lock:
+                    callbacks = tuple(
+                        self._terminal_subscribers.get(
+                            item.session_id,
+                            {},
+                        ).values()
+                    )
+                for callback in callbacks:
+                    try:
+                        callback.on_output(item)
+                    except Exception:
+                        continue
+                    if item.eof and callback.on_eof is not None:
+                        try:
+                            callback.on_eof(item.session_id, item.next_sequence)
+                        except Exception:
+                            continue
+                continue
+            if isinstance(item, SshPilotError):
+                with self._state_lock:
+                    callbacks = tuple(
+                        self._terminal_subscribers.get(
+                            item.session_id,
+                            {},
+                        ).values()
+                    )
+                for callback in callbacks:
+                    if callback.on_error is None:
+                        continue
+                    try:
+                        callback.on_error(item)
+                    except Exception:
+                        continue
+                continue
+            if isinstance(item, tuple) and item and item[0] == "continuity":
+                self._deliver_terminal_continuity(item[1], item[2], item[3])
+
+    def _deliver_terminal_continuity(
+        self,
+        session_id: SessionId,
+        expected: int,
+        available: int,
+    ) -> None:
+        with self._state_lock:
+            callbacks = tuple(
+                self._terminal_subscribers.get(session_id, {}).values()
+            )
+        for callback in callbacks:
+            if callback.on_continuity_lost is None:
+                continue
+            try:
+                callback.on_continuity_lost(
+                    session_id,
+                    expected,
+                    available,
+                )
+            except Exception:
+                continue
+
     def _event_dispatch_main(self) -> None:
         while True:
             item = self._event_queue.get()
@@ -665,6 +966,7 @@ class DaemonClient:
             )
             request.completed.set()
         self._replace_event_queue_with_failure(error)
+        self._stop_terminal_dispatch()
 
     def _replace_event_queue_with_failure(self, error: SshPilotError) -> None:
         while True:
@@ -688,7 +990,13 @@ class DaemonClient:
             name="sshpilot-daemon-reader",
             daemon=True,
         )
+        self._terminal_thread = threading.Thread(
+            target=self._terminal_dispatch_main,
+            name="sshpilot-daemon-terminal",
+            daemon=True,
+        )
         self._event_thread.start()
+        self._terminal_thread.start()
         self._reader_thread.start()
 
     def _stop_event_dispatch(self) -> None:
@@ -699,6 +1007,17 @@ class DaemonClient:
                 break
         try:
             self._event_queue.put_nowait(_EVENT_STOP)
+        except queue.Full:
+            pass
+
+    def _stop_terminal_dispatch(self) -> None:
+        while True:
+            try:
+                self._terminal_queue.get_nowait()
+            except queue.Empty:
+                break
+        try:
+            self._terminal_queue.put_nowait(_EVENT_STOP)
         except queue.Full:
             pass
 
