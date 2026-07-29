@@ -85,6 +85,9 @@ DAEMON_RUNTIME_CAPABILITIES = frozenset(
         Capability.FORWARDS_LOCAL,
         Capability.FORWARDS_REMOTE,
         Capability.FORWARDS_DYNAMIC,
+        Capability.DAEMON_STATUS,
+        Capability.DAEMON_CONTROL,
+        Capability.DAEMON_EVENTS,
     }
 )
 

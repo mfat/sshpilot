@@ -112,6 +112,9 @@ def test_runtime_capability_markers_match_the_provider(
                 Capability.FORWARDS_LOCAL.value,
                 Capability.FORWARDS_REMOTE.value,
                 Capability.FORWARDS_DYNAMIC.value,
+                Capability.DAEMON_STATUS.value,
+                Capability.DAEMON_CONTROL.value,
+                Capability.DAEMON_EVENTS.value,
             }
         )
     assert documented == supported == expected

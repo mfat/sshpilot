@@ -86,6 +86,9 @@ def test_successful_protocol_v1_handshake(raw_peer):
             Capability.FORWARDS_LOCAL.value,
             Capability.FORWARDS_REMOTE.value,
             Capability.FORWARDS_DYNAMIC.value,
+            Capability.DAEMON_STATUS.value,
+            Capability.DAEMON_CONTROL.value,
+            Capability.DAEMON_EVENTS.value,
         )
     )
     assert response.result["server_instance_id"]

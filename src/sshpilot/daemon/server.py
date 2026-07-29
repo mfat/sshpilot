@@ -1712,6 +1712,15 @@ class DaemonServer:
         self._wake_selector()
 
     def _on_lifecycle_state_changed(self, status: DaemonStatus) -> None:
+        # Skip the initial READY publication so client event sequences still
+        # start at zero for the first domain event after handshake.
+        if status.state is DaemonLifecycleState.READY and not self._accepting_core_events:
+            return
+        if status.state in {
+            DaemonLifecycleState.STARTING,
+            DaemonLifecycleState.STOPPED,
+        }:
+            return
         event = CoreEvent(
             type=EventType.DAEMON_STATE_CHANGED,
             payload=status,

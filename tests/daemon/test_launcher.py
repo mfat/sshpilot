@@ -110,6 +110,9 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.FORWARDS_LOCAL,
                 Capability.FORWARDS_REMOTE,
                 Capability.FORWARDS_DYNAMIC,
+                Capability.DAEMON_STATUS,
+                Capability.DAEMON_CONTROL,
+                Capability.DAEMON_EVENTS,
             }
         )
         assert result.client.list_connections() == []
