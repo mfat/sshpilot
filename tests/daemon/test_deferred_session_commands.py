@@ -122,46 +122,35 @@ def test_blocked_start_does_not_delay_other_clients(daemon_factory, _repeat):
         session_runner=runner,
         session_command_workers=2,
     )
-    client_a = DaemonClient(socket_path=server.socket_path, client_id="client:a")
-    client_b = DaemonClient(socket_path=server.socket_path, client_id="client:b")
-    thread, done, result, error = _run_in_thread(
-        lambda: client_a.open_session(
-            OpenSessionRequest(connection_id=client_a.list_connections()[0].id)
-        )
+    client_a = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client:a",
+        timeout=0.5,
     )
+    client_b = DaemonClient(socket_path=server.socket_path, client_id="client:b")
     client_c = None
     try:
+        opened = client_a.open_session(
+            OpenSessionRequest(connection_id=client_a.list_connections()[0].id)
+        )
+        assert opened.state is SessionState.STARTING
         assert runner.start_entered.wait(1)
-        reads_done = threading.Event()
-
-        def _read():
-            assert client_b.list_connections()
-            sessions = client_b.list_sessions()
-            assert len(sessions) == 1
-            assert sessions[0].state is SessionState.STARTING
-            assert client_b.get_session(sessions[0].id).id == sessions[0].id
-            reads_done.set()
-
-        read_thread = threading.Thread(target=_read, daemon=True)
-        read_thread.start()
-        assert reads_done.wait(1)
+        assert client_b.list_connections()
+        sessions = client_b.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].state is SessionState.STARTING
+        assert client_b.get_session(sessions[0].id).id == sessions[0].id
         client_c = DaemonClient(
             socket_path=server.socket_path,
             client_id="client:c",
         )
         assert client_c.list_connections()
-        assert not done.is_set()
+        assert not runner.start_release.is_set()
 
         runner.start_release.set()
-        assert done.wait(1)
-        assert error == []
-        assert result[0].state is SessionState.STARTING
         assert _wait_until(
-            lambda: client_b.get_session(result[0].id).state
-            is SessionState.RUNNING
+            lambda: client_b.get_session(opened.id).state is SessionState.RUNNING
         )
-        thread.join(1)
-        read_thread.join(1)
     finally:
         runner.start_release.set()
         client_a.close()
@@ -228,17 +217,20 @@ def test_close_waits_in_the_same_session_lane_as_start(daemon_factory, _repeat):
         session_runner=runner,
         session_command_workers=2,
     )
-    opener = DaemonClient(socket_path=server.socket_path, client_id="client:open")
-    closer = DaemonClient(socket_path=server.socket_path, client_id="client:close")
-    open_thread, open_done, open_result, open_error = _run_in_thread(
-        lambda: opener.open_session(
-            OpenSessionRequest(connection_id=opener.list_connections()[0].id)
-        )
+    opener = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client:open",
+        timeout=0.5,
     )
+    closer = DaemonClient(socket_path=server.socket_path, client_id="client:close")
     close_thread = None
     try:
+        opened = opener.open_session(
+            OpenSessionRequest(connection_id=opener.list_connections()[0].id)
+        )
+        assert opened.state is SessionState.STARTING
         assert runner.start_entered.wait(1)
-        session_id = closer.list_sessions()[0].id
+        session_id = opened.id
         close_thread, close_done, _close_result, close_error = _run_in_thread(
             lambda: closer.close_session(
                 CloseSessionRequest(session_id=session_id)
@@ -249,16 +241,12 @@ def test_close_waits_in_the_same_session_lane_as_start(daemon_factory, _repeat):
         assert not close_done.is_set()
 
         runner.start_release.set()
-        assert open_done.wait(1)
         assert close_done.wait(1)
-        assert open_error == []
         assert close_error == []
-        assert open_result[0].id == session_id
         assert _wait_until(
             lambda: closer.get_session(session_id).state is SessionState.CLOSED
         )
         assert runner.handles[0].close_entered.is_set()
-        open_thread.join(1)
         close_thread.join(1)
     finally:
         runner.start_release.set()
@@ -277,14 +265,17 @@ def test_executor_queue_full_is_safe_and_reads_remain_live(
         session_command_workers=1,
         session_command_queue_limit=1,
     )
-    client_a = DaemonClient(socket_path=server.socket_path, client_id="client:a")
+    client_a = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client:a",
+        timeout=0.5,
+    )
     client_b = DaemonClient(socket_path=server.socket_path, client_id="client:b")
-    thread, done, _result, first_error = _run_in_thread(
-        lambda: client_a.open_session(
+    try:
+        first = client_a.open_session(
             OpenSessionRequest(connection_id=client_a.list_connections()[0].id)
         )
-    )
-    try:
+        assert first.state is SessionState.STARTING
         assert runner.start_entered.wait(1)
         with pytest.raises(SshPilotError) as caught:
             client_b.open_session(
@@ -303,10 +294,10 @@ def test_executor_queue_full_is_safe_and_reads_remain_live(
         assert server._session_executor.outstanding == 1
 
         runner.start_release.set()
-        assert done.wait(1)
-        assert first_error == []
         assert _wait_until(lambda: server._session_executor.outstanding == 0)
-        thread.join(1)
+        assert _wait_until(
+            lambda: client_a.get_session(first.id).state is SessionState.RUNNING
+        )
     finally:
         runner.start_release.set()
         client_a.close()
@@ -314,21 +305,27 @@ def test_executor_queue_full_is_safe_and_reads_remain_live(
 
 
 @pytest.mark.parametrize("_repeat", range(5))
-def test_peer_disconnect_discards_late_completion(daemon_factory, _repeat):
+def test_peer_disconnect_during_background_start_keeps_session_alive(
+    daemon_factory,
+    _repeat,
+):
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(session_runner=runner)
-    client_a = DaemonClient(socket_path=server.socket_path, client_id="client:a")
+    client_a = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client:a",
+        timeout=0.5,
+    )
     observer = DaemonClient(
         socket_path=server.socket_path,
         client_id="client:observer",
     )
-    _thread, done, _result, error = _run_in_thread(
-        lambda: client_a.open_session(
-            OpenSessionRequest(connection_id=client_a.list_connections()[0].id)
-        )
-    )
     replacement = None
     try:
+        opened = client_a.open_session(
+            OpenSessionRequest(connection_id=client_a.list_connections()[0].id)
+        )
+        assert opened.state is SessionState.STARTING
         assert runner.start_entered.wait(1)
         old_tokens = {
             state.token
@@ -353,12 +350,9 @@ def test_peer_disconnect_discards_late_completion(daemon_factory, _repeat):
         assert old_tokens.isdisjoint(new_tokens)
 
         runner.start_release.set()
-        assert done.wait(1)
-        assert error
-        assert isinstance(error[0], SshPilotError)
         assert replacement.list_connections()
         assert _wait_until(
-            lambda: observer.list_sessions()[0].state is SessionState.RUNNING
+            lambda: observer.get_session(opened.id).state is SessionState.RUNNING
         )
     finally:
         runner.start_release.set()
@@ -435,32 +429,36 @@ def test_shutdown_unblocks_active_start_and_stops_workers(
         session_command_queue_limit=4,
         session_shutdown_timeout=1.0,
     )
-    client_a = DaemonClient(socket_path=server.socket_path, client_id="client:a")
-    client_b = DaemonClient(socket_path=server.socket_path, client_id="client:b")
+    client_a = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client:a",
+        timeout=0.5,
+    )
+    client_b = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client:b",
+        timeout=0.5,
+    )
     observer = DaemonClient(
         socket_path=server.socket_path,
         client_id="client:observer",
     )
-    _thread_a, done_a, _result_a, _error_a = _run_in_thread(
-        lambda: client_a.open_session(
-            OpenSessionRequest(connection_id=client_a.list_connections()[0].id)
-        )
+    opened_a = client_a.open_session(
+        OpenSessionRequest(connection_id=client_a.list_connections()[0].id)
     )
+    assert opened_a.state is SessionState.STARTING
     assert runner.start_entered.wait(1)
     executor = server._session_executor
-    _thread_b, done_b, _result_b, _error_b = _run_in_thread(
-        lambda: client_b.open_session(
-            OpenSessionRequest(connection_id=client_b.list_connections()[0].id)
-        )
+    opened_b = client_b.open_session(
+        OpenSessionRequest(connection_id=client_b.list_connections()[0].id)
     )
+    assert opened_b.state is SessionState.STARTING
     assert _wait_until(lambda: executor.outstanding == 2)
     assert len(observer.list_sessions()) == 2
 
     server.shutdown()
 
     assert server.wait_stopped(timeout=2)
-    assert done_a.wait(1)
-    assert done_b.wait(1)
     assert runner.closed is True
     assert executor.outstanding == 0
     assert all(not thread.is_alive() for thread in executor._threads)

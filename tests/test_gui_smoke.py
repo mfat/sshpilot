@@ -609,6 +609,8 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
             ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
         )
         connection_id = connection_id_from_uuid(manager.connection.uuid)
+        if _repeat == 4:
+            window._is_quitting = True
         app.open_daemon_session_for_diagnostics(
             connection_id,
             on_success=completed.append,
@@ -620,19 +622,16 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
         gui.pump(100)
 
         assert ticked == [True]
-        assert completed == []
         assert probe_client.list_connections()
         assert probe_client.list_sessions()[0].state is SessionState.STARTING
-        if _repeat == 4:
-            window._is_quitting = True
         release.set()
         if _repeat == 4:
+            assert completed == []
             assert _wait_until(
                 lambda: probe_client.list_sessions()[0].state
                 is SessionState.RUNNING
             )
             gui.pump(100)
-            assert completed == []
             assert getattr(app, "_last_api_session_summary", None) is old_summary
         else:
             assert _wait_until(lambda: bool(completed))

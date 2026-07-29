@@ -82,6 +82,8 @@ def test_open_session_success(controller, mock_client, mock_bridge):
     session_id = SessionId("test-session")
     session_summary = Mock()
     session_summary.id = session_id
+    session_summary.state = None
+    mock_client.subscribe_events = Mock(return_value=Mock(unsubscribe=Mock()))
     
     # Configure mocks
     mock_client.open_session.return_value = session_summary

@@ -11,6 +11,7 @@ from sshpilot.api.models import (
     PasswordPrompt,
     RememberPolicy,
     SecretDecision,
+    SessionState,
 )
 
 
@@ -143,19 +144,13 @@ def test_interaction_response_is_not_blocked_by_pending_session_open(
     client = DaemonClient(
         socket_path=server.socket_path,
         client_id="client:owner",
-        timeout=4,
+        timeout=0.5,
     )
     connection_id = client.list_connections()[0].id
     first = client.open_session(OpenSessionRequest(connection_id=connection_id))
     runner.block_next = True
-    opened = []
-
-    worker = threading.Thread(
-        target=lambda: opened.append(
-            client.open_session(OpenSessionRequest(connection_id=connection_id))
-        )
-    )
-    worker.start()
+    second = client.open_session(OpenSessionRequest(connection_id=connection_id))
+    assert second.state is SessionState.STARTING
     assert runner.started.wait(1)
     summary = server._interaction_broker.create(
         session_id=first.id,
@@ -185,8 +180,8 @@ def test_interaction_response_is_not_blocked_by_pending_session_open(
     result = server._interaction_broker.wait_for_result(summary.id)
     assert result is not None
     result.clear()
-    assert worker.is_alive()
+    assert not runner.release.is_set()
+    assert client.get_session(second.id).state is SessionState.STARTING
     runner.release.set()
-    worker.join(2)
-    assert len(opened) == 1
+    assert client.list_sessions()
     client.close()
