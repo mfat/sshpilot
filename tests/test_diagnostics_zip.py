@@ -70,3 +70,6 @@ def test_build_diagnostics_zip_contents_and_redaction(tmp_path, monkeypatch):
         assert "should-not-appear" not in zf.read("config.json").decode()
 
         assert "sshPilot" in zf.read("version.txt").decode()
+
+        daemon_doc = json.loads(zf.read("daemon-diagnostics.json"))
+        assert daemon_doc["available"] is False
