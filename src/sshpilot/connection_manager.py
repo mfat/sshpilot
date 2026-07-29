@@ -983,11 +983,44 @@ class ConnectionManager(GObject.Object):
         # Diagnostic label of the active secret backend (set during init).
         self.secure_storage_backend = 'uninitialized'
 
+        # GTK-free domain store. Canonical reusable state lives here;
+        # this GObject adapter persists to ~/.ssh/config and emits signals.
+        from .core.connections import ConnectionService
+
+        self._domain = ConnectionService(autosave=False)
+        self._domain.add_listener(self._on_domain_mutation)
+
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
 
         # Defer slower operations to idle to avoid blocking startup
         GLib.idle_add(self._post_init_slow_path)
+
+    @property
+    def domain(self):
+        """GTK-free :class:`~sshpilot.core.connections.ConnectionService`."""
+        return self._domain
+
+    def _on_domain_mutation(self, event) -> None:
+        """Domain events are informational; GTK signals are emitted by adapter methods."""
+        logger.debug("Domain mutation: %s", getattr(event, "kind", event))
+
+    def sync_domain_from_live_connections(self) -> None:
+        """Rebuild the domain store from the live GObject connection list."""
+        domain = getattr(self, "_domain", None)
+        if domain is None:
+            return
+        payloads = []
+        for connection in list(self.connections):
+            data = dict(getattr(connection, "data", None) or {})
+            data.setdefault("uuid", getattr(connection, "uuid", ""))
+            data.setdefault("nickname", getattr(connection, "nickname", ""))
+            data.setdefault("hostname", getattr(connection, "hostname", ""))
+            data.setdefault("username", getattr(connection, "username", ""))
+            data.setdefault("port", getattr(connection, "port", 22))
+            data.setdefault("protocol", getattr(connection, "protocol", "ssh"))
+            payloads.append(data)
+        domain.replace_all(payloads)
 
     def _register_connection(self, connection: Connection) -> None:
         """Link a connection to this manager and add it to the list."""
@@ -2033,6 +2066,10 @@ class ConnectionManager(GObject.Object):
                 getattr(self, 'connection_config_generation', 0) + 1
             )
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
+            try:
+                self.sync_domain_from_live_connections()
+            except Exception:
+                logger.debug("Domain sync after SSH config load failed", exc_info=True)
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
             # Keep the last known-good state rather than a partial/empty list.
@@ -2768,6 +2805,10 @@ class ConnectionManager(GObject.Object):
 
         # Announce on the main loop: provider plugins may call from workers.
         GLib.idle_add(self.emit, 'connection-added', connection)
+        try:
+            self.sync_domain_from_live_connections()
+        except Exception:
+            logger.debug("Domain sync after add failed", exc_info=True)
         return connection
 
     def update_connection(
@@ -3047,6 +3088,8 @@ class ConnectionManager(GObject.Object):
 
     def generate_duplicate_nickname(self, base_nickname: str) -> str:
         """Generate a unique nickname for a duplicated connection."""
+        from .core.connections import generate_duplicate_nickname as _core_dup_nick
+
         try:
             existing_names = {
                 str(getattr(conn, 'nickname', '')).strip()
@@ -3055,41 +3098,13 @@ class ConnectionManager(GObject.Object):
             }
         except Exception:
             existing_names = set()
-        existing_lower = {name.lower() for name in existing_names if name}
 
         base = (base_nickname or '').strip()
         if not base:
             base = _('Connection')
-
         copy_label = _('Copy')
-        # The nickname is used verbatim as the ssh Host alias, and the app's own
-        # validator rejects whitespace (and parens make an invalid host token —
-        # see #953). So the suffix must be whitespace/paren-free: use a hyphen
-        # separator and a whitespace-free copy token, e.g. "Name-Copy",
-        # "Name-Copy-2".
         copy_token = re.sub(r"\s+", "-", copy_label.strip()) or "Copy"
-        # Strip an existing copy suffix in either the legacy " (Copy[ N])" form
-        # or the new "-Copy[-N]" form so re-duplicating doesn't stack suffixes.
-        pattern = re.compile(
-            r"(?:\s*\(\s*" + re.escape(copy_label) + r"(?:\s+\d+)?\s*\)"
-            r"|[-_]+" + re.escape(copy_token) + r"(?:[-_]+\d+)?)\s*$",
-            re.IGNORECASE,
-        )
-        base_clean = pattern.sub('', base).strip() or base
-
-        def is_unique(name: str) -> bool:
-            return name.lower() not in existing_lower
-
-        candidate = f"{base_clean}-{copy_token}"
-        if is_unique(candidate):
-            return candidate
-
-        index = 2
-        while True:
-            candidate = f"{base_clean}-{copy_token}-{index}"
-            if is_unique(candidate):
-                return candidate
-            index += 1
+        return _core_dup_nick(base, existing_names, copy_token=copy_token)
 
     def duplicate_connection(self, connection: Connection, group_manager) -> Connection:
         """Duplicate *connection*, persist it, and mirror its group placement.
