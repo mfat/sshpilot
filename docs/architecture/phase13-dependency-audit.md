@@ -17,23 +17,23 @@ Baseline: ``801eef44a8cc0418d94e3bd46f29c7b03fdc3e73`` on ``dev``.
 
 | Area | Current module(s) | Responsibility | Classification | Target | Status |
 | --- | --- | --- | --- | --- | --- |
-| Connection records / CRUD | `core/connections` + `connection_manager` | Domain state, groups, events | core-domain + GTK-controller | `core.connections` | **Moved** — CM is adapter |
-| SSH argv construction | `core/ssh` + `ssh_connection_builder` | ProcessSpec / launch policy | core-domain + compatibility-shim | `core.ssh` | **Moved** — builder resolves askpass env |
-| Askpass prompt policy | `core/interaction` + `askpass_utils` | Classify / request / response | core-domain + platform-adapter | `core.interaction` | **Moved** — GTK provider in `gtk/interaction` |
-| Secret backend policy | `core/secrets` + `secret_storage` | Selection / unlock / refs | core-domain + platform-adapter | `core.secrets` | **Extended** — protocols added |
-| Import/export | `core/import_export` + `backup_manager` | Schema / plan / merge | core-domain + GTK-controller | `core.import_export` | **Moved** orchestration |
-| Transfers | `core/transfers` + daemon runtime + GTK controller | Request/policy models | core-domain + daemon-runtime | `core.transfers` | **Moved** policy models |
-| SFTP runtime | `daemon/*` + file manager | Active sessions | daemon-runtime + GTK-controller | unchanged | Runtime stays daemon |
-| Forwarding validation | `core/forwards` | Rule validation | core-domain | `core.forwards` | Phase 12 |
-| Keys / known_hosts | `core/keys`, `core/known_hosts` | Discovery / parse / save | core-domain | same | Phase 12 |
-| Plugin contracts | `core/plugins` + `gtk/plugins` | Headless API + GTK contrib | core-domain + GTK-view | same | Phase 12 |
-| Settings | `core/settings` + `config.Config` | Defaults / migration | core-domain + compatibility-shim | same | Phase 12 |
+| Connection records / CRUD | `core/connections` + `connection_manager` | Domain state, groups, events | core-domain + GTK-controller | `core.connections` | **Complete** — CM creates/upserts/deletes via domain; SSH-config I/O stays in CM |
+| Groups | `groups.GroupManager` + domain | Membership / hierarchy | GTK-controller + core-domain | synced | **Complete** — create/move/remove/delete sync domain; load rebuilds groups |
+| SSH argv construction | `core/ssh` + `ssh_connection_builder` | ProcessSpec / launch policy | core-domain + compatibility-shim | `core.ssh` | **Complete** — native path uses `build_ssh_process_spec` |
+| Askpass prompt policy | `core/interaction` + `askpass_utils` + `gtk/interaction` | Classify / request / response | core-domain + GTK-controller | `core.interaction` | **Complete** — askpass uses `build_request_from_prompt`; GTK provider wired from MainWindow |
+| Secret backend policy | `core/secrets` + `secret_storage` + `secret_unlock_dialog` | Selection / unlock / refs | core-domain + platform + GTK | `core.secrets` | **Complete** — `decide_unlock` gates unlock; GTK dialogs stay separate |
+| Import/export | `core/import_export` + `backup_manager` | Schema / plan / merge / atomic write | core-domain + GTK-controller | `core.import_export` | **Complete** — plan + atomic export; spbk crypto remains in backup layer |
+| Transfers | `core/transfers` + daemon runtime + GTK controller | Request/policy/conflict | core-domain + daemon-runtime + GTK | `core.transfers` | **Complete** — validate + `decide_conflict` + UI response mapping |
+| Forwarding editor | `core/forwards` + `connection_dialog_port_forwarding` | Rule validation / defaults | core-domain + GTK-controller | `core.forwards` | **Complete** — dialog validates via core (incl. remote SOCKS / field aliases) |
+| SFTP runtime | `daemon/*` + file manager | Active sessions | daemon-runtime + GTK-controller | unchanged | Runtime stays daemon (by design) |
+| Keys / known_hosts / plugins / settings | Phase 12 core packages | Validation / discovery | core-domain | same | Phase 12 |
 
-## Intentionally deferred
+## Intentionally remaining (non-blockers)
 
-* Full rewrite of `ConnectionManager` SSH-config I/O into core (adapter keeps persistence).
-* Moving `ssh_connection_builder.resolve_native_auth` secret lookups entirely out of the shim (needs secret backend handles without pulling GTK).
-* Recursive transfers (explicitly unsupported in core policy).
-* Replacing every Preferences dialog path with core-only calls (already delegates overrides/validation where extracted).
+* Rewriting SSH-config file I/O itself into core (persistence adapter stays in CM).
+* `.spbk` crypto/archive format remains in `backup_archive` (not domain policy).
+* Recursive transfers remain unsupported (explicit, tested).
+* Full Preferences/sidebar presentation chrome stays GTK (already calls core validators/services).
+* Interactive headed smoke of every UI surface is environment-dependent; automated suites cover ownership.
 
 See also `core-boundary.md`, `dependency-direction.md`, `core-compatibility-shims.md`, `daemon-test-isolation.md`.
