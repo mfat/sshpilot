@@ -10,10 +10,11 @@ from typing import Optional
 
 from sshpilot.api.in_process_client import InProcessClient
 
-from .server import DaemonServer
+from .config_reload import AuthoritativeConfigurationBackend
+from .server import DaemonCore, DaemonServer
 
 
-def _production_core_client() -> InProcessClient:
+def _production_core_client() -> DaemonCore:
     # Imports stay here so transport modules remain frontend-neutral and tests
     # can inject a headless core without importing PyGObject.
     from sshpilot.config import Config
@@ -28,10 +29,20 @@ def _production_core_client() -> InProcessClient:
         config,
         connection_manager=connection_manager,
     )
-    return InProcessClient(
+    client = InProcessClient(
         connection_manager,
         group_manager=group_manager,
         client_name="sshpilotd",
+        allow_cross_thread_commands=True,
+    )
+    return DaemonCore(
+        client=client,
+        configuration_backend=AuthoritativeConfigurationBackend(
+            client,
+            connection_manager,
+            group_manager,
+            config,
+        ),
     )
 
 

@@ -38,6 +38,7 @@ from sshpilot.api.transport.codec import (
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, RequestEnvelope
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
+from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
 from sshpilot.daemon.session_runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,15 @@ DAEMON_METHOD_CAPABILITIES = {
     "system.handshake": None,
 }
 
-DEFERRED_DAEMON_METHODS = frozenset({"sessions.open", "sessions.close"})
+DEFERRED_DAEMON_METHODS = frozenset(
+    {
+        "connections.create",
+        "connections.update",
+        "connections.delete",
+        "sessions.open",
+        "sessions.close",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -74,8 +83,9 @@ class DeferredResult:
 
     operation: Callable[[], Any]
     command_key: Hashable
-    session_id: SessionId
     on_rejected: Callable[[], None]
+    session_id: Optional[SessionId] = None
+    connection_id: Optional[ConnectionId] = None
 
 
 DispatchResult = Union[ImmediateResult, DeferredResult]
@@ -270,17 +280,21 @@ class RequestDispatcher:
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> dict:
+    ) -> DeferredResult:
         mutation = create_connection_request_from_wire(request.params)
-        return connection_details_to_wire(
-            self._core_client.create_connection(mutation)
+        return DeferredResult(
+            operation=lambda: connection_details_to_wire(
+                self._core_client.create_connection(mutation)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _handle_update_connection(
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> dict:
+    ) -> DeferredResult:
         if set(request.params) != {"connection_id", "update"}:
             raise ValueError(
                 "connections.update requires connection_id and update"
@@ -289,21 +303,29 @@ class RequestDispatcher:
         if type(connection_id) is not str or not connection_id.strip():
             raise ValueError("connection_id must be a non-empty string")
         mutation = update_connection_request_from_wire(request.params["update"])
-        return connection_details_to_wire(
-            self._core_client.update_connection(
-                ConnectionId(connection_id),
-                mutation,
-            )
+        typed_id = ConnectionId(connection_id)
+        return DeferredResult(
+            operation=lambda: connection_details_to_wire(
+                self._core_client.update_connection(typed_id, mutation)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_id,
         )
 
     def _handle_delete_connection(
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> dict:
+    ) -> DeferredResult:
         mutation = delete_connection_request_from_wire(request.params)
-        return delete_connection_result_to_wire(
-            self._core_client.delete_connection(mutation)
+        return DeferredResult(
+            operation=lambda: delete_connection_result_to_wire(
+                self._core_client.delete_connection(mutation)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=mutation.connection_id,
         )
 
     def _handle_list_sessions(
