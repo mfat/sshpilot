@@ -229,8 +229,16 @@ class InteractionBroker:
         self,
         spec: SessionLaunchSpec,
         launch_builder: Callable[..., tuple[Sequence[str], dict[str, str]]],
+        *,
+        trailing_args: Sequence[str] = (),
     ) -> tuple[tuple[str, ...], dict[str, str]]:
-        """Prepare canonical SSH argv, strict trust, and daemon askpass."""
+        """Prepare canonical SSH argv, strict trust, and daemon askpass.
+
+        ``trailing_args`` are appended after the target host once broker
+        trust/auth options have been inserted (e.g. ``("sftp",)`` for the
+        SFTP subsystem request) — the host must stay ``argv[-1]`` while the
+        broker computes host-key pinning and the ControlMaster check.
+        """
 
         argv_value, environment_value = launch_builder(
             spec.connection_id,
@@ -327,6 +335,8 @@ class InteractionBroker:
             if not current_pythonpath
             else os.pathsep.join((source_root, current_pythonpath))
         )
+        if trailing_args:
+            argv = (*argv, *trailing_args)
         return argv, environment
 
     _BROKER_OPTION_PREFIXES = (

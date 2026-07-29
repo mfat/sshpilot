@@ -28,6 +28,22 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.INTERACTIONS_HOST_KEY,
             Capability.INTERACTIONS_PASSWORD,
             Capability.INTERACTIONS_PASSPHRASE,
+            Capability.SFTP_READ,
+            Capability.SFTP_WRITE,
+            Capability.SFTP_EVENTS,
+            Capability.SFTP_METADATA,
+            Capability.SFTP_MUTATE,
+            Capability.TRANSFERS_READ,
+            Capability.TRANSFERS_WRITE,
+            Capability.TRANSFERS_EVENTS,
+            Capability.TRANSFERS_UPLOAD,
+            Capability.TRANSFERS_DOWNLOAD,
+            Capability.FORWARDS_READ,
+            Capability.FORWARDS_WRITE,
+            Capability.FORWARDS_EVENTS,
+            Capability.FORWARDS_LOCAL,
+            Capability.FORWARDS_REMOTE,
+            Capability.FORWARDS_DYNAMIC,
         }
     )
     client.close()

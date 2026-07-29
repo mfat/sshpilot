@@ -20,40 +20,63 @@ from sshpilot.api.models.common import (
     CompatibilityResult,
     ConnectionId,
     CoreInfo,
+    ForwardId,
     SessionId,
+    SftpServiceId,
+    TransferId,
     InteractionId,
 )
 from sshpilot.api.transport.codec import (
     attach_session_request_from_wire,
     attach_session_result_to_wire,
+    attach_sftp_request_from_wire,
     capabilities_to_wire,
     claim_terminal_input_request_from_wire,
+    close_forward_request_from_wire,
     close_session_request_from_wire,
+    close_sftp_request_from_wire,
     connection_details_to_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
     delete_connection_request_from_wire,
     delete_connection_result_to_wire,
     detach_session_request_from_wire,
+    forward_summary_to_wire,
     handshake_request_from_wire,
     handshake_result_to_wire,
     interaction_claim_to_wire,
     interaction_decision_from_wire,
     interaction_summary_to_wire,
+    list_directory_request_from_wire,
+    list_directory_result_to_wire,
+    open_forward_request_from_wire,
     open_session_request_from_wire,
+    open_sftp_request_from_wire,
+    cancel_transfer_request_from_wire,
     release_terminal_input_request_from_wire,
+    remote_file_entry_to_wire,
     replay_request_from_wire,
     replay_result_to_wire,
     resize_terminal_request_from_wire,
     session_summary_to_wire,
+    sftp_chmod_request_from_wire,
+    sftp_path_request_from_wire,
+    sftp_rename_request_from_wire,
+    sftp_service_summary_to_wire,
+    sftp_symlink_request_from_wire,
+    start_transfer_request_from_wire,
+    transfer_summary_to_wire,
     update_connection_request_from_wire,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, RequestEnvelope
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
+from sshpilot.daemon.forward_runtime import ForwardRuntime
 from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.session_runtime import SessionRuntime
+from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
 from sshpilot.daemon.terminal_stream import ReplaySlice
+from sshpilot.daemon.transfer_runtime import TransferRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +102,31 @@ DAEMON_METHOD_CAPABILITIES = {
     "terminal.resize": Capability.TERMINAL_RESIZE,
     "terminal.claim_input": Capability.TERMINAL_INPUT,
     "terminal.release_input": Capability.TERMINAL_INPUT,
+    "sftp.list_services": Capability.SFTP_READ,
+    "sftp.get_service": Capability.SFTP_READ,
+    "sftp.open": Capability.SFTP_WRITE,
+    "sftp.attach": Capability.SFTP_WRITE,
+    "sftp.detach": Capability.SFTP_WRITE,
+    "sftp.close": Capability.SFTP_WRITE,
+    "sftp.list": Capability.SFTP_READ,
+    "sftp.stat": Capability.SFTP_METADATA,
+    "sftp.lstat": Capability.SFTP_METADATA,
+    "sftp.realpath": Capability.SFTP_METADATA,
+    "sftp.readlink": Capability.SFTP_METADATA,
+    "sftp.mkdir": Capability.SFTP_MUTATE,
+    "sftp.rmdir": Capability.SFTP_MUTATE,
+    "sftp.rename": Capability.SFTP_MUTATE,
+    "sftp.remove": Capability.SFTP_MUTATE,
+    "sftp.chmod": Capability.SFTP_MUTATE,
+    "sftp.symlink": Capability.SFTP_MUTATE,
+    "transfers.list": Capability.TRANSFERS_READ,
+    "transfers.get": Capability.TRANSFERS_READ,
+    "transfers.start": Capability.TRANSFERS_WRITE,
+    "transfers.cancel": Capability.TRANSFERS_WRITE,
+    "forwards.list": Capability.FORWARDS_READ,
+    "forwards.get": Capability.FORWARDS_READ,
+    "forwards.open": Capability.FORWARDS_WRITE,
+    "forwards.close": Capability.FORWARDS_WRITE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -90,6 +138,23 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.delete",
         "sessions.open",
         "sessions.close",
+        "sftp.open",
+        "sftp.close",
+        "sftp.list",
+        "sftp.stat",
+        "sftp.lstat",
+        "sftp.realpath",
+        "sftp.readlink",
+        "sftp.mkdir",
+        "sftp.rmdir",
+        "sftp.rename",
+        "sftp.remove",
+        "sftp.chmod",
+        "sftp.symlink",
+        "transfers.start",
+        "transfers.cancel",
+        "forwards.open",
+        "forwards.close",
     }
 )
 
@@ -145,10 +210,16 @@ class RequestDispatcher:
         core_client: SshPilotClient,
         session_runtime: Optional[SessionRuntime] = None,
         interaction_broker: Optional[InteractionBroker] = None,
+        sftp_runtime: Optional[SftpServiceRuntime] = None,
+        transfer_runtime: Optional[TransferRuntime] = None,
+        forward_runtime: Optional[ForwardRuntime] = None,
     ) -> None:
         self._core_client = core_client
         self._session_runtime = session_runtime or SessionRuntime(core_client)
         self._interaction_broker = interaction_broker
+        self._sftp_runtime = sftp_runtime
+        self._transfer_runtime = transfer_runtime
+        self._forward_runtime = forward_runtime
         self.server_instance_id = uuid.uuid4().hex
         self._daemon_started_at = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
@@ -182,6 +253,31 @@ class RequestDispatcher:
             "terminal.resize": self._handle_resize_terminal,
             "terminal.claim_input": self._handle_claim_terminal_input,
             "terminal.release_input": self._handle_release_terminal_input,
+            "sftp.list_services": self._handle_list_sftp_services,
+            "sftp.get_service": self._handle_get_sftp_service,
+            "sftp.open": self._handle_open_sftp_service,
+            "sftp.attach": self._handle_attach_sftp_service,
+            "sftp.detach": self._handle_detach_sftp_service,
+            "sftp.close": self._handle_close_sftp_service,
+            "sftp.list": self._handle_sftp_list_directory,
+            "sftp.stat": self._handle_sftp_stat,
+            "sftp.lstat": self._handle_sftp_lstat,
+            "sftp.realpath": self._handle_sftp_realpath,
+            "sftp.readlink": self._handle_sftp_readlink,
+            "sftp.mkdir": self._handle_sftp_mkdir,
+            "sftp.rmdir": self._handle_sftp_rmdir,
+            "sftp.rename": self._handle_sftp_rename,
+            "sftp.remove": self._handle_sftp_remove,
+            "sftp.chmod": self._handle_sftp_chmod,
+            "sftp.symlink": self._handle_sftp_symlink,
+            "transfers.list": self._handle_list_transfers,
+            "transfers.get": self._handle_get_transfer,
+            "transfers.start": self._handle_start_transfer,
+            "transfers.cancel": self._handle_cancel_transfer,
+            "forwards.list": self._handle_list_forwards,
+            "forwards.get": self._handle_get_forward,
+            "forwards.open": self._handle_open_forward,
+            "forwards.close": self._handle_close_forward,
         }
 
     def begin_shutdown(self) -> None:
@@ -303,6 +399,9 @@ class RequestDispatcher:
                     self._interaction_broker is not None
                     and "binary-secret-v1" in metadata.supported_frame_types
                 ),
+                sftp=self._sftp_runtime is not None,
+                transfers=self._transfer_runtime is not None,
+                forwards=self._forward_runtime is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -660,6 +759,415 @@ class RequestDispatcher:
             terminal_session_id=result.session_id,
         )
 
+    # -- SFTP services --------------------------------------------------
+    def _handle_list_sftp_services(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> list:
+        self._require_empty_params(request)
+        return [
+            sftp_service_summary_to_wire(item)
+            for item in self._required_sftp_runtime().list_services()
+        ]
+
+    def _handle_get_sftp_service(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        if set(request.params) != {"service_id"}:
+            raise ValueError("sftp.get_service requires only service_id")
+        service_id = request.params["service_id"]
+        if type(service_id) is not str or not service_id.strip():
+            raise ValueError("service_id must be a non-empty string")
+        return sftp_service_summary_to_wire(
+            self._required_sftp_runtime().get_service(SftpServiceId(service_id))
+        )
+
+    def _handle_open_sftp_service(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        sftp_request = open_sftp_request_from_wire(request.params)
+        prepared = runtime.prepare_open_service(sftp_request, client_id=client_id)
+        prepared_wire = sftp_service_summary_to_wire(prepared)
+        return DeferredResult(
+            operation=lambda: runtime.start_service(prepared.id),
+            command_key=prepared.id,
+            session_id=SessionId(str(prepared.id)),
+            connection_id=prepared.connection_id,
+            on_rejected=lambda: runtime.reject_pending_start(prepared.id),
+            respond_on_accept=True,
+            accepted_result=prepared_wire,
+            on_background_error=lambda error: runtime.fail_pending_start(
+                prepared.id, error
+            ),
+            on_cancel=lambda: runtime.reject_pending_start(prepared.id),
+        )
+
+    def _handle_attach_sftp_service(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> dict:
+        client_id = self._required_client_id(state)
+        sftp_request = attach_sftp_request_from_wire(request.params)
+        return sftp_service_summary_to_wire(
+            self._required_sftp_runtime().attach_service(
+                sftp_request, client_id=client_id
+            )
+        )
+
+    def _handle_detach_sftp_service(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        client_id = self._required_client_id(state)
+        if set(request.params) != {"service_id"}:
+            raise ValueError("sftp.detach requires only service_id")
+        service_id = request.params["service_id"]
+        if type(service_id) is not str or not service_id.strip():
+            raise ValueError("service_id must be a non-empty string")
+        self._required_sftp_runtime().detach_service(
+            SftpServiceId(service_id),
+            client_id=client_id,
+        )
+        return None
+
+    def _handle_close_sftp_service(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> Optional[DeferredResult]:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        close_request = close_sftp_request_from_wire(request.params)
+        if not runtime.prepare_close_service(close_request, client_id=client_id):
+            return None
+
+        def _close() -> None:
+            runtime.finish_close_service(close_request.service_id)
+            return None
+
+        return DeferredResult(
+            operation=_close,
+            command_key=close_request.service_id,
+            session_id=SessionId(str(close_request.service_id)),
+            on_rejected=lambda: runtime.reject_pending_close(
+                close_request.service_id
+            ),
+        )
+
+    def _handle_sftp_list_directory(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        list_request = list_directory_request_from_wire(request.params)
+        command_key = list_request.service_id or list_request.connection_id
+        return DeferredResult(
+            operation=lambda: list_directory_result_to_wire(
+                runtime.list_directory(list_request, client_id=client_id)
+            ),
+            command_key=command_key,
+            connection_id=list_request.connection_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_stat(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: remote_file_entry_to_wire(
+                runtime.stat_path(path_request, client_id=client_id)
+            ),
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_lstat(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: remote_file_entry_to_wire(
+                runtime.lstat_path(path_request, client_id=client_id)
+            ),
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_realpath(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: {
+                "path": runtime.realpath(path_request, client_id=client_id)
+            },
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_readlink(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: {
+                "path": runtime.readlink(path_request, client_id=client_id)
+            },
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_mkdir(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.mkdir(path_request, client_id=client_id),
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_rmdir(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.rmdir(path_request, client_id=client_id),
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_remove(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        path_request = sftp_path_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.remove(path_request, client_id=client_id),
+            command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_rename(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        rename_request = sftp_rename_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.rename(rename_request, client_id=client_id),
+            command_key=rename_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_chmod(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        chmod_request = sftp_chmod_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.chmod(chmod_request, client_id=client_id),
+            command_key=chmod_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_symlink(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        symlink_request = sftp_symlink_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.symlink(symlink_request, client_id=client_id),
+            command_key=symlink_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    # -- transfers --------------------------------------------------------
+    def _handle_list_transfers(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> list:
+        self._require_empty_params(request)
+        return [
+            transfer_summary_to_wire(item)
+            for item in self._required_transfer_runtime().list_transfers()
+        ]
+
+    def _handle_get_transfer(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        if set(request.params) != {"transfer_id"}:
+            raise ValueError("transfers.get requires only transfer_id")
+        transfer_id = request.params["transfer_id"]
+        if type(transfer_id) is not str or not transfer_id.strip():
+            raise ValueError("transfer_id must be a non-empty string")
+        return transfer_summary_to_wire(
+            self._required_transfer_runtime().get_transfer(TransferId(transfer_id))
+        )
+
+    def _handle_start_transfer(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_transfer_runtime()
+        transfer_request = start_transfer_request_from_wire(request.params)
+        prepared = runtime.prepare_start_transfer(transfer_request, client_id=client_id)
+        prepared_wire = transfer_summary_to_wire(prepared)
+        return DeferredResult(
+            operation=lambda: runtime.run_transfer(prepared.id),
+            command_key=prepared.id,
+            connection_id=prepared.connection_id,
+            on_rejected=lambda: runtime.reject_pending_start(prepared.id),
+            respond_on_accept=True,
+            accepted_result=prepared_wire,
+            on_background_error=lambda error: runtime.fail_pending_start(
+                prepared.id, error
+            ),
+            on_cancel=lambda: runtime.reject_pending_start(prepared.id),
+        )
+
+    def _handle_cancel_transfer(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_transfer_runtime()
+        cancel_request = cancel_transfer_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.prepare_cancel_transfer(
+                cancel_request, client_id=client_id
+            ),
+            command_key=cancel_request.transfer_id,
+            on_rejected=lambda: None,
+        )
+
+    # -- forwards -----------------------------------------------------
+    def _handle_list_forwards(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> list:
+        self._require_empty_params(request)
+        return [
+            forward_summary_to_wire(item)
+            for item in self._required_forward_runtime().list_forwards()
+        ]
+
+    def _handle_get_forward(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        if set(request.params) != {"forward_id"}:
+            raise ValueError("forwards.get requires only forward_id")
+        forward_id = request.params["forward_id"]
+        if type(forward_id) is not str or not forward_id.strip():
+            raise ValueError("forward_id must be a non-empty string")
+        return forward_summary_to_wire(
+            self._required_forward_runtime().get_forward(ForwardId(forward_id))
+        )
+
+    def _handle_open_forward(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_forward_runtime()
+        forward_request = open_forward_request_from_wire(request.params)
+        prepared = runtime.prepare_open_forward(forward_request, client_id=client_id)
+        prepared_wire = forward_summary_to_wire(prepared)
+        return DeferredResult(
+            operation=lambda: runtime.start_forward(prepared.id),
+            command_key=prepared.id,
+            session_id=SessionId(str(prepared.id)),
+            connection_id=prepared.connection_id,
+            on_rejected=lambda: runtime.reject_pending_start(prepared.id),
+            respond_on_accept=True,
+            accepted_result=prepared_wire,
+            on_background_error=lambda error: runtime.fail_pending_start(
+                prepared.id, error
+            ),
+            on_cancel=lambda: runtime.reject_pending_start(prepared.id),
+        )
+
+    def _handle_close_forward(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> Optional[DeferredResult]:
+        client_id = self._required_client_id(state)
+        runtime = self._required_forward_runtime()
+        close_request = close_forward_request_from_wire(request.params)
+        if not runtime.prepare_close_forward(close_request, client_id=client_id):
+            return None
+
+        def _close() -> None:
+            runtime.finish_close_forward(close_request.forward_id)
+            return None
+
+        return DeferredResult(
+            operation=_close,
+            command_key=close_request.forward_id,
+            session_id=SessionId(str(close_request.forward_id)),
+            on_rejected=lambda: runtime.reject_pending_close(
+                close_request.forward_id
+            ),
+        )
+
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
         if metadata is None or state.client_id is None:
@@ -691,6 +1199,9 @@ class RequestDispatcher:
                     self._interaction_broker is not None
                     and "binary-secret-v1" in metadata.supported_frame_types
                 ),
+                sftp=self._sftp_runtime is not None,
+                transfers=self._transfer_runtime is not None,
+                forwards=self._forward_runtime is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -704,6 +1215,9 @@ class RequestDispatcher:
         *,
         terminal_frames: bool = False,
         secret_frames: bool = False,
+        sftp: bool = False,
+        transfers: bool = False,
+        forwards: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -743,6 +1257,37 @@ class RequestDispatcher:
                     Capability.INTERACTIONS_PASSPHRASE,
                 }
             )
+        if sftp:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.SFTP_READ,
+                    Capability.SFTP_WRITE,
+                    Capability.SFTP_EVENTS,
+                    Capability.SFTP_METADATA,
+                    Capability.SFTP_MUTATE,
+                }
+            )
+        if transfers:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.TRANSFERS_READ,
+                    Capability.TRANSFERS_WRITE,
+                    Capability.TRANSFERS_EVENTS,
+                    Capability.TRANSFERS_UPLOAD,
+                    Capability.TRANSFERS_DOWNLOAD,
+                }
+            )
+        if forwards:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.FORWARDS_READ,
+                    Capability.FORWARDS_WRITE,
+                    Capability.FORWARDS_EVENTS,
+                    Capability.FORWARDS_LOCAL,
+                    Capability.FORWARDS_REMOTE,
+                    Capability.FORWARDS_DYNAMIC,
+                }
+            )
         return daemon_capabilities
 
     def _required_interaction_broker(self) -> InteractionBroker:
@@ -752,6 +1297,30 @@ class RequestDispatcher:
                 "Typed interactions are unavailable",
             )
         return self._interaction_broker
+
+    def _required_sftp_runtime(self) -> SftpServiceRuntime:
+        if self._sftp_runtime is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "SFTP services are unavailable",
+            )
+        return self._sftp_runtime
+
+    def _required_transfer_runtime(self) -> TransferRuntime:
+        if self._transfer_runtime is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "File transfers are unavailable",
+            )
+        return self._transfer_runtime
+
+    def _required_forward_runtime(self) -> ForwardRuntime:
+        if self._forward_runtime is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Port forwards are unavailable",
+            )
+        return self._forward_runtime
 
     @staticmethod
     def _interaction_id_param(request: RequestEnvelope) -> InteractionId:

@@ -61,14 +61,33 @@ def test_successful_protocol_v1_handshake(raw_peer):
     assert response.result["selected_protocol_version"] == "1.0"
     assert response.result["daemon_version"] == __version__
     assert response.result["core_version"] == __version__
-    assert response.result["daemon_capabilities"] == [
-        Capability.CONNECTIONS_EVENTS.value,
-        Capability.CONNECTIONS_READ.value,
-        Capability.CONNECTIONS_WRITE.value,
-        Capability.SESSIONS_EVENTS.value,
-        Capability.SESSIONS_READ.value,
-        Capability.SESSIONS_WRITE.value,
-    ]
+    assert response.result["daemon_capabilities"] == sorted(
+        value
+        for value in (
+            Capability.CONNECTIONS_EVENTS.value,
+            Capability.CONNECTIONS_READ.value,
+            Capability.CONNECTIONS_WRITE.value,
+            Capability.SESSIONS_EVENTS.value,
+            Capability.SESSIONS_READ.value,
+            Capability.SESSIONS_WRITE.value,
+            Capability.SFTP_READ.value,
+            Capability.SFTP_WRITE.value,
+            Capability.SFTP_EVENTS.value,
+            Capability.SFTP_METADATA.value,
+            Capability.SFTP_MUTATE.value,
+            Capability.TRANSFERS_READ.value,
+            Capability.TRANSFERS_WRITE.value,
+            Capability.TRANSFERS_EVENTS.value,
+            Capability.TRANSFERS_UPLOAD.value,
+            Capability.TRANSFERS_DOWNLOAD.value,
+            Capability.FORWARDS_READ.value,
+            Capability.FORWARDS_WRITE.value,
+            Capability.FORWARDS_EVENTS.value,
+            Capability.FORWARDS_LOCAL.value,
+            Capability.FORWARDS_REMOTE.value,
+            Capability.FORWARDS_DYNAMIC.value,
+        )
+    )
     assert response.result["server_instance_id"]
 
 

@@ -18,7 +18,7 @@ from typing import Any, Callable, Deque, Dict, Optional, Set, Tuple, Union
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
-from sshpilot.api.models.common import RequestId, SessionId
+from sshpilot.api.models.common import ForwardId, RequestId, SessionId, SftpServiceId
 from sshpilot.api.models.terminal import TerminalInput, TerminalOutput
 from sshpilot.api.transport.codec import (
     decode_envelope,
@@ -63,6 +63,7 @@ from .dispatch import (
     ImmediateResult,
     RequestDispatcher,
 )
+from .forward_runtime import ForwardRuntime, SubprocessForwardProcessRunner
 from .lifecycle import (
     DaemonAlreadyRunningError,
     SocketSecurityError,
@@ -74,6 +75,8 @@ from .lifecycle import (
 )
 from .interaction_broker import InteractionBroker
 from .session_runtime import SessionRuntime
+from .sftp_runtime import SftpServiceRuntime, SubprocessSftpProcessRunner
+from .transfer_runtime import TransferRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +95,32 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.SESSION_CLOSED,
         EventType.INTERACTION_CREATED,
         EventType.INTERACTION_STATE_CHANGED,
+        EventType.SFTP_CREATED,
+        EventType.SFTP_STATE_CHANGED,
+        EventType.SFTP_CLOSED,
+        EventType.SFTP_FAILED,
+        EventType.TRANSFER_CREATED,
+        EventType.TRANSFER_STARTED,
+        EventType.TRANSFER_PROGRESS,
+        EventType.TRANSFER_ITEM_COMPLETED,
+        EventType.TRANSFER_COMPLETED,
+        EventType.TRANSFER_CANCELLED,
+        EventType.TRANSFER_FAILED,
+        EventType.FORWARD_CREATED,
+        EventType.FORWARD_STARTING,
+        EventType.FORWARD_ACTIVE,
+        EventType.FORWARD_CLOSED,
+        EventType.FORWARD_FAILED,
+    }
+)
+_INTERACTION_CANCELLING_EVENT_TYPES = frozenset(
+    {
+        EventType.SESSION_EXITED,
+        EventType.SESSION_CLOSED,
+        EventType.SFTP_CLOSED,
+        EventType.SFTP_FAILED,
+        EventType.FORWARD_CLOSED,
+        EventType.FORWARD_FAILED,
     }
 )
 
@@ -215,6 +244,9 @@ class DaemonServer:
         self._wakeup_write: Optional[socket.socket] = None
         self._core_client: Optional[SshPilotClient] = None
         self._session_runtime: Optional[SessionRuntime] = None
+        self._sftp_runtime: Optional[SftpServiceRuntime] = None
+        self._transfer_runtime: Optional[TransferRuntime] = None
+        self._forward_runtime: Optional[ForwardRuntime] = None
         self._interaction_broker: Optional[InteractionBroker] = None
         self._dispatcher: Optional[RequestDispatcher] = None
         self._session_executor: Optional[BoundedCommandExecutor] = None
@@ -239,6 +271,9 @@ class DaemonServer:
         self._session_subscription: Optional[Subscription] = None
         self._terminal_subscription: Optional[Subscription] = None
         self._interaction_subscription: Optional[Subscription] = None
+        self._sftp_subscription: Optional[Subscription] = None
+        self._transfer_subscription: Optional[Subscription] = None
+        self._forward_subscription: Optional[Subscription] = None
         self._terminal_queue: queue.Queue[TerminalOutput] = queue.Queue(maxsize=1024)
         self._terminal_publication_lost: Set[SessionId] = set()
         self._next_event_sequence = 0
@@ -408,11 +443,36 @@ class DaemonServer:
                 self._session_runtime = self._session_runtime_factory(
                     self._core_client
                 )
+            sftp_builder = getattr(
+                self._core_client, "prepare_daemon_sftp_launch", None
+            )
+            if callable(sftp_builder):
+                sftp_runner = SubprocessSftpProcessRunner(
+                    lambda spec: self._prepare_sftp_launch(spec, sftp_builder)
+                )
+                self._sftp_runtime = SftpServiceRuntime(
+                    self._core_client, runner=sftp_runner
+                )
+            else:
+                self._sftp_runtime = SftpServiceRuntime(self._core_client)
+            self._transfer_runtime = TransferRuntime(self._sftp_runtime)
+            forward_builder = getattr(
+                self._core_client, "prepare_daemon_forward_launch", None
+            )
+            if callable(forward_builder):
+                forward_runner = SubprocessForwardProcessRunner(
+                    lambda spec: self._prepare_forward_launch(spec, forward_builder)
+                )
+                self._forward_runtime = ForwardRuntime(
+                    self._core_client, runner=forward_runner
+                )
+            else:
+                self._forward_runtime = ForwardRuntime(self._core_client)
             self._interaction_broker = (
                 self._interaction_broker_factory(self._session_runtime)
                 if self._interaction_broker_factory is not None
                 else InteractionBroker(
-                    client_is_eligible=self._session_runtime.client_can_interact,
+                    client_is_eligible=self._client_can_interact,
                     password_lookup=getattr(
                         self._core_client,
                         "lookup_daemon_password",
@@ -439,6 +499,9 @@ class DaemonServer:
                 self._core_client,
                 self._session_runtime,
                 self._interaction_broker,
+                sftp_runtime=self._sftp_runtime,
+                transfer_runtime=self._transfer_runtime,
+                forward_runtime=self._forward_runtime,
             )
             self._session_executor = BoundedCommandExecutor(
                 max_workers=self.session_command_workers,
@@ -468,6 +531,15 @@ class DaemonServer:
         )
         self._terminal_subscription = self._session_runtime.subscribe_terminal(
             self._on_terminal_output
+        )
+        self._sftp_subscription = self._sftp_runtime.subscribe_events(
+            self._on_core_event
+        )
+        self._transfer_subscription = self._transfer_runtime.subscribe_events(
+            self._on_core_event
+        )
+        self._forward_subscription = self._forward_runtime.subscribe_events(
+            self._on_core_event
         )
         with self._event_lock:
             self._accepting_core_events = True
@@ -500,6 +572,74 @@ class DaemonServer:
                 session_id=spec.session_id,
             )
         return broker.prepare_launch(spec, launch_builder)
+
+    def _prepare_sftp_launch(
+        self,
+        spec: Any,
+        launch_builder: Callable[..., tuple],
+    ) -> tuple:
+        broker = self._interaction_broker
+        if broker is None:
+            raise SshPilotError(
+                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
+                "Typed SSH interactions are unavailable",
+                connection_id=spec.connection_id,
+                session_id=spec.session_id,
+            )
+        return broker.prepare_launch(spec, launch_builder, trailing_args=("sftp",))
+
+    def _prepare_forward_launch(
+        self,
+        spec: Any,
+        launch_builder: Callable[..., tuple],
+    ) -> tuple:
+        broker = self._interaction_broker
+        if broker is None:
+            raise SshPilotError(
+                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
+                "Typed SSH interactions are unavailable",
+                connection_id=spec.connection_id,
+                session_id=spec.session_id,
+            )
+        forward_runtime = self._forward_runtime
+        if forward_runtime is None:
+            raise SshPilotError(
+                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
+                "Port forwarding is unavailable",
+                connection_id=spec.connection_id,
+                session_id=spec.session_id,
+            )
+        summary = forward_runtime.get_forward(ForwardId(str(spec.session_id)))
+
+        def _wrapped_builder(connection_id: Any, *, interaction_policy: str = "broker") -> tuple:
+            return launch_builder(
+                connection_id,
+                forward_type=summary.type.value,
+                bind_host=summary.bind_host,
+                bind_port=summary.bind_port,
+                destination_host=summary.destination_host,
+                destination_port=summary.destination_port,
+                interaction_policy=interaction_policy,
+            )
+
+        return broker.prepare_launch(spec, _wrapped_builder)
+
+    def _client_can_interact(self, session_id: SessionId, client_id: Any) -> bool:
+        session_runtime = self._session_runtime
+        if session_runtime is not None and session_runtime.client_can_interact(
+            session_id, client_id
+        ):
+            return True
+        text = str(session_id)
+        if text.startswith("sftp:") and self._sftp_runtime is not None:
+            return self._sftp_runtime.client_can_interact(
+                SftpServiceId(text), client_id
+            )
+        if text.startswith("forward:") and self._forward_runtime is not None:
+            return self._forward_runtime.client_can_interact(
+                ForwardId(text), client_id
+            )
+        return False
 
     def _accept_client(self) -> None:
         listener = self._listener
@@ -1050,6 +1190,12 @@ class DaemonServer:
         session_runtime = self._session_runtime
         if session_runtime is not None:
             session_runtime.detach_client(state.protocol.client_id)
+        sftp_runtime = self._sftp_runtime
+        if sftp_runtime is not None:
+            sftp_runtime.detach_client(state.protocol.client_id)
+        forward_runtime = self._forward_runtime
+        if forward_runtime is not None:
+            forward_runtime.detach_client(state.protocol.client_id)
         broker = self._interaction_broker
         if broker is not None and state.protocol.client_id is not None:
             broker.disconnect_client(state.protocol.client_id)
@@ -1322,6 +1468,9 @@ class DaemonServer:
         core_client = self._core_client
         self._core_client = None
         self._session_runtime = None
+        self._sftp_runtime = None
+        self._transfer_runtime = None
+        self._forward_runtime = None
         try:
             if core_client is not None:
                 core_client.close()
@@ -1340,6 +1489,32 @@ class DaemonServer:
         if coordinator is not None:
             coordinator.close()
 
+    def _run_bounded_shutdown(
+        self, label: str, target: Optional[Any], deadline: float
+    ) -> None:
+        if target is None:
+            return
+
+        def _shutdown_target() -> None:
+            try:
+                target.shutdown()
+            except Exception as error:
+                logger.error(
+                    "%s shutdown failed type=%s",
+                    label,
+                    type(error).__name__,
+                )
+
+        thread = threading.Thread(
+            target=_shutdown_target,
+            name=f"sshpilot-{label.lower().replace(' ', '-')}-shutdown",
+            daemon=True,
+        )
+        thread.start()
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            logger.error("%s shutdown exceeded its time bound", label)
+
     def _shutdown_session_commands(self) -> None:
         if self._session_shutdown_started:
             return
@@ -1349,6 +1524,16 @@ class DaemonServer:
         runtime = self._session_runtime
         if executor is not None:
             executor.stop_accepting(cancel_pending=True)
+
+        # Reject new commands and cancel in-flight transfers before tearing
+        # down the SFTP handles/forwards they depend on, then sessions last.
+        self._run_bounded_shutdown(
+            "Transfer runtime", self._transfer_runtime, deadline
+        )
+        self._run_bounded_shutdown("SFTP runtime", self._sftp_runtime, deadline)
+        self._run_bounded_shutdown(
+            "Forward runtime", self._forward_runtime, deadline
+        )
 
         runtime_thread = None
         if runtime is not None:
@@ -1388,7 +1573,7 @@ class DaemonServer:
         if event.type not in _FORWARDED_EVENT_TYPES:
             return
         if (
-            event.type in {EventType.SESSION_EXITED, EventType.SESSION_CLOSED}
+            event.type in _INTERACTION_CANCELLING_EVENT_TYPES
             and event.session_id is not None
             and self._interaction_broker is not None
         ):
@@ -1522,6 +1707,12 @@ class DaemonServer:
             self._terminal_subscription = None
             interaction_subscription = self._interaction_subscription
             self._interaction_subscription = None
+            sftp_subscription = self._sftp_subscription
+            self._sftp_subscription = None
+            transfer_subscription = self._transfer_subscription
+            self._transfer_subscription = None
+            forward_subscription = self._forward_subscription
+            self._forward_subscription = None
         if subscription is not None:
             subscription.unsubscribe()
         if session_subscription is not None:
@@ -1530,3 +1721,9 @@ class DaemonServer:
             terminal_subscription.unsubscribe()
         if interaction_subscription is not None:
             interaction_subscription.unsubscribe()
+        if sftp_subscription is not None:
+            sftp_subscription.unsubscribe()
+        if transfer_subscription is not None:
+            transfer_subscription.unsubscribe()
+        if forward_subscription is not None:
+            forward_subscription.unsubscribe()

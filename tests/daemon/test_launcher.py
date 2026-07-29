@@ -94,6 +94,22 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.INTERACTIONS_HOST_KEY,
                 Capability.INTERACTIONS_PASSWORD,
                 Capability.INTERACTIONS_PASSPHRASE,
+                Capability.SFTP_READ,
+                Capability.SFTP_WRITE,
+                Capability.SFTP_EVENTS,
+                Capability.SFTP_METADATA,
+                Capability.SFTP_MUTATE,
+                Capability.TRANSFERS_READ,
+                Capability.TRANSFERS_WRITE,
+                Capability.TRANSFERS_EVENTS,
+                Capability.TRANSFERS_UPLOAD,
+                Capability.TRANSFERS_DOWNLOAD,
+                Capability.FORWARDS_READ,
+                Capability.FORWARDS_WRITE,
+                Capability.FORWARDS_EVENTS,
+                Capability.FORWARDS_LOCAL,
+                Capability.FORWARDS_REMOTE,
+                Capability.FORWARDS_DYNAMIC,
             }
         )
         assert result.client.list_connections() == []
