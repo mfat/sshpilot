@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""sshPilot headless core proof CLI launcher."""
+
+import glob
+import os
+import sys
+
+for base_path in ["/app", "/usr", "/usr/local"]:
+    for pkg_dir in ["site-packages", "dist-packages"]:
+        for path in sorted(glob.glob(f"{base_path}/lib/python3*/{pkg_dir}")):
+            sys.path.insert(0, path)
+    for path in (f"{base_path}/share/sshpilot", f"{base_path}/lib/sshpilot"):
+        if os.path.isdir(path):
+            sys.path.insert(0, path)
+
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_src_path = os.path.join(_script_dir, "src")
+if os.path.isdir(_src_path):
+    sys.path.insert(0, _src_path)
+
+from sshpilot.core.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

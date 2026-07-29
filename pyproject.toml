@@ -99,6 +99,10 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 Homepage = "https://github.com/mfat/sshpilot"
 Issues = "https://github.com/mfat/sshpilot/issues"
 
+
+[project.scripts]
+sshpilot-core = "sshpilot.core.cli:main"
+
 [tool.ruff]
 target-version = "py39"
 line-length = 100
