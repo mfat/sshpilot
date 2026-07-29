@@ -10,6 +10,8 @@ import shutil
 import tempfile
 import asyncio
 import enum
+import functools
+import threading
 from dataclasses import dataclass
 import logging
 import getpass
@@ -47,6 +49,21 @@ from .askpass_utils import (
 
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
+
+
+def _authoritative_state_locked(method):
+    """Serialize authoritative connection reads, writes, and reload commits."""
+
+    @functools.wraps(method)
+    def _wrapped(self, *args, **kwargs):
+        lock = getattr(self, '_authoritative_state_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            self._authoritative_state_lock = lock
+        with lock:
+            return method(self, *args, **kwargs)
+
+    return _wrapped
 
 
 def _ensure_event_loop() -> asyncio.AbstractEventLoop:
@@ -930,6 +947,13 @@ class ConnectionManager(GObject.Object):
         self.config = config
         self.connections: List[Connection] = []
         self._connections_by_uuid: Dict[str, Connection] = {}
+        self._visible_connections: List[Connection] = self.connections
+        self._visible_connections_by_uuid: Dict[str, Connection] = (
+            self._connections_by_uuid
+        )
+        self._authoritative_reload_active = False
+        self._authoritative_state_lock = threading.RLock()
+        self.connection_config_generation = 0
         self.identity_migration_enabled = bool(identity_migration_enabled)
         self.identity_migration_error: Optional[BaseException] = None
         # Store wildcard/negated host blocks (rules) separately
@@ -1619,28 +1643,74 @@ class ConnectionManager(GObject.Object):
 
     # No _ensure_collection needed with libsecret's high-level API
 
-    def load_ssh_config(self, create_missing: bool = True):
+    @contextlib.contextmanager
+    def authoritative_state_transaction(self):
+        """Hold the single in-process connection persistence boundary."""
+
+        with self._authoritative_state_lock:
+            yield
+
+    @_authoritative_state_locked
+    def load_ssh_config(
+        self,
+        create_missing: bool = True,
+        *,
+        reuse_existing: bool = True,
+    ):
         """Load under the cross-process identity migration lock."""
 
-        with self._identity_migration_lock():
-            return self._load_ssh_config_locked(create_missing=create_missing)
+        if not reuse_existing:
+            self._authoritative_reload_active = True
+        try:
+            with self._identity_migration_lock():
+                return self._load_ssh_config_locked(
+                    create_missing=create_missing,
+                    reuse_existing=reuse_existing,
+                )
+        finally:
+            if not reuse_existing:
+                self._authoritative_reload_active = False
 
-    def _load_ssh_config_locked(self, create_missing: bool = True):
+    def _load_ssh_config_locked(
+        self,
+        create_missing: bool = True,
+        *,
+        reuse_existing: bool = True,
+    ):
         """Load connections from SSH config file.
 
         Rebuilds the in-memory lists from disk. On any unexpected parse/read
         failure the previous connections/rules are restored, so a transient
         I/O error or bad external edit can't wipe the last known-good state.
         """
-        prev_connections = getattr(self, 'connections', [])
+        prev_connections = (
+            getattr(
+                self,
+                '_visible_connections',
+                getattr(self, 'connections', []),
+            )
+            if not reuse_existing
+            else getattr(self, 'connections', [])
+        )
         prev_rules = getattr(self, 'rules', [])
-        prev_uuid_index = getattr(self, '_connections_by_uuid', {})
+        prev_uuid_index = (
+            getattr(
+                self,
+                '_visible_connections_by_uuid',
+                getattr(self, '_connections_by_uuid', {}),
+            )
+            if not reuse_existing
+            else getattr(self, '_connections_by_uuid', {})
+        )
         existing_by_nickname = {conn.nickname: conn for conn in prev_connections}
         existing_by_uuid = {
             connection.uuid: connection
             for connection in prev_connections
             if getattr(connection, 'uuid', None)
         }
+        if not reuse_existing:
+            existing_by_nickname = {}
+            existing_by_uuid = {}
         seen_uuids: Dict[str, str] = {}
         ssh_uuid_assignments: Dict[str, Dict[str, str]] = {}
         identity_repairs: List[str] = []
@@ -1649,6 +1719,7 @@ class ConnectionManager(GObject.Object):
             self.ssh_config_path = self._ensure_config_parent_dir(self.ssh_config_path)
         except Exception as exc:
             logger.error("Unable to prepare SSH config path '%s': %s", self.ssh_config_path, exc)
+            self.identity_migration_error = exc
             return
         self.connections = []
         self._connections_by_uuid = {}
@@ -1675,6 +1746,11 @@ class ConnectionManager(GObject.Object):
                 ):
                     raise RuntimeError("connection identity migration is disabled")
                 self._commit_identity_metadata()
+                self._visible_connections = self.connections
+                self._visible_connections_by_uuid = self._connections_by_uuid
+                self.connection_config_generation = (
+                    getattr(self, 'connection_config_generation', 0) + 1
+                )
                 self.identity_migration_error = None
                 return
             else:
@@ -1741,10 +1817,23 @@ class ConnectionManager(GObject.Object):
 
                 raw_copy = dict(raw_cfg)
                 raw_uuid_map = raw_copy.pop('__connection_uuids', {})
+                single_marker_uuid = None
+                if (
+                    isinstance(raw_uuid_map, dict)
+                    and len(tokens) == 1
+                    and len(raw_uuid_map) == 1
+                ):
+                    # An external rename commonly changes only ``Host old`` to
+                    # ``Host new`` and leaves sshPilot's adjacent UUID marker
+                    # keyed by the old token. The block still supplies strong
+                    # identity evidence, so retain it and rewrite the marker.
+                    single_marker_uuid = next(iter(raw_uuid_map.values()))
                 raw_uuid = (
                     raw_uuid_map.get(
                         token,
-                        raw_uuid_map.get(None) if len(tokens) == 1 else None,
+                        raw_uuid_map.get(None, single_marker_uuid)
+                        if len(tokens) == 1
+                        else None,
                     )
                     if isinstance(raw_uuid_map, dict)
                     else None
@@ -1921,12 +2010,19 @@ class ConnectionManager(GObject.Object):
             if callable(binder):
                 binder(self.connections)
             self.identity_migration_error = None
+            self._visible_connections = self.connections
+            self._visible_connections_by_uuid = self._connections_by_uuid
+            self.connection_config_generation = (
+                getattr(self, 'connection_config_generation', 0) + 1
+            )
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
             # Keep the last known-good state rather than a partial/empty list.
             self.connections, self.rules = prev_connections, prev_rules
             self._connections_by_uuid = prev_uuid_index
+            self._visible_connections = prev_connections
+            self._visible_connections_by_uuid = prev_uuid_index
             self.identity_migration_error = e
 
     def parse_host_config(self, config: Dict[str, Any], source: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -2894,11 +2990,22 @@ class ConnectionManager(GObject.Object):
 
     def get_connections(self) -> List[Connection]:
         """Get list of all connections"""
+        if getattr(self, '_authoritative_reload_active', False):
+            return getattr(
+                self,
+                '_visible_connections',
+                self.connections,
+            ).copy()
         return self.connections.copy()
 
     def find_connection_by_nickname(self, nickname: str) -> Optional[Connection]:
         """Find by display nickname, accepting a UUID reference for migration."""
-        for connection in self.connections:
+        connections = (
+            getattr(self, '_visible_connections', self.connections)
+            if getattr(self, '_authoritative_reload_active', False)
+            else self.connections
+        )
+        for connection in connections:
             if connection.nickname == nickname:
                 return connection
         return self.get_connection_by_uuid(nickname)
@@ -2910,7 +3017,16 @@ class ConnectionManager(GObject.Object):
             canonical = canonical_connection_uuid(connection_uuid)
         except ValueError:
             return None
-        return getattr(self, '_connections_by_uuid', {}).get(canonical)
+        index = (
+            getattr(
+                self,
+                '_visible_connections_by_uuid',
+                self._connections_by_uuid,
+            )
+            if getattr(self, '_authoritative_reload_active', False)
+            else self._connections_by_uuid
+        )
+        return index.get(canonical)
 
     def generate_duplicate_nickname(self, base_nickname: str) -> str:
         """Generate a unique nickname for a duplicated connection."""

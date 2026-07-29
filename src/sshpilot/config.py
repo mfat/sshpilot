@@ -101,6 +101,22 @@ class Config(GObject.Object):
             logger.error(f"Failed to load JSON config: {e}")
             return self.get_default_config()
 
+    def read_json_config_strict(self) -> Dict[str, Any]:
+        """Read JSON state without replacing malformed input with defaults.
+
+        Authoritative daemon reload uses this path so a partial external write
+        cannot turn the last-known-good connection snapshot into defaults.
+        """
+
+        if not os.path.exists(self.config_file):
+            return self.get_default_config()
+        with open(self.config_file, encoding="utf-8") as config_file:
+            config = json.load(config_file)
+        if not isinstance(config, dict):
+            raise ValueError("configuration root must be an object")
+        config, _updated = self._ensure_config_defaults(config)
+        return config
+
     def save_json_config(
         self,
         config_data: Optional[Dict[str, Any]] = None,

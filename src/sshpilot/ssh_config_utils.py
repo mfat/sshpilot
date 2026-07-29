@@ -10,7 +10,8 @@ import shutil
 import tempfile
 import subprocess
 from collections import Counter
-from typing import Dict, List, Optional, Set, Union
+from dataclasses import dataclass
+from typing import Dict, FrozenSet, List, Optional, Set, Union
 
 
 logger = logging.getLogger(__name__)
@@ -154,18 +155,48 @@ def expand_ssh_tokens(value: str) -> str:
     return _TOKEN_RE.sub(_repl, value)
 
 
-def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str]:
-    """Return a list of SSH config files including those referenced by Include.
+@dataclass(frozen=True)
+class SSHConfigPathDiscovery:
+    """Resolved SSH inputs and filesystem paths needed to rediscover them."""
+
+    files: tuple[str, ...]
+    watch_paths: FrozenSet[str]
+    unreadable_paths: FrozenSet[str]
+
+
+def _watch_parent_for_pattern(pattern: str) -> str:
+    """Return the nearest non-glob parent used to discover future matches."""
+
+    candidate = pattern
+    while glob.has_magic(candidate):
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            break
+        candidate = parent
+    if not candidate or glob.has_magic(candidate):
+        candidate = os.path.dirname(pattern) or '.'
+    return os.path.abspath(candidate)
+
+
+def discover_ssh_config_paths(
+    main_path: str,
+    *,
+    max_depth: int = 32,
+) -> SSHConfigPathDiscovery:
+    """Resolve SSH inputs and the minimal watch set for their Include graph.
 
     Paths are expanded and resolved relative to their parent file. Duplicate files
-    are ignored. The main file is always first in the returned list. A recursion
-    guard prevents cycles and limits include depth.
+    are ignored. Missing exact includes and non-glob parents are retained in the
+    watch set so later creation and wildcard matches are detected.
     """
     resolved: List[str] = []
     visited: Set[str] = set()
+    watch_paths: Set[str] = set()
+    unreadable_paths: Set[str] = set()
 
     def _resolve(path: str, depth: int, stack: List[str]):
         abs_path = os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
+        watch_paths.add(abs_path)
         if abs_path in stack:
             logger.warning("Include cycle detected: %s -> %s", " -> ".join(stack), abs_path)
             return
@@ -177,8 +208,10 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
         try:
             with open(abs_path) as f:
                 lines = f.readlines()
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             logger.warning("Cannot read include file %s: %s", abs_path, exc)
+            if os.path.exists(abs_path):
+                unreadable_paths.add(abs_path)
             return
         visited.add(abs_path)
         resolved.append(abs_path)
@@ -195,11 +228,18 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
                     expanded = os.path.expanduser(os.path.expandvars(expand_ssh_tokens(pattern)))
                     if not os.path.isabs(expanded):
                         expanded = os.path.join(base_dir, expanded)
+                    expanded = os.path.abspath(expanded)
+                    if glob.has_magic(expanded):
+                        watch_paths.add(_watch_parent_for_pattern(expanded))
+                    else:
+                        watch_paths.add(expanded)
+                        watch_paths.add(os.path.dirname(expanded) or '.')
                     matches = glob.glob(expanded)
                     if not matches:
                         logger.warning("Include pattern %s does not match any files", pattern)
                     for matched in sorted(matches):
                         if os.path.isdir(matched):
+                            watch_paths.add(os.path.abspath(matched))
                             dir_matches = sorted(glob.glob(os.path.join(matched, '*')))
                             if not dir_matches:
                                 logger.warning("Include directory %s is empty", matched)
@@ -210,7 +250,17 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
         stack.pop()
 
     _resolve(main_path, 1, [])
-    return resolved
+    return SSHConfigPathDiscovery(
+        files=tuple(resolved),
+        watch_paths=frozenset(watch_paths),
+        unreadable_paths=frozenset(unreadable_paths),
+    )
+
+
+def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str]:
+    """Return SSH config files, including recursively resolved Include files."""
+
+    return list(discover_ssh_config_paths(main_path, max_depth=max_depth).files)
 
 
 def get_effective_ssh_config(

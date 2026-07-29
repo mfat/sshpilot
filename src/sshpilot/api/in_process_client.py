@@ -2,7 +2,7 @@
 
 import logging
 import threading
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 from sshpilot import __version__ as sshpilot_version
 
@@ -94,12 +94,14 @@ class InProcessClient:
         group_manager: Any = None,
         client_name: str = "gtk",
         client_version: str = sshpilot_version,
+        allow_cross_thread_commands: bool = False,
     ) -> None:
         if connection_manager is None:
             raise ValueError("connection_manager is required")
         self._connection_manager = connection_manager
         self._group_manager = group_manager
         self._owner_thread_id = threading.get_ident()
+        self._allow_cross_thread_commands = bool(allow_cross_thread_commands)
         self._publisher = EventPublisher()
         self._signal_handlers: List[int] = []
         self._closed = False
@@ -135,6 +137,11 @@ class InProcessClient:
 
     def get_capabilities(self) -> Capabilities:
         return self._capabilities
+
+    def enable_serialized_command_threads(self) -> None:
+        """Allow daemon-owned serialized workers to invoke this adapter."""
+
+        self._allow_cross_thread_commands = True
 
     def list_connections(self) -> List[ConnectionSummary]:
         self._assert_command_thread()
@@ -401,11 +408,49 @@ class InProcessClient:
     def _assert_command_thread(self) -> None:
         if self._closed:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "The client is closed")
-        if threading.get_ident() != self._owner_thread_id:
+        if (
+            not self._allow_cross_thread_commands
+            and threading.get_ident() != self._owner_thread_id
+        ):
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
                 "In-process client commands must run on their owner thread",
             )
+
+    def snapshot_connection_summaries(self) -> Tuple[ConnectionSummary, ...]:
+        """Return an immutable concrete-adapter snapshot for daemon reloads."""
+
+        if self._closed:
+            return ()
+        return tuple(
+            self._to_summary(connection)
+            for connection in self._manager_connections()
+        )
+
+    def publish_connection_reload(
+        self,
+        *,
+        deleted: Iterable[ConnectionSummary] = (),
+        created: Iterable[ConnectionSummary] = (),
+        updated: Iterable[ConnectionSummary] = (),
+    ) -> None:
+        """Publish one committed authoritative reload in deterministic order."""
+
+        if self._closed:
+            return
+        for event_type, summaries in (
+            (EventType.CONNECTION_DELETED, deleted),
+            (EventType.CONNECTION_CREATED, created),
+            (EventType.CONNECTION_UPDATED, updated),
+        ):
+            for summary in summaries:
+                if type(summary) is not ConnectionSummary:
+                    raise TypeError("connection reload events require public summaries")
+                self._publisher.publish(
+                    event_type,
+                    summary,
+                    connection_id=summary.id,
+                )
 
     def _require_capability(self, capability: Capability) -> None:
         if not self._capabilities.supports(capability):
