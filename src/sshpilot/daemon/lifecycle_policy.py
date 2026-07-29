@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 # Exit status the process may use so a supervisor can respawn after restart.
 RESTART_EXIT_CODE = 75
 
+# Sentinel so ``None`` still means "idle shutdown disabled" while omitting the
+# argument selects the environment default (dev/packaged/service).
+_IDLE_SHUTDOWN_UNSET: object = object()
+
 
 @dataclass
 class _IdleClock:
@@ -54,7 +58,7 @@ class DaemonLifecycleController:
         started_at: datetime,
         daemon_version: str,
         development_revision: str = "",
-        idle_shutdown_seconds: Optional[float] = ...,  # type: ignore[assignment]
+        idle_shutdown_seconds: object = _IDLE_SHUTDOWN_UNSET,
         service_mode: bool = False,
         packaged: bool = False,
         drain_timeout_seconds: float = 5.0,
@@ -63,15 +67,20 @@ class DaemonLifecycleController:
         on_state_changed: Optional[Callable[[DaemonStatus], None]] = None,
         on_shutdown: Optional[Callable[[], None]] = None,
     ) -> None:
-        if idle_shutdown_seconds is ...:
+        if idle_shutdown_seconds is _IDLE_SHUTDOWN_UNSET:
             configured = default_idle_shutdown_seconds(
                 service_mode=service_mode,
                 packaged=packaged,
             )
+        elif idle_shutdown_seconds is None:
+            configured = None
+        elif isinstance(idle_shutdown_seconds, (int, float)) and not isinstance(
+            idle_shutdown_seconds, bool
+        ):
+            configured = float(idle_shutdown_seconds)
         else:
-            configured = idle_shutdown_seconds
+            raise TypeError("idle_shutdown_seconds must be a number or None")
         if configured is not None:
-            configured = float(configured)
             if configured < 0:
                 raise ValueError("idle_shutdown_seconds must not be negative")
         if drain_timeout_seconds < 0:

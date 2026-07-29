@@ -87,7 +87,7 @@ from .lifecycle import (
     unlink_owned_socket,
     verify_bound_socket,
 )
-from .lifecycle_policy import DaemonLifecycleController
+from .lifecycle_policy import DaemonLifecycleController, _IDLE_SHUTDOWN_UNSET
 from .runtime_cleanup import (
     sweep_runtime_directory_on_startup,
     sweep_stale_askpass_sockets,
@@ -213,7 +213,7 @@ class DaemonServer:
         interaction_broker_factory: Optional[
             Callable[[SessionRuntime], InteractionBroker]
         ] = None,
-        idle_shutdown_seconds: Optional[float] = ...,  # type: ignore[assignment]
+        idle_shutdown_seconds: object = _IDLE_SHUTDOWN_UNSET,
         service_mode: bool = False,
         packaged: bool = False,
         drain_timeout_seconds: float = 5.0,
