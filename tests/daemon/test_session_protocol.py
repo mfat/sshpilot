@@ -87,9 +87,11 @@ def test_daemon_client_session_methods_and_multi_client_events(
 
         opened = client_a.open_session(OpenSessionRequest(connection_id=connection_id))
 
-        assert opened.state is SessionState.RUNNING
-        assert client_b.get_session(opened.id) == opened
-        assert client_b.list_sessions() == [opened]
+        assert opened.state is SessionState.STARTING
+        assert _wait_until(
+            lambda: client_b.get_session(opened.id).state is SessionState.RUNNING
+        )
+        assert client_b.list_sessions()[0].id == opened.id
         assert _wait_until(
             lambda: (
                 len([event for event in events_a if event.session_id == opened.id]) >= 3
@@ -152,9 +154,13 @@ def test_default_production_runner_fails_truthfully_without_terminal_transport(
         opened = client.open_session(
             OpenSessionRequest(connection_id=client.list_connections()[0].id)
         )
-        assert opened.state is SessionState.FAILED
-        assert opened.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
-        assert opened.capabilities.supported == frozenset()
+        assert opened.state is SessionState.STARTING
+        assert _wait_until(
+            lambda: client.get_session(opened.id).state is SessionState.FAILED
+        )
+        failed = client.get_session(opened.id)
+        assert failed.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
+        assert failed.capabilities.supported == frozenset()
         assert _wait_until(
             lambda: any(
                 event.type is EventType.SESSION_STATE_CHANGED

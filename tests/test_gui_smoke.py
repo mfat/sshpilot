@@ -429,8 +429,15 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
     old_bridge = getattr(app, "_api_client_bridge", None)
     bridge = GtkClientBridge()
     daemon_client = DaemonClient(socket_path=server.socket_path, timeout=2)
+    probe_client = DaemonClient(
+        socket_path=server.socket_path,
+        client_id=f"gtk-session-probe:{_repeat}",
+        timeout=2,
+    )
     completed = []
     observed = []
+    old_is_quitting = window._is_quitting
+    old_summary = getattr(app, "_last_api_session_summary", None)
     app._api_session_event_callback = observed.append
     app._api_client_bridge = bridge
     window.client_bridge = bridge
@@ -451,20 +458,36 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
 
         assert ticked == [True]
         assert completed == []
+        assert probe_client.list_connections()
+        assert probe_client.list_sessions()[0].state is SessionState.STARTING
+        if _repeat == 4:
+            window._is_quitting = True
         release.set()
-        assert _wait_until(lambda: bool(completed))
-        assert completed[0].state is SessionState.RUNNING
-        assert _wait_until(
-            lambda: any(
-                getattr(event.payload, "state", None) is SessionState.RUNNING for event in observed
+        if _repeat == 4:
+            assert _wait_until(
+                lambda: probe_client.list_sessions()[0].state
+                is SessionState.RUNNING
             )
-        )
-        assert getattr(app, "_last_api_session_summary") == completed[0]
+            gui.pump(100)
+            assert completed == []
+            assert getattr(app, "_last_api_session_summary", None) is old_summary
+        else:
+            assert _wait_until(lambda: bool(completed))
+            assert completed[0].state is SessionState.STARTING
+            assert _wait_until(
+                lambda: any(
+                    getattr(event.payload, "state", None) is SessionState.RUNNING
+                    for event in observed
+                )
+            )
+            assert getattr(app, "_last_api_session_summary") == completed[0]
         assert window.client is daemon_client
     finally:
         release.set()
+        window._is_quitting = old_is_quitting
         app.clear_api_event_subscription()
         app._api_session_event_callback = None
+        probe_client.close()
         daemon_client.close()
         bridge.shutdown()
         replacement = InProcessClient(

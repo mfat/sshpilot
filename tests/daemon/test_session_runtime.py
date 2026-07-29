@@ -241,6 +241,45 @@ def test_open_list_get_and_spontaneous_exit_are_serial_and_safe(runtime_parts):
     ]
 
 
+def test_prepare_and_start_split_keeps_runner_work_out_of_prepare(runtime_parts):
+    runtime, core, runner = runtime_parts
+    prepared = runtime.prepare_open_session(
+        OpenSessionRequest(connection_id=core.list_connections()[0].id),
+        client_id=ClientId("client:a"),
+    )
+
+    assert prepared.state is SessionState.STARTING
+    assert runner.specs == []
+
+    runtime.start_session(prepared.id)
+
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    assert len(runner.specs) == 1
+    with pytest.raises(SshPilotError) as caught:
+        runtime.start_session(prepared.id)
+    assert caught.value.code is ErrorCode.SESSION_INVALID_STATE
+    assert len(runner.specs) == 1
+
+
+def test_prepare_and_finish_close_keep_runner_work_out_of_prepare(runtime_parts):
+    runtime, core, runner = runtime_parts
+    session = runtime.open_session(
+        OpenSessionRequest(connection_id=core.list_connections()[0].id),
+        client_id=ClientId("client:a"),
+    )
+
+    assert runtime.prepare_close_session(
+        CloseSessionRequest(session_id=session.id)
+    )
+    assert runtime.get_session(session.id).state is SessionState.CLOSING
+    assert runner.handles[0].terminated == 0
+
+    runtime.finish_close_session(session.id)
+
+    assert runtime.get_session(session.id).state is SessionState.CLOSED
+    assert runner.handles[0].terminated == 1
+
+
 def test_startup_failure_is_a_real_failed_session_without_sensitive_details():
     manager = _Manager()
     core = InProcessClient(manager)
@@ -297,7 +336,7 @@ def test_process_exit_before_runner_returns_does_not_retain_a_stale_handle():
 
         assert opened.state is SessionState.CLOSED
         runtime.close_session(CloseSessionRequest(session_id=opened.id))
-        assert runner.handles[0].terminated == 0
+        assert runner.handles[0].terminated == 1
     finally:
         runtime.shutdown()
         core.close()
