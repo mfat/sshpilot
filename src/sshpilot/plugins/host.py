@@ -29,104 +29,29 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from sshpilot.core.plugins import (
+    ALL_EVENTS,
+    ConnectionInfo,
+    EventBus,
+    Events,
+    SessionInfo,
+)
+
 logger = logging.getLogger(__name__)
 
-
-class Events:
-    """Stable event-name constants. Plugins subscribe via ``ctx.events``."""
-
-    APP_STARTED = "app_started"
-    APP_SHUTDOWN = "app_shutdown"
-    CONNECTION_CREATED = "connection_created"
-    CONNECTION_UPDATED = "connection_updated"
-    CONNECTION_DELETED = "connection_deleted"
-    SESSION_OPENED = "session_opened"
-    SESSION_CLOSED = "session_closed"
-
-
-ALL_EVENTS = frozenset({
-    Events.APP_STARTED,
-    Events.APP_SHUTDOWN,
-    Events.CONNECTION_CREATED,
-    Events.CONNECTION_UPDATED,
-    Events.CONNECTION_DELETED,
-    Events.SESSION_OPENED,
-    Events.SESSION_CLOSED,
-})
+# Re-export core event contracts for compatibility.
+__all__ = [
+    "ALL_EVENTS",
+    "ConnectionInfo",
+    "EventBus",
+    "Events",
+    "PluginHost",
+    "SessionInfo",
+    "UiHost",
+]
 
 
-@dataclass(frozen=True)
-class ConnectionInfo:
-    """Read-only snapshot of a connection handed to plugins in events and
-    returned from ``ctx.add_connection``. Decoupled from the internal
-    ``Connection`` class, which is private and may change."""
-
-    nickname: str
-    host: str
-    username: str
-    protocol: str
-    port: int
-
-    @classmethod
-    def from_connection(cls, conn: Any) -> "ConnectionInfo":
-        return cls(
-            nickname=getattr(conn, "nickname", "") or "",
-            host=(getattr(conn, "hostname", "") or getattr(conn, "host", "") or ""),
-            username=getattr(conn, "username", "") or "",
-            protocol=getattr(conn, "protocol", "ssh") or "ssh",
-            port=int(getattr(conn, "port", 22) or 22),
-        )
-
-
-@dataclass(frozen=True)
-class SessionInfo:
-    """Read-only snapshot of an open terminal session (one tab)."""
-
-    connection: ConnectionInfo
-    session_id: str
-
-
-class EventBus:
-    """Synchronous, main-thread event dispatcher with per-callback isolation."""
-
-    def __init__(self) -> None:
-        # event name -> list of (plugin_id, callback)
-        self._subs: Dict[str, List[Tuple[str, Callable[[Any], None]]]] = {}
-
-    def subscribe(self, event: str, callback: Callable[[Any], None],
-                  *, plugin_id: str) -> None:
-        if event not in ALL_EVENTS:
-            raise ValueError(f"Unknown event {event!r}; valid events: "
-                             f"{sorted(ALL_EVENTS)}")
-        if not callable(callback):
-            raise TypeError("callback must be callable")
-        self._subs.setdefault(event, []).append((plugin_id, callback))
-
-    def unsubscribe(self, event: str, callback: Callable[[Any], None],
-                    *, plugin_id: str) -> None:
-        subs = self._subs.get(event)
-        if not subs:
-            return
-        self._subs[event] = [
-            (pid, cb) for (pid, cb) in subs
-            if not (pid == plugin_id and cb == callback)
-        ]
-
-    def unsubscribe_plugin(self, plugin_id: str) -> None:
-        """Drop every subscription owned by a plugin (used on deactivate)."""
-        for event in list(self._subs):
-            self._subs[event] = [
-                (pid, cb) for (pid, cb) in self._subs[event] if pid != plugin_id
-            ]
-
-    def emit(self, event: str, payload: Any) -> None:
-        # Iterate a copy so a callback that (un)subscribes mid-dispatch is safe.
-        for plugin_id, callback in list(self._subs.get(event, ())):
-            try:
-                callback(payload)
-            except Exception:
-                logger.exception(
-                    "Plugin %r callback for event %r failed", plugin_id, event)
+# Events / ConnectionInfo / SessionInfo / EventBus / ALL_EVENTS imported from core.
 
 
 @dataclass

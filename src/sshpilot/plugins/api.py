@@ -16,7 +16,6 @@ version does not match ``API_VERSION[0]``.
 from __future__ import annotations
 
 import abc
-import enum
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -67,68 +66,23 @@ logger = logging.getLogger(__name__)
 #      line-oriented streams (e.g. `docker logs -f`, `docker events`) over the
 #      same native SSH/local paths as the one-shot command APIs; returns a
 #      StreamHandle the caller stops when done.
-API_VERSION: Tuple[int, int] = (1, 13)
+#
+# Headless contracts (Capability, SpawnSpec, FieldSpec, Events, …) live in
+# ``sshpilot.core.plugins``; this module re-exports them for plugin compatibility.
+from sshpilot.core.plugins import (  # noqa: E402,F401
+    API_VERSION,
+    Capability,
+    FieldSpec,
+    SpawnSpec,
+)
 
-# Stable event names and event payload types live in host.py; re-exported here
-# so plugins import everything from sshpilot.plugins.api. (host.py imports
-# nothing from this module, so there is no import cycle.)
+# Stable event names and event payload types live in host.py (backed by core);
+# re-exported here so plugins import everything from sshpilot.plugins.api.
 from .host import ConnectionInfo, Events, SessionInfo  # noqa: E402,F401
 
 # Re-exported so plugins can type/inspect ctx.identities.list() results without
 # reaching into a private module. (identity.py imports nothing from plugins.)
 from ..identity import Identity  # noqa: E402,F401
-
-
-class Capability(enum.Enum):
-    """Things a protocol backend can do. UI code uses these to show/hide
-    actions (SFTP button, port-forwarding page, ssh-copy-id, ...) instead
-    of checking ``protocol == 'ssh'``."""
-
-    FILE_TRANSFER = "file-transfer"          # SFTP/SCP-style browsing
-    PORT_FORWARDING = "port-forwarding"
-    REMOTE_COMMAND = "remote-command"
-    AUTH_PASSWORD = "auth-password"
-    AUTH_KEY = "auth-key"
-    KEY_DEPLOYMENT = "key-deployment"        # ssh-copy-id flow
-    AGENT = "ssh-agent"
-    JUMP_HOST = "jump-host"
-
-
-@dataclass
-class SpawnSpec:
-    """A fully prepared, ready-to-spawn command for a terminal tab.
-
-    This is the generalized successor of ``SSHConnectionCommand``: argv +
-    env is all the terminal layer fundamentally needs. ``extras`` carries
-    protocol-private hints during the migration period (e.g. the SSH
-    backend's sshpass/askpass flags, which terminal.py still orchestrates);
-    new protocols should NOT rely on extras being interpreted by core.
-    """
-
-    argv: List[str]
-    env: Dict[str, str] = field(default_factory=dict)
-    working_directory: Optional[str] = None  # spawn cwd; defaults to ~ if None
-    # Transitional, protocol-private data. See docstring.
-    extras: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class FieldSpec:
-    """Declarative description of one connection-editor field.
-
-    Phase 2: the connection dialog renders these for non-SSH protocols
-    instead of hardcoding rows. ``key`` is where the value lives in
-    ``Connection.data``.
-    """
-
-    key: str
-    label: str
-    kind: str = "text"  # text | int | password | file | choice | switch
-    default: Any = None
-    choices: Optional[List[Tuple[str, str]]] = None  # (value, label)
-    placeholder: str = ""
-    required: bool = False
-    group: str = "general"  # dialog section the row belongs to
 
 
 class ProtocolBackend(abc.ABC):
@@ -1116,7 +1070,7 @@ class PluginContext:
 
         import time
 
-        from ..api.capabilities import Capability
+        from ..api.capabilities import Capability as ApiCapability
         from ..api.daemon_client import DaemonClient
         from ..api.models.operations import ForwardState, ForwardType, OpenForwardRequest
         from ..connection_identity import connection_id_from_uuid
@@ -1139,9 +1093,9 @@ class PluginContext:
                 )
             ) from exc
         required = {
-            Capability.FORWARDS_READ,
-            Capability.FORWARDS_WRITE,
-            Capability.FORWARDS_LOCAL,
+            ApiCapability.FORWARDS_READ,
+            ApiCapability.FORWARDS_WRITE,
+            ApiCapability.FORWARDS_LOCAL,
         }
         missing = required - supported
         if missing:
