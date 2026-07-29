@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -159,9 +160,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from .server import DaemonServer
 
         _configure_logging(args.verbose)
+        idle_shutdown_seconds = None
+        service_mode = False
+        packaged = False
+        try:
+            from sshpilot.config import Config
+
+            app_config = Config()
+            raw_idle = app_config.get_setting("daemon.idle_shutdown_seconds", None)
+            if raw_idle is not None:
+                idle_shutdown_seconds = float(raw_idle)
+            service_mode = bool(
+                app_config.get_setting("daemon.service_mode", False)
+                or os.environ.get("SSHPILOT_DAEMON_SERVICE_MODE")
+            )
+            packaged = bool(os.environ.get("SSHPILOT_PACKAGED"))
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "daemon config unavailable; using idle defaults",
+                exc_info=True,
+            )
         server = DaemonServer(
             _production_core_client,
             socket_path=args.socket,
+            idle_shutdown_seconds=idle_shutdown_seconds,
+            service_mode=service_mode,
+            packaged=packaged,
         )
 
         def _shutdown() -> None:

@@ -762,7 +762,51 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         daemon_group.add(self.legacy_fallback_switch)
 
+        # Idle shutdown (seconds); 0 disables.
+        self.daemon_idle_timeout_row = Adw.SpinRow(
+            adjustment=Gtk.Adjustment(
+                value=float(self.config.get_setting('daemon.idle_shutdown_seconds', 300)),
+                lower=0,
+                upper=86400,
+                step_increment=30,
+                page_increment=60,
+            ),
+            digits=0,
+        )
+        self.daemon_idle_timeout_row.set_title(_("Daemon idle shutdown (seconds)"))
+        self.daemon_idle_timeout_row.set_subtitle(
+            _("Exit when idle with no clients or live resources. 0 keeps the daemon running.")
+        )
+        self.daemon_idle_timeout_row.connect(
+            'notify::value', self.on_daemon_idle_timeout_changed
+        )
+        daemon_group.add(self.daemon_idle_timeout_row)
+
+        self.daemon_status_row = Adw.ActionRow()
+        self.daemon_status_row.set_title(_("Daemon status"))
+        self.daemon_status_row.set_subtitle(_("Not queried yet"))
+        refresh_btn = Gtk.Button(label=_("Refresh"))
+        refresh_btn.set_valign(Gtk.Align.CENTER)
+        refresh_btn.connect('clicked', self.on_daemon_status_refresh_clicked)
+        self.daemon_status_row.add_suffix(refresh_btn)
+        daemon_group.add(self.daemon_status_row)
+
+        restart_row = Adw.ActionRow()
+        restart_row.set_title(_("Restart daemon"))
+        restart_row.set_subtitle(
+            _("Stops the daemon process; the app will start a new instance on demand. "
+              "Live sessions cannot survive a restart.")
+        )
+        restart_btn = Gtk.Button(label=_("Restart"))
+        restart_btn.set_valign(Gtk.Align.CENTER)
+        restart_btn.add_css_class('destructive-action')
+        restart_btn.connect('clicked', self.on_daemon_restart_clicked)
+        restart_row.add_suffix(restart_btn)
+        daemon_group.add(restart_row)
+
         terminal_page.add(daemon_group)
+        # Best-effort status fill without blocking dialog open.
+        GLib.idle_add(self._refresh_daemon_status_row)
 
     def _build_terminal_preferences_page(self):
         """Build the Terminal preferences page."""
@@ -3321,6 +3365,123 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('terminal.legacy_local_ssh_fallback', bool(switch.get_active()))
         except Exception as exc:
             logger.error("Failed to update legacy fallback setting: %s", exc)
+
+    def on_daemon_idle_timeout_changed(self, row, _pspec):
+        try:
+            self.config.set_setting(
+                'daemon.idle_shutdown_seconds',
+                int(row.get_value()),
+            )
+        except Exception as exc:
+            logger.error("Failed to update daemon idle timeout: %s", exc)
+
+    def on_daemon_status_refresh_clicked(self, _button):
+        self._refresh_daemon_status_row()
+
+    def _refresh_daemon_status_row(self) -> bool:
+        row = getattr(self, 'daemon_status_row', None)
+        if row is None:
+            return False
+        try:
+            from .api.daemon_client import DaemonClient
+
+            client = DaemonClient(timeout=1.0)
+            try:
+                status = client.get_daemon_status()
+                resources = status.resources
+                row.set_subtitle(
+                    _(
+                        "{state} · instance {instance} · "
+                        "{sessions} sessions · {clients} clients"
+                    ).format(
+                        state=status.state.value,
+                        instance=status.server_instance_id[:8],
+                        sessions=resources.sessions_active,
+                        clients=resources.clients,
+                    )
+                )
+            finally:
+                client.close()
+        except Exception as exc:
+            row.set_subtitle(_("Unavailable ({error})").format(error=type(exc).__name__))
+        return False
+
+    def on_daemon_restart_clicked(self, _button):
+        dialog = Adw.AlertDialog(
+            heading=_("Restart the local daemon?"),
+            body=_(
+                "Live terminal sessions, SFTP services, transfers, and forwards "
+                "owned by this daemon will be lost. They cannot survive a restart."
+            ),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('restart', _("Restart"))
+        dialog.set_response_appearance('restart', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('cancel')
+        dialog.set_close_response('cancel')
+        dialog.connect('response', self._on_daemon_restart_response)
+        dialog.present(self)
+
+    def _on_daemon_restart_response(self, _dialog, response):
+        if response != 'restart':
+            return
+        try:
+            from .api.daemon_client import DaemonClient
+            from .api.models.daemon import RestartDaemonRequest
+
+            client = DaemonClient(timeout=2.0)
+            try:
+                status = client.get_daemon_status()
+                request = RestartDaemonRequest(force=False)
+                result = client.restart_daemon(request)
+                if not result.accepted and result.confirmation:
+                    warn = Adw.AlertDialog(
+                        heading=_("Daemon has live resources"),
+                        body=_(
+                            "Restarting will destroy: {resources}. "
+                            "Force the restart?"
+                        ).format(resources=", ".join(result.will_lose) or _("unknown")),
+                    )
+                    warn.add_response('cancel', _("Cancel"))
+                    warn.add_response('force', _("Force restart"))
+                    warn.set_response_appearance(
+                        'force', Adw.ResponseAppearance.DESTRUCTIVE
+                    )
+                    warn.set_default_response('cancel')
+                    warn.set_close_response('cancel')
+
+                    def _force(_d, resp, token=result.confirmation):
+                        if resp != 'force':
+                            return
+                        try:
+                            forced = DaemonClient(timeout=2.0)
+                            try:
+                                forced.restart_daemon(
+                                    RestartDaemonRequest(force=True, confirmation=token)
+                                )
+                            finally:
+                                forced.close()
+                        except Exception as exc:
+                            logger.error("Forced daemon restart failed: %s", exc)
+                        self._refresh_daemon_status_row()
+
+                    warn.connect('response', _force)
+                    warn.present(self)
+                    return
+                _ = status
+            finally:
+                client.close()
+        except Exception as exc:
+            logger.error("Daemon restart failed: %s", exc)
+            err = Adw.AlertDialog(
+                heading=_("Could not restart daemon"),
+                body=str(exc),
+            )
+            err.add_response('ok', _("OK"))
+            err.set_default_response('ok')
+            err.set_close_response('ok')
+            err.present(self)
+        self._refresh_daemon_status_row()
 
     def _set_shortcut_controls_enabled(self, enabled: bool):
         for widget in (getattr(self, '_shortcuts_row', None), getattr(self, '_shortcuts_button', None)):
