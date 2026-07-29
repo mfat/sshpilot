@@ -27,7 +27,7 @@ from .models.terminal import (
     ResizeTerminalRequest,
     TerminalInput,
 )
-from .models.common import ConnectionId
+from .models.common import ConnectionId, SessionId
 
 
 class SshPilotClient(Protocol):
@@ -53,6 +53,12 @@ class SshPilotClient(Protocol):
         ...
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
+        ...
+
+    def list_sessions(self) -> List[SessionSummary]:
+        ...
+
+    def get_session(self, session_id: SessionId) -> SessionSummary:
         ...
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:

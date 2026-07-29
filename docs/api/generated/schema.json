@@ -1,17 +1,17 @@
 {
-  "api_implementation_version": "0.5",
+  "api_implementation_version": "0.6",
   "client_method_contract": {
     "attach_session": {
-      "capability": "terminal.attach",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "close": {
       "capability": null,
       "status": "implemented"
     },
     "close_session": {
-      "capability": "terminal",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "create_connection": {
       "capability": "connections.write",
@@ -22,8 +22,8 @@
       "status": "implemented"
     },
     "detach_session": {
-      "capability": "terminal.attach",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "get_capabilities": {
       "capability": null,
@@ -33,13 +33,21 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "get_session": {
+      "capability": "sessions.read",
+      "status": "daemon-only"
+    },
     "list_connections": {
       "capability": "connections.read",
       "status": "implemented"
     },
+    "list_sessions": {
+      "capability": "sessions.read",
+      "status": "daemon-only"
+    },
     "open_session": {
-      "capability": "terminal",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "replay_terminal": {
       "capability": "terminal.replay",
@@ -82,6 +90,24 @@
     "connections.update": {
       "capability": "connections.write"
     },
+    "sessions.attach": {
+      "capability": "sessions.write"
+    },
+    "sessions.close": {
+      "capability": "sessions.write"
+    },
+    "sessions.detach": {
+      "capability": "sessions.write"
+    },
+    "sessions.get": {
+      "capability": "sessions.read"
+    },
+    "sessions.list": {
+      "capability": "sessions.read"
+    },
+    "sessions.open": {
+      "capability": "sessions.write"
+    },
     "system.get_capabilities": {
       "capability": null
     },
@@ -98,6 +124,9 @@
       "connections.read",
       "connections.events",
       "connections.write",
+      "sessions.read",
+      "sessions.write",
+      "sessions.events",
       "terminal",
       "terminal.attach",
       "terminal.replay",
@@ -122,6 +151,11 @@
       "persistence_failed",
       "mutation_ambiguous",
       "session_not_found",
+      "session_already_closed",
+      "session_invalid_state",
+      "session_startup_failed",
+      "session_termination_failed",
+      "unsupported_session_protocol",
       "interaction_not_found",
       "interaction_already_answered",
       "permission_denied",
@@ -186,14 +220,12 @@
       "rejected"
     ],
     "SessionState": [
-      "creating",
-      "connecting",
-      "waiting_for_interaction",
-      "connected",
-      "reconnecting",
-      "disconnected",
-      "failed",
+      "created",
+      "starting",
+      "running",
       "closing",
+      "exited",
+      "failed",
       "closed"
     ],
     "TransferDirection": [
@@ -230,13 +262,6 @@
           "type": "SessionId"
         },
         {
-          "default": null,
-          "name": "client_id",
-          "required": true,
-          "sensitive": false,
-          "type": "ClientId"
-        },
-        {
           "default": true,
           "name": "request_input",
           "required": false,
@@ -244,7 +269,7 @@
           "type": "bool"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "AttachSessionResult": {
       "fields": [
@@ -263,7 +288,7 @@
           "type": "AttachmentInfo"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "AttachmentInfo": {
       "fields": [
@@ -296,7 +321,7 @@
           "type": "bool"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "Capabilities": {
       "fields": [
@@ -381,7 +406,7 @@
           "type": "SessionId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "CompatibilityResult": {
       "fields": [
@@ -807,7 +832,7 @@
           "type": "AttachmentId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ErrorData": {
       "fields": [
@@ -1253,16 +1278,9 @@
           "required": true,
           "sensitive": false,
           "type": "ConnectionId"
-        },
-        {
-          "default": null,
-          "name": "client_id",
-          "required": true,
-          "sensitive": false,
-          "type": "ClientId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "PluginArgument": {
       "fields": [
@@ -1585,7 +1603,7 @@
           "type": "frozenset[str]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SessionExitInfo": {
       "fields": [
@@ -1611,7 +1629,26 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
+    },
+    "SessionFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
     },
     "SessionSummary": {
       "fields": [
@@ -1665,9 +1702,23 @@
           "required": false,
           "sensitive": false,
           "type": "SessionExitInfo | None"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionFailure | None"
+        },
+        {
+          "default": 0,
+          "name": "attachment_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpEntry": {
       "fields": [

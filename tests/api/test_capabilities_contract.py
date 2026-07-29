@@ -18,7 +18,6 @@ from sshpilot.api.models import (
 )
 from sshpilot.api.models.common import (
     AttachmentId,
-    ClientId,
     ConnectionId,
     InteractionId,
     SessionId,
@@ -38,20 +37,18 @@ UNSUPPORTED_OPERATION_CASES = [
         lambda client: client.open_session(
             OpenSessionRequest(
                 connection_id=ConnectionId("connection:v1:test"),
-                client_id=ClientId("client:test"),
             )
         ),
-        Capability.TERMINAL,
+        Capability.SESSIONS_WRITE,
     ),
     (
         "attach_session",
         lambda client: client.attach_session(
             AttachSessionRequest(
                 session_id=SessionId("session:test"),
-                client_id=ClientId("client:test"),
             )
         ),
-        Capability.TERMINAL_ATTACH,
+        Capability.SESSIONS_WRITE,
     ),
     (
         "detach_session",
@@ -61,14 +58,14 @@ UNSUPPORTED_OPERATION_CASES = [
                 attachment_id=AttachmentId("attachment:test"),
             )
         ),
-        Capability.TERMINAL_ATTACH,
+        Capability.SESSIONS_WRITE,
     ),
     (
         "close_session",
         lambda client: client.close_session(
             CloseSessionRequest(session_id=SessionId("session:test"))
         ),
-        Capability.TERMINAL,
+        Capability.SESSIONS_WRITE,
     ),
     (
         "send_terminal_input",
@@ -110,20 +107,45 @@ UNSUPPORTED_OPERATION_CASES = [
         Capability.INTERACTIONS,
     ),
 ]
+UNSUPPORTED_OPERATION_CASES.extend(
+    [
+        (
+            "list_sessions",
+            lambda client: client.list_sessions(),
+            Capability.SESSIONS_READ,
+        ),
+        (
+            "get_session",
+            lambda client: client.get_session(SessionId("session:test")),
+            Capability.SESSIONS_READ,
+        ),
+    ]
+)
 
 
-def test_capabilities_advertise_only_contract_tested_runtime(fake_manager, client_factory):
+def test_capabilities_advertise_only_contract_tested_runtime(
+    fake_manager,
+    client_factory,
+    client_backend,
+):
     client = client_factory(fake_manager)
 
     capabilities = client.get_capabilities()
 
-    assert capabilities.supported == frozenset(
-        {
-            Capability.CONNECTIONS_READ,
-            Capability.CONNECTIONS_EVENTS,
-            Capability.CONNECTIONS_WRITE,
-        }
-    )
+    expected = {
+        Capability.CONNECTIONS_READ,
+        Capability.CONNECTIONS_EVENTS,
+        Capability.CONNECTIONS_WRITE,
+    }
+    if client_backend == "daemon":
+        expected.update(
+            {
+                Capability.SESSIONS_READ,
+                Capability.SESSIONS_WRITE,
+                Capability.SESSIONS_EVENTS,
+            }
+        )
+    assert capabilities.supported == frozenset(expected)
     assert capabilities.supports(Capability.CONNECTIONS_READ)
     assert capabilities.supports(Capability.CONNECTIONS_EVENTS)
     assert capabilities.supports(Capability.CONNECTIONS_WRITE)
@@ -161,6 +183,7 @@ def test_method_status_metadata_covers_the_complete_client_contract():
 def test_advertised_capabilities_have_implemented_operations(
     fake_manager,
     client_factory,
+    client_backend,
 ):
     client = client_factory(fake_manager)
     implemented_capabilities = {
@@ -168,6 +191,14 @@ def test_advertised_capabilities_have_implemented_operations(
         for capability in IMPLEMENTED_CLIENT_METHOD_CAPABILITIES.values()
         if capability is not None
     }
+    if client_backend == "daemon":
+        implemented_capabilities.update(
+            {
+                Capability.SESSIONS_READ,
+                Capability.SESSIONS_WRITE,
+                Capability.SESSIONS_EVENTS,
+            }
+        )
     assert client.get_capabilities().supported <= implemented_capabilities
 
 
@@ -203,13 +234,13 @@ def test_in_process_write_capability_requires_manager_mutation_methods():
 )
 def test_unavailable_methods_fail_with_their_stable_capability(
     fake_manager,
-    client_factory,
+    in_process_client_factory,
     method_name,
     invoke,
     capability,
 ):
     assert method_name in UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
-    client = client_factory(fake_manager)
+    client = in_process_client_factory(fake_manager)
 
     with pytest.raises(SshPilotError) as caught:
         invoke(client)

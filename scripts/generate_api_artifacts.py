@@ -30,6 +30,9 @@ from sshpilot.api import (  # noqa: E402
 from sshpilot.api import __all__ as API_EXPORTS  # noqa: E402
 from sshpilot.api.capabilities import Capabilities  # noqa: E402
 from sshpilot.api.client import SshPilotClient  # noqa: E402
+from sshpilot.api.daemon_client import (  # noqa: E402
+    DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES,
+)
 from sshpilot.api.events import CoreEvent  # noqa: E402
 from sshpilot.api.in_process_client import (  # noqa: E402
     IMPLEMENTED_CLIENT_METHOD_CAPABILITIES,
@@ -74,6 +77,16 @@ IMPLEMENTED_MODELS = {
     "HandshakeResult",
     "RequestEnvelope",
     "SuccessResponseEnvelope",
+    "AttachSessionRequest",
+    "AttachSessionResult",
+    "AttachmentInfo",
+    "CloseSessionRequest",
+    "DetachSessionRequest",
+    "OpenSessionRequest",
+    "SessionCapabilities",
+    "SessionExitInfo",
+    "SessionFailure",
+    "SessionSummary",
 }
 PARTIAL_MODELS = {"CoreEvent"}
 
@@ -106,6 +119,12 @@ RELATED_METHODS = {
     "DeleteConnectionResult": ("delete_connection",),
     "UpdateConnectionRequest": ("update_connection",),
     "OpenSessionRequest": ("open_session",),
+    "SessionSummary": (
+        "list_sessions",
+        "get_session",
+        "open_session",
+        "attach_session",
+    ),
     "AttachSessionRequest": ("attach_session",),
     "AttachSessionResult": ("attach_session",),
     "DetachSessionRequest": ("detach_session",),
@@ -137,6 +156,7 @@ RELATED_EVENTS = {
 
 FIELD_EXAMPLES = {
     "after_sequence": 0,
+    "attachment_count": 0,
     "attachment_id": "attachment:example",
     "bind_host": "127.0.0.1",
     "bind_port": 8022,
@@ -166,7 +186,7 @@ FIELD_EXAMPLES = {
     "retained_bytes": 0,
     "rows": 24,
     "sequence": 0,
-    "session_id": "session:example",
+    "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
     "target_host": "example.invalid",
     "target_port": 22,
     "timestamp": "2030-01-01T00:00:00Z",
@@ -240,9 +260,18 @@ def client_method_contract() -> Dict[str, Dict[str, Any]]:
             "capability": capability.value if capability is not None else None,
         }
     for name, capability in UNSUPPORTED_CLIENT_METHOD_CAPABILITIES.items():
+        daemon_capability = DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES.get(name)
         result[name] = {
-            "status": "schema-only",
-            "capability": capability.value,
+            "status": (
+                "daemon-only"
+                if daemon_capability is not None
+                else "schema-only"
+            ),
+            "capability": (
+                daemon_capability.value
+                if daemon_capability is not None
+                else capability.value
+            ),
         }
     return dict(sorted(result.items()))
 

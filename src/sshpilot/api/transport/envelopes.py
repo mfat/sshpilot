@@ -109,9 +109,8 @@ class ErrorResponseEnvelope:
 class EventEnvelope:
     """An unsolicited typed public event frame.
 
-    Protocol v1 currently carries the three connection lifecycle events. Other
-    public event identifiers remain schema-only until their runtime contracts
-    define transport, ordering, and backpressure semantics.
+    Protocol v1 currently carries typed connection and session lifecycle
+    events. Terminal bytes, prompts, and replay remain outside this envelope.
     """
 
     protocol_version: str

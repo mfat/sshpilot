@@ -22,7 +22,7 @@ from .events import (
     Subscription,
 )
 from .in_process_client import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
-from .models.common import ClientId, ConnectionId, RequestId
+from .models.common import ClientId, ConnectionId, RequestId, SessionId
 from .models.connections import (
     ConnectionDetails,
     ConnectionSummary,
@@ -47,18 +47,24 @@ from .models.terminal import (
     TerminalInput,
 )
 from .transport.codec import (
+    attach_session_request_to_wire,
+    attach_session_result_from_wire,
     capabilities_from_wire,
-    connection_event_from_envelope,
+    close_session_request_to_wire,
     connection_details_from_wire,
     connection_summary_from_wire,
     create_connection_request_to_wire,
     decode_envelope,
     delete_connection_request_to_wire,
     delete_connection_result_from_wire,
+    detach_session_request_to_wire,
     encode_envelope,
     error_from_wire,
     handshake_request_to_wire,
     handshake_result_from_wire,
+    open_session_request_to_wire,
+    public_event_from_envelope,
+    session_summary_from_wire,
     update_connection_request_to_wire,
 )
 from .transport.envelopes import (
@@ -74,6 +80,15 @@ from .version import PROTOCOL_VERSION
 DEFAULT_REQUEST_TIMEOUT = 5.0
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
+
+DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
+    "attach_session": Capability.SESSIONS_WRITE,
+    "close_session": Capability.SESSIONS_WRITE,
+    "detach_session": Capability.SESSIONS_WRITE,
+    "get_session": Capability.SESSIONS_READ,
+    "list_sessions": Capability.SESSIONS_READ,
+    "open_session": Capability.SESSIONS_WRITE,
+}
 
 
 @dataclass
@@ -221,20 +236,65 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid delete result")
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
-        del request
-        raise self._unsupported("open_session")
+        self._require_capability(Capability.SESSIONS_WRITE)
+        result = self._request(
+            "sessions.open",
+            open_session_request_to_wire(request),
+            session_mutation=True,
+        )
+        try:
+            return session_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid session summary")
+
+    def list_sessions(self) -> List[SessionSummary]:
+        self._require_capability(Capability.SESSIONS_READ)
+        result = self._request("sessions.list", {})
+        if type(result) is not list:
+            self._fail_protocol("The daemon returned an invalid session list")
+        try:
+            return [session_summary_from_wire(item) for item in result]
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid session list")
+
+    def get_session(self, session_id: SessionId) -> SessionSummary:
+        self._require_capability(Capability.SESSIONS_READ)
+        result = self._request("sessions.get", {"session_id": session_id})
+        try:
+            return session_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid session summary")
 
     def attach_session(self, request: AttachSessionRequest) -> AttachSessionResult:
-        del request
-        raise self._unsupported("attach_session")
+        self._require_capability(Capability.SESSIONS_WRITE)
+        result = self._request(
+            "sessions.attach",
+            attach_session_request_to_wire(request),
+        )
+        try:
+            return attach_session_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid attachment")
 
     def detach_session(self, request: DetachSessionRequest) -> None:
-        del request
-        raise self._unsupported("detach_session")
+        self._require_capability(Capability.SESSIONS_WRITE)
+        result = self._request(
+            "sessions.detach",
+            detach_session_request_to_wire(request),
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid detach result")
 
     def close_session(self, request: CloseSessionRequest) -> None:
-        del request
-        raise self._unsupported("close_session")
+        self._require_capability(Capability.SESSIONS_WRITE)
+        result = self._request(
+            "sessions.close",
+            close_session_request_to_wire(request),
+            mutation_session_id=request.session_id,
+            session_mutation=True,
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid close result")
 
     def send_terminal_input(self, request: TerminalInput) -> None:
         del request
@@ -336,6 +396,8 @@ class DaemonClient:
         *,
         protocol_version: Optional[str] = None,
         mutation_connection_id: Optional[ConnectionId] = None,
+        mutation_session_id: Optional[SessionId] = None,
+        session_mutation: bool = False,
     ):
         with self._request_lock:
             with self._state_lock:
@@ -368,6 +430,7 @@ class DaemonClient:
                     mutation_may_have_been_sent = (
                         mutation_connection_id is not None
                         or method == "connections.create"
+                        or session_mutation
                     )
                     transport.sendall(frame)
             except (FramingError, TypeError, ValueError):
@@ -413,6 +476,14 @@ class DaemonClient:
                         ErrorCode.TRANSPORT_TIMEOUT,
                     }
                 ):
+                    if session_mutation:
+                        raise SshPilotError(
+                            ErrorCode.MUTATION_AMBIGUOUS,
+                            "The session change may have completed",
+                            retryable=False,
+                            request_id=request_id,
+                            session_id=mutation_session_id,
+                        )
                     raise SshPilotError(
                         ErrorCode.MUTATION_AMBIGUOUS,
                         "The connection change may have been saved",
@@ -523,10 +594,10 @@ class DaemonClient:
             )
             return False
         try:
-            event = connection_event_from_envelope(envelope)
+            event = public_event_from_envelope(envelope)
         except (TypeError, ValueError):
             self._fail_protocol_from_reader(
-                "The daemon sent an invalid connection event"
+                "The daemon sent an invalid lifecycle event"
             )
             return False
         with self._state_lock:

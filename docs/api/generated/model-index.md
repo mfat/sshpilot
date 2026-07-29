@@ -10,9 +10,9 @@ stored connection data.
 <!-- api-model: AttachSessionRequest -->
 ## `AttachSessionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** AttachSessionRequest(session_id: sshpilot.api.models.common.SessionId, client_id: sshpilot.api.models.common.ClientId, request_input: bool = True)
+**Purpose:** AttachSessionRequest(session_id: sshpilot.api.models.common.SessionId, request_input: bool = True)
 
 **Related methods:** `attach_session`
 **Related events:** None
@@ -20,23 +20,21 @@ stored connection data.
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `session_id` | `SessionId` | Yes | — | No |
-| `client_id` | `ClientId` | Yes | — | No |
 | `request_input` | `bool` | No | `true` | No |
 
 Synthetic representation:
 
 ```json
 {
-  "client_id": "client:example",
   "request_input": true,
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 <!-- api-model: AttachSessionResult -->
 ## `AttachSessionResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** AttachSessionResult(session: sshpilot.api.models.sessions.SessionSummary, attachment: sshpilot.api.models.sessions.AttachmentInfo)
 
@@ -56,18 +54,20 @@ Synthetic representation:
     "client_id": "client:example",
     "id": "id:example",
     "input_owner": false,
-    "session_id": "session:example"
+    "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
   },
   "session": {
+    "attachment_count": 0,
     "capabilities": {
       "supported": []
     },
     "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
     "created_at": "<UTC timestamp at creation>",
     "exit_info": null,
+    "failure": null,
     "id": "id:example",
     "input_owner": null,
-    "state": "creating"
+    "state": "created"
   }
 }
 ```
@@ -75,7 +75,7 @@ Synthetic representation:
 <!-- api-model: AttachmentInfo -->
 ## `AttachmentInfo`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** AttachmentInfo(id: sshpilot.api.models.common.AttachmentId, session_id: sshpilot.api.models.common.SessionId, client_id: sshpilot.api.models.common.ClientId, input_owner: bool)
 
@@ -96,7 +96,7 @@ Synthetic representation:
   "client_id": "client:example",
   "id": "id:example",
   "input_owner": false,
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -173,7 +173,7 @@ Synthetic representation:
 <!-- api-model: CloseSessionRequest -->
 ## `CloseSessionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** CloseSessionRequest(session_id: sshpilot.api.models.common.SessionId)
 
@@ -188,7 +188,7 @@ Synthetic representation:
 
 ```json
 {
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -497,7 +497,7 @@ Synthetic representation:
 <!-- api-model: DetachSessionRequest -->
 ## `DetachSessionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** DetachSessionRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId)
 
@@ -514,7 +514,7 @@ Synthetic representation:
 ```json
 {
   "attachment_id": "attachment:example",
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -585,9 +585,8 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** An unsolicited typed public event frame.
 
-Protocol v1 currently carries the three connection lifecycle events. Other
-public event identifiers remain schema-only until their runtime contracts
-define transport, ordering, and backpressure semantics.
+Protocol v1 currently carries typed connection and session lifecycle
+events. Terminal bytes, prompts, and replay remain outside this envelope.
 
 **Related methods:** None
 **Related events:** None
@@ -891,9 +890,9 @@ Synthetic representation:
 <!-- api-model: OpenSessionRequest -->
 ## `OpenSessionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** OpenSessionRequest(connection_id: sshpilot.api.models.common.ConnectionId, client_id: sshpilot.api.models.common.ClientId)
+**Purpose:** OpenSessionRequest(connection_id: sshpilot.api.models.common.ConnectionId)
 
 **Related methods:** `open_session`
 **Related events:** None
@@ -901,13 +900,11 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `connection_id` | `ConnectionId` | Yes | — | No |
-| `client_id` | `ClientId` | Yes | — | No |
 
 Synthetic representation:
 
 ```json
 {
-  "client_id": "client:example",
   "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
@@ -1021,7 +1018,7 @@ Synthetic representation:
   "bind_port": 8022,
   "id": "id:example",
   "kind": "local",
-  "session_id": "session:example",
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
   "state": "starting",
   "target_host": "",
   "target_port": null
@@ -1076,7 +1073,7 @@ Synthetic representation:
 {
   "after_sequence": null,
   "max_bytes": 1048576,
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -1111,7 +1108,7 @@ Synthetic representation:
   "data": "<sensitive value omitted>",
   "first_sequence": 0,
   "next_sequence": 1,
-  "session_id": "session:example",
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
   "truncated": false
 }
 ```
@@ -1171,14 +1168,14 @@ Synthetic representation:
     "columns": 80,
     "rows": 24
   },
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 <!-- api-model: SessionCapabilities -->
 ## `SessionCapabilities`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** SessionCapabilities(supported: FrozenSet[str] = frozenset())
 
@@ -1200,7 +1197,7 @@ Synthetic representation:
 <!-- api-model: SessionExitInfo -->
 ## `SessionExitInfo`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** SessionExitInfo(exit_code: int | None = None, signal: int | None = None, reason: str = '')
 
@@ -1223,14 +1220,38 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SessionFailure -->
+## `SessionFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** SessionFailure(code: str, message: str)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `str` | Yes | — | No |
+| `message` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": "example",
+  "message": "Example request"
+}
+```
+
 <!-- api-model: SessionSummary -->
 ## `SessionSummary`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SessionSummary(id: sshpilot.api.models.common.SessionId, connection_id: sshpilot.api.models.common.ConnectionId, state: sshpilot.api.models.sessions.SessionState, created_at: datetime.datetime = <factory>, input_owner: sshpilot.api.models.sessions.InputOwner | None = None, capabilities: sshpilot.api.models.sessions.SessionCapabilities = <factory>, exit_info: sshpilot.api.models.sessions.SessionExitInfo | None = None)
+**Purpose:** SessionSummary(id: sshpilot.api.models.common.SessionId, connection_id: sshpilot.api.models.common.ConnectionId, state: sshpilot.api.models.sessions.SessionState, created_at: datetime.datetime = <factory>, input_owner: sshpilot.api.models.sessions.InputOwner | None = None, capabilities: sshpilot.api.models.sessions.SessionCapabilities = <factory>, exit_info: sshpilot.api.models.sessions.SessionExitInfo | None = None, failure: sshpilot.api.models.sessions.SessionFailure | None = None, attachment_count: int = 0)
 
-**Related methods:** None
+**Related methods:** `list_sessions`, `get_session`, `open_session`, `attach_session`
 **Related events:** `session.created`, `session.state_changed`, `session.closed`
 
 | Field | Type | Required | Default | Sensitive |
@@ -1242,20 +1263,24 @@ Synthetic representation:
 | `input_owner` | `InputOwner | None` | No | `null` | No |
 | `capabilities` | `SessionCapabilities` | No | `{"supported": []}` | No |
 | `exit_info` | `SessionExitInfo | None` | No | `null` | No |
+| `failure` | `SessionFailure | None` | No | `null` | No |
+| `attachment_count` | `int` | No | `0` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "attachment_count": 0,
   "capabilities": {
     "supported": []
   },
   "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
   "created_at": "<UTC timestamp at creation>",
   "exit_info": null,
+  "failure": null,
   "id": "id:example",
   "input_owner": null,
-  "state": "creating"
+  "state": "created"
 }
 ```
 
@@ -1359,7 +1384,7 @@ Synthetic representation:
 {
   "attachment_id": "attachment:example",
   "data": "<sensitive value omitted>",
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -1387,7 +1412,7 @@ Synthetic representation:
   "created_at": "<UTC timestamp at creation>",
   "data": "<sensitive value omitted>",
   "sequence": 0,
-  "session_id": "session:example"
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 

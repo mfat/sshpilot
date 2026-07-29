@@ -14,6 +14,7 @@ from .models.common import (
     CompatibilityResult,
     ConnectionId,
     CoreInfo,
+    SessionId,
 )
 from .models.connections import (
     AuthenticationMethod,
@@ -63,10 +64,12 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
 }
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
-    "attach_session": Capability.TERMINAL_ATTACH,
-    "close_session": Capability.TERMINAL,
-    "detach_session": Capability.TERMINAL_ATTACH,
-    "open_session": Capability.TERMINAL,
+    "attach_session": Capability.SESSIONS_WRITE,
+    "close_session": Capability.SESSIONS_WRITE,
+    "detach_session": Capability.SESSIONS_WRITE,
+    "get_session": Capability.SESSIONS_READ,
+    "list_sessions": Capability.SESSIONS_READ,
+    "open_session": Capability.SESSIONS_WRITE,
     "replay_terminal": Capability.TERMINAL_REPLAY,
     "resize_terminal": Capability.TERMINAL,
     "respond_to_interaction": Capability.INTERACTIONS,
@@ -317,6 +320,13 @@ class InProcessClient:
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
         del request
         raise self._unsupported("open_session")
+
+    def list_sessions(self) -> List[SessionSummary]:
+        raise self._unsupported("list_sessions")
+
+    def get_session(self, session_id: SessionId) -> SessionSummary:
+        del session_id
+        raise self._unsupported("get_session")
 
     def attach_session(self, request: AttachSessionRequest) -> AttachSessionResult:
         del request

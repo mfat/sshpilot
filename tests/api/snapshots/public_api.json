@@ -13,7 +13,7 @@
     "SshPilotError",
     "Subscription"
   ],
-  "api_implementation_version": "0.5",
+  "api_implementation_version": "0.6",
   "capabilities": [
     "connections.events",
     "connections.read",
@@ -22,6 +22,9 @@
     "plugins",
     "port_forwarding",
     "secrets",
+    "sessions.events",
+    "sessions.read",
+    "sessions.write",
     "sftp",
     "terminal",
     "terminal.attach",
@@ -29,16 +32,16 @@
   ],
   "client_method_contract": {
     "attach_session": {
-      "capability": "terminal.attach",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "close": {
       "capability": null,
       "status": "implemented"
     },
     "close_session": {
-      "capability": "terminal",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "create_connection": {
       "capability": "connections.write",
@@ -49,8 +52,8 @@
       "status": "implemented"
     },
     "detach_session": {
-      "capability": "terminal.attach",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "get_capabilities": {
       "capability": null,
@@ -60,13 +63,21 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "get_session": {
+      "capability": "sessions.read",
+      "status": "daemon-only"
+    },
     "list_connections": {
       "capability": "connections.read",
       "status": "implemented"
     },
+    "list_sessions": {
+      "capability": "sessions.read",
+      "status": "daemon-only"
+    },
     "open_session": {
-      "capability": "terminal",
-      "status": "schema-only"
+      "capability": "sessions.write",
+      "status": "daemon-only"
     },
     "replay_terminal": {
       "capability": "terminal.replay",
@@ -102,7 +113,9 @@
     "detach_session",
     "get_capabilities",
     "get_connection",
+    "get_session",
     "list_connections",
+    "list_sessions",
     "open_session",
     "replay_terminal",
     "resize_terminal",
@@ -180,9 +193,23 @@
       ],
       "return": "ConnectionDetails"
     },
+    "get_session": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "session_id",
+          "type": "SessionId"
+        }
+      ],
+      "return": "SessionSummary"
+    },
     "list_connections": {
       "parameters": [],
       "return": "list[ConnectionSummary]"
+    },
+    "list_sessions": {
+      "parameters": [],
+      "return": "list[SessionSummary]"
     },
     "open_session": {
       "parameters": [
@@ -276,6 +303,24 @@
     "connections.update": {
       "capability": "connections.write"
     },
+    "sessions.attach": {
+      "capability": "sessions.write"
+    },
+    "sessions.close": {
+      "capability": "sessions.write"
+    },
+    "sessions.detach": {
+      "capability": "sessions.write"
+    },
+    "sessions.get": {
+      "capability": "sessions.read"
+    },
+    "sessions.list": {
+      "capability": "sessions.read"
+    },
+    "sessions.open": {
+      "capability": "sessions.write"
+    },
     "system.get_capabilities": {
       "capability": null
     },
@@ -303,11 +348,16 @@
     "persistence_failed",
     "protocol_error",
     "protocol_version_unsupported",
+    "session_already_closed",
+    "session_invalid_state",
     "session_not_found",
+    "session_startup_failed",
+    "session_termination_failed",
     "transport_closed",
     "transport_timeout",
     "unsupported_capability",
     "unsupported_method",
+    "unsupported_session_protocol",
     "validation_failed"
   ],
   "event_types": [
@@ -378,6 +428,7 @@
     "ResizeTerminalRequest",
     "SessionCapabilities",
     "SessionExitInfo",
+    "SessionFailure",
     "SessionId",
     "SessionState",
     "SessionSummary",
@@ -394,7 +445,6 @@
   "models": {
     "AttachSessionRequest": [
       "session_id",
-      "client_id",
       "request_input"
     ],
     "AttachSessionResult": [
@@ -578,8 +628,7 @@
       "path"
     ],
     "OpenSessionRequest": [
-      "connection_id",
-      "client_id"
+      "connection_id"
     ],
     "PluginArgument": [
       "name",
@@ -645,6 +694,10 @@
       "signal",
       "reason"
     ],
+    "SessionFailure": [
+      "code",
+      "message"
+    ],
     "SessionSummary": [
       "id",
       "connection_id",
@@ -652,7 +705,9 @@
       "created_at",
       "input_owner",
       "capabilities",
-      "exit_info"
+      "exit_info",
+      "failure",
+      "attachment_count"
     ],
     "SftpEntry": [
       "name",
@@ -706,6 +761,9 @@
       "connections.read",
       "connections.events",
       "connections.write",
+      "sessions.read",
+      "sessions.write",
+      "sessions.events",
       "terminal",
       "terminal.attach",
       "terminal.replay",
@@ -730,6 +788,11 @@
       "persistence_failed",
       "mutation_ambiguous",
       "session_not_found",
+      "session_already_closed",
+      "session_invalid_state",
+      "session_startup_failed",
+      "session_termination_failed",
+      "unsupported_session_protocol",
       "interaction_not_found",
       "interaction_already_answered",
       "permission_denied",
@@ -794,14 +857,12 @@
       "rejected"
     ],
     "SessionState": [
-      "creating",
-      "connecting",
-      "waiting_for_interaction",
-      "connected",
-      "reconnecting",
-      "disconnected",
-      "failed",
+      "created",
+      "starting",
+      "running",
       "closing",
+      "exited",
+      "failed",
       "closed"
     ],
     "TransferDirection": [
@@ -828,6 +889,12 @@
     "MAX_FRAME_SIZE",
     "RequestEnvelope",
     "SuccessResponseEnvelope",
+    "attach_session_request_from_wire",
+    "attach_session_request_to_wire",
+    "attach_session_result_from_wire",
+    "attach_session_result_to_wire",
+    "close_session_request_from_wire",
+    "close_session_request_to_wire",
     "create_connection_request_from_wire",
     "create_connection_request_to_wire",
     "decode_envelope",
@@ -835,11 +902,19 @@
     "delete_connection_request_to_wire",
     "delete_connection_result_from_wire",
     "delete_connection_result_to_wire",
+    "detach_session_request_from_wire",
+    "detach_session_request_to_wire",
     "encode_envelope",
     "encode_frame",
     "error_from_wire",
     "error_to_wire",
+    "open_session_request_from_wire",
+    "open_session_request_to_wire",
     "receive_frame",
+    "session_exit_info_from_wire",
+    "session_exit_info_to_wire",
+    "session_summary_from_wire",
+    "session_summary_to_wire",
     "update_connection_request_from_wire",
     "update_connection_request_to_wire"
   ]

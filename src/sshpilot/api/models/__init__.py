@@ -55,6 +55,7 @@ from .sessions import (
     OpenSessionRequest,
     SessionCapabilities,
     SessionExitInfo,
+    SessionFailure,
     SessionState,
     SessionSummary,
 )
@@ -116,6 +117,7 @@ __all__ = [
     "ResizeTerminalRequest",
     "SessionCapabilities",
     "SessionExitInfo",
+    "SessionFailure",
     "SessionId",
     "SessionState",
     "SessionSummary",
