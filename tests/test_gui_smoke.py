@@ -328,6 +328,169 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
         assert server.wait_stopped()
 
 
+def test_real_window_refreshes_after_daemon_owned_external_config_reload(
+    gui,
+    tmp_path,
+    monkeypatch,
+):
+    import json
+    import os
+    from pathlib import Path
+
+    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.config import Config
+    import sshpilot.connection_manager as connection_manager_module
+    from sshpilot.connection_manager import ConnectionManager
+    from sshpilot.daemon.config_reload import AuthoritativeConfigurationBackend
+    from sshpilot.daemon.server import DaemonCore, DaemonServer
+    from sshpilot.groups import GroupManager
+    from sshpilot.gtk_client_bridge import GtkClientBridge
+
+    class _FileConfig:
+        def __init__(self, path):
+            self.config_file = str(path)
+            self.config_data = {"config_version": 3}
+            self._connection_uuid_by_nickname = {}
+            self._connection_nickname_by_uuid = {}
+            self.save_json_config()
+
+        def get_setting(self, key, default=None):
+            current = self.config_data
+            for part in key.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    return default
+                current = current[part]
+            return current
+
+        def set_setting(self, key, value):
+            ConnectionManager._set_nested_setting(self.config_data, key, value)
+            self.save_json_config()
+
+        def save_json_config(self, data=None, *, raise_on_error=False):
+            return Config.save_json_config(
+                self,
+                data,
+                raise_on_error=raise_on_error,
+            )
+
+        def read_json_config_strict(self):
+            return json.loads(
+                Path(self.config_file).read_text(encoding="utf-8")
+            )
+
+        def bind_connection_identities(self, connections):
+            Config.bind_connection_identities(self, connections)
+
+    def _label_texts(widget):
+        texts = []
+        if isinstance(widget, gui.Gtk.Label):
+            texts.append(widget.get_text())
+        child = widget.get_first_child()
+        while child is not None:
+            texts.extend(_label_texts(child))
+            child = child.get_next_sibling()
+        return texts
+
+    def _wait_until(predicate, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            gui.pump(10)
+        return bool(predicate())
+
+    ssh_dir = tmp_path / "external-reload-ssh"
+    ssh_dir.mkdir(mode=0o700)
+    root = ssh_dir / "config"
+    root.write_text(
+        "Host Alpha\n    HostName alpha.example.test\n    User tester\n",
+        encoding="utf-8",
+    )
+    os.chmod(root, 0o600)
+    monkeypatch.setattr(
+        connection_manager_module,
+        "get_ssh_dir",
+        lambda: str(ssh_dir),
+    )
+    monkeypatch.setattr(
+        connection_manager_module,
+        "get_config_dir",
+        lambda: str(tmp_path),
+    )
+    config = _FileConfig(tmp_path / "daemon-config.json")
+    manager = ConnectionManager(config)
+    groups = GroupManager(config, connection_manager=manager)
+    core = InProcessClient(
+        manager,
+        group_manager=groups,
+        client_name="gtk-external-reload",
+        allow_cross_thread_commands=True,
+    )
+    backend = AuthoritativeConfigurationBackend(core, manager, groups, config)
+    socket_dir = tmp_path / "daemon-external-reload"
+    socket_dir.mkdir(mode=0o700)
+    server = DaemonServer(
+        lambda: DaemonCore(core, backend),
+        socket_path=socket_dir / "sshpilotd.sock",
+        configuration_reload_debounce=0.02,
+        configuration_poll_interval=0.02,
+    )
+    server.start_in_thread()
+
+    window = gui.window
+    welcome = window.welcome_view
+    app = gui.app
+    old_bridge = getattr(app, "_api_client_bridge", None)
+    old_get_meta = welcome.config.get_connection_meta
+    bridge = GtkClientBridge()
+    daemon_client = DaemonClient(socket_path=server.socket_path, timeout=2)
+    welcome.config.get_connection_meta = lambda _nickname: {"last_used": 1}
+    app._api_client_bridge = bridge
+    window.client_bridge = bridge
+    try:
+        window._apply_client_selection(
+            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+        )
+        assert window.connection_manager.identity_migration_enabled is False
+        root.write_text(
+            root.read_text(encoding="utf-8")
+            + "\nHost NL1\n    HostName nl1.example.test\n    User tester\n",
+            encoding="utf-8",
+        )
+        ticked = []
+        gui.GLib.idle_add(lambda: ticked.append(True) or False)
+        assert _wait_until(lambda: bool(ticked))
+        assert _wait_until(
+            lambda: "NL1" in _label_texts(welcome._recent_box)
+        )
+        assert "sshpilot:ConnectionUUID NL1" in root.read_text(
+            encoding="utf-8"
+        )
+        assert window.connection_manager.identity_migration_enabled is False
+    finally:
+        app.clear_api_event_subscription()
+        daemon_client.close()
+        bridge.shutdown()
+        window.connection_manager.identity_migration_enabled = True
+        replacement = InProcessClient(
+            window.connection_manager,
+            group_manager=window.group_manager,
+        )
+        window.client = replacement
+        window.client_bridge = None
+        welcome._closed = False
+        welcome.config.get_connection_meta = old_get_meta
+        welcome.set_client(replacement)
+        app._api_client_selection = ClientSelection(
+            client=replacement,
+            mode=ClientMode.IN_PROCESS,
+        )
+        app._api_client_bridge = old_bridge
+        server.shutdown()
+        assert server.wait_stopped()
+
+
 @pytest.mark.parametrize("_repeat", range(5))
 def test_real_gtk_session_open_is_non_blocking_and_observes_events(
     gui,
