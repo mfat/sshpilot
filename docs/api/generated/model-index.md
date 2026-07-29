@@ -156,6 +156,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ClaimTerminalInputRequest -->
+## `ClaimTerminalInputRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** ClaimTerminalInputRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `session_id` | `SessionId` | Yes | — | No |
+| `attachment_id` | `AttachmentId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attachment_id": "attachment:example",
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
 <!-- api-model: ClientInfo -->
 ## `ClientInfo`
 
@@ -1232,6 +1256,30 @@ Synthetic representation:
   "state": "starting",
   "target_host": "",
   "target_port": null
+}
+```
+
+<!-- api-model: ReleaseTerminalInputRequest -->
+## `ReleaseTerminalInputRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** ReleaseTerminalInputRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `session_id` | `SessionId` | Yes | — | No |
+| `attachment_id` | `AttachmentId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attachment_id": "attachment:example",
+  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 

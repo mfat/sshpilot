@@ -177,7 +177,13 @@ attachment. The daemon derives client identity from the handshaken peer.
 ## `terminal_input_owner_required`
 
 The attachment exists but is view-only. The first eligible attachment owns
-input until detach or disconnect; clients cannot claim another attachment.
+input until detach, release, or disconnect.
+
+<!-- api-error: terminal_input_owner_exists -->
+## `terminal_input_owner_exists`
+
+Another attachment already owns terminal input. Forced takeover is not allowed;
+the current owner must release or detach first.
 
 <!-- api-error: terminal_input_backpressure -->
 ## `terminal_input_backpressure`

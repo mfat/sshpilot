@@ -59,6 +59,8 @@ from ..models.sessions import (
     SessionSummary,
 )
 from ..models.terminal import (
+    ClaimTerminalInputRequest,
+    ReleaseTerminalInputRequest,
     ReplayBounds,
     ReplayRequest,
     ReplayResult,
@@ -1138,6 +1140,56 @@ def resize_terminal_request_from_wire(value: Any) -> ResizeTerminalRequest:
             _identifier(data["attachment_id"], "attachment id")
         ),
         dimensions=terminal_dimensions_from_wire(data["dimensions"]),
+    )
+
+
+def claim_terminal_input_request_to_wire(
+    request: ClaimTerminalInputRequest,
+) -> Dict[str, Any]:
+    if type(request) is not ClaimTerminalInputRequest:
+        raise TypeError("terminal claim input request is required")
+    return {
+        "session_id": request.session_id,
+        "attachment_id": request.attachment_id,
+    }
+
+
+def claim_terminal_input_request_from_wire(value: Any) -> ClaimTerminalInputRequest:
+    data = _strict_fields(
+        value,
+        required={"session_id", "attachment_id"},
+        context="terminal claim input request",
+    )
+    return ClaimTerminalInputRequest(
+        session_id=_session_id(data["session_id"], "session id"),
+        attachment_id=AttachmentId(
+            _identifier(data["attachment_id"], "attachment id")
+        ),
+    )
+
+
+def release_terminal_input_request_to_wire(
+    request: ReleaseTerminalInputRequest,
+) -> Dict[str, Any]:
+    if type(request) is not ReleaseTerminalInputRequest:
+        raise TypeError("terminal release input request is required")
+    return {
+        "session_id": request.session_id,
+        "attachment_id": request.attachment_id,
+    }
+
+
+def release_terminal_input_request_from_wire(value: Any) -> ReleaseTerminalInputRequest:
+    data = _strict_fields(
+        value,
+        required={"session_id", "attachment_id"},
+        context="terminal release input request",
+    )
+    return ReleaseTerminalInputRequest(
+        session_id=_session_id(data["session_id"], "session id"),
+        attachment_id=AttachmentId(
+            _identifier(data["attachment_id"], "attachment id")
+        ),
     )
 
 

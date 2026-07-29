@@ -73,6 +73,8 @@ from .sessions import (
     SessionSummary,
 )
 from .terminal import (
+    ClaimTerminalInputRequest,
+    ReleaseTerminalInputRequest,
     ReplayBounds,
     ReplayRequest,
     ReplayResult,
@@ -89,6 +91,7 @@ __all__ = [
     "AttachmentId",
     "AttachmentInfo",
     "AuthenticationMethod",
+    "ClaimTerminalInputRequest",
     "ClientId",
     "ClientInfo",
     "CloseSessionRequest",
@@ -134,6 +137,7 @@ __all__ = [
     "PluginOperationRequest",
     "PluginOperationResult",
     "PortForwardSummary",
+    "ReleaseTerminalInputRequest",
     "RememberPolicy",
     "ReplayBounds",
     "ReplayRequest",

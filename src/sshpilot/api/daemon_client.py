@@ -46,6 +46,8 @@ from .models.sessions import (
     SessionSummary,
 )
 from .models.terminal import (
+    ClaimTerminalInputRequest,
+    ReleaseTerminalInputRequest,
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
@@ -63,6 +65,7 @@ from .transport.codec import (
     attach_session_request_to_wire,
     attach_session_result_from_wire,
     capabilities_from_wire,
+    claim_terminal_input_request_to_wire,
     close_session_request_to_wire,
     connection_details_from_wire,
     connection_summary_from_wire,
@@ -80,6 +83,7 @@ from .transport.codec import (
     interaction_summary_from_wire,
     open_session_request_to_wire,
     public_event_from_envelope,
+    release_terminal_input_request_to_wire,
     replay_request_to_wire,
     replay_result_from_wire,
     resize_terminal_request_to_wire,
@@ -119,6 +123,7 @@ receive_frame = receive_multiplexed_frame
 
 DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.SESSIONS_WRITE,
+    "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
     "get_session": Capability.SESSIONS_READ,
@@ -128,6 +133,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_interactions": Capability.INTERACTIONS_READ,
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
+    "release_terminal_input": Capability.TERMINAL_INPUT,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
     "resize_terminal": Capability.TERMINAL_RESIZE,
@@ -411,6 +417,24 @@ class DaemonClient:
         )
         if result is not None:
             self._fail_protocol("The daemon returned an invalid resize result")
+
+    def claim_terminal_input(self, request: ClaimTerminalInputRequest) -> None:
+        self._require_capability(Capability.TERMINAL_INPUT)
+        result = self._request(
+            "terminal.claim_input",
+            claim_terminal_input_request_to_wire(request),
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid claim input result")
+
+    def release_terminal_input(self, request: ReleaseTerminalInputRequest) -> None:
+        self._require_capability(Capability.TERMINAL_INPUT)
+        result = self._request(
+            "terminal.release_input",
+            release_terminal_input_request_to_wire(request),
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid release input result")
 
     def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
         self._require_capability(Capability.TERMINAL_REPLAY)

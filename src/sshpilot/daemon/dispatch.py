@@ -25,6 +25,7 @@ from sshpilot.api.transport.codec import (
     attach_session_request_from_wire,
     attach_session_result_to_wire,
     capabilities_to_wire,
+    claim_terminal_input_request_from_wire,
     close_session_request_from_wire,
     connection_details_to_wire,
     connection_summary_to_wire,
@@ -38,6 +39,7 @@ from sshpilot.api.transport.codec import (
     interaction_decision_from_wire,
     interaction_summary_to_wire,
     open_session_request_from_wire,
+    release_terminal_input_request_from_wire,
     replay_request_from_wire,
     replay_result_to_wire,
     resize_terminal_request_from_wire,
@@ -73,6 +75,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "sessions.close": Capability.SESSIONS_WRITE,
     "terminal.replay": Capability.TERMINAL_REPLAY,
     "terminal.resize": Capability.TERMINAL_RESIZE,
+    "terminal.claim_input": Capability.TERMINAL_INPUT,
+    "terminal.release_input": Capability.TERMINAL_INPUT,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -158,6 +162,8 @@ class RequestDispatcher:
             "sessions.close": self._handle_close_session,
             "terminal.replay": self._handle_replay_terminal,
             "terminal.resize": self._handle_resize_terminal,
+            "terminal.claim_input": self._handle_claim_terminal_input,
+            "terminal.release_input": self._handle_release_terminal_input,
         }
 
     def begin_shutdown(self) -> None:
@@ -576,6 +582,32 @@ class RequestDispatcher:
     ) -> None:
         self._session_runtime.resize_terminal(
             resize_terminal_request_from_wire(request.params),
+            client_id=self._required_client_id(state),
+        )
+        return None
+
+    def _handle_claim_terminal_input(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        claim_request = claim_terminal_input_request_from_wire(request.params)
+        self._session_runtime.claim_input(
+            session_id=claim_request.session_id,
+            attachment_id=claim_request.attachment_id,
+            client_id=self._required_client_id(state),
+        )
+        return None
+
+    def _handle_release_terminal_input(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        release_request = release_terminal_input_request_from_wire(request.params)
+        self._session_runtime.release_input(
+            session_id=release_request.session_id,
+            attachment_id=release_request.attachment_id,
             client_id=self._required_client_id(state),
         )
         return None

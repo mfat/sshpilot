@@ -34,6 +34,8 @@ from .models.sessions import (
     SessionSummary,
 )
 from .models.terminal import (
+    ClaimTerminalInputRequest,
+    ReleaseTerminalInputRequest,
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
@@ -86,6 +88,12 @@ class SshPilotClient(Protocol):
         ...
 
     def send_terminal_input(self, request: TerminalInput) -> None:
+        ...
+
+    def claim_terminal_input(self, request: ClaimTerminalInputRequest) -> None:
+        ...
+
+    def release_terminal_input(self, request: ReleaseTerminalInputRequest) -> None:
         ...
 
     def resize_terminal(self, request: ResizeTerminalRequest) -> None:

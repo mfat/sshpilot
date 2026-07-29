@@ -27,6 +27,7 @@ class ErrorCode(str, Enum):
     UNSUPPORTED_SESSION_PROTOCOL = "unsupported_session_protocol"
     TERMINAL_ATTACHMENT_REQUIRED = "terminal_attachment_required"
     TERMINAL_INPUT_OWNER_REQUIRED = "terminal_input_owner_required"
+    TERMINAL_INPUT_OWNER_EXISTS = "terminal_input_owner_exists"
     TERMINAL_INPUT_BACKPRESSURE = "terminal_input_backpressure"
     TERMINAL_INVALID_DIMENSIONS = "terminal_invalid_dimensions"
     TERMINAL_UNAVAILABLE = "terminal_unavailable"

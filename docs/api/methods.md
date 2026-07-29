@@ -23,6 +23,8 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `send_terminal_input` | Daemon only | `terminal.input` |
 | `resize_terminal` | Daemon only | `terminal.resize` |
 | `replay_terminal` | Daemon only | `terminal.replay` |
+| `claim_terminal_input` | Daemon only | `terminal.input` |
+| `release_terminal_input` | Daemon only | `terminal.input` |
 | `subscribe_terminal` | Daemon only | `terminal.output` |
 | `list_interactions` | Daemon only | `interactions.read` |
 | `get_interaction` | Daemon only | `interactions.read` |
@@ -56,6 +58,8 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: respond_to_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_interaction_secret status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: claim_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: release_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
 <!-- api-method-contract: update_connection status=implemented capability=connections.write -->
@@ -87,6 +91,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sessions.close` | `sessions.write` | Implemented |
 | `terminal.replay` | `terminal.replay` | Implemented |
 | `terminal.resize` | `terminal.resize` | Implemented |
+| `terminal.claim_input` | `terminal.input` | Implemented |
+| `terminal.release_input` | `terminal.input` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
@@ -107,6 +113,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sessions.open capability=sessions.write -->
 <!-- api-daemon-method: terminal.replay capability=terminal.replay -->
 <!-- api-daemon-method: terminal.resize capability=terminal.resize -->
+<!-- api-daemon-method: terminal.claim_input capability=terminal.input -->
+<!-- api-daemon-method: terminal.release_input capability=terminal.input -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
 
@@ -405,6 +413,45 @@ session = client.open_session(OpenSessionRequest(connection_id))
 
 ```python
 client.send_terminal_input(TerminalInput(session_id, attachment_id, b"ls\r"))
+```
+
+<!-- api-method: claim_terminal_input -->
+## `claim_terminal_input`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.9.
+- **Capability / purpose:** `terminal.input`; claim input ownership when the
+  session currently has no input owner. Forced takeover is rejected.
+- **Parameters / return:** `ClaimTerminalInputRequest`; returns `None`.
+- **Errors:** `terminal_attachment_required`, `terminal_input_owner_exists`,
+  session-state and transport errors.
+- **Ordering / threading:** Ownership changes are serialized with attach,
+  detach, input, and resize on the session lane.
+- **Side effects / security:** Emits an updated session summary. Does not move
+  bytes.
+
+```python
+client.claim_terminal_input(
+    ClaimTerminalInputRequest(session_id=session_id, attachment_id=attachment_id)
+)
+```
+
+<!-- api-method: release_terminal_input -->
+## `release_terminal_input`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.9.
+- **Capability / purpose:** `terminal.input`; release input ownership while
+  remaining attached as a view-only subscriber.
+- **Parameters / return:** `ReleaseTerminalInputRequest`; returns `None`.
+- **Errors:** `terminal_attachment_required`, `terminal_input_owner_required`,
+  session-state and transport errors.
+- **Ordering / threading:** Same session-lane serialization as claim/input.
+- **Side effects / security:** Emits an updated session summary. Does not flush
+  or echo pending input.
+
+```python
+client.release_terminal_input(
+    ReleaseTerminalInputRequest(session_id=session_id, attachment_id=attachment_id)
+)
 ```
 
 <!-- api-method: resize_terminal -->

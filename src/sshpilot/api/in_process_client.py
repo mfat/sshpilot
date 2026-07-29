@@ -42,6 +42,8 @@ from .models.sessions import (
     SessionSummary,
 )
 from .models.terminal import (
+    ClaimTerminalInputRequest,
+    ReleaseTerminalInputRequest,
     ReplayRequest,
     ReplayResult,
     ResizeTerminalRequest,
@@ -77,6 +79,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.SESSIONS_WRITE,
+    "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
     "get_session": Capability.SESSIONS_READ,
@@ -86,6 +89,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "list_interactions": Capability.INTERACTIONS_READ,
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
+    "release_terminal_input": Capability.TERMINAL_INPUT,
     "replay_terminal": Capability.TERMINAL_REPLAY,
     "resize_terminal": Capability.TERMINAL_RESIZE,
     "release_interaction": Capability.INTERACTIONS_RESPOND,
@@ -442,6 +446,14 @@ class InProcessClient:
     def resize_terminal(self, request: ResizeTerminalRequest) -> None:
         del request
         raise self._unsupported("resize_terminal")
+
+    def claim_terminal_input(self, request: ClaimTerminalInputRequest) -> None:
+        del request
+        raise self._unsupported("claim_terminal_input")
+
+    def release_terminal_input(self, request: ReleaseTerminalInputRequest) -> None:
+        del request
+        raise self._unsupported("release_terminal_input")
 
     def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
         del request

@@ -119,3 +119,23 @@ class ReplayResult:
             raise ValueError("invalid terminal replay sequence range")
         if type(self.truncated) is not bool or type(self.eof) is not bool:
             raise TypeError("terminal replay flags must be booleans")
+
+
+@dataclass(frozen=True)
+class ClaimTerminalInputRequest:
+    session_id: SessionId
+    attachment_id: AttachmentId
+
+    def __post_init__(self) -> None:
+        require_identifier(self.session_id, "session id")
+        require_identifier(self.attachment_id, "attachment id")
+
+
+@dataclass(frozen=True)
+class ReleaseTerminalInputRequest:
+    session_id: SessionId
+    attachment_id: AttachmentId
+
+    def __post_init__(self) -> None:
+        require_identifier(self.session_id, "session id")
+        require_identifier(self.attachment_id, "attachment id")

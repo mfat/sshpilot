@@ -342,7 +342,7 @@ def test_process_exit_before_runner_returns_does_not_retain_a_stale_handle():
         core.close()
 
 
-def test_attachment_membership_is_idempotent_and_client_scoped(runtime_parts):
+def test_attachment_membership_always_creates_new_attachments_phase9(runtime_parts):
     runtime, core, _runner = runtime_parts
     session = runtime.open_session(
         OpenSessionRequest(connection_id=core.list_connections()[0].id),
@@ -354,10 +354,18 @@ def test_attachment_membership_is_idempotent_and_client_scoped(runtime_parts):
     second = runtime.attach_session(request, client_id=ClientId("client:a"))
     other = runtime.attach_session(request, client_id=ClientId("client:b"))
 
-    assert first == second
+    # Phase 9: Always create new attachments (each pane has its own attachment)
+    assert first.attachment.id != second.attachment.id
     assert first.attachment.id != other.attachment.id
+    assert second.attachment.id != other.attachment.id
+
+    # Session summaries should be the same but attachment IDs different
+    assert first.session.id == second.session.id == other.session.id
+
     assert first.attachment.input_owner is False
     assert other.attachment.input_owner is False
+
+    # Test that attachments belong to the right clients
     with pytest.raises(SshPilotError) as caught:
         runtime.detach_session(
             DetachSessionRequest(
@@ -367,7 +375,11 @@ def test_attachment_membership_is_idempotent_and_client_scoped(runtime_parts):
             client_id=ClientId("client:a"),
         )
     assert caught.value.code is ErrorCode.PERMISSION_DENIED
+
+    # Clean up - detach client removes all attachments for that client
     runtime.detach_client(ClientId("client:b"))
+
+    # Detach specific attachments for client:a
     runtime.detach_session(
         DetachSessionRequest(
             session_id=session.id,
@@ -375,6 +387,15 @@ def test_attachment_membership_is_idempotent_and_client_scoped(runtime_parts):
         ),
         client_id=ClientId("client:a"),
     )
+    runtime.detach_session(
+        DetachSessionRequest(
+            session_id=session.id,
+            attachment_id=second.attachment.id,
+        ),
+        client_id=ClientId("client:a"),
+    )
+
+    # Attempting to detach non-existent attachment should be safe (idempotent)
     runtime.detach_session(
         DetachSessionRequest(
             session_id=session.id,

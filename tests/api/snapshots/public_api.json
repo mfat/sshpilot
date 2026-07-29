@@ -53,6 +53,10 @@
       "capability": "interactions.respond",
       "status": "daemon-only"
     },
+    "claim_terminal_input": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
     "close": {
       "capability": null,
       "status": "implemented"
@@ -109,6 +113,10 @@
       "capability": "interactions.respond",
       "status": "daemon-only"
     },
+    "release_terminal_input": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
     "replay_terminal": {
       "capability": "terminal.replay",
       "status": "daemon-only"
@@ -146,6 +154,7 @@
     "attach_session",
     "cancel_interaction",
     "claim_interaction",
+    "claim_terminal_input",
     "close",
     "close_session",
     "create_connection",
@@ -160,6 +169,7 @@
     "list_sessions",
     "open_session",
     "release_interaction",
+    "release_terminal_input",
     "replay_terminal",
     "resize_terminal",
     "respond_to_interaction",
@@ -199,6 +209,16 @@
         }
       ],
       "return": "InteractionClaim"
+    },
+    "claim_terminal_input": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ClaimTerminalInputRequest"
+        }
+      ],
+      "return": "None"
     },
     "close": {
       "parameters": [],
@@ -306,6 +326,16 @@
           "kind": "positional_or_keyword",
           "name": "interaction_id",
           "type": "InteractionId"
+        }
+      ],
+      "return": "None"
+    },
+    "release_terminal_input": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ReleaseTerminalInputRequest"
         }
       ],
       "return": "None"
@@ -484,6 +514,12 @@
     "system.handshake": {
       "capability": null
     },
+    "terminal.claim_input": {
+      "capability": "terminal.input"
+    },
+    "terminal.release_input": {
+      "capability": "terminal.input"
+    },
     "terminal.replay": {
       "capability": "terminal.replay"
     },
@@ -533,6 +569,7 @@
     "terminal_attachment_required",
     "terminal_continuity_lost",
     "terminal_input_backpressure",
+    "terminal_input_owner_exists",
     "terminal_input_owner_required",
     "terminal_invalid_dimensions",
     "terminal_replay_unavailable",
@@ -574,6 +611,7 @@
     "AttachmentId",
     "AttachmentInfo",
     "AuthenticationMethod",
+    "ClaimTerminalInputRequest",
     "ClientId",
     "ClientInfo",
     "CloseSessionRequest",
@@ -619,6 +657,7 @@
     "PluginOperationRequest",
     "PluginOperationResult",
     "PortForwardSummary",
+    "ReleaseTerminalInputRequest",
     "RememberPolicy",
     "ReplayBounds",
     "ReplayRequest",
@@ -670,6 +709,10 @@
       "core",
       "supported",
       "compatibility"
+    ],
+    "ClaimTerminalInputRequest": [
+      "session_id",
+      "attachment_id"
     ],
     "ClientInfo": [
       "name",
@@ -910,6 +953,10 @@
       "target_host",
       "target_port"
     ],
+    "ReleaseTerminalInputRequest": [
+      "session_id",
+      "attachment_id"
+    ],
     "ReplayBounds": [
       "earliest_sequence",
       "latest_sequence",
@@ -1062,6 +1109,7 @@
       "unsupported_session_protocol",
       "terminal_attachment_required",
       "terminal_input_owner_required",
+      "terminal_input_owner_exists",
       "terminal_input_backpressure",
       "terminal_invalid_dimensions",
       "terminal_unavailable",

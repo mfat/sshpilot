@@ -13,6 +13,10 @@
       "capability": "interactions.respond",
       "status": "daemon-only"
     },
+    "claim_terminal_input": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
     "close": {
       "capability": null,
       "status": "implemented"
@@ -67,6 +71,10 @@
     },
     "release_interaction": {
       "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "release_terminal_input": {
+      "capability": "terminal.input",
       "status": "daemon-only"
     },
     "replay_terminal": {
@@ -160,6 +168,12 @@
     "system.handshake": {
       "capability": null
     },
+    "terminal.claim_input": {
+      "capability": "terminal.input"
+    },
+    "terminal.release_input": {
+      "capability": "terminal.input"
+    },
     "terminal.replay": {
       "capability": "terminal.replay"
     },
@@ -219,6 +233,7 @@
       "unsupported_session_protocol",
       "terminal_attachment_required",
       "terminal_input_owner_required",
+      "terminal_input_owner_exists",
       "terminal_input_backpressure",
       "terminal_invalid_dimensions",
       "terminal_unavailable",
@@ -529,6 +544,25 @@
         }
       ],
       "status": "Implemented"
+    },
+    "ClaimTerminalInputRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        }
+      ],
+      "status": "Schema only"
     },
     "ClientInfo": {
       "fields": [
@@ -1866,6 +1900,25 @@
           "required": false,
           "sensitive": false,
           "type": "int | None"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ReleaseTerminalInputRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
         }
       ],
       "status": "Schema only"

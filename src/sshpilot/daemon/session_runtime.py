@@ -8,6 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections import defaultdict
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
 from sshpilot.api.client import SshPilotClient
@@ -65,6 +66,15 @@ from .terminal_stream import (
 DEFAULT_CLOSE_GRACE_SECONDS = 0.5
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 2.0
 DEFAULT_MAX_RETAINED_CLOSED_SESSIONS = 100
+
+
+@dataclass
+class _AttachmentRecord:
+    """Individual attachment record for multi-attachment support."""
+    id: AttachmentId
+    client_id: ClientId
+    want_output: bool = False
+    is_input_owner: bool = False
 
 
 @dataclass(frozen=True)
@@ -301,7 +311,8 @@ class _SessionRecord:
     closed_at: Optional[datetime] = None
     exit_info: Optional[SessionExitInfo] = None
     failure: Optional[SessionFailure] = None
-    attachments: Dict[ClientId, AttachmentId] = field(default_factory=dict)
+    attachments: Dict[AttachmentId, _AttachmentRecord] = field(default_factory=dict)
+    client_attachments: Dict[ClientId, Set[AttachmentId]] = field(default_factory=lambda: defaultdict(set))
     process_handle: Optional[SessionProcessHandle] = None
     launch_spec: Optional[SessionLaunchSpec] = None
     startup_scheduled: bool = False
@@ -310,7 +321,7 @@ class _SessionRecord:
     replay: TerminalReplayBuffer = field(default_factory=TerminalReplayBuffer)
     terminal_capable: bool = False
     pty_eof: bool = False
-    input_owner_client_id: Optional[ClientId] = None
+    input_owner_attachment_id: Optional[AttachmentId] = None
     output_clients: Set[ClientId] = field(default_factory=set)
     originating_client_id: Optional[ClientId] = None
 
@@ -611,11 +622,22 @@ class SessionRuntime:
                     "The session no longer accepts attachments",
                     session_id=request.session_id,
                 )
-            attachment_id = record.attachments.get(client_id)
-            if attachment_id is None:
-                attachment_id = AttachmentId(f"attachment:{uuid.uuid4()}")
-                record.attachments[client_id] = attachment_id
-                record.updated_at = self._clock()
+            # Always create a new attachment (Phase 9: each pane has its own attachment)
+            attachment_id = AttachmentId(f"attachment:{uuid.uuid4()}")
+
+            # Create attachment record
+            attachment_record = _AttachmentRecord(
+                id=attachment_id,
+                client_id=client_id,
+                want_output=request.want_terminal_output,
+                is_input_owner=False,
+            )
+
+            # Store attachment
+            record.attachments[attachment_id] = attachment_record
+            record.client_attachments[client_id].add(attachment_id)
+            record.updated_at = self._clock()
+
             if request.want_terminal_output:
                 if not record.terminal_capable and record.state is not SessionState.STARTING:
                     raise SshPilotError(
@@ -624,12 +646,15 @@ class SessionRuntime:
                         session_id=request.session_id,
                     )
                 record.output_clients.add(client_id)
+
+            # Grant input ownership if requested and available
             if (
                 request.request_input
                 and self.terminal_supported
-                and record.input_owner_client_id is None
+                and record.input_owner_attachment_id is None
             ):
-                record.input_owner_client_id = client_id
+                record.input_owner_attachment_id = attachment_id
+                attachment_record.is_input_owner = True
             replay = record.replay.replay(
                 min(request.from_sequence, record.replay.end_sequence),
                 record.replay.max_bytes,
@@ -640,7 +665,7 @@ class SessionRuntime:
                     id=attachment_id,
                     session_id=record.session_id,
                     client_id=client_id,
-                    input_owner=record.input_owner_client_id == client_id,
+                    input_owner=attachment_record.is_input_owner,
                 ),
                 available_start=replay.available_start,
                 live_sequence=replay.live_sequence,
@@ -678,19 +703,34 @@ class SessionRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             record = self._record_locked(request.session_id)
-            current = record.attachments.get(client_id)
-            if current is None:
+            attachment_record = record.attachments.get(request.attachment_id)
+            if attachment_record is None:
                 return
-            if current != request.attachment_id:
+            if attachment_record.client_id != client_id:
                 raise SshPilotError(
                     ErrorCode.PERMISSION_DENIED,
                     "The attachment does not belong to this client",
                     session_id=request.session_id,
                 )
-            del record.attachments[client_id]
-            record.output_clients.discard(client_id)
-            if record.input_owner_client_id == client_id:
-                record.input_owner_client_id = None
+
+            # Remove the attachment
+            del record.attachments[request.attachment_id]
+            record.client_attachments[client_id].discard(request.attachment_id)
+
+            # Update output clients if this was the last attachment wanting output for this client
+            if attachment_record.want_output:
+                client_still_has_output = any(
+                    record.attachments[att_id].want_output
+                    for att_id in record.client_attachments[client_id]
+                    if att_id in record.attachments
+                )
+                if not client_still_has_output:
+                    record.output_clients.discard(client_id)
+
+            # Release input ownership if this attachment owned it
+            if record.input_owner_attachment_id == request.attachment_id:
+                record.input_owner_attachment_id = None
+
             record.updated_at = self._clock()
 
     def receives_terminal(self, session_id: SessionId, client_id: ClientId) -> bool:
@@ -726,14 +766,14 @@ class SessionRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             record = self._record_locked(request.session_id)
-            attachment = record.attachments.get(client_id)
-            if attachment != request.attachment_id:
+            attachment_record = record.attachments.get(request.attachment_id)
+            if attachment_record is None or attachment_record.client_id != client_id:
                 raise SshPilotError(
                     ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
                     "A matching terminal attachment is required",
                     session_id=request.session_id,
                 )
-            if record.input_owner_client_id != client_id:
+            if record.input_owner_attachment_id != request.attachment_id:
                 raise SshPilotError(
                     ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
                     "The attachment does not own terminal input",
@@ -772,16 +812,20 @@ class SessionRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             record = self._record_locked(request.session_id)
-            if (
-                request.attachment_id is None
-                or record.attachments.get(client_id) != request.attachment_id
-            ):
+            if request.attachment_id is None:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                    "A terminal attachment is required",
+                    session_id=request.session_id,
+                )
+            attachment_record = record.attachments.get(request.attachment_id)
+            if attachment_record is None or attachment_record.client_id != client_id:
                 raise SshPilotError(
                     ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
                     "A matching terminal attachment is required",
                     session_id=request.session_id,
                 )
-            if record.input_owner_client_id != client_id:
+            if record.input_owner_attachment_id != request.attachment_id:
                 raise SshPilotError(
                     ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
                     "The attachment does not own terminal resize",
@@ -826,6 +870,72 @@ class SessionRuntime:
                 session_id=request.session_id,
             ) from None
 
+    def claim_input(
+        self,
+        session_id: SessionId,
+        attachment_id: AttachmentId,
+        client_id: ClientId,
+    ) -> None:
+        """Claim input ownership for an attachment. Only when unowned; no forced takeover."""
+        with self._lock:
+            self._require_accepting_commands_locked()
+            record = self._record_locked(session_id)
+
+            # Verify attachment belongs to client
+            attachment_record = record.attachments.get(attachment_id)
+            if attachment_record is None or attachment_record.client_id != client_id:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                    "A matching terminal attachment is required",
+                    session_id=session_id,
+                )
+
+            # Check if input is already owned
+            if record.input_owner_attachment_id is not None:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_INPUT_OWNER_EXISTS,
+                    "Terminal input is already owned by another attachment",
+                    session_id=session_id,
+                )
+
+            # Grant input ownership
+            record.input_owner_attachment_id = attachment_id
+            attachment_record.is_input_owner = True
+            record.updated_at = self._clock()
+
+    def release_input(
+        self,
+        session_id: SessionId,
+        attachment_id: AttachmentId,
+        client_id: ClientId,
+    ) -> None:
+        """Release input ownership. Current owner only."""
+        with self._lock:
+            self._require_accepting_commands_locked()
+            record = self._record_locked(session_id)
+
+            # Verify attachment belongs to client
+            attachment_record = record.attachments.get(attachment_id)
+            if attachment_record is None or attachment_record.client_id != client_id:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                    "A matching terminal attachment is required",
+                    session_id=session_id,
+                )
+
+            # Check if this attachment owns input
+            if record.input_owner_attachment_id != attachment_id:
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+                    "The attachment does not own terminal input",
+                    session_id=session_id,
+                )
+
+            # Release input ownership
+            record.input_owner_attachment_id = None
+            attachment_record.is_input_owner = False
+            record.updated_at = self._clock()
+
     def replay_terminal(
         self,
         request: ReplayRequest,
@@ -836,7 +946,11 @@ class SessionRuntime:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "Replay request is invalid")
         with self._lock:
             record = self._record_locked(request.session_id)
-            if record.attachments.get(client_id) != request.attachment_id:
+            attachment_record = record.attachments.get(request.attachment_id)
+            if (
+                attachment_record is None
+                or attachment_record.client_id != client_id
+            ):
                 raise SshPilotError(
                     ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
                     "A matching terminal attachment is required",
@@ -938,10 +1052,21 @@ class SessionRuntime:
             return
         with self._lock:
             for record in self._records.values():
-                if record.attachments.pop(client_id, None) is not None:
+                # Remove all attachments for this client
+                attachment_ids_to_remove = record.client_attachments.get(client_id, set()).copy()
+                if attachment_ids_to_remove:
+                    for attachment_id in attachment_ids_to_remove:
+                        attachment_record = record.attachments.get(attachment_id)
+                        if attachment_record:
+                            # Release input ownership if this attachment owned it
+                            if record.input_owner_attachment_id == attachment_id:
+                                record.input_owner_attachment_id = None
+                            # Remove the attachment
+                            del record.attachments[attachment_id]
+
+                    # Clean up client tracking
+                    del record.client_attachments[client_id]
                     record.output_clients.discard(client_id)
-                    if record.input_owner_client_id == client_id:
-                        record.input_owner_client_id = None
                     record.updated_at = self._clock()
 
     def shutdown(self) -> None:
@@ -961,8 +1086,9 @@ class SessionRuntime:
         with self._lock:
             for record in self._records.values():
                 record.attachments.clear()
+                record.client_attachments.clear()
                 record.output_clients.clear()
-                record.input_owner_client_id = None
+                record.input_owner_attachment_id = None
             self._terminal_callbacks.clear()
             self._closed = True
         try:
@@ -1198,8 +1324,9 @@ class SessionRuntime:
         elif new_state is SessionState.CLOSED:
             record.closed_at = now
             record.attachments.clear()
+            record.client_attachments.clear()
             record.output_clients.clear()
-            record.input_owner_client_id = None
+            record.input_owner_attachment_id = None
             self._evict_closed_locked()
         event_type = EventType.SESSION_STATE_CHANGED
         payload = self._summary_locked(record)
@@ -1251,14 +1378,14 @@ class SessionRuntime:
     @staticmethod
     def _summary_locked(record: _SessionRecord) -> SessionSummary:
         input_owner = None
-        if record.input_owner_client_id is not None:
-            attachment_id = record.attachments.get(record.input_owner_client_id)
-            if attachment_id is not None:
+        if record.input_owner_attachment_id is not None:
+            attachment_record = record.attachments.get(record.input_owner_attachment_id)
+            if attachment_record is not None:
                 from sshpilot.api.models.sessions import InputOwner
 
                 input_owner = InputOwner(
-                    client_id=record.input_owner_client_id,
-                    attachment_id=attachment_id,
+                    client_id=attachment_record.client_id,
+                    attachment_id=attachment_record.id,
                 )
         supported = frozenset(
             {

@@ -10,8 +10,10 @@ from sshpilot.api.in_process_client import (
     UNSUPPORTED_CLIENT_METHOD_CAPABILITIES,
 )
 from sshpilot.api.models import (
+    ClaimTerminalInputRequest,
     CreateConnectionRequest,
     InteractionDecisionRequest,
+    ReleaseTerminalInputRequest,
     SecretDecision,
     TerminalDimensions,
     TerminalInput,
@@ -74,6 +76,26 @@ UNSUPPORTED_OPERATION_CASES = [
                 session_id=SessionId("session:test"),
                 attachment_id=AttachmentId("attachment:test"),
                 data=b"example",
+            )
+        ),
+        Capability.TERMINAL_INPUT,
+    ),
+    (
+        "claim_terminal_input",
+        lambda client: client.claim_terminal_input(
+            ClaimTerminalInputRequest(
+                session_id=SessionId("session:test"),
+                attachment_id=AttachmentId("attachment:test"),
+            )
+        ),
+        Capability.TERMINAL_INPUT,
+    ),
+    (
+        "release_terminal_input",
+        lambda client: client.release_terminal_input(
+            ReleaseTerminalInputRequest(
+                session_id=SessionId("session:test"),
+                attachment_id=AttachmentId("attachment:test"),
             )
         ),
         Capability.TERMINAL_INPUT,
