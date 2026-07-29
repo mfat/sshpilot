@@ -46,19 +46,15 @@ class KnownHostsEditorWindow(Adw.Window):
 
     def _load_entries(self):
         """Load known_hosts entries into the listbox."""
+        from sshpilot.core.known_hosts import load_known_hosts
+
         try:
-            with open(self._known_hosts_path) as f:
-                lines = [line.rstrip('\n') for line in f]
+            parsed = load_known_hosts(self._known_hosts_path)
         except Exception as e:
             logger.error(f"Failed to load known_hosts: {e}")
-            lines = []
+            parsed = []
 
-        self._all_entries = []
-        for line in lines:
-            if not line.strip():
-                continue
-            self._all_entries.append(line)
-        
+        self._all_entries = [entry.line for entry in parsed]
         self._display_entries(self._all_entries)
 
     def _display_entries(self, entries):
@@ -176,31 +172,20 @@ class KnownHostsEditorWindow(Adw.Window):
     @Gtk.Template.Callback()
     def _on_search_changed(self, search_entry):
         """Handle search text changes."""
+        from sshpilot.core.known_hosts import KnownHostEntry, filter_entries
+
         search_text = search_entry.get_text().lower().strip()
-        
-        if not search_text:
-            # Show all entries if search is empty
-            self._display_entries(self._all_entries)
-        else:
-            # Filter entries based on search text
-            filtered_entries = []
-            for line in self._all_entries:
-                if search_text in line.lower():
-                    filtered_entries.append(line)
-            self._display_entries(filtered_entries)
+        parsed = [KnownHostEntry.parse(line) for line in self._all_entries]
+        filtered = filter_entries(parsed, search_text)
+        self._display_entries([e.line for e in filtered])
 
     @Gtk.Template.Callback()
     def _on_save_clicked(self, _btn):
-        # Save all remaining entries from the _all_entries list
-        lines = self._all_entries.copy()
+        from sshpilot.core.known_hosts import save_known_hosts
 
+        lines = self._all_entries.copy()
         try:
-            os.makedirs(os.path.dirname(self._known_hosts_path), exist_ok=True)
-            with open(self._known_hosts_path, 'w') as f:
-                if lines:
-                    f.write('\n'.join(lines) + '\n')
-                else:
-                    f.write('')
+            save_known_hosts(self._known_hosts_path, lines)
             if self._on_saved:
                 self._on_saved()
             self.close()
