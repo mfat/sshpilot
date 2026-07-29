@@ -38,7 +38,7 @@ The current code has not completed that ownership split. Read
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.6` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.7` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -80,6 +80,13 @@ random UUID hex strings, unique for the connection and never derived from
 request data. Duplicate requests, unknown response IDs, and response protocol
 mismatches are protocol errors. A timed-out `DaemonClient` closes its socket so
 a late response cannot be correlated with later work.
+
+The daemon reserves request IDs for deferred `sessions.open` and
+`sessions.close` until selector-owned completion or peer closure. Each accepted
+peer also receives an internal monotonically allocated token that is never
+sent over the wire. Deferred completions match this token as well as the
+request ID, preventing an old completion from reaching a new socket after file
+descriptor reuse.
 
 ## Identifiers
 
@@ -174,6 +181,12 @@ implemented.
 - Session lifecycle events share that order. `session.created` precedes state
   transitions; `session.exited` precedes `session.closed`. Terminal output
   ordering and replay remain schema-only.
+- Open preparation accepts `session.created` and `starting` before deferred
+  startup. The response contains that captured `starting` snapshot, but later
+  `running`/`failed` events may be processed before it because the worker
+  completion is queued independently. Close accepts `closing` before its
+  deferred response and emits exit/closed events during worker completion.
+  Frontends reconcile all of these by session ID rather than byte arrival.
 
 ## Event/response multiplexing
 
@@ -189,6 +202,15 @@ response correlation. Unknown or duplicate response IDs, malformed event
 payloads, and duplicate/regressing/gapped event sequences are protocol errors
 that close the transport and wake every pending caller.
 
+The server has a separate bounded command plane for blocking session work:
+four daemon-owned workers, at most 64 outstanding commands, keyed FIFO
+serialization per session, and a bounded completion queue. Workers call no
+socket or selector API. They enqueue immutable success/error completions and
+wake the selector; the selector validates peer token and request reservation,
+then queues the response. A full command plane returns retryable
+`server_busy` immediately. Connection mutations remain synchronous in API 0.7
+and may still perform bounded persistence work on the selector.
+
 ## Cancellation and timeouts
 
 Client calls are synchronous and expose no cancellation token. `DaemonClient`
@@ -199,6 +221,12 @@ non-retryable `mutation_ambiguous`; clients must refresh the relevant snapshot
 before an explicit retry. Attach/detach are idempotent membership operations
 but are not automatically reconnected or retried. `close()` tears down
 resources and can interrupt a blocked socket call through socket shutdown.
+
+Peer closure discards a deferred response but does not cancel an accepted open
+or close: runtime ownership and cleanup are independent of response interest.
+Daemon shutdown rejects new submissions, cancels commands that have not
+started where safe, runs required exact-resource cleanup, drains workers under
+one finite deadline, and discards late response completions.
 
 The `operation_cancelled` and `operation_timed_out` error codes are reserved
 schema vocabulary. Future cancellation must define request identity, race

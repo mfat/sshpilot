@@ -26,10 +26,19 @@ GObject manager owner-thread rules. One selector loop handles multiple client
 sockets without a thread per client, a thread per request, `asyncio.run()`, or a
 per-call event loop.
 
-The selector thread also owns `SessionRuntime` commands. One runtime lock
-serializes state/attachment mutations; one shared process reaper reports exits
-without a thread per event or byte. Event callbacks are never invoked while
-runtime or transport locks are held.
+The selector thread owns envelope validation, immediate bounded dispatch,
+deferred-request reservation, completion draining, and all socket/selector
+operations. A daemon-scoped executor has four workers and a hard limit of 64
+outstanding session commands. It runs session start and close operations;
+equal session IDs serialize while unrelated sessions may progress in parallel.
+Workers submit immutable completions to a bounded queue and wake the selector.
+Only the selector queues the correlated response. Stable daemon-local peer
+tokens prevent late completions from reaching a reused file descriptor.
+
+One runtime lock serializes state/attachment mutations; it is released before
+runner start, terminate, kill, wait, event publication, or thread joins. One
+shared process reaper reports exits without a thread per event or byte. Event
+callbacks are never invoked while runtime or transport locks are held.
 
 `DaemonClient` presents synchronous methods, but exactly one persistent reader
 thread owns socket receive. Callers register pending request IDs and serialize
@@ -141,10 +150,11 @@ access exists.
 ## Lifecycle
 
 The server owns its listener, wakeup pair, active client sockets, dispatcher,
-session runtime, and core client. `shutdown()` wakes the selector, stops new
-work/events, closes exact owned session resources under a global bounded
-deadline, closes peers and the core client on its owner thread, and removes its
-socket.
+session command executor/completion queue, session runtime, and core client.
+`shutdown()` wakes the selector, rejects new deferred submissions, cancels
+queued non-cleanup commands, closes exact owned session resources under a
+global bounded deadline, drains worker threads, discards late responses,
+closes peers and the core client, and removes its socket.
 The module entry point maps SIGINT and SIGTERM to this path. It does not install
 or supervise a service.
 
@@ -202,6 +212,17 @@ Logical attachment uses the handshaken peer ID. Peer disconnect detaches it
 from every session without terminating the resource. Open/close transport
 ambiguity is never retried automatically. Four typed events share the existing
 daemon-global sequence and bounded peer queues with connection events.
+
+`sessions.open` and `sessions.close` are the explicit deferred method class.
+The former prepares a `starting` record before submitting startup and returns
+that captured snapshot after worker completion. The latter enters `closing`
+before submitting bounded terminate/wait/kill and responds when that worker
+step finishes. A full 64-command executor returns retryable `server_busy`
+without blocking the selector. Immediate reads, handshake, attachment
+bookkeeping, and capability discovery remain on the selector because they are
+bounded. Connection persistence mutations also remain synchronous in API 0.7;
+the selector is therefore hardened against session runner blocking, not claimed
+to be free of every possible filesystem delay.
 
 The production Phase 6 process runner deliberately produces a safe failed
 session because prompt/secret/PTY startup is not yet supported. Tests inject

@@ -250,13 +250,19 @@ client.delete_connection(DeleteConnectionRequest(connection_id))
 - **Capability / purpose:** `sessions.write`; allocate a daemon-owned session
   record and initiate the configured process runner.
 - **Parameters / return:** `OpenSessionRequest(connection_id)`; returns the
-  current `SessionSummary`, which may already be `running` or `failed`.
+  immutable `starting` `SessionSummary` captured when the record is accepted.
 - **Errors:** Missing connection, unsupported protocol, daemon shutdown, or
-  transport errors. A lost response after send becomes non-retryable
-  `mutation_ambiguous`; refresh `sessions.list` before user-directed retry.
+  transport errors. `server_busy` means the bounded worker admission failed.
+  A lost response after send becomes non-retryable `mutation_ambiguous`;
+  refresh `sessions.list` before user-directed retry.
 - **Events:** `session.created`, then state changes. Current event frames are
-  normally queued before the response, but clients must accept either
-  response/event interleaving.
+  accepted before the response, but worker completion and transport
+  multiplexing mean a later state event may be processed first. Clients
+  reconcile by session ID and must accept either response/event interleaving.
+- **Threading:** Preparation is bounded on the selector. Runner startup executes
+  on the daemon's bounded keyed executor; only the selector completes the
+  request from its bounded completion queue. A slow startup does not delay
+  another peer's handshake or read requests.
 - **Security:** The frontend supplies no argv or environment. Phase 6's
   production runner fails safely until prompt-safe PTY startup exists; it does
   not fake `running`.
@@ -293,13 +299,18 @@ session = client.open_session(OpenSessionRequest(connection_id))
 - **Capability / purpose:** `sessions.write`; request bounded termination of
   the exact owned runtime resource.
 - **Semantics:** Repeated close is idempotent. The runtime enters `closing`,
-  requests termination, escalates only for its exact handle, records exit, and
-  emits `session.exited` and `session.closed`. If both bounded attempts fail,
-  the daemon retains the exact handle in `failed`; a later explicit close
-  retries it rather than forgetting an owned resource.
+  submits termination on the same session's serial worker lane, escalates only
+  for its exact handle, records exit, and emits `session.exited` and
+  `session.closed`. The response is completed after that bounded worker step,
+  not on acceptance. If both bounded attempts fail, the daemon retains the
+  exact handle in `failed`; a later explicit close retries it rather than
+  forgetting an owned resource.
 - **Errors:** `session_not_found`, `session_termination_failed`, shutdown and
-  transport errors. Lost responses are `mutation_ambiguous`; there is no
-  automatic retry.
+  transport errors. `server_busy` is an immediate retryable admission failure.
+  Lost responses are `mutation_ambiguous`; there is no automatic retry.
+- **Threading:** Terminate, wait, and kill never run on the selector. A close
+  queued behind startup for the same session cannot overtake it; unrelated
+  session lanes can progress concurrently.
 
 <!-- api-method: send_terminal_input -->
 ## `send_terminal_input`

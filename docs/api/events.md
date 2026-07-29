@@ -55,6 +55,14 @@ valid response/event ordering and refresh from the resulting snapshot.
 Connection event payload IDs are UUID-backed and remain stable across rename.
 Startup identity migration is schema maintenance and emits no lifecycle event.
 
+Session start and close execute on a bounded keyed worker pool, but workers do
+not write transport frames. Runtime events enter the existing encoded event
+path; deferred results enter a separate bounded completion queue. The selector
+alone queues response frames. Created/starting and closing events are accepted
+before their corresponding deferred responses, while later running/failed/
+exited/closed events can interleave with response completion. Consumers use the
+session ID and state machine, never arrival order alone.
+
 `DaemonClient` has exactly one persistent socket reader. It correlates responses
 through a pending-request table and sends events to a separate bounded serial
 event-dispatch thread, so slow subscribers cannot stop response reading. The

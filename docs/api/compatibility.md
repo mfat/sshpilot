@@ -116,9 +116,14 @@ ambiguity, and multi-client sequence rules have focused transport tests.
 Connection event parity is covered under `connections.events`. Terminal-byte,
 replay, prompt, and cancellation parity remain out of scope because the daemon
 does not advertise those capabilities. Session lifecycle is intentionally
-daemon-only in API 0.6: `InProcessClient` continues to return
+daemon-only in API 0.7: `InProcessClient` continues to return
 `unsupported_capability`, while daemon integration contracts cover lifecycle,
 attachment, multi-client event, shutdown, and process-ownership semantics.
+API 0.7 changes daemon execution ownership, not Protocol v1 request/response
+shapes: open/close remain synchronous `DaemonClient` calls while the daemon
+completes them from a bounded worker path. The open response is deliberately
+the `starting` acceptance snapshot. Clients were already required to reconcile
+later state through events or session reads, so Protocol remains `1.0`.
 The [public API snapshot](../../tests/api/snapshots/public_api.json) is a review
 aid for structural changes, not proof of semantic compatibility.
 

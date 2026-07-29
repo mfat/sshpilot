@@ -13,7 +13,7 @@
     "SshPilotError",
     "Subscription"
   ],
-  "api_implementation_version": "0.6",
+  "api_implementation_version": "0.7",
   "capabilities": [
     "connections.events",
     "connections.read",
@@ -348,6 +348,7 @@
     "persistence_failed",
     "protocol_error",
     "protocol_version_unsupported",
+    "server_busy",
     "session_already_closed",
     "session_invalid_state",
     "session_not_found",
@@ -793,6 +794,7 @@
       "session_startup_failed",
       "session_termination_failed",
       "unsupported_session_protocol",
+      "server_busy",
       "interaction_not_found",
       "interaction_already_answered",
       "permission_denied",

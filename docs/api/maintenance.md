@@ -114,6 +114,13 @@ event delivery, mutation-ambiguity behaviour, and daemon shutdown with no
 owned process leaks. Terminal byte methods must remain unsupported until their
 own transport and backpressure contract is implemented.
 
+Potentially blocking session command changes additionally require a bounded
+executor and completion queue, explicit immediate/deferred method policy,
+per-session ordering, stable peer-token correlation, queue-full behaviour,
+disconnect/late-completion tests, and repeated blocked start/close/shutdown
+isolation runs. No runner start/terminate/kill/wait call may execute on the
+selector thread.
+
 ## Example: connection health monitoring
 
 Ownership and flow should be:

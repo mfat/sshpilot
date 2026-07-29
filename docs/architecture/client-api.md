@@ -89,6 +89,13 @@ and mutation results through `GLib.idle_add`. Request tokens suppress stale resu
 refresh/window destruction. GLib remains outside `DaemonClient`, and
 `InProcessClient` stays on its construction/main thread.
 
+Inside the daemon, `sessions.open` and `sessions.close` are deferred through a
+four-worker, 64-command keyed executor. The selector reserves the request and
+later drains a bounded completion queue; workers never write sockets. Commands
+for one session serialize, while slow work for one session does not delay
+handshake, reads, attachments, or commands for other sessions. Connection
+mutations remain synchronous persistence operations in API 0.7.
+
 ## Versioning and compatibility
 
 - `PROTOCOL_VERSION` versions public semantics and DTO compatibility.

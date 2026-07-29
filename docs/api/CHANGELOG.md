@@ -49,13 +49,18 @@ notes remain separate.
 - Added a daemon-internal process-runner boundary with exact process ownership,
   one shared reaper, bounded terminate/kill shutdown, and a production-safe
   unsupported runner until prompt-safe PTY startup exists.
+- Added a daemon-scoped four-worker session command executor with a hard
+  64-command bound, per-session serialization, stable internal peer tokens,
+  selector-owned deferred response completion, and bounded shutdown draining.
+- Added retryable `server_busy` for non-blocking session-command admission
+  failure.
 - Added the schema-only `replay_terminal` client operation and complete
   package-level convenience exports for all documented model types.
 - Aligned schema-only `delete_connection` with `DeleteConnectionRequest`.
 
 ### Changed
 
-- Increased `API_IMPLEMENTATION_VERSION` to `0.6`; `PROTOCOL_VERSION` remains
+- Increased `API_IMPLEMENTATION_VERSION` to `0.7`; `PROTOCOL_VERSION` remains
   compatible `1.0`.
 - Capability discovery over `DaemonClient` now comes from the negotiated daemon
   response and advertises only contract-tested runtime capabilities.
@@ -79,10 +84,12 @@ notes remain separate.
 - Renaming through `update_connection` returns and emits the same stable ID.
   Mutation requests are never automatically retried after ambiguous transport
   failure.
-- `sessions.open` returns the current record after bounded startup initiation;
-  later state changes arrive as events. Open/close are not automatically
-  retried after ambiguous transport loss, while logical attach/detach are
-  idempotent set operations on one connection.
+- `sessions.open` and `sessions.close` process-runner work no longer executes
+  on the daemon selector. Open returns the captured `starting` acceptance
+  snapshot after deferred startup completion; later state changes arrive as
+  events. Close responds after bounded worker termination. Neither mutation is
+  automatically retried after ambiguous transport loss, while logical
+  attach/detach remain idempotent set operations on one connection.
 - Replaced the pre-runtime schema-only session states with the seven-state
   daemon lifecycle and removed caller-supplied client IDs from open/attach
   requests. This is an API 0.6 Python source change but not a Protocol v1 wire

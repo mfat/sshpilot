@@ -56,6 +56,7 @@ the validated internal envelope.
 | `protocol_error` | Implemented locally/remotely | No | Correlation/envelope/state violation | Disconnect and retain safe diagnostics |
 | `unsupported_method` | Implemented remotely | No | Unknown wire method | Update caller; do not infer a capability |
 | `daemon_shutting_down` | Implemented remotely | Yes | Request after shutdown begins | Reconnect after daemon restart |
+| `server_busy` | Implemented remotely | Yes after snapshot | Deferred session-command admission | Refresh session state, then retry only on explicit user action |
 
 <!-- api-error: unsupported_capability -->
 ## `unsupported_capability`
@@ -261,6 +262,18 @@ which describes a known public client operation whose feature is unavailable.
 
 The server had begun shutdown and rejected new work. It is remotely originated,
 retryable after restart, and correlated to the rejected request.
+
+<!-- api-error: server_busy -->
+## `server_busy`
+
+The bounded daemon session-command executor already contains its maximum 64
+running or queued commands. Submission fails immediately; the selector never
+waits for capacity. The error is remotely originated, request-correlated, and
+marked retryable, but accepted session mutations are never retried
+automatically. If open preparation already created a session record, that
+record is visible as `failed` with the same safe code; clients refresh
+`sessions.list` before offering an explicit retry. No operation payload,
+command, environment, queue contents, or peer filesystem data is exposed.
 
 ## Handling example
 

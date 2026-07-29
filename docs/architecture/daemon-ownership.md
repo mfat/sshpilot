@@ -59,6 +59,9 @@ not the canonical domain contract.
 
 - The daemon owns Phase 6 session records and exact runner handles. Future
   terminal-capable sessions will also own the SSH process and PTY.
+- Process start, terminate, kill, and wait execute only on the daemon's bounded
+  keyed session executor. The selector owns request validation and response
+  framing, never those runner calls.
 - A session may live without a frontend.
 - Attachment and session lifetime are separate. Detaching does not close a
   session; closing is explicit.
