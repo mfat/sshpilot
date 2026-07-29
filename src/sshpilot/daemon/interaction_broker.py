@@ -1243,6 +1243,17 @@ class InteractionBroker:
             with self._condition:
                 current = self._askpass_contexts.get(token)
                 if current is not None and not current.closed:
+                    # Retries (wrong password then correct) must not keep the
+                    # failed secret queued for remember-after-success.
+                    if interaction_type is InteractionType.PASSWORD:
+                        retained = []
+                        for pending in current.pending_remember:
+                            if pending.interaction_type is InteractionType.PASSWORD:
+                                pending.clear()
+                            else:
+                                retained.append(pending)
+                        current.pending_remember.clear()
+                        current.pending_remember.extend(retained)
                     current.pending_remember.append(
                         _PendingRemember(
                             interaction_type=interaction_type,
