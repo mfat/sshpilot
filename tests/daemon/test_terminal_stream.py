@@ -53,6 +53,17 @@ def test_replay_buffer_tracks_absolute_offsets_and_eviction():
     assert replay.replay(10, 8).eof is True
 
 
+def test_replay_buffer_trim_to_frees_oldest_bytes():
+    replay = TerminalReplayBuffer(64)
+    replay.append(b"abcdefghij")
+    freed = replay.trim_to(4)
+    assert freed == 6
+    assert replay.retained_bytes == 4
+    snapshot = replay.replay(0, 64)
+    assert snapshot.truncated is True
+    assert b"".join(data for _sequence, data in snapshot.chunks) == b"ghij"
+
+
 def test_owned_pty_reports_tty_output_input_resize_and_exit():
     output = bytearray()
     eof = threading.Event()

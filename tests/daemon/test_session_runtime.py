@@ -559,6 +559,38 @@ def test_closed_session_retention_is_bounded():
     core.close()
 
 
+def test_global_replay_budget_trims_oldest_sessions_first():
+    manager = _Manager()
+    core = InProcessClient(manager)
+    runtime = SessionRuntime(
+        core,
+        runner=ControlledRunner(),
+        replay_bytes=64,
+        global_replay_bytes=20,
+    )
+    connection_id = core.list_connections()[0].id
+    older = runtime.open_session(
+        OpenSessionRequest(connection_id=connection_id),
+        client_id=ClientId("client:a"),
+    )
+    newer = runtime.open_session(
+        OpenSessionRequest(connection_id=connection_id),
+        client_id=ClientId("client:a"),
+    )
+    runtime._terminal_output(older.id, b"0123456789")
+    runtime._terminal_output(newer.id, b"ABCDEFGHIJ")
+    runtime._terminal_output(newer.id, b"abcdefghij")
+
+    older_record = runtime._records[older.id]
+    newer_record = runtime._records[newer.id]
+    total = older_record.replay.retained_bytes + newer_record.replay.retained_bytes
+    assert total <= 20
+    assert older_record.replay.retained_bytes < 10
+    assert newer_record.replay.retained_bytes > 0
+    runtime.shutdown()
+    core.close()
+
+
 def test_timestamps_are_monotonic_across_transitions():
     manager = _Manager()
     core = InProcessClient(manager)

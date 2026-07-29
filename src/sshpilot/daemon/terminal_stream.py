@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Deque, Iterable, Tuple
 
 DEFAULT_SESSION_REPLAY_BYTES = 2 * 1024 * 1024
+DEFAULT_GLOBAL_REPLAY_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,27 @@ class TerminalReplayBuffer:
         self._chunks.clear()
         self._retained = 0
         self._start = self._end
+
+    def trim_to(self, max_retained: int) -> int:
+        """Evict oldest bytes until retained_bytes <= max_retained.
+
+        Returns the number of bytes freed. Sequence offsets advance so
+        subsequent replay reports truncation correctly.
+        """
+
+        if type(max_retained) is not int or max_retained < 0:
+            raise ValueError("trim target must be a non-negative int")
+        before = self._retained
+        if max_retained == 0:
+            self.clear()
+            return before - self._retained
+        previous_limit = self.max_bytes
+        self.max_bytes = max_retained
+        try:
+            self._evict()
+        finally:
+            self.max_bytes = previous_limit
+        return before - self._retained
 
     def _evict(self) -> None:
         excess = self._retained - self.max_bytes

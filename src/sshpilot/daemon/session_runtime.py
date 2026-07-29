@@ -57,6 +57,7 @@ from sshpilot.api.session_identity import (
 )
 
 from .terminal_stream import (
+    DEFAULT_GLOBAL_REPLAY_BYTES,
     DEFAULT_SESSION_REPLAY_BYTES,
     ReplaySlice,
     TerminalReplayBuffer,
@@ -376,6 +377,7 @@ class SessionRuntime:
         shutdown_timeout_seconds: float = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
         max_retained_closed_sessions: int = DEFAULT_MAX_RETAINED_CLOSED_SESSIONS,
         replay_bytes: int = DEFAULT_SESSION_REPLAY_BYTES,
+        global_replay_bytes: int = DEFAULT_GLOBAL_REPLAY_BYTES,
     ) -> None:
         if close_grace_seconds < 0 or shutdown_timeout_seconds < 0:
             raise ValueError("session close timeouts must not be negative")
@@ -391,7 +393,10 @@ class SessionRuntime:
         self._max_retained_closed_sessions = max_retained_closed_sessions
         if type(replay_bytes) is not int or replay_bytes < 1:
             raise ValueError("terminal replay byte limit must be positive")
+        if type(global_replay_bytes) is not int or global_replay_bytes < 1:
+            raise ValueError("global terminal replay byte limit must be positive")
         self._replay_bytes = replay_bytes
+        self._global_replay_bytes = global_replay_bytes
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[SessionId, _SessionRecord] = {}
@@ -1257,6 +1262,7 @@ class SessionRuntime:
             if record is None or record.pty_eof:
                 return
             start, _end = record.replay.append(data)
+            self._enforce_global_replay_budget_locked(prefer=session_id)
             output = TerminalOutput(
                 session_id=session_id,
                 sequence=start,
@@ -1268,6 +1274,37 @@ class SessionRuntime:
                 callback(output)
             except Exception:
                 continue
+
+    def _global_replay_retained_locked(self) -> int:
+        return sum(record.replay.retained_bytes for record in self._records.values())
+
+    def _enforce_global_replay_budget_locked(
+        self, *, prefer: Optional[SessionId] = None
+    ) -> None:
+        """Trim oldest sessions first when the daemon-wide replay budget is exceeded."""
+
+        total = self._global_replay_retained_locked()
+        if total <= self._global_replay_bytes:
+            return
+        excess = total - self._global_replay_bytes
+        # Prefer trimming older sessions; keep the writer session until last.
+        order = [
+            session_id
+            for session_id in self._creation_order
+            if session_id in self._records and session_id != prefer
+        ]
+        if prefer is not None and prefer in self._records:
+            order.append(prefer)
+        for session_id in order:
+            if excess <= 0:
+                break
+            record = self._records[session_id]
+            retained = record.replay.retained_bytes
+            if retained <= 0:
+                continue
+            target = max(0, retained - excess)
+            freed = record.replay.trim_to(target)
+            excess -= freed
 
     def _terminal_eof(self, session_id: SessionId) -> None:
         events: List[CoreEvent] = []
