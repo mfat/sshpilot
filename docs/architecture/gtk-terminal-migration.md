@@ -200,35 +200,105 @@ def _on_continuity_lost(self):
         self.backend.commit()
 ```
 
-## Legacy Fallback: Explicit Only
+## Phase 9.1 — Strict Terminal Routing
 
-Legacy local SSH fallback is **explicit user choice only**:
+Phase 9.1 separates **route selection** from **daemon readiness**. Readiness
+failures never change the selected route and never launch local internal SSH.
+
+### Route model
+
+```python
+class SshTerminalRoute(str, Enum):
+    DAEMON = "daemon"
+    LEGACY_LOCAL = "legacy_local"
+    EXTERNAL = "external"
+```
+
+`resolve_ssh_terminal_route(config, connection)` decides only user/product
+policy. It does **not** inspect client existence, capabilities, bridge state,
+handshake status, or daemon startup progress.
+
+### Precedence (first match wins)
+
+1. Local shell tab / non-SSH protocol / missing connection → not an SSH route
+2. External-terminal preference active and not policy-hidden → `EXTERNAL`
+3. Explicit `terminal.legacy_local_ssh_fallback` → `LEGACY_LOCAL`
+4. `terminal.daemon_backed_ssh` enabled (Stage C default) → `DAEMON`
+5. Daemon-backed setting disabled → `LEGACY_LOCAL`
+
+### Readiness (separate)
+
+```python
+@dataclass(frozen=True)
+class DaemonTerminalReadiness:
+    ready: bool
+    reason: DaemonTerminalReadinessReason | None
+    missing_capabilities: tuple[Capability, ...] = ()
+```
+
+Reasons include `client_unavailable`, `bridge_unavailable`,
+`handshake_incomplete`, `protocol_incompatible`,
+`terminal_transport_unavailable`, `secret_transport_unavailable`,
+`missing_capabilities`, `daemon_start_failed`, and `daemon_start_timeout`.
+
+### No silent fallback guarantee
+
+| Selected route | Service state | Outcome |
+| --- | --- | --- |
+| `DAEMON` | ready | daemon-backed SSH |
+| `DAEMON` | unavailable / incompatible | clear error; **no** local SSH |
+| `LEGACY_LOCAL` | (irrelevant) | GTK-owned local SSH |
+| `EXTERNAL` | (irrelevant) | external process |
+
+`should_use_daemon_ssh_terminal()` now means “route is `DAEMON`” only. It no
+longer returns false when the daemon is merely unavailable.
+
+### Activation phases
+
+```text
+1. Resolve route
+2. EXTERNAL → optional vault unlock → external launch
+3. LEGACY_LOCAL → vault unlock → native_connect + VTE spawn
+4. DAEMON → readiness (+ bounded on-demand start) → optional vault unlock
+   → daemon session open (never native_connect / _connect_ssh)
+```
+
+### Secret-preflight ownership
+
+- **Daemon route**: resolve route and readiness first. GTK may unlock a
+  session-backed vault afterward so the daemon broker can read stored
+  credentials; SSH passwords/passphrases are not retrieved into GTK.
+- **Legacy local**: existing GTK askpass / vault unlock path.
+- **External**: existing external askpass/secret policy unchanged.
+
+Locked Bitwarden/KDBX backends remain a distinct unlock concern. Unlock is
+backend unlock, not SSH authentication. Unsupported autofill falls through to
+typed daemon interactions — never to silent local SSH.
+
+## Legacy Local SSH: Explicit Only
+
+Legacy local SSH is **explicit user choice only**:
 
 - **Default behavior**: `terminal.daemon_backed_ssh = True` (Stage C rollout)
-- **Explicit fallback**: `terminal.legacy_local_ssh_fallback = True` disables daemon path
-- **Never silent**: No automatic mid-session fallback from daemon to local
-- **Clear error**: Daemon failures show explicit error dialog
+- **Explicit legacy**: `terminal.legacy_local_ssh_fallback = True` selects
+  GTK-owned local SSH (`Use legacy local SSH terminals` in Preferences)
+- **Never silent**: Daemon unavailability/incompatibility never switches route
+- **Clear error**: Readiness failures show an actionable dialog with optional
+  Preferences action
 
 ### Decision Logic
 
 ```python
-def should_use_daemon_ssh_terminal(window_or_config, connection, *, client=None) -> bool:
-    """Return whether SSH activation should use daemon."""
-    config = _config_of(window_or_config)
-
-    # User explicitly requested legacy fallback
+def resolve_ssh_terminal_route(config, connection, *, is_local=False):
+    if is_local or connection is None or connection.protocol != "ssh":
+        return None
+    if use_external and not should_hide_external_terminal_options():
+        return SshTerminalRoute.EXTERNAL
     if config.get_setting("terminal.legacy_local_ssh_fallback", False):
-        return False
-
-    # User disabled daemon SSH
-    if not config.get_setting("terminal.daemon_backed_ssh", True):
-        return False
-
-    # Check daemon capabilities
-    if daemon_terminal_capabilities_missing(client):
-        return False
-
-    return True
+        return SshTerminalRoute.LEGACY_LOCAL
+    if config.get_setting("terminal.daemon_backed_ssh", True):
+        return SshTerminalRoute.DAEMON
+    return SshTerminalRoute.LEGACY_LOCAL
 ```
 
 ## Terminal Type Ownership
@@ -238,13 +308,14 @@ def should_use_daemon_ssh_terminal(window_or_config, connection, *, client=None)
 - **Process ownership**: GTK spawns and owns local shell processes
 - **Backend choice**: User can select VTE or PyXtermJS via `terminal.backend`
 - **No daemon involvement**: Local terminals bypass daemon entirely
-- **Direct VTE**: Local terminals use direct VTE spawn_async
+- **Daemon settings do not apply**: local tabs open even when daemon is absent
 
 ### External Terminals: External Process
 
 - **System ownership**: External terminal application owns process
 - **No sshPilot control**: No terminal emulator, replay, or session management
 - **SSH command only**: sshPilot builds SSH command, external terminal executes
+- **Precedence**: external preference wins over daemon and legacy settings
 
 ### Daemon SSH Terminals: Daemon-Owned
 
@@ -252,23 +323,28 @@ def should_use_daemon_ssh_terminal(window_or_config, connection, *, client=None)
 - **VTE emulation**: GTK receives output via VTE feed API
 - **Session persistence**: Sessions survive GTK restart
 - **Multi-attachment**: Multiple GTK tabs can attach to same session
+- **No GTK SSH spawn**: `native_connect` / `_connect_ssh` / local askpass are
+  not used for this route
 
 ## Rollout Stage C: Default On
 
-Phase 9 implements Stage C rollout policy:
+Phase 9 / 9.1 implement Stage C rollout policy:
 
 - **Default enabled**: `terminal.daemon_backed_ssh = True` by default
-- **Capability gated**: Auto-disabled if daemon lacks required capabilities
-- **User choice preserved**: Legacy fallback available via explicit setting
-- **Smooth upgrade**: Existing users get daemon SSH automatically
+- **Readiness gated**: Launch blocked with a clear error when capabilities or
+  transport are missing — never auto-switched to local SSH
+- **User choice preserved**: Explicit legacy local SSH setting remains
+- **Smooth upgrade**: Existing users get daemon SSH automatically when ready
 
 ## Daemon Lifecycle
 
 ### Startup Behavior
 
-- **On-demand start**: Daemon starts when first SSH terminal requested
+- **On-demand start**: Bounded `DaemonLauncher.connect_or_start()` may run when
+  the daemon route is selected and the client is unavailable
 - **Capability check**: GTK verifies required capabilities before activation
 - **Bridge initialization**: GtkClientBridge connects daemon to GTK main thread
+- **Startup failure**: shows error; does not launch local SSH
 
 ### Persistence Behavior
 
@@ -276,14 +352,16 @@ Phase 9 implements Stage C rollout policy:
 - **Session retention**: Live SSH sessions continue running in daemon
 - **Idle exit**: Daemon shuts down when no sessions remain (deferred to Phase 10)
 - **Restart recovery**: GTK startup can reattach to surviving daemon sessions
+- **Restored sessions**: attach by session ID — they do not re-resolve a new
+  terminal route as though opening a fresh connection
 
 ### Error Handling
 
 ```python
 def _show_daemon_error_dialog(self, window, message):
-    """Show error for daemon terminal failures."""
-    dialog = Adw.AlertDialog.new("Daemon Terminal Error", message)
-    dialog.add_response("ok", "OK")
+    dialog = Adw.AlertDialog.new(_("Daemon Terminal Unavailable"), message)
+    dialog.add_response("ok", _("OK"))
+    dialog.add_response("prefs", _("Open Preferences"))
     dialog.present(window)
 ```
 
@@ -309,6 +387,10 @@ REQUIRED_DAEMON_TERMINAL_CAPABILITIES = frozenset({
 })
 ```
 
+Absence of terminal capabilities maps to `terminal_transport_unavailable`
+(binary-terminal-v1). Absence of interaction capabilities maps to
+`secret_transport_unavailable` (binary-secret-v1).
+
 ### Capability Gating
 
 ```python
@@ -318,7 +400,6 @@ def daemon_terminal_capabilities_missing(client) -> frozenset[Capability]:
     supported = client.get_capabilities().supported
     return required - supported
 ```
-
 ## SSH Options Compatibility Matrix
 
 | SSH Option Category | Support Status | Notes |

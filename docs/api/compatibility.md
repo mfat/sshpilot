@@ -2,14 +2,18 @@
 
 SSH Pilot uses a deliberately simple policy:
 
-## Phase 9: Default Behavior Change
+## Phase 9 / 9.1: Default Behavior Change
 
-Phase 9 introduces a default behavior change while maintaining compatibility:
+Phase 9 introduces a default behavior change while maintaining compatibility.
+Phase 9.1 hardens routing so readiness never silently selects legacy SSH:
 
 - **Default change**: `terminal.daemon_backed_ssh` now defaults to `True` (Stage C rollout)
-- **Explicit override**: Users can set `terminal.legacy_local_ssh_fallback = True` to preserve Phase 8 behavior
-- **Capability gated**: Daemon SSH only activates if daemon supports required capabilities
-- **Graceful fallback**: Missing daemon capabilities show clear error instead of silent fallback
+- **Explicit override**: Users can set `terminal.legacy_local_ssh_fallback = True`
+  to force GTK-owned local SSH (`Use legacy local SSH terminals`)
+- **Route vs readiness**: `resolve_ssh_terminal_route` is pure policy;
+  `resolve_daemon_terminal_readiness` never changes the selected route
+- **No silent fallback**: Missing daemon, bridge, protocol, binary transport, or
+  capabilities shows a clear error and does not launch local internal SSH
 
 - Backward-compatible additive evolution remains Protocol v1.
 - Incompatible public semantic changes require Protocol v2.

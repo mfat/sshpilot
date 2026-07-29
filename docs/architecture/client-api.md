@@ -301,7 +301,10 @@ Phase 9 introduces production daemon-backed SSH terminals with VTE emulation:
 - **Input ownership**: Exclusive input ownership with claim/release API
 - **Session persistence**: Sessions survive GTK restart with detach/reattach
 - **VTE emulation**: Unified VTE-based production emulator for daemon SSH
-- **Legacy fallback**: Explicit `terminal.legacy_local_ssh_fallback` only
+- **Legacy local SSH**: Explicit `terminal.legacy_local_ssh_fallback` only —
+  never selected because daemon readiness failed
+- **Route model**: `SshTerminalRoute` (`daemon` / `legacy_local` / `external`)
+  resolved before readiness or secret unlock
 
 See [GTK Terminal Migration](gtk-terminal-migration.md) and [Session Reattachment](session-reattachment.md).
 

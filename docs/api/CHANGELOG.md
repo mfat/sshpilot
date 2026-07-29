@@ -5,6 +5,17 @@ notes remain separate.
 
 ## Unreleased
 
+### Phase 9.1: Strict Terminal Routing (Added)
+
+- Separated SSH terminal route selection (`SshTerminalRoute`) from daemon
+  readiness (`DaemonTerminalReadiness`)
+- Daemon route failures show clear readiness errors and never silently launch
+  local internal SSH
+- Secret vault unlock runs only after route resolution (and after daemon
+  readiness for the daemon route)
+- Preferences wording: “Use legacy local SSH terminals” (explicit mode, not
+  automatic failure fallback)
+
 ### Phase 9: GTK Terminal Migration (Added)
 
 - Added production GTK daemon SSH terminal path with VTE emulation as default

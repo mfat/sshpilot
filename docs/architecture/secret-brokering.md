@@ -60,6 +60,15 @@ unlock concern. Phase 8 never sends a backend master password as an SSH
 password/passphrase response; failed automatic lookup falls back to direct
 typed SSH credential entry.
 
+### Phase 9.1 GTK ownership
+
+For the **daemon SSH route**, GTK resolves route and daemon readiness before any
+vault unlock prompt. Unlock is backend unlock only — GTK must not retrieve the
+SSH password/passphrase into process memory merely because the vault was
+unlocked. The daemon interaction broker remains authoritative for SSH secrets.
+The **legacy local** route keeps GTK askpass/secret preparation. Daemon
+readiness failure must not trigger legacy secret preparation or local SSH spawn.
+
 ## Host keys
 
 The broker retrieves the presented public key, compares it with configured

@@ -2,6 +2,13 @@
 
 This document covers daemon SSH session persistence across GTK restarts, including detachment policies, restoration metadata, and reattachment mechanisms.
 
+## Routing boundary
+
+Restored sessions attach **directly by session ID**. They do not call
+`resolve_ssh_terminal_route` / `connect_to_host` as though opening a new SSH
+connection. Phase 9.1 routing changes therefore must not bypass restored-session
+attach paths (`DaemonSessionRestoreManager.restore_session`).
+
 ## Detach vs Terminate
 
 Daemon SSH sessions support two distinct close operations:

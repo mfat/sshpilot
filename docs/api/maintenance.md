@@ -179,9 +179,11 @@ before commit, participate in last-known-good rollback, and have atomic
 replacement plus self-write no-op coverage. GTK must not gain a daemon-mode
 migration bypass.
 
-## Phase 9 notes
+## Phase 9 / 9.1 notes
 
 Production GTK SSH terminals are daemon-backed by default (`terminal.daemon_backed_ssh`).
+Phase 9.1 keeps route selection (`SshTerminalRoute`) separate from daemon readiness;
+readiness failures must never silently select legacy local SSH.
 When regenerating API artifacts after claim/release or multi-attachment changes, run
 `python3 scripts/generate_api_artifacts.py` and keep `docs/api/methods.md` /
 `docs/api/errors.md` markers in sync with `SshPilotClient` and `DAEMON_METHOD_CAPABILITIES`.

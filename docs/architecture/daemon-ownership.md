@@ -14,6 +14,12 @@ Phase 9 completes the GTK terminal migration to daemon ownership:
 - **Input ownership**: Exclusive input control with claim/release API
 - **VTE emulation**: Unified VTE-based terminal emulation for all daemon SSH sessions
 
+Phase 9.1 hardens activation ownership: route selection
+(`SshTerminalRoute`) is independent of daemon readiness. A selected daemon
+route that is not ready shows a clear error and never silently launches
+GTK-owned local SSH. Local shell tabs and external terminals remain outside
+daemon SSH ownership.
+
 The concrete current client contract is maintained in the
 [API reference](../api/README.md). This document describes intended ownership;
 it does not advertise runtime capabilities.
