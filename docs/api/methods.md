@@ -552,6 +552,35 @@ Opens a local, remote, or dynamic forward. Type also requires
 
 Requests bounded closure of one runtime forward.
 
+<!-- api-method: get_daemon_status -->
+## `get_daemon_status`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.11.
+- **Capability / purpose:** `daemon.status`; return lifecycle state, versions,
+  resource counts, and idle/shutdown diagnostics without secrets.
+- **Errors:** `unsupported_capability` from `InProcessClient`; transport errors.
+
+<!-- api-method: get_daemon_diagnostics -->
+## `get_daemon_diagnostics`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.11.
+- **Capability / purpose:** `daemon.status`; broader safe diagnostics snapshot
+  (threads, FDs, RSS where available). No secrets, paths, or terminal data.
+
+<!-- api-method: stop_daemon -->
+## `stop_daemon`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.11.
+- **Capability / purpose:** `daemon.control`; drain and stop. Rejects when live
+  resources exist unless confirmation or force is supplied.
+
+<!-- api-method: restart_daemon -->
+## `restart_daemon`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.11.
+- **Capability / purpose:** `daemon.control`; drain, stop, and request a new
+  instance. Live processes do not survive restart.
+
 <!-- api-method: list_sessions -->
 ## `list_sessions`
 

@@ -69,6 +69,13 @@ from .models.transfers import (
     StartTransferRequest,
     TransferSummary,
 )
+from .models.daemon import (
+    DaemonDiagnostics,
+    DaemonStatus,
+    DaemonStopResult,
+    RestartDaemonRequest,
+    StopDaemonRequest,
+)
 
 
 class SshPilotClient(Protocol):
@@ -94,6 +101,20 @@ class SshPilotClient(Protocol):
         ...
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
+        ...
+
+    def get_daemon_status(self) -> DaemonStatus:
+        ...
+
+    def get_daemon_diagnostics(self) -> DaemonDiagnostics:
+        ...
+
+    def stop_daemon(self, request: Optional[StopDaemonRequest] = None) -> DaemonStopResult:
+        ...
+
+    def restart_daemon(
+        self, request: Optional[RestartDaemonRequest] = None
+    ) -> DaemonStopResult:
         ...
 
     def list_sessions(self) -> List[SessionSummary]:

@@ -65,6 +65,14 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "get_daemon_diagnostics": {
+      "capability": "daemon.status",
+      "status": "daemon-only"
+    },
+    "get_daemon_status": {
+      "capability": "daemon.status",
+      "status": "daemon-only"
+    },
     "get_forward": {
       "capability": "forwards.read",
       "status": "daemon-only"
@@ -141,6 +149,10 @@
       "capability": "interactions.respond",
       "status": "daemon-only"
     },
+    "restart_daemon": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
     "send_interaction_secret": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -195,6 +207,10 @@
     },
     "start_transfer": {
       "capability": "transfers.write",
+      "status": "daemon-only"
+    },
+    "stop_daemon": {
+      "capability": "daemon.control",
       "status": "daemon-only"
     },
     "subscribe_events": {

@@ -104,6 +104,7 @@ local `error.occurred` continuity notification where delivery remains possible.
 | `forward.active` | Daemon implemented | `forwards.events` | Forward is listening/active | `ForwardSummary` |
 | `forward.closed` | Daemon implemented | `forwards.events` | Forward closed | `ForwardSummary` |
 | `forward.failed` | Daemon implemented | `forwards.events` | Forward failed | `ForwardSummary` |
+| `daemon.state_changed` | Daemon implemented | `daemon.events` | Lifecycle state transition | `DaemonStatus` |
 | `error.occurred` | Local runtime transport-continuity signal in `DaemonClient` | None fixed | Daemon transport/protocol continuity failure | Safe structured error envelope dictionary |
 
 <!-- api-event: connection.created -->
@@ -307,6 +308,13 @@ local `error.occurred` continuity notification where delivery remains possible.
 - **Status / introduced:** Daemon implemented / v1, API 0.10.
 - **Capability / trigger:** `forwards.events`; forward failed.
 - **Payload / IDs:** `ForwardSummary` including optional `ServiceFailure`.
+
+<!-- api-event: daemon.state_changed -->
+## `daemon.state_changed`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.11.
+- **Capability / trigger:** `daemon.events`; lifecycle state transition.
+- **Payload / IDs:** `DaemonStatus` (no secrets, paths, or terminal data).
 
 <!-- api-event: session.interaction_requested -->
 ## `session.interaction_requested`

@@ -220,6 +220,9 @@ def test_schema_only_capabilities_are_not_advertised(
                 Capability.FORWARDS_LOCAL,
                 Capability.FORWARDS_REMOTE,
                 Capability.FORWARDS_DYNAMIC,
+                Capability.DAEMON_STATUS,
+                Capability.DAEMON_CONTROL,
+                Capability.DAEMON_EVENTS,
             }
         )
     assert client.get_capabilities().supported == frozenset(runtime_capabilities)

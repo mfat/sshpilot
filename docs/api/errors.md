@@ -536,6 +536,30 @@ which describes a known public client operation whose feature is unavailable.
 The server had begun shutdown and rejected new work. It is remotely originated,
 retryable after restart, and correlated to the rejected request.
 
+<!-- api-error: daemon_active_resources -->
+## `daemon_active_resources`
+
+A stop or restart was refused because live resources still require confirmation
+or an explicit force. No resource contents are exposed.
+
+<!-- api-error: daemon_confirmation_required -->
+## `daemon_confirmation_required`
+
+The caller must pass the returned confirmation value (or force) before a
+destructive daemon stop/restart proceeds.
+
+<!-- api-error: daemon_incompatible -->
+## `daemon_incompatible`
+
+The connected daemon is incompatible with this client (protocol, API
+implementation, or required capability). Restart or upgrade is required.
+
+<!-- api-error: daemon_restart_required -->
+## `daemon_restart_required`
+
+The client detected a stale or mismatched daemon and requires an explicit
+restart before continuing.
+
 <!-- api-error: server_busy -->
 ## `server_busy`
 

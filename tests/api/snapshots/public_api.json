@@ -124,6 +124,14 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "get_daemon_diagnostics": {
+      "capability": "daemon.status",
+      "status": "daemon-only"
+    },
+    "get_daemon_status": {
+      "capability": "daemon.status",
+      "status": "daemon-only"
+    },
     "get_forward": {
       "capability": "forwards.read",
       "status": "daemon-only"
@@ -200,6 +208,10 @@
       "capability": "interactions.respond",
       "status": "daemon-only"
     },
+    "restart_daemon": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
     "send_interaction_secret": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -256,6 +268,10 @@
       "capability": "transfers.write",
       "status": "daemon-only"
     },
+    "stop_daemon": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
     "subscribe_events": {
       "capability": "connections.events",
       "status": "implemented"
@@ -286,6 +302,8 @@
     "detach_sftp",
     "get_capabilities",
     "get_connection",
+    "get_daemon_diagnostics",
+    "get_daemon_status",
     "get_forward",
     "get_interaction",
     "get_session",
@@ -305,6 +323,7 @@
     "replay_terminal",
     "resize_terminal",
     "respond_to_interaction",
+    "restart_daemon",
     "send_interaction_secret",
     "send_terminal_input",
     "sftp_chmod",
@@ -319,6 +338,7 @@
     "sftp_stat",
     "sftp_symlink",
     "start_transfer",
+    "stop_daemon",
     "subscribe_events",
     "subscribe_terminal",
     "update_connection"
@@ -471,6 +491,14 @@
         }
       ],
       "return": "ConnectionDetails"
+    },
+    "get_daemon_diagnostics": {
+      "parameters": [],
+      "return": "DaemonDiagnostics"
+    },
+    "get_daemon_status": {
+      "parameters": [],
+      "return": "DaemonStatus"
     },
     "get_forward": {
       "parameters": [
@@ -626,6 +654,16 @@
       ],
       "return": "None"
     },
+    "restart_daemon": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "RestartDaemonRequest | None"
+        }
+      ],
+      "return": "DaemonStopResult"
+    },
     "send_interaction_secret": {
       "parameters": [
         {
@@ -775,6 +813,16 @@
         }
       ],
       "return": "TransferSummary"
+    },
+    "stop_daemon": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "StopDaemonRequest | None"
+        }
+      ],
+      "return": "DaemonStopResult"
     },
     "subscribe_events": {
       "parameters": [

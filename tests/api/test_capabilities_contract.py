@@ -462,6 +462,26 @@ UNSUPPORTED_OPERATION_CASES.extend(
             ),
             Capability.FORWARDS_WRITE,
         ),
+        (
+            "get_daemon_status",
+            lambda client: client.get_daemon_status(),
+            Capability.DAEMON_STATUS,
+        ),
+        (
+            "get_daemon_diagnostics",
+            lambda client: client.get_daemon_diagnostics(),
+            Capability.DAEMON_STATUS,
+        ),
+        (
+            "stop_daemon",
+            lambda client: client.stop_daemon(),
+            Capability.DAEMON_CONTROL,
+        ),
+        (
+            "restart_daemon",
+            lambda client: client.restart_daemon(),
+            Capability.DAEMON_CONTROL,
+        ),
     ]
 )
 

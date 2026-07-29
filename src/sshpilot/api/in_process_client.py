@@ -106,6 +106,8 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
+    "get_daemon_diagnostics": Capability.DAEMON_STATUS,
+    "get_daemon_status": Capability.DAEMON_STATUS,
     "get_session": Capability.SESSIONS_READ,
     "get_interaction": Capability.INTERACTIONS_READ,
     "claim_interaction": Capability.INTERACTIONS_RESPOND,
@@ -118,8 +120,10 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "resize_terminal": Capability.TERMINAL_RESIZE,
     "release_interaction": Capability.INTERACTIONS_RESPOND,
     "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
+    "restart_daemon": Capability.DAEMON_CONTROL,
     "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "send_terminal_input": Capability.TERMINAL_INPUT,
+    "stop_daemon": Capability.DAEMON_CONTROL,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
     "list_sftp_services": Capability.SFTP_READ,
     "get_sftp_service": Capability.SFTP_READ,
@@ -687,6 +691,20 @@ class InProcessClient:
 
     def list_sessions(self) -> List[SessionSummary]:
         raise self._unsupported("list_sessions")
+
+    def get_daemon_status(self):
+        raise self._unsupported("get_daemon_status")
+
+    def get_daemon_diagnostics(self):
+        raise self._unsupported("get_daemon_diagnostics")
+
+    def stop_daemon(self, request=None):
+        del request
+        raise self._unsupported("stop_daemon")
+
+    def restart_daemon(self, request=None):
+        del request
+        raise self._unsupported("restart_daemon")
 
     def get_session(self, session_id: SessionId) -> SessionSummary:
         del session_id

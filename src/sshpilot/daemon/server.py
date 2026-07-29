@@ -24,6 +24,7 @@ from sshpilot.api.events import CoreEvent, EventType, Subscription
 from sshpilot.api.models.common import ForwardId, RequestId, SessionId, SftpServiceId
 from sshpilot.api.models.daemon import (
     DaemonDiagnostics,
+    DaemonLifecycleState,
     DaemonResourceCounts,
     DaemonStatus,
 )
@@ -351,6 +352,8 @@ class DaemonServer:
             return
         if self._lifecycle is not None:
             self._lifecycle.mark_ready()
+        with self._event_lock:
+            self._accepting_core_events = True
         self._ready.set()
         try:
             while not self._stopping.is_set():
@@ -632,8 +635,9 @@ class DaemonServer:
         self._forward_subscription = self._forward_runtime.subscribe_events(
             self._on_core_event
         )
-        with self._event_lock:
-            self._accepting_core_events = True
+        # Defer `_accepting_core_events` until after `mark_ready()` so the
+        # initial READY lifecycle publication is not sequenced onto the
+        # shared event bus (clients still poll `daemon.status`).
         if configuration_backend is not None:
             watcher = (
                 self._configuration_watcher_factory()
