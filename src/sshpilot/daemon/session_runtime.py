@@ -287,6 +287,10 @@ class _SessionRecord:
     failure: Optional[SessionFailure] = None
     attachments: Dict[ClientId, AttachmentId] = field(default_factory=dict)
     process_handle: Optional[SessionProcessHandle] = None
+    launch_spec: Optional[SessionLaunchSpec] = None
+    startup_scheduled: bool = False
+    startup_started: bool = False
+    close_scheduled: bool = False
 
 
 _ALLOWED_TRANSITIONS = {
@@ -388,6 +392,22 @@ class SessionRuntime:
         *,
         client_id: ClientId,
     ) -> SessionSummary:
+        """Compatibility helper that performs prepare/start synchronously."""
+
+        prepared = self.prepare_open_session(request, client_id=client_id)
+        self.start_session(prepared.id)
+        with self._lock:
+            return self._summary_locked(self._record_locked(prepared.id))
+
+    def prepare_open_session(
+        self,
+        request: OpenSessionRequest,
+        *,
+        client_id: ClientId,
+    ) -> SessionSummary:
+        """Create one starting record without calling the process runner."""
+
+        del client_id
         if type(request) is not OpenSessionRequest:
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
@@ -408,6 +428,8 @@ class SessionRuntime:
             state=SessionState.CREATED,
             created_at=now,
             updated_at=now,
+            launch_spec=self._launch_spec(connection, session_id),
+            startup_scheduled=True,
         )
         with self._lock:
             self._require_accepting_commands_locked()
@@ -418,11 +440,29 @@ class SessionRuntime:
             created_event = self._event_locked(record, EventType.SESSION_CREATED)
             starting_event = self._transition_locked(record, SessionState.STARTING)
         self._publish((created_event, starting_event))
-
         with self._lock:
-            if record.state is not SessionState.STARTING:
-                return self._summary_locked(record)
-        spec = self._launch_spec(connection, session_id)
+            return self._summary_locked(record)
+
+    def start_session(self, session_id: SessionId) -> None:
+        """Run the potentially blocking startup step on a command worker."""
+
+        session_uuid_from_id(session_id)
+        with self._lock:
+            record = self._record_locked(session_id)
+            if not record.startup_scheduled or record.startup_started:
+                raise SshPilotError(
+                    ErrorCode.SESSION_INVALID_STATE,
+                    "Session startup is not pending",
+                    session_id=session_id,
+                )
+            if record.state not in {SessionState.STARTING, SessionState.CLOSING}:
+                record.startup_scheduled = False
+                return
+            record.startup_scheduled = False
+            record.startup_started = True
+            spec = record.launch_spec
+            if spec is None:
+                raise RuntimeError("starting session has no launch specification")
         try:
             handle = self._runner.start(
                 spec,
@@ -443,25 +483,38 @@ class SessionRuntime:
                 "The session process could not be started",
             )
         else:
-            terminate_after_start = False
+            terminate_after_start = True
             events: List[CoreEvent] = []
             with self._lock:
                 if record.state is SessionState.STARTING:
                     record.process_handle = handle
                     record.started_at = self._clock()
                     events.append(self._transition_locked(record, SessionState.RUNNING))
+                    terminate_after_start = False
                 elif record.state is SessionState.CLOSING:
                     record.process_handle = handle
-                    terminate_after_start = True
+                    terminate_after_start = False
             self._publish(events)
             if terminate_after_start:
-                self._terminate_record(
-                    record,
+                self._terminate_handle(
+                    handle,
                     deadline=self._monotonic() + self._close_grace_seconds,
-                    raise_on_failure=False,
                 )
+
+    def reject_pending_start(self, session_id: SessionId) -> None:
+        """Mark an unscheduled startup failed after executor saturation."""
+
         with self._lock:
-            return self._summary_locked(record)
+            record = self._record_locked(session_id)
+            if record.startup_started or record.state is not SessionState.STARTING:
+                return
+            record.startup_scheduled = False
+            record.failure = SessionFailure(
+                code=ErrorCode.SERVER_BUSY.value,
+                message="The daemon session command queue is full",
+            )
+            event = self._transition_locked(record, SessionState.FAILED)
+        self._publish((event,))
 
     def attach_session(
         self,
@@ -531,17 +584,68 @@ class SessionRuntime:
             record.updated_at = self._clock()
 
     def close_session(self, request: CloseSessionRequest) -> None:
+        """Compatibility helper that accepts and completes close synchronously."""
+
+        if self.prepare_close_session(request):
+            self.finish_close_session(request.session_id)
+
+    def prepare_close_session(self, request: CloseSessionRequest) -> bool:
+        """Accept close without calling terminate, kill, or wait."""
+
         if type(request) is not CloseSessionRequest:
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
                 "A close session request is required",
             )
         session_uuid_from_id(request.session_id)
+        events: List[CoreEvent] = []
+        with self._lock:
+            self._require_accepting_commands_locked()
+            record = self._record_locked(request.session_id)
+            if record.state is SessionState.CLOSED or record.close_scheduled:
+                return False
+            if record.state in {SessionState.CREATED, SessionState.EXITED}:
+                events.append(self._transition_locked(record, SessionState.CLOSED))
+            elif record.state is SessionState.FAILED and record.process_handle is None:
+                events.append(self._transition_locked(record, SessionState.CLOSED))
+            else:
+                if record.state in {SessionState.STARTING, SessionState.RUNNING}:
+                    events.append(
+                        self._transition_locked(record, SessionState.CLOSING)
+                    )
+                record.close_scheduled = True
+        self._publish(events)
+        return record.close_scheduled
+
+    def finish_close_session(self, session_id: SessionId) -> None:
+        """Perform accepted blocking termination on a command worker."""
+
+        session_uuid_from_id(session_id)
         self._close_session_id(
-            request.session_id,
+            session_id,
             deadline=self._monotonic() + self._close_grace_seconds,
             raise_on_failure=True,
+            allow_shutdown=True,
         )
+
+    def reject_pending_close(self, session_id: SessionId) -> None:
+        """Make an executor-rejected close explicit and retryable."""
+
+        with self._lock:
+            record = self._record_locked(session_id)
+            if not record.close_scheduled:
+                return
+            record.close_scheduled = False
+            if record.state is SessionState.CLOSING:
+                record.failure = SessionFailure(
+                    code=ErrorCode.SERVER_BUSY.value,
+                    message="The daemon session command queue is full",
+                )
+                event = self._transition_locked(record, SessionState.FAILED)
+            else:
+                event = None
+        if event is not None:
+            self._publish((event,))
 
     def detach_client(self, client_id: Optional[ClientId]) -> None:
         if client_id is None:
@@ -639,6 +743,7 @@ class SessionRuntime:
         except Exception:
             events: List[CoreEvent] = []
             with self._lock:
+                record.close_scheduled = False
                 if record.state not in {
                     SessionState.FAILED,
                     SessionState.CLOSED,
@@ -657,6 +762,25 @@ class SessionRuntime:
                 ) from None
             return
         self._process_exited(record.session_id, exit_info)
+
+    def _terminate_handle(
+        self,
+        handle: SessionProcessHandle,
+        *,
+        deadline: float,
+    ) -> None:
+        """Best-effort cleanup for a handle obtained after final session state."""
+
+        try:
+            handle.terminate()
+            remaining = max(0.0, deadline - self._monotonic())
+            exit_info = handle.wait(remaining)
+            if exit_info is None:
+                handle.kill()
+                remaining = max(0.0, deadline - self._monotonic())
+                handle.wait(remaining)
+        except Exception:
+            return
 
     def _process_exited(
         self,
@@ -698,6 +822,7 @@ class SessionRuntime:
         with self._lock:
             if record.state is not SessionState.STARTING:
                 return
+            record.startup_scheduled = False
             record.failure = SessionFailure(code=code.value, message=message)
             event = self._transition_locked(record, SessionState.FAILED)
         self._publish((event,))

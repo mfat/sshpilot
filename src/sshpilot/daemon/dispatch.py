@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, FrozenSet, Optional, Set
+from typing import Any, Callable, Dict, FrozenSet, Hashable, Optional, Set, Union
 
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.api.capabilities import Capabilities, Capability
@@ -58,6 +58,28 @@ DAEMON_METHOD_CAPABILITIES = {
     "system.handshake": None,
 }
 
+DEFERRED_DAEMON_METHODS = frozenset({"sessions.open", "sessions.close"})
+
+
+@dataclass(frozen=True)
+class ImmediateResult:
+    """A selector-safe handler result."""
+
+    value: Any
+
+
+@dataclass(frozen=True)
+class DeferredResult:
+    """A daemon-owned blocking operation for the bounded command executor."""
+
+    operation: Callable[[], Any]
+    command_key: Hashable
+    session_id: SessionId
+    on_rejected: Callable[[], None]
+
+
+DispatchResult = Union[ImmediateResult, DeferredResult]
+
 
 @dataclass
 class ClientProtocolState:
@@ -101,7 +123,11 @@ class RequestDispatcher:
     def begin_shutdown(self) -> None:
         self._shutting_down = True
 
-    def dispatch(self, request: RequestEnvelope, state: ClientProtocolState) -> Any:
+    def dispatch(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DispatchResult:
         if self._shutting_down:
             raise SshPilotError(
                 ErrorCode.DAEMON_SHUTTING_DOWN,
@@ -144,7 +170,14 @@ class RequestDispatcher:
                 request_id=request.request_id,
             )
         try:
-            return handler(request, state)
+            result = handler(request, state)
+            if isinstance(result, DeferredResult):
+                if request.method not in DEFERRED_DAEMON_METHODS:
+                    raise RuntimeError("immediate daemon method returned deferred work")
+                return result
+            if request.method in DEFERRED_DAEMON_METHODS:
+                return ImmediateResult(result)
+            return ImmediateResult(result)
         except SshPilotError:
             raise
         except (TypeError, ValueError):
@@ -302,14 +335,26 @@ class RequestDispatcher:
         self,
         request: RequestEnvelope,
         state: ClientProtocolState,
-    ) -> dict:
+    ) -> DeferredResult:
         client_id = self._required_client_id(state)
         session_request = open_session_request_from_wire(request.params)
-        return session_summary_to_wire(
-            self._session_runtime.open_session(
-                session_request,
-                client_id=client_id,
-            )
+        prepared = self._session_runtime.prepare_open_session(
+            session_request,
+            client_id=client_id,
+        )
+        prepared_wire = session_summary_to_wire(prepared)
+
+        def _start() -> dict:
+            self._session_runtime.start_session(prepared.id)
+            return prepared_wire
+
+        return DeferredResult(
+            operation=_start,
+            command_key=prepared.id,
+            session_id=prepared.id,
+            on_rejected=lambda: self._session_runtime.reject_pending_start(
+                prepared.id
+            ),
         )
 
     def _handle_attach_session(
@@ -343,10 +388,23 @@ class RequestDispatcher:
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> None:
+    ) -> Optional[DeferredResult]:
         session_request = close_session_request_from_wire(request.params)
-        self._session_runtime.close_session(session_request)
-        return None
+        if not self._session_runtime.prepare_close_session(session_request):
+            return None
+
+        def _close() -> None:
+            self._session_runtime.finish_close_session(session_request.session_id)
+            return None
+
+        return DeferredResult(
+            operation=_close,
+            command_key=session_request.session_id,
+            session_id=session_request.session_id,
+            on_rejected=lambda: self._session_runtime.reject_pending_close(
+                session_request.session_id
+            ),
+        )
 
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info

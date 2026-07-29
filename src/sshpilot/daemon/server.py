@@ -5,13 +5,15 @@ from __future__ import annotations
 import errno
 import logging
 import os
+import queue
 import selectors
 import socket
 import stat
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Deque, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Deque, Dict, Optional, Set, Tuple, Union
 
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -31,7 +33,18 @@ from sshpilot.api.transport.envelopes import (
 from sshpilot.api.transport.framing import FrameDecoder, FramingError, encode_frame
 from sshpilot.api.version import PROTOCOL_VERSION
 
-from .dispatch import ClientProtocolState, RequestDispatcher
+from .command_executor import (
+    DEFAULT_SESSION_COMMAND_QUEUE_LIMIT,
+    DEFAULT_SESSION_COMMAND_WORKERS,
+    BoundedCommandExecutor,
+    DeferredCommand,
+)
+from .dispatch import (
+    ClientProtocolState,
+    DeferredResult,
+    ImmediateResult,
+    RequestDispatcher,
+)
 from .lifecycle import (
     DaemonAlreadyRunningError,
     SocketSecurityError,
@@ -47,6 +60,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
 DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
+DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
 _FORWARDED_EVENT_TYPES = frozenset(
     {
         EventType.CONNECTION_CREATED,
@@ -69,6 +83,7 @@ class _OutboundFrame:
 @dataclass
 class _ClientConnection:
     sock: socket.socket
+    token: int = 0
     decoder: FrameDecoder = field(default_factory=FrameDecoder)
     output: Deque[_OutboundFrame] = field(default_factory=deque)
     output_offset: int = 0
@@ -78,6 +93,16 @@ class _ClientConnection:
     close_after_write: bool = False
     continuity_lost: bool = False
     closed: bool = False
+    pending_request_ids: Set[RequestId] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class _DeferredCompletion:
+    peer_token: int
+    protocol_version: str
+    request_id: RequestId
+    result: Any = None
+    error: Optional[SshPilotError] = None
 
 
 class DaemonServer:
@@ -93,6 +118,9 @@ class DaemonServer:
         session_runtime_factory: Optional[
             Callable[[SshPilotClient], SessionRuntime]
         ] = None,
+        session_command_workers: int = DEFAULT_SESSION_COMMAND_WORKERS,
+        session_command_queue_limit: int = DEFAULT_SESSION_COMMAND_QUEUE_LIMIT,
+        session_shutdown_timeout: float = DEFAULT_SESSION_SHUTDOWN_SECONDS,
     ) -> None:
         if (
             type(client_event_queue_limit) is not int
@@ -104,11 +132,23 @@ class DaemonServer:
             or max_client_outbound_bytes < 1
         ):
             raise ValueError("maximum client outbound bytes must be positive")
+        if type(session_command_workers) is not int or session_command_workers < 1:
+            raise ValueError("session command worker count must be positive")
+        if (
+            type(session_command_queue_limit) is not int
+            or session_command_queue_limit < 1
+        ):
+            raise ValueError("session command queue limit must be positive")
+        if session_shutdown_timeout < 0:
+            raise ValueError("session shutdown timeout must not be negative")
         self.socket_path = resolve_socket_path(socket_path)
         self.client_event_queue_limit = client_event_queue_limit
         self.max_client_outbound_bytes = max_client_outbound_bytes
         self._core_factory = core_factory
         self._session_runtime_factory = session_runtime_factory
+        self.session_command_workers = session_command_workers
+        self.session_command_queue_limit = session_command_queue_limit
+        self.session_shutdown_timeout = float(session_shutdown_timeout)
         self._selector: Optional[selectors.BaseSelector] = None
         self._listener: Optional[socket.socket] = None
         self._wakeup_read: Optional[socket.socket] = None
@@ -116,7 +156,13 @@ class DaemonServer:
         self._core_client: Optional[SshPilotClient] = None
         self._session_runtime: Optional[SessionRuntime] = None
         self._dispatcher: Optional[RequestDispatcher] = None
+        self._session_executor: Optional[BoundedCommandExecutor] = None
+        self._completion_queue: queue.Queue[_DeferredCompletion] = queue.Queue(
+            maxsize=session_command_queue_limit
+        )
         self._clients: Dict[int, _ClientConnection] = {}
+        self._clients_by_token: Dict[int, _ClientConnection] = {}
+        self._next_peer_token = 1
         self._socket_identity: Optional[Tuple[int, int]] = None
         self._stopping = threading.Event()
         self._ready = threading.Event()
@@ -128,6 +174,7 @@ class DaemonServer:
         self._core_subscription: Optional[Subscription] = None
         self._session_subscription: Optional[Subscription] = None
         self._next_event_sequence = 0
+        self._session_shutdown_started = False
 
     @property
     def ready(self) -> bool:
@@ -190,8 +237,7 @@ class DaemonServer:
             self._stop_core_events()
             if self._dispatcher is not None:
                 self._dispatcher.begin_shutdown()
-            if self._session_runtime is not None:
-                self._session_runtime.shutdown()
+            self._shutdown_session_commands()
             self._cleanup()
             self._stopped.set()
 
@@ -263,6 +309,10 @@ class DaemonServer:
                 self._core_client,
                 self._session_runtime,
             )
+            self._session_executor = BoundedCommandExecutor(
+                max_workers=self.session_command_workers,
+                max_commands=self.session_command_queue_limit,
+            )
             wakeup_read, wakeup_write = socket.socketpair()
             wakeup_read.setblocking(False)
             wakeup_write.setblocking(False)
@@ -295,9 +345,12 @@ class DaemonServer:
         except BlockingIOError:
             return
         client_socket.setblocking(False)
-        state = _ClientConnection(client_socket)
+        peer_token = self._next_peer_token
+        self._next_peer_token += 1
+        state = _ClientConnection(client_socket, token=peer_token)
         with self._event_lock:
             self._clients[client_socket.fileno()] = state
+            self._clients_by_token[peer_token] = state
         selector.register(client_socket, selectors.EVENT_READ, state)
 
     def _read_client(self, state: _ClientConnection) -> None:
@@ -342,12 +395,17 @@ class DaemonServer:
                     request_id=envelope.request_id,
                 )
             result = dispatcher.dispatch(envelope, state.protocol)
+            if isinstance(result, DeferredResult):
+                self._submit_deferred(state, envelope, result)
+                return
+            if not isinstance(result, ImmediateResult):
+                raise RuntimeError("dispatcher returned an unknown result type")
             response = SuccessResponseEnvelope(
                 protocol_version=(
                     state.protocol.selected_protocol_version or PROTOCOL_VERSION
                 ),
                 request_id=envelope.request_id,
-                result=result,
+                result=result.value,
             )
         except SshPilotError as exc:
             response = self._error_response(request_id, exc)
@@ -361,6 +419,117 @@ class DaemonServer:
                 ),
             )
         self._queue_response(state, response)
+
+    def _submit_deferred(
+        self,
+        state: _ClientConnection,
+        request: RequestEnvelope,
+        result: DeferredResult,
+    ) -> None:
+        executor = self._session_executor
+        protocol_version = (
+            state.protocol.selected_protocol_version or PROTOCOL_VERSION
+        )
+        peer_token = state.token
+        if executor is None:
+            result.on_rejected()
+            self._queue_response(
+                state,
+                self._error_response(
+                    request.request_id,
+                    SshPilotError(
+                        ErrorCode.DAEMON_SHUTTING_DOWN,
+                        "The daemon is shutting down",
+                        retryable=True,
+                        request_id=request.request_id,
+                        session_id=result.session_id,
+                    ),
+                ),
+            )
+            return
+
+        def _complete(value: object) -> None:
+            self._enqueue_completion(
+                _DeferredCompletion(
+                    peer_token=peer_token,
+                    protocol_version=protocol_version,
+                    request_id=request.request_id,
+                    result=value,
+                )
+            )
+
+        def _error(error: BaseException) -> None:
+            if isinstance(error, SshPilotError):
+                safe_error = SshPilotError(
+                    error.code,
+                    error.message,
+                    details=error.details,
+                    retryable=error.retryable,
+                    request_id=request.request_id,
+                    connection_id=error.connection_id,
+                    session_id=error.session_id or result.session_id,
+                )
+            else:
+                logger.error(
+                    "Deferred daemon method %s failed type=%s",
+                    request.method,
+                    type(error).__name__,
+                )
+                safe_error = SshPilotError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "The daemon could not complete the deferred request",
+                    retryable=True,
+                    request_id=request.request_id,
+                    session_id=result.session_id,
+                )
+            self._enqueue_completion(
+                _DeferredCompletion(
+                    peer_token=peer_token,
+                    protocol_version=protocol_version,
+                    request_id=request.request_id,
+                    error=safe_error,
+                )
+            )
+
+        command = DeferredCommand(
+            key=result.command_key,
+            operation=result.operation,
+            on_complete=_complete,
+            on_error=_error,
+            on_cancel=lambda: None,
+        )
+        state.pending_request_ids.add(request.request_id)
+        if executor.submit(command):
+            logger.debug(
+                "Deferred session command accepted method=%s",
+                request.method,
+            )
+            return
+        state.pending_request_ids.discard(request.request_id)
+        result.on_rejected()
+        self._queue_response(
+            state,
+            self._error_response(
+                request.request_id,
+                SshPilotError(
+                    ErrorCode.SERVER_BUSY,
+                    "The daemon session command queue is full",
+                    retryable=True,
+                    request_id=request.request_id,
+                    session_id=result.session_id,
+                ),
+            ),
+        )
+
+    def _enqueue_completion(self, completion: _DeferredCompletion) -> None:
+        while not self._stopping.is_set():
+            try:
+                self._completion_queue.put(completion, timeout=0.05)
+            except queue.Full:
+                self._wake_selector()
+                continue
+            self._wake_selector()
+            return
 
     def _queue_protocol_error(
         self,
@@ -483,6 +652,7 @@ class DaemonServer:
                 pass
             except OSError:
                 pass
+        self._drain_completions()
         with self._event_lock:
             states = tuple(self._clients.values())
         for state in states:
@@ -491,6 +661,34 @@ class DaemonServer:
                 self._close_client(state)
             else:
                 self._refresh_client_interest(state)
+
+    def _drain_completions(self) -> None:
+        while True:
+            try:
+                completion = self._completion_queue.get_nowait()
+            except queue.Empty:
+                return
+            state = self._clients_by_token.get(completion.peer_token)
+            if (
+                state is None
+                or state.closed
+                or completion.request_id not in state.pending_request_ids
+            ):
+                logger.debug("Discarded deferred completion for a closed peer")
+                continue
+            state.pending_request_ids.discard(completion.request_id)
+            if completion.error is not None:
+                response = self._error_response(
+                    completion.request_id,
+                    completion.error,
+                )
+            else:
+                response = SuccessResponseEnvelope(
+                    protocol_version=completion.protocol_version,
+                    request_id=completion.request_id,
+                    result=completion.result,
+                )
+            self._queue_response(state, response)
 
     def _close_client(self, state: _ClientConnection) -> None:
         file_descriptor = state.sock.fileno()
@@ -502,7 +700,9 @@ class DaemonServer:
             state.output_offset = 0
             state.queued_event_count = 0
             state.queued_outbound_bytes = 0
+            state.pending_request_ids.clear()
             self._clients.pop(file_descriptor, None)
+            self._clients_by_token.pop(state.token, None)
         selector = self._selector
         if selector is not None and file_descriptor >= 0:
             try:
@@ -518,6 +718,7 @@ class DaemonServer:
             session_runtime.detach_client(state.protocol.client_id)
 
     def _cleanup(self) -> None:
+        self._shutdown_session_commands()
         self._stop_core_events()
         with self._event_lock:
             states = tuple(self._clients.values())
@@ -541,11 +742,8 @@ class DaemonServer:
         self._wakeup_write = None
         core_client = self._core_client
         self._core_client = None
-        session_runtime = self._session_runtime
         self._session_runtime = None
         try:
-            if session_runtime is not None:
-                session_runtime.shutdown()
             if core_client is not None:
                 core_client.close()
         except Exception as error:
@@ -556,6 +754,48 @@ class DaemonServer:
         finally:
             unlink_owned_socket(self.socket_path, self._socket_identity)
             self._socket_identity = None
+
+    def _shutdown_session_commands(self) -> None:
+        if self._session_shutdown_started:
+            return
+        self._session_shutdown_started = True
+        deadline = time.monotonic() + self.session_shutdown_timeout
+        executor = self._session_executor
+        runtime = self._session_runtime
+        if executor is not None:
+            executor.stop_accepting(cancel_pending=True)
+
+        runtime_thread = None
+        if runtime is not None:
+            def _shutdown_runtime() -> None:
+                try:
+                    runtime.shutdown()
+                except Exception as error:
+                    logger.error(
+                        "Session runtime shutdown failed type=%s",
+                        type(error).__name__,
+                    )
+
+            runtime_thread = threading.Thread(
+                target=_shutdown_runtime,
+                name="sshpilot-session-runtime-shutdown",
+                daemon=True,
+            )
+            runtime_thread.start()
+        if executor is not None:
+            executor.shutdown(
+                timeout=max(0.0, deadline - time.monotonic()),
+            )
+        if runtime_thread is not None:
+            runtime_thread.join(max(0.0, deadline - time.monotonic()))
+            if runtime_thread.is_alive():
+                logger.error("Session runtime shutdown exceeded its time bound")
+        self._session_executor = None
+        while True:
+            try:
+                self._completion_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def _on_core_event(self, event: CoreEvent) -> None:
         """Encode once and enqueue without performing socket I/O."""

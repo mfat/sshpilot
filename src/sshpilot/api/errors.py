@@ -25,6 +25,7 @@ class ErrorCode(str, Enum):
     SESSION_STARTUP_FAILED = "session_startup_failed"
     SESSION_TERMINATION_FAILED = "session_termination_failed"
     UNSUPPORTED_SESSION_PROTOCOL = "unsupported_session_protocol"
+    SERVER_BUSY = "server_busy"
     INTERACTION_NOT_FOUND = "interaction_not_found"
     INTERACTION_ALREADY_ANSWERED = "interaction_already_answered"
     PERMISSION_DENIED = "permission_denied"
