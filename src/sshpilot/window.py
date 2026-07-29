@@ -5748,6 +5748,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
             from .file_manager import create_file_manager_backend
+            from .connection_identity import connection_id_from_uuid
         except Exception as exc:
             logger.error("authorized_keys editor unavailable: %s", exc)
             return
@@ -5772,6 +5773,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug("Password lookup failed for authorized_keys editor: %s", exc)
                 initial_password = None
 
+        connection_id = None
+        try:
+            uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
+            if uuid_value:
+                connection_id = connection_id_from_uuid(str(uuid_value))
+        except Exception:
+            connection_id = None
+
         try:
             manager = create_file_manager_backend(
                 str(host_value or ''),
@@ -5781,6 +5790,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection=connection,
                 connection_manager=self.connection_manager,
                 ssh_config=ssh_config,
+                daemon_client=getattr(self, "client", None),
+                bridge=getattr(self, "client_bridge", None),
+                connection_id=connection_id,
+                parent_widget=self,
+                config=getattr(self, "config", None),
             )
         except Exception as exc:
             logger.error("Failed to create SFTP manager for authorized_keys: %s", exc)

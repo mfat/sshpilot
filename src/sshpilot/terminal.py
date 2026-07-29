@@ -5259,10 +5259,21 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Drop rejected: no valid file paths extracted from value type: %s", type(value))
                 return False
 
-            # Get MainWindow instance to call SCP upload
+            # Legacy SCP drag-drop: only when MainWindow exposes the gated
+            # controller (daemon mode requires file_manager.legacy_scp).
             root = self.get_root()
-            if not root or not hasattr(root, '_start_scp_transfer'):
-                logger.debug("Drop rejected: MainWindow not found")
+            scp_controller = getattr(root, "scp_controller", None) if root else None
+            start_scp = getattr(scp_controller, "_start_scp_transfer", None)
+            if not callable(start_scp):
+                logger.debug("Drop rejected: legacy SCP controller unavailable")
+                return False
+            from .extended_service_policy import allow_legacy_scp
+
+            if not allow_legacy_scp(
+                getattr(root, "config", None),
+                client=getattr(root, "client", None),
+            ):
+                logger.info("Drop rejected: legacy SCP disabled in daemon mode")
                 return False
 
             # Get current directory from the active terminal session
@@ -5367,9 +5378,9 @@ class TerminalWidget(Gtk.Box):
                 destination = "~"
                 logger.warning("Could not determine remote current directory, using home directory (~)")
 
-            # Initiate SCP upload
+            # Initiate legacy SCP upload (explicit compatibility path only)
             logger.info(f"Initiating SCP upload for {len(file_paths)} file(s) to {destination}")
-            root._start_scp_transfer(
+            start_scp(
                 self.connection,
                 file_paths,
                 destination,

@@ -1,9 +1,10 @@
-"""The file-manager backend factory builds the OpenSSH backend (the only one)."""
+"""The file-manager backend factory selects OpenSSH for in-process / legacy."""
 
 from tests._fm_harness import _load_file_manager_module
 
 
 def test_factory_returns_openssh_backend(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "in_process")
     _load_file_manager_module(monkeypatch)
     import sshpilot.file_manager as fm
     from sshpilot.file_manager.openssh_backend import OpenSSHSFTPManager

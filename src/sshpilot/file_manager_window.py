@@ -97,6 +97,7 @@ class FileManagerWindow(Adw.Window):
         daemon_client: Any = None,
         bridge: Any = None,
         connection_id: Any = None,
+        config: Any = None,
     ) -> None:
         super().__init__(application=application, title="")
         # Register this window in the global registry for cleanup
@@ -111,6 +112,7 @@ class FileManagerWindow(Adw.Window):
         self._daemon_client = daemon_client
         self._bridge = bridge
         self._connection_id = connection_id
+        self.config = config
         # Set default and minimum sizes following GNOME HIG
         self.set_default_size(1000, 640)
         # Set minimum size to ensure usability (GNOME HIG recommends minimum 360px width)
@@ -456,6 +458,7 @@ class FileManagerWindow(Adw.Window):
             bridge=bridge,
             connection_id=connection_id,
             parent_widget=self,
+            config=self.config,
         )
 
         # Connect signals with error handling
@@ -3016,6 +3019,7 @@ def launch_file_manager_window(
 
     daemon_client = getattr(parent, "client", None) if parent is not None else None
     bridge = getattr(parent, "client_bridge", None) if parent is not None else None
+    parent_config = getattr(parent, "config", None) if parent is not None else None
     connection_id = None
     if connection is not None:
         try:
@@ -3038,6 +3042,7 @@ def launch_file_manager_window(
         daemon_client=daemon_client,
         bridge=bridge,
         connection_id=connection_id,
+        config=parent_config,
     )
     if parent is not None and transient_for_parent:
         window.set_transient_for(parent)

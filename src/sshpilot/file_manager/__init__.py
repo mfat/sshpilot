@@ -57,59 +57,72 @@ def create_file_manager_backend(
     bridge=None,
     connection_id=None,
     parent_widget=None,
+    config=None,
+    prefer_daemon=None,
     **kwargs,
 ):
     """Construct the file-manager backend.
 
     Prefers the daemon-backed SFTP manager (no local ``ssh -s sftp``
-    subprocess) when ``daemon_client``/``bridge``/``connection_id`` are all
-    supplied and ``daemon_client`` is a real out-of-process ``DaemonClient``
-    with the required SFTP/transfer capabilities. Raises rather than
-    silently spawning a local subprocess if that client is missing
-    capabilities the running service should have (mirrors the daemon
-    terminal policy — no silent fallback once daemon mode is selected).
+    subprocess) when ``daemon_client`` is a real out-of-process
+    ``DaemonClient`` with bridge + connection_id and the required
+    SFTP/transfer capabilities.
 
-    Falls back to the legacy ``OpenSSHSFTPManager`` (driving a native
-    ``ssh -s sftp`` subprocess) when no daemon client is supplied, or when
-    the supplied client is the in-process adapter rather than a real daemon
-    connection (legacy path, kept until in-process mode is removed).
+    Daemon mode (``SSHPILOT_CLIENT_MODE=daemon``, Stage C promotion, or
+    ``prefer_daemon=True``) never silently falls back to
+    ``OpenSSHSFTPManager``. Missing client/capabilities raise
+    ``RuntimeError``. Legacy OpenSSH SFTP is only used when:
+
+    * ``file_manager.legacy_local_sftp = True``, or
+    * in-process client mode (no daemon preference).
     """
 
-    if daemon_client is not None and bridge is not None and connection_id is not None:
-        from ..api.daemon_client import DaemonClient
+    from ..api.daemon_client import DaemonClient
+    from ..extended_service_policy import (
+        daemon_sftp_unavailable_message,
+        resolve_file_manager_route,
+        ExtendedServiceRoute,
+    )
 
-        if isinstance(daemon_client, DaemonClient):
-            from ..daemon_sftp_backend import (
-                DaemonSftpManager,
-                daemon_file_manager_capabilities_missing,
-            )
+    route_config = config
+    if route_config is None and parent_widget is not None:
+        route_config = getattr(parent_widget, "config", None)
 
-            missing = daemon_file_manager_capabilities_missing(daemon_client)
-            if missing:
-                raise RuntimeError(
-                    "The running SSH Pilot service does not support the file "
-                    f"manager's SFTP API (missing: {sorted(c.value for c in missing)}); "
-                    "refusing to spawn a local SFTP subprocess."
-                )
-            logger.info("File manager backend: daemon-sftp")
-            return DaemonSftpManager(
-                *args,
-                connection_id=connection_id,
-                daemon_client=daemon_client,
-                bridge=bridge,
-                parent_widget=parent_widget,
-                **kwargs,
-            )
+    route = resolve_file_manager_route(
+        route_config,
+        prefer_daemon=prefer_daemon,
+        client=daemon_client,
+    )
 
-        logger.info(
-            "Daemon SFTP unavailable (client is %s, not a DaemonClient); "
-            "using legacy OpenSSH SFTP backend",
-            type(daemon_client).__name__,
+    if (
+        isinstance(daemon_client, DaemonClient)
+        and bridge is not None
+        and connection_id is not None
+    ):
+        from ..daemon_sftp_backend import (
+            DaemonSftpManager,
+            daemon_file_manager_capabilities_missing,
         )
+
+        missing = daemon_file_manager_capabilities_missing(daemon_client)
+        if missing:
+            raise RuntimeError(daemon_sftp_unavailable_message(missing=missing))
+        logger.info("File manager backend: daemon-sftp")
+        return DaemonSftpManager(
+            *args,
+            connection_id=connection_id,
+            daemon_client=daemon_client,
+            bridge=bridge,
+            parent_widget=parent_widget,
+            **kwargs,
+        )
+
+    if route is ExtendedServiceRoute.DAEMON:
+        raise RuntimeError(daemon_sftp_unavailable_message())
 
     from .openssh_backend import OpenSSHSFTPManager
 
-    logger.info("File manager backend: openssh")
+    logger.info("File manager backend: openssh (legacy/in-process)")
     return OpenSSHSFTPManager(*args, **kwargs)
 
 

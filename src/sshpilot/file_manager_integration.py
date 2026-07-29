@@ -377,6 +377,7 @@ def create_internal_file_manager_tab(
         daemon_client=daemon_client,
         bridge=bridge,
         connection_id=connection_id,
+        config=getattr(parent_window, "config", None) if parent_window else None,
     )
     # Remove the controller window from the application so it does not count
     # as a top-level window while embedded in a tab.

@@ -58,9 +58,11 @@ logger = logging.getLogger(__name__)
 # 1.11: ctx.run_local_command / ctx.open_local_command_terminal — captured and
 #      streamed/interactive commands on the local machine (Flatpak-host aware).
 # 1.12: ctx.ensure_local_forward(nickname, remote_port) — local port forwarded
-#      to the host over the single SSH/auth path (ControlMaster -O forward,
-#      background ssh -N fallback); ctx.ui.open_web_tab(url, title=) — show a
-#      URL in an embedded WebKit tab (system-browser fallback).
+#      to the host over the single SSH/auth path. Daemon mode uses daemon-owned
+#      forwards with no silent ControlMaster/ssh -N fallback; legacy local
+#      process only when no DaemonClient or forwards.legacy_local_process is set.
+#      ctx.ui.open_web_tab(url, title=) — show a URL in an embedded WebKit tab
+#      (system-browser fallback).
 # 1.13: ctx.run_command_stream / ctx.run_local_command_stream — long-lived
 #      line-oriented streams (e.g. `docker logs -f`, `docker events`) over the
 #      same native SSH/local paths as the one-shot command APIs; returns a
@@ -1088,57 +1090,89 @@ class PluginContext:
         except Exception:  # noqa: BLE001 — best-effort teardown; ControlPersist
             pass               # expiry is the fallback, so failures are harmless
 
-    def _try_daemon_local_forward(
+    def _daemon_client_for_forwards(self):
+        """Return the live API client from the plugin host / main window."""
+
+        host = self._host
+        if host is None:
+            return None
+        client = getattr(host, "client", None)
+        if client is not None:
+            return client
+        window = getattr(host, "window", None)
+        return getattr(window, "client", None) if window is not None else None
+
+    def _open_daemon_local_forward(
         self,
         connection: Any,
         remote_port: int,
         timeout: float,
-    ) -> Optional[int]:
-        """Open a daemon-owned local forward when the live client supports it.
+    ) -> int:
+        """Open a daemon-owned local forward. Raises ``RuntimeError`` on failure.
 
-        Returns the local bind port on success, or ``None`` to fall back to
-        the legacy ControlMaster / ``ssh -N`` path.
+        Never returns ``None`` and never falls back to a local ``ssh`` process —
+        callers that want the legacy path must opt in explicitly.
         """
 
         import time
 
         from ..api.capabilities import Capability
+        from ..api.daemon_client import DaemonClient
         from ..api.models.operations import ForwardState, ForwardType, OpenForwardRequest
         from ..connection_identity import connection_id_from_uuid
+        from ..extended_service_policy import daemon_forward_unavailable_message
         from ..port_utils import find_available_port
 
-        host = self._host
-        client = None
-        if host is not None:
-            client = getattr(host, "client", None)
-            if client is None:
-                window = getattr(host, "window", None)
-                client = getattr(window, "client", None) if window is not None else None
-        if client is None or not hasattr(client, "open_forward"):
-            return None
+        client = self._daemon_client_for_forwards()
+        if not isinstance(client, DaemonClient):
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail="no DaemonClient is available"
+                )
+            )
         try:
             supported = client.get_capabilities().supported
-        except Exception:
-            return None
+        except Exception as exc:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail=f"capabilities unavailable ({type(exc).__name__})"
+                )
+            ) from exc
         required = {
             Capability.FORWARDS_READ,
             Capability.FORWARDS_WRITE,
             Capability.FORWARDS_LOCAL,
         }
-        if not required <= supported:
-            return None
+        missing = required - supported
+        if missing:
+            names = ", ".join(sorted(c.value for c in missing))
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail=f"missing capabilities: {names}"
+                )
+            )
         uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
         if not uuid_value:
-            return None
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail="connection has no UUID"
+                )
+            )
         try:
             connection_id = connection_id_from_uuid(str(uuid_value))
-        except Exception:
-            return None
+        except Exception as exc:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail=f"invalid connection id ({type(exc).__name__})"
+                )
+            ) from exc
         local_port = find_available_port(
             remote_port if remote_port >= 1024 else 8000 + remote_port
         )
         if not local_port:
-            return None
+            raise RuntimeError(
+                daemon_forward_unavailable_message(detail="no free local port")
+            )
         try:
             summary = client.open_forward(
                 OpenForwardRequest(
@@ -1150,15 +1184,23 @@ class PluginContext:
                     destination_port=int(remote_port),
                 )
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail=f"open_forward failed ({type(exc).__name__})"
+                )
+            ) from exc
         deadline = time.monotonic() + max(1.0, float(timeout))
         forward_id = summary.id
         while time.monotonic() < deadline:
             try:
                 current = client.get_forward(forward_id)
-            except Exception:
-                return None
+            except Exception as exc:
+                raise RuntimeError(
+                    daemon_forward_unavailable_message(
+                        detail=f"get_forward failed ({type(exc).__name__})"
+                    )
+                ) from exc
             if current.state is ForwardState.ACTIVE:
                 with _FORWARDS_LOCK:
                     _FORWARDS[(getattr(connection, "nickname", ""), int(remote_port))] = _Forward(
@@ -1166,26 +1208,47 @@ class PluginContext:
                     )
                 return int(current.bind_port or local_port)
             if current.state in {ForwardState.FAILED, ForwardState.CLOSED}:
-                return None
+                raise RuntimeError(
+                    daemon_forward_unavailable_message(
+                        detail=f"forward ended in state {current.state.value}"
+                    )
+                )
             time.sleep(0.1)
-        return None
+        raise RuntimeError(
+            daemon_forward_unavailable_message(detail="timed out waiting for ACTIVE")
+        )
 
     def ensure_local_forward(self, nickname: str, remote_port: int, *,
                              timeout: float = 15) -> int:
         """Return a local TCP port forwarded to ``localhost:remote_port`` on the
         connection's host (API >= 1.12), establishing it if needed over the
-        app's single SSH/auth path. Prefers adding the forward onto the shared
-        ControlMaster (``ssh -O forward``); otherwise spawns a background
+        app's single SSH/auth path.
+
+        When a live ``DaemonClient`` is present (or daemon mode is selected),
+        opens a daemon-owned forward and **refuses silent fallback** to
+        ControlMaster / ``ssh -N``. The legacy local-process path runs only
+        when there is no ``DaemonClient`` and daemon mode is not preferred, or
+        when ``forwards.legacy_local_process`` is explicitly ``True``.
+
+        Prefers adding the forward onto the shared ControlMaster
+        (``ssh -O forward``) on the legacy path; otherwise spawns a background
         ``ssh -N``. Forwards are reused per (nickname, remote_port) and live
         until app quit (or with the master). **Blocking** — call from a worker
-        thread. Raises ``RuntimeError`` on failure."""
+        thread. Raises ``RuntimeError`` on failure.
+        """
         import atexit
         import subprocess
         import time
+        from ..api.daemon_client import DaemonClient
         from ..ssh_connection_builder import (
             ConnectionContext, build_ssh_connection)
         from ..port_utils import find_available_port, is_port_available
         from .. import ssh_multiplex
+        from ..extended_service_policy import (
+            allow_legacy_local_forward,
+            daemon_forward_unavailable_message,
+            prefer_daemon_extended_services,
+        )
 
         global _FORWARDS_ATEXIT
         key = (nickname, int(remote_port))
@@ -1205,10 +1268,26 @@ class PluginContext:
         if conn is None:
             raise RuntimeError(f"No connection named {nickname!r}")
 
-        # Prefer daemon-owned forwarding when the live client supports it.
-        daemon_forward = self._try_daemon_local_forward(conn, int(remote_port), timeout)
-        if daemon_forward is not None:
-            return daemon_forward
+        client = self._daemon_client_for_forwards()
+        legacy_ok = allow_legacy_local_forward(self.config, client=client)
+        daemon_preferred = prefer_daemon_extended_services(
+            self.config, client=client
+        )
+
+        if isinstance(client, DaemonClient):
+            try:
+                return self._open_daemon_local_forward(
+                    conn, int(remote_port), timeout
+                )
+            except RuntimeError:
+                if not legacy_ok:
+                    raise
+        elif daemon_preferred and not legacy_ok:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail="no DaemonClient is available"
+                )
+            )
 
         lp = find_available_port(
             remote_port if remote_port >= 1024 else 8000 + remote_port)

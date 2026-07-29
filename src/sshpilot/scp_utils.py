@@ -1,7 +1,10 @@
-"""Shared helpers for the SCP UI (VTE transfer path in ``scp_window``).
+"""Shared helpers for the legacy SCP UI (VTE transfer path in ``scp_window``).
 
 Headless ``download_file`` / ``upload_file`` helpers were removed; transfers
 run in a terminal via ``ScpWindowController._start_scp_transfer``.
+
+This is an explicit legacy compatibility path — production file-manager
+upload/download must use daemon-owned transfers, not these helpers.
 """
 
 from __future__ import annotations
