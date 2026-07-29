@@ -54,6 +54,9 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: forwards.local -->
 <!-- api-daemon-runtime-capability: forwards.remote -->
 <!-- api-daemon-runtime-capability: forwards.dynamic -->
+<!-- api-daemon-runtime-capability: daemon.status -->
+<!-- api-daemon-runtime-capability: daemon.control -->
+<!-- api-daemon-runtime-capability: daemon.events -->
 
 ## Inventory
 
@@ -96,6 +99,9 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `forwards.local` | Local TCP forwards | Daemon: Implemented when forward runtime present | `open_forward` with `local` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
 | `forwards.remote` | Remote TCP forwards | Daemon: Implemented when forward runtime present | `open_forward` with `remote` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
 | `forwards.dynamic` | Dynamic SOCKS forwards | Daemon: Implemented when forward runtime present | `open_forward` with `dynamic` | Forward lifecycle events | Daemon `ForwardRuntime` | v1 / API 0.10 |
+| `daemon.status` | Read daemon lifecycle and diagnostics | Daemon: Implemented | `get_daemon_status`, `get_daemon_diagnostics`; wire `daemon.status`, `daemon.diagnostics` | None required | `DaemonLifecycleController` | v1 / API 0.11 |
+| `daemon.control` | Stop or restart the daemon process | Daemon: Implemented | `stop_daemon`, `restart_daemon`; wire `daemon.stop`, `daemon.restart` | None required | Lifecycle drain and bounded cleanup | v1 / API 0.11 |
+| `daemon.events` | Observe daemon lifecycle state changes | Daemon: Implemented | `subscribe_events` | `daemon.state_changed` | Bounded daemon event stream | v1 / API 0.11 |
 | `plugins` | Invoke core plugin operations | Schema only; no client method | None | None defined | Split core plugin service | v1 |
 | `secrets` | Core-mediated secret operations/interactions | Schema only; no client method | None | No dedicated event; interaction schemas may be used later | Secret service and permissions | v1 |
 
@@ -330,6 +336,23 @@ Advertises remote TCP forward support for `open_forward`.
 ## `forwards.dynamic`
 
 Advertises dynamic SOCKS forward support for `open_forward`.
+
+<!-- api-capability: daemon.status -->
+## `daemon.status`
+
+Daemon lifecycle snapshots and diagnostics. Safe for support bundles; no secrets,
+paths, or terminal payloads.
+
+<!-- api-capability: daemon.control -->
+## `daemon.control`
+
+Graceful stop and restart with optional confirmation when live resources would
+be lost. Does not imply automatic client reconnect or resource restoration.
+
+<!-- api-capability: daemon.events -->
+## `daemon.events`
+
+Lifecycle state changes via `daemon.state_changed` on the bounded event stream.
 
 <!-- api-capability: plugins -->
 ## `plugins`

@@ -58,9 +58,17 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `get_forward` | Daemon only | `forwards.read` |
 | `open_forward` | Daemon only | `forwards.write` |
 | `close_forward` | Daemon only | `forwards.write` |
+| `get_daemon_status` | Daemon only | `daemon.status` |
+| `get_daemon_diagnostics` | Daemon only | `daemon.status` |
+| `stop_daemon` | Daemon only | `daemon.control` |
+| `restart_daemon` | Daemon only | `daemon.control` |
 | `subscribe_events` | Implemented | Bootstrap; event availability follows capabilities |
 | `close` | Implemented | None |
 
+<!-- api-method-contract: get_daemon_diagnostics status=daemon-only capability=daemon.status -->
+<!-- api-method-contract: get_daemon_status status=daemon-only capability=daemon.status -->
+<!-- api-method-contract: restart_daemon status=daemon-only capability=daemon.control -->
+<!-- api-method-contract: stop_daemon status=daemon-only capability=daemon.control -->
 <!-- api-method-contract: attach_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: attach_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: cancel_interaction status=daemon-only capability=interactions.respond -->
@@ -168,12 +176,20 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `forwards.get` | `forwards.read` | Implemented |
 | `forwards.open` | `forwards.write` | Implemented |
 | `forwards.close` | `forwards.write` | Implemented |
+| `daemon.status` | `daemon.status` | Implemented |
+| `daemon.diagnostics` | `daemon.status` | Implemented |
+| `daemon.stop` | `daemon.control` | Implemented |
+| `daemon.restart` | `daemon.control` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
+<!-- api-daemon-method: daemon.diagnostics capability=daemon.status -->
+<!-- api-daemon-method: daemon.restart capability=daemon.control -->
+<!-- api-daemon-method: daemon.status capability=daemon.status -->
+<!-- api-daemon-method: daemon.stop capability=daemon.control -->
 <!-- api-daemon-method: forwards.close capability=forwards.write -->
 <!-- api-daemon-method: forwards.get capability=forwards.read -->
 <!-- api-daemon-method: forwards.list capability=forwards.read -->

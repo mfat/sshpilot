@@ -190,8 +190,12 @@ by the exact `Popen` object that created it; no PID lookup or process-name
 matching exists. Failed startup terminates only that exact child. A successfully
 started daemon is deliberately left running when GTK exits because Protocol v1
 cannot prove that no other clients need it. Tests terminate their own exact
-child and verify socket cleanup. An installed `sshpilotd` launcher and bounded
-idle exit remain packaging/lifecycle work.
+child and verify socket cleanup.
+
+The installed `sshpilot-daemon` launcher and optional systemd user unit are
+documented in [packaging-daemon.md](../operations/packaging-daemon.md). Socket
+activation is intentionally not used; the app launcher remains the primary,
+race-hardened activation path.
 
 ## Connection event forwarding
 
@@ -224,9 +228,11 @@ the same bounded-queue principle between its reader and callback dispatcher.
 Malformed payloads, gaps, duplicates, regressions, and local overflow close the
 transport and surface a safe local continuity error.
 
-There is no automatic reconnect. GTK stops trusting cached live state and shows
-the safe unavailable state. Restarting the application re-runs daemon
-selection; a future explicit reconnect must take a fresh list snapshot.
+There is no automatic reconnect in Protocol v1. GTK stops trusting cached live
+state and shows the safe unavailable state. Client code may use
+`DaemonReconnectPolicy` / `DaemonReconnectHelper` for bounded backoff; after
+success it must take fresh list snapshots. Resource restoration across restart
+is out of scope.
 
 ## Session lifecycle foundation
 
@@ -287,12 +293,10 @@ transport remain out of scope.
 
 ## Packaging and lifecycle backlog
 
-- add an explicit `sshpilotd` installed launcher after lifecycle policy settles;
-- define systemd user activation without making it a runtime dependency;
-- add launchd lifecycle integration for macOS;
+- define launchd lifecycle integration for macOS;
 - add Windows named-pipe transport and ownership checks;
 - remove deprecated transitional-ID lookup in Protocol v2;
-- define explicit reconnect/resume/replay semantics;
+- wire GTK preferences for daemon status/restart controls;
 - migrate the normal GTK terminal path only after extended interaction testing;
 - keep daemon mode experimental until extended GTK lifecycle testing is
   complete; production-default selection is a separate decision.

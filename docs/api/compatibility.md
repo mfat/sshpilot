@@ -2,6 +2,15 @@
 
 SSH Pilot uses a deliberately simple policy:
 
+## Phase 11: Daemon lifecycle and management
+
+Phase 11 adds daemon lifecycle states, idle shutdown, management RPCs, client
+reconnect policy, and packaging for `sshpilot-daemon`. Older clients ignore the
+new capabilities, methods, and `daemon.state_changed` events. Newer clients
+require `daemon.status` before reading diagnostics and `daemon.control` before
+stop/restart. Reconnect helpers never restore live sessions or transfers across
+restart. `API_IMPLEMENTATION_VERSION` is `0.11`.
+
 ## Phase 10: Additive SFTP / transfer / forward surface
 
 Phase 10 is an additive Protocol v1 extension. Older clients ignore the new
