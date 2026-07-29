@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from sshpilot import main
 from sshpilot.api import EventType, InProcessClient
+from sshpilot.api.models.sessions import SessionState, SessionSummary
 from sshpilot.api.client_factory import (
     CLIENT_MODE_ENVIRONMENT,
     ClientMode,
@@ -76,6 +77,10 @@ class _EventApplication:
     )
     clear_api_event_subscription = SshPilotApplication.clear_api_event_subscription
     _handle_api_client_event = SshPilotApplication._handle_api_client_event
+    _handle_api_session_event = SshPilotApplication._handle_api_session_event
+    open_daemon_session_for_diagnostics = (
+        SshPilotApplication.open_daemon_session_for_diagnostics
+    )
 
     def __init__(self):
         self._api_event_subscription = None
@@ -169,3 +174,79 @@ def test_application_scoped_event_subscription_marshals_once_to_glib(monkeypatch
 
     app.clear_api_event_subscription()
     assert unsubscriptions == [True]
+
+
+def test_application_session_event_is_marshaled_without_connection_refresh(
+    monkeypatch,
+):
+    callbacks = []
+    subscribed = []
+    monkeypatch.setattr(
+        main.GLib,
+        "idle_add",
+        lambda callback, event: callbacks.append((callback, event)) or 1,
+    )
+
+    class _Client:
+        def subscribe_events(self, callback):
+            subscribed.append(callback)
+            return SimpleNamespace(unsubscribe=lambda: None)
+
+    app = _EventApplication()
+    event = SimpleNamespace(type=EventType.SESSION_STATE_CHANGED)
+    app.install_api_event_subscription(_Client())
+    subscribed[0](event)
+
+    assert callbacks == [(app._handle_api_session_event, event)]
+    assert app._handle_api_session_event(event) is False
+    assert app._last_api_session_event is event
+
+
+def test_session_diagnostic_open_uses_application_bridge_asynchronously():
+    bridge = _RecordingBridge()
+    summary = SessionSummary(
+        id="session:test",
+        connection_id="connection:test",
+        state=SessionState.FAILED,
+    )
+    client = SimpleNamespace(open_session=lambda request: summary)
+    app = _EventApplication()
+    app._api_client_selection = SimpleNamespace(client=client)
+    app._api_client_bridge = bridge
+    completed = []
+
+    request = app.open_daemon_session_for_diagnostics(
+        "connection:test",
+        on_success=completed.append,
+    )
+
+    assert request is bridge.request
+    assert completed == []
+    bridge.run()
+    assert completed == [summary]
+    assert app._last_api_session_summary is summary
+
+
+def test_session_diagnostic_suppresses_late_result_during_window_shutdown():
+    bridge = _RecordingBridge()
+    summary = SessionSummary(
+        id="session:test",
+        connection_id="connection:test",
+        state=SessionState.FAILED,
+    )
+    app = _EventApplication()
+    app.window = SimpleNamespace(_is_quitting=True)
+    app._api_client_selection = SimpleNamespace(
+        client=SimpleNamespace(open_session=lambda request: summary)
+    )
+    app._api_client_bridge = bridge
+    completed = []
+
+    app.open_daemon_session_for_diagnostics(
+        "connection:test",
+        on_success=completed.append,
+    )
+    bridge.run()
+
+    assert completed == []
+    assert not hasattr(app, "_last_api_session_summary")

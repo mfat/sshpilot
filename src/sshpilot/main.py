@@ -502,6 +502,13 @@ class SshPilotApplication(Adw.Application):
                 EventType.ERROR_OCCURRED,
             }:
                 GLib.idle_add(self._handle_api_client_event, event.type)
+            elif event.type in {
+                EventType.SESSION_CREATED,
+                EventType.SESSION_STATE_CHANGED,
+                EventType.SESSION_EXITED,
+                EventType.SESSION_CLOSED,
+            }:
+                GLib.idle_add(self._handle_api_session_event, event)
 
         try:
             self._api_event_subscription = client.subscribe_events(_on_event)
@@ -511,6 +518,81 @@ class SshPilotApplication(Adw.Application):
                 "Application API event subscription failed type=%s",
                 type(error).__name__,
             )
+
+    def _handle_api_session_event(self, event) -> bool:
+        """Record daemon session state on GTK's main context for diagnostics."""
+
+        window = self.window
+        if window is not None and getattr(window, '_is_quitting', False):
+            return False
+        self._last_api_session_event = event
+        callback = getattr(self, '_api_session_event_callback', None)
+        if callable(callback):
+            callback(event)
+        return False
+
+    def open_daemon_session_for_diagnostics(
+        self,
+        connection_id,
+        *,
+        on_success=None,
+        on_error=None,
+    ):
+        """Submit a non-terminal session open without blocking GTK.
+
+        This remains a development/test hook. Normal VTE and PyXtermJS launch
+        paths do not call it in Phase 6.
+        """
+
+        from .api.errors import ErrorCode, SshPilotError
+        from .api.models.sessions import OpenSessionRequest
+
+        selection = getattr(self, '_api_client_selection', None)
+        client = getattr(selection, 'client', None)
+        bridge = getattr(self, '_api_client_bridge', None)
+        if client is None or bridge is None:
+            error = SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Daemon session diagnostics are unavailable",
+            )
+            self._last_api_session_error_code = error.code
+            if callable(on_error):
+                on_error(error)
+            return None
+
+        def _success(summary):
+            if self.window is not None and getattr(
+                self.window,
+                '_is_quitting',
+                False,
+            ):
+                return
+            self._last_api_session_summary = summary
+            if callable(on_success):
+                on_success(summary)
+
+        def _error(error):
+            if self.window is not None and getattr(
+                self.window,
+                '_is_quitting',
+                False,
+            ):
+                return
+            self._last_api_session_error_code = getattr(
+                error,
+                'code',
+                ErrorCode.INTERNAL_ERROR,
+            )
+            if callable(on_error):
+                on_error(error)
+
+        return bridge.submit(
+            lambda: client.open_session(
+                OpenSessionRequest(connection_id=connection_id)
+            ),
+            on_success=_success,
+            on_error=_error,
+        )
 
     def clear_api_event_subscription(self) -> None:
         subscription = getattr(self, '_api_event_subscription', None)

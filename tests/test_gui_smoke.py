@@ -326,3 +326,159 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
         app._api_client_bridge = old_bridge
         server.shutdown()
         assert server.wait_stopped()
+
+
+@pytest.mark.parametrize("_repeat", range(5))
+def test_real_gtk_session_open_is_non_blocking_and_observes_events(
+    gui,
+    tmp_path,
+    _repeat,
+):
+    from types import SimpleNamespace
+
+    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.api.models.sessions import SessionExitInfo, SessionState
+    from sshpilot.connection_identity import connection_id_from_uuid
+    from sshpilot.daemon import DaemonServer
+    from sshpilot.daemon.session_runtime import SessionRuntime
+    from sshpilot.gtk_client_bridge import GtkClientBridge
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _Handle:
+        def __init__(self, on_exit):
+            self.on_exit = on_exit
+            self.exit_info = None
+
+        def terminate(self):
+            if self.exit_info is None:
+                self.exit_info = SessionExitInfo(exit_code=0, reason="terminated")
+                self.on_exit(self.exit_info)
+
+        def kill(self):
+            self.terminate()
+
+        def wait(self, _timeout):
+            return self.exit_info
+
+    class _Runner:
+        def start(self, _spec, on_exit):
+            entered.set()
+            release.wait(2)
+            return _Handle(on_exit)
+
+        def close(self):
+            return None
+
+    class _Manager:
+        def __init__(self):
+            self.connection = SimpleNamespace(
+                uuid=str(uuid4()),
+                nickname=f"SessionDemo{_repeat}",
+                host=f"SessionDemo{_repeat}",
+                hostname="session.example.test",
+                username="alice",
+                port=22,
+                protocol="ssh",
+                aliases=[],
+                auth_method=0,
+                keyfile="",
+                identity_files=[],
+                certificate="",
+                certificate_files=[],
+                x11_forwarding=False,
+                forwarding_rules=[],
+                proxy_jump=[],
+            )
+
+        def get_connections(self):
+            return [self.connection]
+
+        def connect(self, _signal_name, _callback):
+            return 1
+
+        def disconnect(self, _handler_id):
+            return None
+
+    def _wait_until(predicate, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            gui.pump(10)
+        return bool(predicate())
+
+    manager = _Manager()
+    socket_dir = tmp_path / f"daemon-session-gui-{_repeat}"
+    socket_dir.mkdir(mode=0o700)
+    server = DaemonServer(
+        lambda: InProcessClient(manager, client_name="gtk-session-daemon"),
+        socket_path=socket_dir / "sshpilotd.sock",
+        session_runtime_factory=lambda core: SessionRuntime(
+            core,
+            runner=_Runner(),
+        ),
+    )
+    server.start_in_thread()
+
+    window = gui.window
+    welcome = window.welcome_view
+    app = gui.app
+    old_bridge = getattr(app, "_api_client_bridge", None)
+    bridge = GtkClientBridge()
+    daemon_client = DaemonClient(socket_path=server.socket_path, timeout=2)
+    completed = []
+    observed = []
+    app._api_session_event_callback = observed.append
+    app._api_client_bridge = bridge
+    window.client_bridge = bridge
+    try:
+        window._apply_client_selection(
+            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+        )
+        connection_id = connection_id_from_uuid(manager.connection.uuid)
+        app.open_daemon_session_for_diagnostics(
+            connection_id,
+            on_success=completed.append,
+        )
+        assert entered.wait(1)
+
+        ticked = []
+        gui.GLib.idle_add(lambda: ticked.append(True) or False)
+        gui.pump(100)
+
+        assert ticked == [True]
+        assert completed == []
+        release.set()
+        assert _wait_until(lambda: bool(completed))
+        assert completed[0].state is SessionState.RUNNING
+        assert _wait_until(
+            lambda: any(
+                getattr(event.payload, "state", None) is SessionState.RUNNING for event in observed
+            )
+        )
+        assert getattr(app, "_last_api_session_summary") == completed[0]
+        assert window.client is daemon_client
+    finally:
+        release.set()
+        app.clear_api_event_subscription()
+        app._api_session_event_callback = None
+        daemon_client.close()
+        bridge.shutdown()
+        replacement = InProcessClient(
+            window.connection_manager,
+            group_manager=window.group_manager,
+        )
+        window.client = replacement
+        window.client_bridge = None
+        welcome._closed = False
+        welcome.set_client(replacement)
+        app._api_client_selection = ClientSelection(
+            client=replacement,
+            mode=ClientMode.IN_PROCESS,
+        )
+        app._api_client_bridge = old_bridge
+        server.shutdown()
+        assert server.wait_stopped()
