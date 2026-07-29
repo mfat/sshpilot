@@ -419,7 +419,9 @@ def daemon_terminal_capabilities_missing(client) -> frozenset[Capability]:
 
 ### SFTP/Forwarding Boundary
 
-SFTP file manager and port forwarding are **explicitly deferred to Phase 10**:
+SFTP file manager and port forwarding are implemented in Phase 10 (see
+`sftp-services.md`, `file-transfers.md`, `port-forwarding.md`). Historical note
+from Phase 9 planning:
 
 - **Current scope**: Interactive SSH terminal sessions only
 - **SFTP status**: Remains on local SSH path for Phase 9

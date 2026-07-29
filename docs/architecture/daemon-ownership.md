@@ -224,3 +224,15 @@ current behaviour.
     streaming are contract-tested.
 13. Design separately secured remote/mobile access only as a later, explicit
     project.
+
+
+## Phase 10 extended services
+
+Daemon ownership now also covers:
+
+- SFTP services (`docs/architecture/sftp-services.md`)
+- File transfers (`docs/architecture/file-transfers.md`)
+- Port forwards (`docs/architecture/port-forwarding.md`)
+- Cross-cutting lifecycle (`docs/architecture/extended-service-lifecycle.md`)
+
+Terminal PTY transport is unchanged.
