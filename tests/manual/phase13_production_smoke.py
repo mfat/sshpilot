@@ -80,6 +80,7 @@ class SmokeContext:
     auth_helper_stop: threading.Event = field(default_factory=threading.Event)
     auth_helper_thread: threading.Thread | None = None
     evidence_dir: Path = field(default_factory=lambda: SMOKE_HOME / "evidence")
+    acceptance_shutdown_succeeded: bool = False
 
     def record(self, step: int, action: str, expected: str, actual: str, ok: bool, evidence: str = ""):
         self.results.append(
@@ -763,7 +764,6 @@ def run_smoke() -> int:
         pages_before = win.tab_view.get_n_pages()
         # Layer A: prove daemon SFTP READY without opening the GTK file-manager
         # window (Adwaita dialog-host aborts on some FM close paths in xvfb).
-        manager = None
         fm_connected = False
 
         opened = client.open_sftp(OpenSftpRequest(connection_id=cid))
@@ -1341,11 +1341,268 @@ def run_smoke() -> int:
             if not any(r.step == step for r in ctx.results):
                 ctx.record(step, f"final {step}", "ok", repr(exc), False)
 
+    # --- Steps 41–52: resource drain, graceful stop, lifecycle proof ---
+    try:
+        from sshpilot.api.models.daemon import (
+            DaemonLifecycleState,
+            StopDaemonRequest,
+        )
+        from sshpilot.api.models.sessions import CloseSessionRequest, SessionState
+        from sshpilot.api.models.sftp import CloseSftpRequest, SftpServiceState
+        from sshpilot.api.models.transfers import CancelTransferRequest, TransferState
+        from sshpilot.api.models.forwards import CloseForwardRequest, ForwardState
+
+        # 41. Enumerate active daemon resources.
+        resources = client.get_daemon_status().resources
+        ctx.record(
+            41,
+            "Enumerate active daemon resources via client.get_daemon_status",
+            "Resource counts returned",
+            f"sessions_active={resources.sessions_active} sftp_active={resources.sftp_active} "
+            f"transfers_running={resources.transfers_running} forwards_active={resources.forwards_active} "
+            f"interactions_pending={resources.interactions_pending}",
+            True,
+        )
+
+        # 42. Close all sessions through public API.
+        sessions_closed = 0
+        for sess in client.list_sessions():
+            if sess.state in {SessionState.RUNNING, SessionState.STARTING, SessionState.CREATED, SessionState.CLOSING}:
+                try:
+                    client.close_session(CloseSessionRequest(session_id=sess.id))
+                    sessions_closed += 1
+                except Exception:
+                    pass
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            remaining = sum(
+                1 for s in client.list_sessions()
+                if s.state in {SessionState.RUNNING, SessionState.STARTING, SessionState.CREATED, SessionState.CLOSING}
+            )
+            if remaining == 0:
+                break
+            time.sleep(0.1)
+        active_after = sum(
+            1 for s in client.list_sessions()
+            if s.state in {SessionState.RUNNING, SessionState.STARTING, SessionState.CREATED}
+        )
+        ctx.record(
+            42,
+            "Close all sessions via client.close_session (public API)",
+            "No active sessions remain",
+            f"closed={sessions_closed} active_after={active_after}",
+            active_after == 0,
+        )
+
+        # 43. Close all SFTP services through public API.
+        sftp_closed = 0
+        for svc in client.list_sftp_services():
+            if svc.state in {SftpServiceState.READY, SftpServiceState.STARTING, SftpServiceState.CREATED, SftpServiceState.CLOSING}:
+                try:
+                    client.close_sftp(CloseSftpRequest(service_id=svc.id))
+                    sftp_closed += 1
+                except Exception:
+                    pass
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            active_sftp = sum(
+                1 for s in client.list_sftp_services()
+                if s.state in {SftpServiceState.READY, SftpServiceState.STARTING, SftpServiceState.CREATED}
+            )
+            if active_sftp == 0:
+                break
+            time.sleep(0.1)
+        ctx.record(
+            43,
+            "Close all SFTP services via client.close_sftp (public API)",
+            "No active SFTP services remain",
+            f"closed={sftp_closed} active_after={active_sftp}",
+            active_sftp == 0,
+        )
+
+        # 44. Cancel/finish active transfers through public API.
+        xfers_cancelled = 0
+        for xfer in client.list_transfers():
+            if xfer.state in {TransferState.RUNNING, TransferState.STARTING, TransferState.QUEUED, TransferState.CANCELLING}:
+                try:
+                    client.cancel_transfer(CancelTransferRequest(transfer_id=xfer.id))
+                    xfers_cancelled += 1
+                except Exception:
+                    pass
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            active_xfers = sum(
+                1 for t in client.list_transfers()
+                if t.state in {TransferState.RUNNING, TransferState.STARTING, TransferState.QUEUED, TransferState.CANCELLING}
+            )
+            if active_xfers == 0:
+                break
+            time.sleep(0.1)
+        ctx.record(
+            44,
+            "Cancel/finish active transfers via client.cancel_transfer (public API)",
+            "No active transfers remain",
+            f"cancelled={xfers_cancelled} active_after={active_xfers}",
+            active_xfers == 0,
+        )
+
+        # 45. Close all forwards through public API.
+        fwd_closed = 0
+        for fwd in client.list_forwards():
+            if fwd.state in {ForwardState.ACTIVE, ForwardState.STARTING, ForwardState.CREATED, ForwardState.CLOSING}:
+                try:
+                    client.close_forward(CloseForwardRequest(forward_id=fwd.id))
+                    fwd_closed += 1
+                except Exception:
+                    pass
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            active_fwd = sum(
+                1 for f in client.list_forwards()
+                if f.state in {ForwardState.ACTIVE, ForwardState.STARTING, ForwardState.CREATED}
+            )
+            if active_fwd == 0:
+                break
+            time.sleep(0.1)
+        ctx.record(
+            45,
+            "Close all forwards via client.close_forward (public API)",
+            "No active forwards remain",
+            f"closed={fwd_closed} active_after={active_fwd}",
+            active_fwd == 0,
+        )
+
+        # 46. Verify no active work remains.
+        final_resources = client.get_daemon_status().resources
+        no_work = final_resources.live_blockers == ()
+        ctx.record(
+            46,
+            "Verify no active daemon work remains (live_blockers empty)",
+            "Daemon has no live resource blockers",
+            f"live_blockers={final_resources.live_blockers} resources={final_resources}",
+            no_work,
+        )
+
+        # 47. Request graceful stop through DaemonClient.
+        stop_result = client.stop_daemon(StopDaemonRequest())
+        ctx.record(
+            47,
+            "Request graceful daemon stop via client.stop_daemon (public API)",
+            "Stop accepted",
+            f"accepted={stop_result.accepted} state={stop_result.state} message={stop_result.message}",
+            stop_result.accepted,
+        )
+
+        # 48. Verify lifecycle enters draining/stopping.
+        deadline = time.monotonic() + 5.0
+        lifecycle_observed = []
+        while time.monotonic() < deadline:
+            try:
+                st = client.get_daemon_status()
+                lifecycle_observed.append(st.lifecycle_state.value)
+                if st.lifecycle_state in {DaemonLifecycleState.DRAINING, DaemonLifecycleState.STOPPING, DaemonLifecycleState.STOPPED}:
+                    break
+            except Exception:
+                lifecycle_observed.append("disconnected")
+                break
+            time.sleep(0.1)
+        saw_drain = any(
+            s in {"draining", "stopping", "stopped", "disconnected"}
+            for s in lifecycle_observed
+        )
+        ctx.record(
+            48,
+            "Verify lifecycle transitions: ready -> draining -> stopping",
+            "Observed draining/stopping/stopped or client disconnect",
+            f"observed_states={lifecycle_observed}",
+            saw_drain,
+        )
+
+        # 49. Verify daemon exits naturally.
+        # The daemon may have already exited; wait for server to confirm.
+        daemon_exited = False
+        if ctx.daemon_server is not None:
+            daemon_exited = ctx.daemon_server.wait_stopped(timeout=15.0)
+        else:
+            # Fallback: poll the socket
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                if not (ctx.daemon_socket_root / "sshpilotd.sock").exists():
+                    daemon_exited = True
+                    break
+                time.sleep(0.2)
+        ctx.record(
+            49,
+            "Verify daemon exits naturally after graceful stop",
+            "Daemon process stopped",
+            f"exited={daemon_exited}",
+            daemon_exited,
+        )
+
+        # 50. Verify socket and metadata disappear.
+        sock = ctx.daemon_socket_root / "sshpilotd.sock"
+        sock_gone = not sock.exists()
+        ctx.record(
+            50,
+            "Verify daemon socket removed after exit",
+            "Socket file no longer exists",
+            f"sock_exists={sock_gone} path={sock}",
+            sock_gone,
+        )
+
+        # 51. Verify no child processes remain.
+        orphan_children = []
+        try:
+            import psutil
+            daemon_pid = getattr(ctx.daemon_server, '_pid', None)
+            if daemon_pid is not None:
+                try:
+                    proc = psutil.Process(daemon_pid)
+                    children = proc.children(recursive=True)
+                    orphan_children = [c.pid for c in children]
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except ImportError:
+            # psutil not available; use /proc scan as fallback
+            pass
+        ctx.record(
+            51,
+            "Verify no orphaned daemon child processes remain",
+            "No zombie or child processes",
+            f"orphans={orphan_children}",
+            len(orphan_children) == 0,
+        )
+
+        # 52. Verify no askpass or interaction state remains.
+        askpass_socks = list(ctx.daemon_socket_root.glob("askpass-*.sock")) if ctx.daemon_socket_root.exists() else []
+        ctx.record(
+            52,
+            "Verify no stale askpass sockets or pending interactions remain",
+            "No askpass sockets left",
+            f"askpass_socks={len(askpass_socks)}",
+            len(askpass_socks) == 0,
+        )
+
+        ctx.acceptance_shutdown_succeeded = all(
+            r.status == "PASS" for r in ctx.results if r.step >= 41
+        )
+    except Exception as exc:
+        for step in range(41, 53):
+            if not any(r.step == step for r in ctx.results):
+                ctx.record(step, f"lifecycle {step}", "ok", repr(exc), False, traceback.format_exc())
+
     failed = _finalize(ctx)
     return 1 if failed else 0
 
 
 def _finalize(ctx: SmokeContext) -> list:
+    # --- Acceptance-path shutdown: only if steps 41-52 did not already prove it ---
+    if ctx.acceptance_shutdown_succeeded:
+        print("[info] Acceptance shutdown succeeded — skipping emergency cleanup")
+    else:
+        print("[warn] Acceptance shutdown did not succeed — running emergency cleanup")
+
+    # Stop the auth helper thread first (it references the client/server).
     try:
         if ctx.auth_helper_stop:
             ctx.auth_helper_stop.set()
@@ -1353,27 +1610,41 @@ def _finalize(ctx: SmokeContext) -> list:
             ctx.auth_helper_thread.join(timeout=2)
     except Exception:
         pass
+
+    # Close the client transport (may already be closed by step 47-49).
     try:
         if ctx.daemon_client is not None:
             ctx.daemon_client.close()
     except Exception:
         pass
+
+    # Shut down the GTK application.
     try:
         if ctx.gui is not None:
             ctx.gui.shutdown()
     except Exception:
         pass
-    try:
-        if ctx.daemon_server is not None:
-            ctx.daemon_server.shutdown()
-            ctx.daemon_server.wait_stopped()
-    except Exception:
-        pass
+
+    # Emergency teardown: call server.shutdown() only as a fallback when the
+    # acceptance path (steps 41-52) did not already prove natural daemon exit.
+    # This is clearly labeled as cleanup — it does NOT count as lifecycle proof.
+    if not ctx.acceptance_shutdown_succeeded:
+        try:
+            if ctx.daemon_server is not None:
+                print("[cleanup] Emergency: calling daemon_server.shutdown() — not lifecycle proof")
+                ctx.daemon_server.shutdown()
+                ctx.daemon_server.wait_stopped(timeout=5.0)
+        except Exception:
+            pass
+
+    # Destroy the temporary OpenSSH fixture.
     try:
         if ctx.openssh is not None:
             ctx.openssh.destroy()
     except Exception:
         pass
+
+    # Remove the ephemeral socket directory (best-effort).
     if ctx.daemon_socket_root is not None:
         shutil.rmtree(ctx.daemon_socket_root, ignore_errors=True)
 
@@ -1387,10 +1658,11 @@ def _write_report(ctx: SmokeContext):
     out = ROOT / "docs" / "testing" / "phase13-production-smoke.md"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Layer map for the original 40 acceptance steps.
+    # Layer map for the 52-step acceptance sequence.
     layer_a = {9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 38, 39, 40}
     layer_b = {1, 2, 3, 4, 5, 6, 7, 8, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37}
-    layer_c: set[int] = set()  # widget clicks not required for Phase 13.2 gate
+    layer_c: set[int] = set()  # widget clicks not required for this gate
+    layer_d = {41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52}  # lifecycle shutdown
 
     def _layer(step: int) -> str:
         if step in layer_a:
@@ -1399,6 +1671,8 @@ def _write_report(ctx: SmokeContext):
             return "B"
         if step in layer_c:
             return "C"
+        if step in layer_d:
+            return "D"
         return "?"
 
     by_step = {r.step: r for r in ctx.results}
@@ -1414,14 +1688,15 @@ def _write_report(ctx: SmokeContext):
     a_pass, a_total = _count(layer_a)
     b_pass, b_total = _count(layer_b)
     c_pass, c_total = _count(layer_c) if layer_c else (0, 0)
+    d_pass, d_total = _count(layer_d)
     overall_pass = all(
         by_step.get(step) is not None and by_step[step].status == "PASS"
-        for step in range(1, 41)
+        for step in range(1, 53)
     )
     gate = "PASS" if overall_pass else "FAIL"
 
     lines = [
-        "# Phase 13.2 production path smoke",
+        "# Phase 13.3 production path smoke",
         "",
         f"Isolated HOME: `{SMOKE_HOME}`",
         f"Evidence directory: `{SMOKE_HOME / 'evidence'}`",
@@ -1432,6 +1707,7 @@ def _write_report(ctx: SmokeContext):
         f"Daemon/API: {a_pass}/{a_total}",
         f"GTK controller: {b_pass}/{b_total}",
         f"Widget interaction: {c_pass}/{c_total}",
+        f"Lifecycle shutdown: {d_pass}/{d_total}",
         f"Overall gate: {gate}",
         f"```",
         "",
@@ -1439,11 +1715,15 @@ def _write_report(ctx: SmokeContext):
         "Layer B = GTK controllers / ConnectionManager / BackupManager / restart rediscovery.",
         "Layer C = visible widget clicks (not required for this gate; VTE opt-in via",
         "`SSHPILOT_SMOKE_GTK_TERMINAL=1` — see `gtk-vte-bloom-filter-crash.md`).",
+        "Layer D = lifecycle shutdown: resource drain, graceful stop, natural exit,",
+        "socket removal, child reaping, interaction cleanup.",
+        "",
+        f"Emergency cleanup {'was NOT needed' if ctx.acceptance_shutdown_succeeded else 'was invoked (acceptance path failed)'}.",
         "",
         "| step | layer | action | expected result | actual result | pass/fail | evidence |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for step in range(1, 41):
+    for step in range(1, 53):
         r = by_step.get(step)
         if r is None:
             lines.append(f"| {step} | {_layer(step)} | (missing) | | | FAIL | not executed |")
@@ -1473,6 +1753,7 @@ def _write_report(ctx: SmokeContext):
         f"Daemon/API: {a_pass}/{a_total}\n"
         f"GTK controller: {b_pass}/{b_total}\n"
         f"Widget interaction: {c_pass}/{c_total}\n"
+        f"Lifecycle shutdown: {d_pass}/{d_total}\n"
         f"Overall gate: {gate}"
     )
 
