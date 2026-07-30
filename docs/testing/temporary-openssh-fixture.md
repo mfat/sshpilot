@@ -85,3 +85,7 @@ cannot delete (`Permission denied` / `Device or resource busy`). Prefer
 pgrep -af 'phase13-fixture|sshpilot-p13' || echo none
 ls -d /tmp/sshpilot-phase13-smoke-* 2>/dev/null || echo 'smoke dirs gone'
 ```
+
+## Phase 13.2
+
+The production smoke and daemon integration tests use this fixture for password, key, encrypted-key, SFTP, transfers, and forwarding proofs without touching the developer `~/.ssh`.

@@ -34,3 +34,5 @@ shims after caller migration is complete.
 Phase 13.1: shim inventory above remains accurate after ownership wiring
 (`ConnectionService` mutations, `build_ssh_process_spec`, askpass/secret policy,
 import/export plan, transfer `decide_conflict`).
+
+Referenced by Phase 13.2 completion matrix and API topic guides.

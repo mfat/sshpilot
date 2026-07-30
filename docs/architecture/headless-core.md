@@ -14,3 +14,5 @@ Temporary OpenSSH fixture: `docs/testing/temporary-openssh-fixture.md`.
 Phase 13 completed the reusable connection domain, SSH `ProcessSpec` builder,
 askpass/secret interaction policy, import/export planning, and transfer
 conflict policy under `sshpilot.core`. GTK remains an interaction adapter.
+
+Referenced by Phase 13.2 completion matrix and API topic guides.

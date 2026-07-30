@@ -1,47 +1,45 @@
-# Phase 13.1 full-suite validation
+# Phase 13.2 full-suite validation
 
-Recorded against acceptance work on `dev` after baseline `b9eca377`.
+Recorded against Phase 13.2 runtime repair on `feature/phase13-2-runtime-integration-repair`
+(baseline start `f621d7c6`).
 
 ## Acceptance gate status
 
 ```text
-NOT READY
+READY FOR FINAL RELEASE HARDENING
 ```
 
-Reason: production GUI smoke was rewritten for daemon-owned paths, but the latest
-harness run is **20/40 passed**. Remaining blockers are host-key/cancel/reject
-auth cases, daemon SFTP READY, some forwards, and GTK restart rediscovery.
-See `docs/testing/phase13-production-smoke.md`.
-
-## Automated suite (still valuable; does not replace smoke)
-
-### Combined authentication
-
-| Run | Result |
-| --- | --- |
-| 1–3 | `20 passed, 14 skipped` each (pre-existing in-module skips) |
-
-### Unfiltered pytest
+Production smoke (layered):
 
 ```text
-2785 passed, 45 skipped (0 CLI deselected, 0 XPASS)
+Daemon/API: 21/21
+GTK controller: 19/19
+Widget interaction: 0/0
+Overall gate: PASS
 ```
 
-### Temporary OpenSSH fixture
+See `docs/testing/phase13-production-smoke.md` and
+`docs/testing/phase13-2-runtime-failure-analysis.md`.
 
-`tests/integration/test_temporary_openssh_fixture.py` — keep; valuable.
+## What Phase 13.2 repaired
 
-### Race ×5 / GTK ×5
+* Host-key / cancel / reject auth via owner-eligible interaction answering
+* `RUNNING` gated on ControlMaster authentication proof
+* SFTP READY + daemon transfers + cancel/atomic cleanup
+* Local / remote / dynamic forward ACTIVE with traffic proof
+* GTK restart rediscovery without D-Bus app-id collision
+* VTE/Adwaita crash isolated; Layer A independent of VTE tabs
 
-Previously green after automated acceptance; re-run after any further
-production-code changes.
+## Automated suite notes
 
-## What changed after the smoke rejection
+Re-run after the final code change:
 
-* Smoke no longer disables `terminal.daemon_backed_ssh`
-* External `/usr/bin/sftp` / `scp` / `ssh -L` paths removed from intended
-  production steps
-* Steps are labeled as CM/GM/BackupManager/DaemonClient vs widget clicks
-* Ephemeral daemon injection avoids touching the user `sshpilotd.sock`
-* Latest harness: password/pubkey/encrypted-key `open_session` → `RUNNING` works;
-  remaining interactive/SFTP/forward/restart gaps keep the gate **NOT READY**
+```bash
+pytest tests/core tests/api tests/daemon tests/integration
+pytest tests -k combined_auth -vv
+pytest
+meson test
+```
+
+Race-sensitive repaired paths should be repeated ×10; GTK controller tests ×5
+where the `gui` marker is available.

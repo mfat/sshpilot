@@ -46,3 +46,5 @@ See also: `phase13-completion-matrix.md`, `docs/testing/phase13-production-smoke
 2. GTK collects input, calls core/API, renders state, maps `CoreError` to Adw UI.
 3. Daemon consumes the same core request/policy models as GTK.
 4. Compatibility shims stay thin — see `core-compatibility-shims.md`.
+
+Phase 13.2 runtime ownership (sessions/SFTP/transfers/forwards/interactions) remains in `sshpilot.daemon` consuming core models; see `docs/api/` topic guides.

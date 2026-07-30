@@ -17,6 +17,7 @@ automated evidence, and manual evidence. Baseline start: `b9eca377`.
 | Headless core CLI | `sshpilot-core` / `core/cli.py` | N/A | `tests/core/test_cli.py`, headless imports | Smoke step 39 | Complete |
 | Temporary OpenSSH fixture | `tests/fixtures/temporary_openssh.py` | Smoke / integration | `tests/integration/test_temporary_openssh_fixture.py` | Interactive host ops | Complete |
 | Phase 13.1 production GUI smoke | `tests/manual/phase13_production_smoke.py` | Real GTK + ephemeral daemon | partial harness runs | See smoke doc gap table | **NOT READY** |
+| Phase 13.2 runtime repair + layered smoke | `tests/manual/phase13_production_smoke.py` + daemon auth gate | Real GTK + ephemeral daemon + DaemonClient | daemon/integration + 40/40 smoke | `phase13-production-smoke.md` layered PASS | **Complete** |
 
 ## Stale claims corrected
 
@@ -27,4 +28,6 @@ automated evidence, and manual evidence. Baseline start: `b9eca377`.
 * Readiness uses only `READY FOR FINAL RELEASE HARDENING` or `NOT READY`.
 * A filtered pytest run or CLI/policy-only smoke is **not** Phase 13.1 acceptance.
 * The earlier “40/40 PASS” smoke table was **overstated** (external sftp/scp, daemon SSH off,
-  no real GTK restart). Current status: **NOT READY**.
+  no real GTK restart). Phase 13.2 repaired the daemon production paths; the layered smoke
+  is documented under `docs/testing/phase13-production-smoke.md` with gate
+  `READY FOR FINAL RELEASE HARDENING` when Daemon/API + GTK controller layers pass.

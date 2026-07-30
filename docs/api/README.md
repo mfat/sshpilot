@@ -7,6 +7,18 @@ these documents describe the concrete contract.
 
 ## Reference
 
+## Phase 13.2 topic guides
+
+- [Daemon lifecycle](daemon-lifecycle.md)
+- [Sessions](sessions.md)
+- [Interactions](interactions.md)
+- [SFTP](sftp.md)
+- [Transfers](transfers.md)
+- [Forwards](forwards.md)
+- [Errors and states](errors-and-states.md)
+- [Versioning and capabilities](versioning-and-capabilities.md)
+
+
 - [Protocol v1](protocol-v1.md) — scope, identity, conventions, ordering, and
   wire framing/security rules
 - [Methods](methods.md) — every `SshPilotClient` method and its runtime status

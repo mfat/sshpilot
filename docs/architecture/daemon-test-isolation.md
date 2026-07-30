@@ -38,3 +38,5 @@ Manual confirmation: Phase 13.1 smoke step 40 runs
 `tests/daemon/test_daemon_isolation.py` while a user daemon may be present and
 asserts the suite stays green without touching `/run/user/$UID/sshpilot/sshpilotd.sock`
 sessions.
+
+Phase 13.2 smoke step 40 still runs `tests/daemon/test_daemon_isolation.py` while a user daemon may be present.

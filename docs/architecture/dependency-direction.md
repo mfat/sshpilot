@@ -37,3 +37,5 @@ fallback: `auto` fallthrough is explicit, ordered, and tested via
 
 Phase 13.1 acceptance: unfiltered `pytest`, combined-auth repetitions, temporary
 OpenSSH fixture, and the 40-step GUI smoke are documented under `docs/testing/`.
+
+Phase 13.2 acceptance uses the layered production smoke (`Daemon/API` + `GTK controller`) documented in `docs/testing/phase13-production-smoke.md`.
