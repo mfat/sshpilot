@@ -23,7 +23,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Callable, Deque, Dict, Iterable, List, Optional, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -837,6 +837,88 @@ class InteractionBroker:
             frame.clear()
         if publish is not None:
             self._publish(EventType.INTERACTION_STATE_CHANGED, publish)
+
+    def classify_startup_failure(self, session_id: SessionId) -> ErrorCode:
+        """Map a failed auth-gate wait to a stable error code."""
+
+        with self._condition:
+            for record in reversed(list(self._records.values())):
+                if record.summary.session_id != session_id:
+                    continue
+                if record.summary.state is InteractionState.CANCELLED:
+                    return ErrorCode.OPERATION_CANCELLED
+                if record.summary.state is InteractionState.EXPIRED:
+                    return ErrorCode.SESSION_STARTUP_FAILED
+        return ErrorCode.SESSION_STARTUP_FAILED
+
+    def wait_for_control_master(
+        self,
+        session_id: SessionId,
+        *,
+        is_alive: Callable[[], bool],
+        timeout: float = 60.0,
+    ) -> bool:
+        """Block until ControlMaster is usable for ``session_id``, or give up.
+
+        Used by session startup so ``RUNNING`` means authentication succeeded,
+        not merely that the SSH child was spawned. Returns ``False`` when the
+        process dies first, the broker shuts down, or ``timeout`` elapses.
+
+        If this broker never created an askpass/ControlMaster context for the
+        session (mock runners / non-broker launches), return ``True`` while the
+        process is still alive — there is nothing to wait for.
+        """
+
+        if timeout <= 0:
+            raise ValueError("control-master wait timeout must be positive")
+        deadline = monotonic() + float(timeout)
+        context = self._context_for_session(session_id)
+        if context is None:
+            # prepare_launch always registers the askpass context before the
+            # child is spawned. Absence means this launch did not use the
+            # broker trust/auth path.
+            return is_alive()
+        while monotonic() < deadline:
+            if self._closed or not is_alive():
+                return False
+            context = self._context_for_session(session_id)
+            if context is None or context.closed:
+                return False
+            if self._control_master_ready(context):
+                return True
+            sleep(0.05)
+        context = self._context_for_session(session_id)
+        return bool(
+            context is not None
+            and not context.closed
+            and is_alive()
+            and self._control_master_ready(context)
+        )
+
+    def _context_for_session(self, session_id: SessionId) -> Optional[_AskpassContext]:
+        with self._condition:
+            for context in self._askpass_contexts.values():
+                if context.session_id == session_id and not context.closed:
+                    return context
+        return None
+
+    @staticmethod
+    def _control_master_ready(context: _AskpassContext) -> bool:
+        if not os.path.exists(context.control_path):
+            return False
+        try:
+            result = subprocess.run(
+                context.control_argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=1,
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
 
     def wait_for_result(
         self,

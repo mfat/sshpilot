@@ -397,6 +397,10 @@ class SessionRuntime:
             raise ValueError("global terminal replay byte limit must be positive")
         self._replay_bytes = replay_bytes
         self._global_replay_bytes = global_replay_bytes
+        # Optional auth gate: (session_id, is_alive) -> bool. When set,
+        # RUNNING is deferred until ControlMaster proves authentication.
+        self._auth_gate: Optional[Callable[..., bool]] = None
+        self._auth_gate_timeout_seconds = 60.0
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[SessionId, _SessionRecord] = {}
@@ -518,6 +522,19 @@ class SessionRuntime:
         with self._lock:
             return self._summary_locked(record)
 
+    def set_auth_gate(
+        self,
+        gate: Optional[Callable[..., bool]],
+        *,
+        timeout_seconds: float = 60.0,
+    ) -> None:
+        """Install the ControlMaster auth gate used before ``RUNNING``."""
+
+        if timeout_seconds <= 0:
+            raise ValueError("auth gate timeout must be positive")
+        self._auth_gate = gate
+        self._auth_gate_timeout_seconds = float(timeout_seconds)
+
     def start_session(self, session_id: SessionId) -> None:
         """Run the potentially blocking startup step on a command worker."""
 
@@ -569,6 +586,32 @@ class SessionRuntime:
                 "The session process could not be started",
             )
         else:
+            authenticated = True
+            gate = self._auth_gate
+            if gate is not None:
+                authenticated = bool(
+                    gate(
+                        session_id,
+                        is_alive=lambda: self._handle_is_alive(handle),
+                        timeout=self._auth_gate_timeout_seconds,
+                    )
+                )
+            if not authenticated:
+                cancel_code = self._startup_failure_code(session_id)
+                self._startup_failed(
+                    record,
+                    cancel_code,
+                    (
+                        "The session authentication was cancelled"
+                        if cancel_code is ErrorCode.OPERATION_CANCELLED
+                        else "The session did not complete authentication"
+                    ),
+                )
+                self._terminate_handle(
+                    handle,
+                    deadline=self._monotonic() + self._close_grace_seconds,
+                )
+                return
             terminate_after_start = True
             events: List[CoreEvent] = []
             with self._lock:
@@ -586,6 +629,30 @@ class SessionRuntime:
                     handle,
                     deadline=self._monotonic() + self._close_grace_seconds,
                 )
+
+    @staticmethod
+    def _handle_is_alive(handle: SessionProcessHandle) -> bool:
+        poll = getattr(handle, "poll", None)
+        if not callable(poll):
+            return True
+        try:
+            return poll() is None
+        except Exception:
+            return False
+
+    def _startup_failure_code(self, session_id: SessionId) -> ErrorCode:
+        """Classify auth-gate failure: cancelled interaction vs generic fail."""
+
+        # Best-effort: inspect recent interactions via optional broker hook.
+        classifier = getattr(self, "_auth_failure_classifier", None)
+        if callable(classifier):
+            try:
+                code = classifier(session_id)
+                if isinstance(code, ErrorCode):
+                    return code
+            except Exception:
+                pass
+        return ErrorCode.SESSION_STARTUP_FAILED
 
     def reject_pending_start(self, session_id: SessionId) -> None:
         """Mark an unscheduled startup failed after executor saturation."""
