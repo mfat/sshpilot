@@ -972,10 +972,20 @@ class SshPilotApplication(Adw.Application):
         if client is not None and daemon_process is not None:
             try:
                 from .api.models.daemon import StopDaemonRequest
-                client.stop_daemon(StopDaemonRequest())
-                logger.info(
-                    "Requested graceful stop of app-launched daemon"
-                )
+                result = client.stop_daemon(StopDaemonRequest())
+                if not result.accepted and result.confirmation:
+                    # Active resources exist — force stop to terminate all work.
+                    logger.info(
+                        "Daemon stop refused (%s); force-terminating all work",
+                        result.will_lose,
+                    )
+                    client.stop_daemon(
+                        StopDaemonRequest(force=True)
+                    )
+                else:
+                    logger.info(
+                        "Requested graceful stop of app-launched daemon"
+                    )
             except Exception:
                 logger.debug(
                     "Daemon graceful stop request failed (will idle out)",

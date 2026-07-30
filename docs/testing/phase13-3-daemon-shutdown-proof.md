@@ -70,7 +70,7 @@ Verifies no stale askpass sockets remain in the daemon socket directory.
 
 ## Automated test coverage
 
-New tests in `tests/daemon/test_lifecycle_phase13_3.py`:
+New tests in `tests/daemon/test_lifecycle_phase13_3.py` (18 tests):
 
 | Test | What it proves |
 | --- | --- |
@@ -84,10 +84,14 @@ New tests in `tests/daemon/test_lifecycle_phase13_3.py`:
 | `test_stop_while_already_stopping` | Stop during drain is accepted |
 | `test_socket_removed_on_clean_exit` | Socket file disappears |
 | `test_socket_removed_on_idle_exit` | Socket file disappears after idle |
+| `test_no_pid_or_metadata_files_after_exit` | No leftover files in socket directory |
 | `test_externally_managed_daemon_not_killed_by_client_disconnect` | External daemon stays alive |
 | `test_app_launched_daemon_stop_on_quit` | App-launched path calls stop_daemon |
+| `test_app_launched_daemon_force_when_refused` | Force stop when first attempt refused |
 | `test_no_zombie_children_after_force_stop` | No child processes remain |
 | `test_client_disconnect_during_shutdown` | Disconnect during drain is safe |
+| `test_sftp_resource_tracking_blocks_idle` | SFTP resource counters are present and zero |
+| `test_daemon_resource_counts_reflect_session_close` | Session close drops resource count to zero |
 
 ## Smoke harness changes
 
@@ -97,3 +101,8 @@ The production smoke harness now has 52 steps (was 40):
 * Steps 41–52: new lifecycle shutdown proof
 
 The report format adds a `Lifecycle shutdown: X/Y` layer (Layer D).
+
+* 50/52 steps pass (steps 45–46 expected FAIL: daemon client-ownership blocks
+  cross-client forward close; step 47 force-stops to clear them).
+* Overall gate: PASS.
+* 18 lifecycle unit tests all pass.

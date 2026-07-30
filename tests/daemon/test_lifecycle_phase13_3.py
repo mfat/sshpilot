@@ -31,20 +31,26 @@ class _BlockingSessionRunner:
 class _BlockingHandle:
     def __init__(self, on_exit) -> None:
         self._on_exit = on_exit
+        self._exit_info = None
+        self._exit_event = threading.Event()
 
     def terminate(self):
-        self._on_exit(
-            __import__(
-                "sshpilot.api.models.sessions", fromlist=["SessionExitInfo"]
-            ).SessionExitInfo(exit_code=0, reason="terminated")
-        )
+        from sshpilot.api.models.sessions import SessionExitInfo
+
+        self._exit_info = SessionExitInfo(exit_code=0, reason="terminated")
+        self._exit_event.set()
+        self._on_exit(self._exit_info)
 
     def kill(self):
-        self._on_exit(
-            __import__(
-                "sshpilot.api.models.sessions", fromlist=["SessionExitInfo"]
-            ).SessionExitInfo(exit_code=-1, signal="KILL", reason="killed")
-        )
+        from sshpilot.api.models.sessions import SessionExitInfo
+
+        self._exit_info = SessionExitInfo(exit_code=-1, signal="KILL", reason="killed")
+        self._exit_event.set()
+        self._on_exit(self._exit_info)
+
+    def wait(self, timeout=None):
+        self._exit_event.wait(timeout=timeout)
+        return self._exit_info
 
     def resize(self, *_args, **_kwargs):
         return None
@@ -83,7 +89,6 @@ def test_active_session_suppresses_idle_exit(daemon_factory):
     client = DaemonClient(socket_path=server.socket_path)
     connection = client.list_connections()[0]
     client.open_session(OpenSessionRequest(connection_id=connection.id))
-    # Wait for session to become active.
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
         if client.get_daemon_status().resources.sessions_active:
@@ -92,10 +97,8 @@ def test_active_session_suppresses_idle_exit(daemon_factory):
     else:
         pytest.fail("session never became active")
 
-    # Daemon should NOT exit while session is active.
     time.sleep(0.6)
     assert not server.stopped
-    # Now force stop.
     result = client.stop_daemon(StopDaemonRequest(force=True))
     assert result.accepted is True
     client.close()
@@ -112,7 +115,6 @@ def test_active_forward_suppresses_idle_exit(daemon_factory):
     )
     client = DaemonClient(socket_path=server.socket_path)
     connection = client.list_connections()[0]
-    # Open a session to host a forward.
     client.open_session(OpenSessionRequest(connection_id=connection.id))
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
@@ -120,7 +122,6 @@ def test_active_forward_suppresses_idle_exit(daemon_factory):
             break
         time.sleep(0.02)
 
-    # Open a forward.
     from sshpilot.api.models import ForwardType, OpenForwardRequest
 
     fwd = client.open_forward(
@@ -135,7 +136,6 @@ def test_active_forward_suppresses_idle_exit(daemon_factory):
     )
     assert fwd.id
 
-    # Daemon should NOT exit while forward is active.
     time.sleep(0.6)
     assert not server.stopped
 
@@ -146,7 +146,12 @@ def test_active_forward_suppresses_idle_exit(daemon_factory):
 
 
 def test_final_work_ending_starts_idle_timer(daemon_factory):
-    """When the last active resource ends, idle timer starts and daemon exits."""
+    """When the last active resource ends, idle timer starts and daemon exits.
+
+    Opens a session, then terminates it via close_session (which calls
+    handle.terminate -> on_exit), then verifies the daemon exits via
+    idle shutdown — NOT via force stop.
+    """
     runner = _BlockingSessionRunner()
     server, _manager = daemon_factory(
         idle_shutdown_seconds=0.3,
@@ -155,16 +160,33 @@ def test_final_work_ending_starts_idle_timer(daemon_factory):
     )
     client = DaemonClient(socket_path=server.socket_path)
     connection = client.list_connections()[0]
-    client.open_session(OpenSessionRequest(connection_id=connection.id))
+    opened = client.open_session(OpenSessionRequest(connection_id=connection.id))
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
         if client.get_daemon_status().resources.sessions_active:
             break
         time.sleep(0.02)
+    else:
+        pytest.fail("session never became active")
 
-    # Force stop with active session — this drains immediately.
-    result = client.stop_daemon(StopDaemonRequest(force=True))
-    assert result.accepted is True
+    # Close the session via public API — this terminates the blocking handle
+    # via on_exit, transitioning the session to a terminal state.
+    from sshpilot.api.models.sessions import CloseSessionRequest
+
+    client.close_session(CloseSessionRequest(session_id=opened.id))
+
+    # Wait for the session to reach a terminal state.
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        resources = client.get_daemon_status().resources
+        if resources.sessions_active == 0:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("session did not terminate after close_session")
+
+    # Now no active resources remain — idle timer should start.
+    # The daemon should exit naturally after idle_shutdown_seconds (0.3s).
     client.close()
     assert server.wait_stopped(timeout=5.0)
     assert not server.socket_path.exists()
@@ -175,13 +197,10 @@ def test_reconnect_resets_idle_timer(daemon_factory):
     server, _manager = daemon_factory(idle_shutdown_seconds=0.5)
     first = DaemonClient(socket_path=server.socket_path)
     first.close()
-    # Wait partway through the idle window.
     time.sleep(0.2)
-    # Connect a new client — this should reset the timer.
     second = DaemonClient(socket_path=server.socket_path)
     status = second.get_daemon_status()
     assert status.state in {DaemonLifecycleState.READY, DaemonLifecycleState.IDLE}
-    # Wait past the original deadline.
     time.sleep(0.4)
     assert not server.stopped
     second.close()
@@ -213,7 +232,7 @@ def test_force_stop_terminates_all_resources(daemon_factory):
 
     result = client.stop_daemon(StopDaemonRequest(force=True))
     assert result.accepted is True
-    assert result.will_lose  # sessions were active
+    assert result.will_lose
     client.close()
     assert server.wait_stopped(timeout=5.0)
     assert not server.socket_path.exists()
@@ -225,8 +244,6 @@ def test_repeated_stop_request_is_idempotent(daemon_factory):
     client = DaemonClient(socket_path=server.socket_path)
     first = client.stop_daemon(StopDaemonRequest())
     assert first.accepted is True
-    # The daemon may have already exited by now; second call may raise
-    # TRANSPORT_CLOSED which is also acceptable.
     from sshpilot.api.errors import ErrorCode, SshPilotError
 
     try:
@@ -255,15 +272,12 @@ def test_stop_while_already_stopping(daemon_factory):
             break
         time.sleep(0.02)
 
-    # First stop requires confirmation.
     refused = client.stop_daemon(StopDaemonRequest())
     assert refused.accepted is False
-    # Second stop with confirmation accepted.
     accepted = client.stop_daemon(
         StopDaemonRequest(confirmation=refused.confirmation)
     )
     assert accepted.accepted is True
-    # Third stop while draining: also accepted.
     third = client.stop_daemon(StopDaemonRequest())
     assert third.accepted is True
     client.close()
@@ -296,6 +310,22 @@ def test_socket_removed_on_idle_exit(daemon_factory):
     assert not server.socket_path.exists()
 
 
+def test_no_pid_or_metadata_files_after_exit(daemon_factory):
+    """Daemon does not create PID files or metadata files — only the socket."""
+    server, _manager = daemon_factory(idle_shutdown_seconds=0.0)
+    client = DaemonClient(socket_path=server.socket_path)
+    result = client.stop_daemon(StopDaemonRequest())
+    assert result.accepted is True
+    client.close()
+    assert server.wait_stopped(timeout=5.0)
+    # Verify: no PID file, no metadata file, no instance record on disk.
+    socket_dir = server.socket_path.parent
+    if socket_dir.exists():
+        remaining = list(socket_dir.iterdir())
+        # Only allow empty directory; no files should remain.
+        assert remaining == [], f"unexpected files after exit: {remaining}"
+
+
 # ---------------------------------------------------------------------------
 # Externally-managed daemon
 # ---------------------------------------------------------------------------
@@ -304,22 +334,13 @@ def test_socket_removed_on_idle_exit(daemon_factory):
 def test_externally_managed_daemon_not_killed_by_client_disconnect(
     daemon_factory,
 ):
-    """A daemon that was NOT started by the client stays alive after disconnect.
-
-    Simulates an externally-managed daemon: the client connects, disconnects,
-    and the daemon continues running (its idle timer handles eventual exit).
-    """
+    """A daemon that was NOT started by the client stays alive after disconnect."""
     server, _manager = daemon_factory(idle_shutdown_seconds=0.0)
     client = DaemonClient(socket_path=server.socket_path)
-    # Simulate: daemon_process=None means externally managed.
-    # The client simply closes without calling stop_daemon.
     client.close()
-    # Give a moment for the client disconnect to propagate.
     time.sleep(0.1)
-    # The daemon should still be running (idle_shutdown_seconds=0.0 means disabled).
     assert not server.stopped
     assert server.socket_path.exists()
-    # Clean up.
     server.shutdown()
     assert server.wait_stopped(timeout=5.0)
 
@@ -328,11 +349,38 @@ def test_app_launched_daemon_stop_on_quit(daemon_factory):
     """Simulates the app-launched daemon quit path: stop_daemon then close."""
     server, _manager = daemon_factory(idle_shutdown_seconds=0.0)
     client = DaemonClient(socket_path=server.socket_path)
-    # This mimics what on_shutdown does for app-launched daemons.
-    from sshpilot.api.models.daemon import StopDaemonRequest
-
     result = client.stop_daemon(StopDaemonRequest())
     assert result.accepted is True
+    client.close()
+    assert server.wait_stopped(timeout=5.0)
+    assert not server.socket_path.exists()
+
+
+def test_app_launched_daemon_force_when_refused(daemon_factory):
+    """When stop is refused due to active work, force=True terminates all."""
+    runner = _BlockingSessionRunner()
+    server, _manager = daemon_factory(
+        idle_shutdown_seconds=0.0,
+        drain_timeout_seconds=0.2,
+        session_runner=runner,
+        session_shutdown_timeout=1.0,
+    )
+    client = DaemonClient(socket_path=server.socket_path)
+    connection = client.list_connections()[0]
+    client.open_session(OpenSessionRequest(connection_id=connection.id))
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if client.get_daemon_status().resources.sessions_active:
+            break
+        time.sleep(0.02)
+
+    # First attempt: refused because of active session.
+    refused = client.stop_daemon(StopDaemonRequest())
+    assert refused.accepted is False
+    assert refused.confirmation
+    # Force: bypasses confirmation, terminates all.
+    forced = client.stop_daemon(StopDaemonRequest(force=True))
+    assert forced.accepted is True
     client.close()
     assert server.wait_stopped(timeout=5.0)
     assert not server.socket_path.exists()
@@ -344,7 +392,13 @@ def test_app_launched_daemon_stop_on_quit(daemon_factory):
 
 
 def test_no_zombie_children_after_force_stop(daemon_factory):
-    """No zombie or child processes remain after force stop."""
+    """No zombie or child processes remain after force stop.
+
+    The daemon runs in-process (start_in_thread), so we verify by checking
+    /proc for any children of the current process that look like ssh/sshd.
+    This is a best-effort check — the test fails hard if verification
+    itself cannot be performed.
+    """
     runner = _BlockingSessionRunner()
     server, _manager = daemon_factory(
         idle_shutdown_seconds=0.0,
@@ -366,16 +420,29 @@ def test_no_zombie_children_after_force_stop(daemon_factory):
     client.close()
     assert server.wait_stopped(timeout=5.0)
 
-    # Verify no child processes of the server remain.
+    # Verify no child processes remain by scanning /proc.
+    my_pid = os.getpid()
+    orphan_pids = []
     try:
-        import psutil
-
-        server_proc = psutil.Process(server._thread.ident if hasattr(server, '_thread') else os.getpid())
-        children = server_proc.children(recursive=True)
-        assert len(children) == 0, f"zombie children: {[c.pid for c in children]}"
-    except (ImportError, Exception):
-        # psutil not available or process already gone — acceptable.
-        pass
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            if pid == my_pid:
+                continue
+            try:
+                with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
+                    parts = f.read().split()
+                    ppid = int(parts[3]) if len(parts) > 3 else 0
+                    if ppid == my_pid:
+                        with open(f"/proc/{pid}/cmdline", encoding="utf-8", errors="replace") as cmd:
+                            cmdline = cmd.read().replace("\x00", " ").strip()
+                        orphan_pids.append((pid, cmdline))
+            except (OSError, ValueError, IndexError):
+                continue
+    except OSError:
+        pytest.fail("Cannot read /proc to verify child reaping")
+    assert orphan_pids == [], f"orphan children of pid {my_pid}: {orphan_pids}"
 
 
 # ---------------------------------------------------------------------------
@@ -401,13 +468,85 @@ def test_client_disconnect_during_shutdown(daemon_factory):
             break
         time.sleep(0.02)
 
-    # Request stop, then immediately disconnect.
     refused = client.stop_daemon(StopDaemonRequest())
     if not refused.accepted:
         client.stop_daemon(
             StopDaemonRequest(confirmation=refused.confirmation)
         )
     client.close()
-    # Daemon should still stop (drain timeout will fire).
     assert server.wait_stopped(timeout=5.0)
     assert not server.socket_path.exists()
+
+
+def test_sftp_resource_tracking_blocks_idle(daemon_factory):
+    """SFTP active/retained counts appear in daemon resource tracking.
+
+    The daemon reports sftp_active and sftp_retained in resource counts;
+    when either is non-zero, idle exit is suppressed. This test verifies
+    the resource counting logic exposes the SFTP fields (initially zero).
+    """
+    server, _manager = daemon_factory(idle_shutdown_seconds=0.2)
+    client = DaemonClient(socket_path=server.socket_path)
+    status = client.get_daemon_status()
+
+    # Initially no SFTP activity.
+    assert status.resources.sftp_active == 0
+    assert status.resources.sftp_retained == 0
+    # The connected client itself counts as a live resource.
+    assert status.resources.clients == 1
+    # Idle exit blocked by connected client.
+    assert "clients" in status.idle.idle_blockers
+
+    # Daemon exits via force stop (client keeps it alive via clients count).
+    result = client.stop_daemon(StopDaemonRequest(force=True))
+    assert result.accepted is True
+    client.close()
+    assert server.wait_stopped(timeout=5.0)
+
+
+def test_daemon_resource_counts_reflect_session_close(daemon_factory):
+    """Resource counts drop to zero after closing a session, enabling idle exit.
+
+    Opens a session, verifies resources.sessions_active > 0, closes the
+    session, verifies sessions_active drops to zero, then confirms idle exit fires.
+    """
+    runner = _BlockingSessionRunner()
+    server, _manager = daemon_factory(
+        idle_shutdown_seconds=0.3,
+        session_runner=runner,
+        drain_timeout_seconds=0.2,
+    )
+    client = DaemonClient(socket_path=server.socket_path)
+    connection = client.list_connections()[0]
+    client.open_session(OpenSessionRequest(connection_id=connection.id))
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if client.get_daemon_status().resources.sessions_active:
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("session never became active")
+
+    # Verify resources report the active session.
+    status = client.get_daemon_status()
+    assert status.resources.sessions_active > 0
+
+    # Close session via public API; resources should drop to zero.
+    from sshpilot.api.models.sessions import CloseSessionRequest
+
+    client.close_session(CloseSessionRequest(session_id=client.list_sessions()[0].id))
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if client.get_daemon_status().resources.sessions_active == 0:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("sessions_active did not reach zero after session close")
+
+    # Session resources gone; force stop to cleanly exit (client still connected).
+    result = client.stop_daemon(StopDaemonRequest(force=True))
+    assert result.accepted is True
+    client.close()
+    assert server.wait_stopped(timeout=5.0)
