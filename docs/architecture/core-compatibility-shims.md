@@ -30,3 +30,7 @@ Thin adapters that preserve historical import paths while domain logic lives in
 Prefer importing from `sshpilot.core.*` in new headless/CLI/daemon code.
 GTK may keep historical imports until a dedicated cleanup phase deletes the
 shims after caller migration is complete.
+
+Phase 13.1: shim inventory above remains accurate after ownership wiring
+(`ConnectionService` mutations, `build_ssh_process_spec`, askpass/secret policy,
+import/export plan, transfer `decide_conflict`).

@@ -34,3 +34,6 @@ It is outside the core/api/daemon boundary and is loaded lazily by
 `secret_storage` only when the libsecret backend is used. No silent backend
 fallback: `auto` fallthrough is explicit, ordered, and tested via
 `core.secrets.resolve_lookup_order`.
+
+Phase 13.1 acceptance: unfiltered `pytest`, combined-auth repetitions, temporary
+OpenSSH fixture, and the 40-step GUI smoke are documented under `docs/testing/`.

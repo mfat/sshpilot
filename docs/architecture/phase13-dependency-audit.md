@@ -34,6 +34,12 @@ Baseline: ``801eef44a8cc0418d94e3bd46f29c7b03fdc3e73`` on ``dev``.
 * `.spbk` crypto/archive format remains in `backup_archive` (not domain policy).
 * Recursive transfers remain unsupported (explicit, tested).
 * Full Preferences/sidebar presentation chrome stays GTK (already calls core validators/services).
-* Interactive headed smoke of every UI surface is environment-dependent; automated suites cover ownership.
+
+Phase 13.1 acceptance artifacts:
+
+* `docs/architecture/phase13-completion-matrix.md`
+* `docs/testing/phase13-production-smoke.md` (40/40)
+* `docs/testing/temporary-openssh-fixture.md`
+* `docs/testing/full-suite-validation.md`
 
 See also `core-boundary.md`, `dependency-direction.md`, `core-compatibility-shims.md`, `daemon-test-isolation.md`.

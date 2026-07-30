@@ -37,6 +37,9 @@ src/sshpilot/core/
 | `sshpilot.ssh_connection_builder` | Runtime askpass/env adapter over `core.ssh` |
 | `sshpilot.askpass_utils` | Process askpass helper; classifies via `core.interaction` |
 
+See also: `phase13-completion-matrix.md`, `docs/testing/phase13-production-smoke.md`,
+`docs/testing/temporary-openssh-fixture.md`.
+
 ## Rules
 
 1. Core never displays dialogs or loads GI.

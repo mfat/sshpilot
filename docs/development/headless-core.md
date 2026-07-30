@@ -32,3 +32,7 @@ by create APIs — the CLI inspect/validate/plan paths are read-only).
 ```bash
 pytest -q tests/core
 ```
+
+Phase 13.1 acceptance also requires the unfiltered full suite, combined-auth
+repetitions, temporary OpenSSH integration tests, and the GUI production smoke
+documented in `docs/testing/`.
