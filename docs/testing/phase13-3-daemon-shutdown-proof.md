@@ -70,7 +70,7 @@ Verifies no stale askpass sockets remain in the daemon socket directory.
 
 ## Automated test coverage
 
-New tests in `tests/daemon/test_lifecycle_phase13_3.py` (18 tests):
+New tests in `tests/daemon/test_lifecycle_phase13_3.py` (19 tests):
 
 | Test | What it proves |
 | --- | --- |
@@ -92,6 +92,7 @@ New tests in `tests/daemon/test_lifecycle_phase13_3.py` (18 tests):
 | `test_client_disconnect_during_shutdown` | Disconnect during drain is safe |
 | `test_sftp_resource_tracking_blocks_idle` | SFTP resource counters are present and zero |
 | `test_daemon_resource_counts_reflect_session_close` | Session close drops resource count to zero |
+| `test_claim_orphaned_forward` | New client claims and closes orphaned forward |
 
 ## Smoke harness changes
 
@@ -102,7 +103,15 @@ The production smoke harness now has 52 steps (was 40):
 
 The report format adds a `Lifecycle shutdown: X/Y` layer (Layer D).
 
-* 50/52 steps pass (steps 45–46 expected FAIL: daemon client-ownership blocks
-  cross-client forward close; step 47 force-stops to clear them).
+* 52/52 steps pass.
 * Overall gate: PASS.
-* 18 lifecycle unit tests all pass.
+* Emergency cleanup is **not** invoked.
+* 19 lifecycle unit tests all pass.
+
+### Resource ownership after client restart
+
+When a client disconnects, orphaned resources (forwards, SFTP services,
+transfers) have their `owner_client_id` cleared via `detach_client`. A
+reconnecting client can then claim ownership via `forward.claim` (or close
+directly, since the ownership check passes when `owner_client_id` is None).
+This enables the full public-API shutdown sequence after a GTK restart.

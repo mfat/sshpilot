@@ -56,6 +56,7 @@ from .models.interactions import (
 )
 from .models.operations import (
     AttachSftpRequest,
+    ClaimForwardRequest,
     CloseForwardRequest,
     CloseSftpRequest,
     ForwardSummary,
@@ -105,6 +106,7 @@ from .transport.codec import (
     attach_sftp_request_to_wire,
     cancel_transfer_request_to_wire,
     capabilities_from_wire,
+    claim_forward_request_to_wire,
     claim_terminal_input_request_to_wire,
     close_forward_request_to_wire,
     close_session_request_to_wire,
@@ -806,6 +808,23 @@ class DaemonClient:
         )
         if result is not None:
             self._fail_protocol("The daemon returned an invalid forward close result")
+
+    def claim_forward(self, request: ClaimForwardRequest) -> ForwardSummary:
+        """Claim ownership of an orphaned forward.
+
+        A forward becomes orphaned when its originating client disconnects.
+        Any subsequent client may call ``claim_forward`` to become the new
+        owner, after which it can close or mutate the forward.
+        """
+        self._require_capability(Capability.FORWARDS_WRITE)
+        result = self._request(
+            "forwards.claim",
+            claim_forward_request_to_wire(request),
+        )
+        try:
+            return forward_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid forward claim result")
 
     def send_terminal_input(self, request: TerminalInput) -> None:
         self._require_capability(Capability.TERMINAL_INPUT)

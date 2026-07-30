@@ -1307,6 +1307,9 @@ class DaemonServer:
         forward_runtime = self._forward_runtime
         if forward_runtime is not None:
             forward_runtime.detach_client(state.protocol.client_id)
+        transfer_runtime = self._transfer_runtime
+        if transfer_runtime is not None:
+            transfer_runtime.detach_client(state.protocol.client_id)
         broker = self._interaction_broker
         if broker is not None and state.protocol.client_id is not None:
             broker.disconnect_client(state.protocol.client_id)

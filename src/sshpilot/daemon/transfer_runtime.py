@@ -126,7 +126,7 @@ class _TransferRecord:
     destination_display: str
     state: TransferState
     created_at: datetime
-    owner_client_id: ClientId
+    owner_client_id: Optional[ClientId] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     bytes_total: Optional[int] = None
@@ -793,13 +793,26 @@ class TransferRuntime:
 
     @staticmethod
     def _require_owner(record: _TransferRecord, client_id: ClientId) -> None:
-        if record.owner_client_id != client_id:
+        if record.owner_client_id is not None and record.owner_client_id != client_id:
             raise SshPilotError(
                 ErrorCode.SERVICE_OWNER_REQUIRED,
                 "Only the originating client may mutate this transfer",
                 connection_id=record.connection_id,
                 details={"transfer_id": record.transfer_id},
             )
+
+    def detach_client(self, client_id: Optional[ClientId]) -> None:
+        """Orphan all transfers owned by the disconnecting client.
+
+        The transfer keeps running; ownership is cleared so any
+        reconnecting client can claim and manage the resource.
+        """
+        if client_id is None:
+            return
+        with self._lock:
+            for record in self._records.values():
+                if record.owner_client_id == client_id:
+                    record.owner_client_id = None
 
     def _transition_locked(
         self,

@@ -539,13 +539,19 @@ class SftpServiceRuntime:
             record.attached_clients.discard(client_id)
 
     def detach_client(self, client_id: Optional[ClientId]) -> None:
-        """Remove a disconnected client's attachments. Never closes services."""
+        """Remove a disconnected client's attachments and orphan its services.
+
+        The SFTP service keeps running; ownership is cleared so any
+        reconnecting client can claim and manage the resource.
+        """
 
         if client_id is None:
             return
         with self._lock:
             for record in self._records.values():
                 record.attached_clients.discard(client_id)
+                if record.owner_client_id == client_id:
+                    record.owner_client_id = None
 
     def client_can_interact(self, service_id: SftpServiceId, client_id: ClientId) -> bool:
         with self._lock:

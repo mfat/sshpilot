@@ -550,3 +550,60 @@ def test_daemon_resource_counts_reflect_session_close(daemon_factory):
     assert result.accepted is True
     client.close()
     assert server.wait_stopped(timeout=5.0)
+
+
+def test_claim_orphaned_forward(daemon_factory):
+    """A new client can claim a forward orphaned by a prior client.
+
+    Client A opens a forward, then disconnects (which orphans it via
+    detach_client). Client B claims the orphaned forward, becoming its
+    new owner, and can then close it.
+    """
+    from sshpilot.api.models.operations import (
+        ClaimForwardRequest,
+        CloseForwardRequest,
+    )
+    from sshpilot.api.models import ForwardType, OpenForwardRequest
+
+    server, _manager = daemon_factory(idle_shutdown_seconds=5.0)
+    client_a = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client-a",
+    )
+    fwd = client_a.open_forward(
+        OpenForwardRequest(
+            connection_id=client_a.list_connections()[0].id,
+            type=ForwardType.LOCAL,
+            bind_host="127.0.0.1",
+            bind_port=0,
+            destination_host="127.0.0.1",
+            destination_port=1,
+        )
+    )
+
+    # Client A disconnects — forward should be orphaned.
+    client_a.close()
+    time.sleep(0.3)
+
+    # Client B connects.
+    client_b = DaemonClient(
+        socket_path=server.socket_path,
+        client_id="client-b",
+    )
+    forwards = client_b.list_forwards()
+    active = [f for f in forwards if f.id == fwd.id]
+    assert len(active) == 1
+    # Owner was cleared by detach_client.
+    assert active[0].owner_client_id != "client-b"
+
+    # Client B claims the orphaned forward.
+    claimed = client_b.claim_forward(ClaimForwardRequest(forward_id=fwd.id))
+    assert claimed.owner_client_id == "client-b"
+
+    # Client B can now close it (ownership check passes).
+    client_b.close_forward(CloseForwardRequest(forward_id=fwd.id))
+
+    result = client_b.stop_daemon(StopDaemonRequest(force=True))
+    assert result.accepted is True
+    client_b.close()
+    assert server.wait_stopped(timeout=5.0)

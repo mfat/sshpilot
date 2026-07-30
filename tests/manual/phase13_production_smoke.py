@@ -1187,6 +1187,14 @@ def run_smoke() -> int:
             pass
         ctx.gui.shutdown()
         ctx.gui = None
+
+        # Close the old daemon client so the daemon fires detach_client
+        # and orphan resources owned by this client.
+        old_client = client
+        try:
+            old_client.close()
+        except Exception:
+            pass
         time.sleep(0.5)
 
         # Recreate GTK app against the same ephemeral daemon socket / HOME
@@ -1342,7 +1350,7 @@ def run_smoke() -> int:
         from sshpilot.api.models.sessions import CloseSessionRequest, SessionState
         from sshpilot.api.models.operations import CloseSftpRequest, SftpServiceState
         from sshpilot.api.models.transfers import CancelTransferRequest, TransferState
-        from sshpilot.api.models.operations import CloseForwardRequest, ForwardState
+        from sshpilot.api.models.operations import CloseForwardRequest, ClaimForwardRequest, ForwardState
 
         # 41. Enumerate active daemon resources.
         resources = client.get_daemon_status().resources
@@ -1439,11 +1447,17 @@ def run_smoke() -> int:
         )
 
         # 45. Close all forwards through public API.
+        # Forwards orphaned by a prior client (owner disconnected) must be
+        # claimed before closing.
         fwd_closed = 0
+        fwd_claimed = 0
         fwd_errors = []
         for fwd in client.list_forwards():
             if fwd.state in {ForwardState.ACTIVE, ForwardState.STARTING, ForwardState.CREATED, ForwardState.CLOSING}:
                 try:
+                    if fwd.owner_client_id and fwd.owner_client_id != client._client_id:
+                        client.claim_forward(ClaimForwardRequest(forward_id=fwd.id))
+                        fwd_claimed += 1
                     client.close_forward(CloseForwardRequest(forward_id=fwd.id))
                     fwd_closed += 1
                 except Exception as exc:
@@ -1459,16 +1473,16 @@ def run_smoke() -> int:
             time.sleep(0.1)
         ctx.record(
             45,
-            "Close all forwards via client.close_forward (public API)",
+            "Claim and close all forwards via public API",
             "No active forwards remain",
-            f"closed={fwd_closed} active_after={active_fwd} errors={fwd_errors}",
+            f"claimed={fwd_claimed} closed={fwd_closed} active_after={active_fwd} errors={fwd_errors}",
             active_fwd == 0,
         )
 
         # 46. Verify no active work remains.
-        # Some forwards may be owned by a different client (from before GTK
-        # restart) and cannot be closed by the current client. These are
-        # flagged as blockers; force stop will clear them.
+        # The connected client itself is a "clients" blocker; only
+        # non-client blockers (sessions, forwards, sftp, transfers)
+        # indicate un-drained resources.
         final_resources = client.get_daemon_status().resources
         non_client_blockers = tuple(
             b for b in final_resources.live_blockers if b != "clients"
@@ -1476,20 +1490,17 @@ def run_smoke() -> int:
         no_work = len(non_client_blockers) == 0
         ctx.record(
             46,
-            "Verify no active daemon work remains (non-client live_blockers empty)",
-            "Daemon has no live resource blockers other than connected clients",
+            "Verify no non-client daemon work remains (live_blockers has only 'clients')",
+            "Daemon has no live resource blockers other than connected client",
             f"live_blockers={final_resources.live_blockers} non_client={non_client_blockers}",
             no_work,
         )
 
-        # 47. Request graceful stop; if non-client blockers remain (orphaned
-        # forwards from a prior client), fall back to force stop.
+        # 47. Request graceful stop through DaemonClient.
         stop_result = client.stop_daemon(StopDaemonRequest())
-        if not stop_result.accepted and non_client_blockers:
-            stop_result = client.stop_daemon(StopDaemonRequest(force=True))
         ctx.record(
             47,
-            "Request daemon stop via client.stop_daemon (public API, force if needed)",
+            "Request graceful daemon stop via client.stop_daemon (public API)",
             "Stop accepted",
             f"accepted={stop_result.accepted} state={stop_result.state} message={stop_result.message}",
             stop_result.accepted,
@@ -1731,12 +1742,9 @@ def _write_report(ctx: SmokeContext):
     b_pass, b_total = _count(layer_b)
     c_pass, c_total = _count(layer_c) if layer_c else (0, 0)
     d_pass, d_total = _count(layer_d)
-    # Steps 45-46 may fail when forwards are owned by a pre-restart client;
-    # step 47 force-stops to clear them. Exclude 45-46 from the overall gate.
-    gate_steps = set(range(1, 53)) - {45, 46}
     overall_pass = all(
         by_step.get(step) is not None and by_step[step].status == "PASS"
-        for step in gate_steps
+        for step in range(1, 53)
     )
     gate = "PASS" if overall_pass else "FAIL"
 

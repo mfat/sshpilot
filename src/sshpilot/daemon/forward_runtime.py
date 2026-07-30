@@ -244,7 +244,7 @@ class _ForwardRecord:
     destination_port: Optional[int]
     state: ForwardState
     created_at: datetime
-    owner_client_id: ClientId
+    owner_client_id: Optional[ClientId] = None
     active_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     failure: Optional[ServiceFailure] = None
@@ -628,6 +628,39 @@ class ForwardRuntime:
         if event is not None:
             self._publish((event,))
 
+    def claim_forward(
+        self,
+        forward_id: ForwardId,
+        *,
+        client_id: ClientId,
+    ) -> ForwardSummary:
+        """Claim ownership of an orphaned forward.
+
+        A forward becomes orphaned when its originating client disconnects
+        (``detach_client`` clears ``owner_client_id``). Any subsequent client
+        may call ``claim_forward`` to become the new owner, after which it
+        can close or mutate the forward.
+        """
+        with self._lock:
+            self._require_accepting_commands_locked()
+            record = self._record_locked(forward_id)
+            if record.state is ForwardState.CLOSED:
+                raise SshPilotError(
+                    ErrorCode.INVALID_REQUEST,
+                    "Cannot claim a closed forward",
+                    connection_id=record.connection_id,
+                    details={"forward_id": forward_id},
+                )
+            if record.owner_client_id is not None and record.owner_client_id != client_id:
+                raise SshPilotError(
+                    ErrorCode.SERVICE_OWNER_REQUIRED,
+                    "Only the originating client may claim this forward",
+                    connection_id=record.connection_id,
+                    details={"forward_id": forward_id},
+                )
+            record.owner_client_id = client_id
+            return self._summary_locked(record)
+
     def _close_forward_id(self, forward_id: ForwardId, *, allow_shutdown: bool = False) -> None:
         events: List[Optional[CoreEvent]] = []
         handle: Optional[ForwardProcessHandle] = None
@@ -690,13 +723,22 @@ class ForwardRuntime:
             return bool(record is not None and record.owner_client_id == client_id)
 
     def detach_client(self, client_id: Optional[ClientId]) -> None:
-        """No-op: forwards have a single owner and no separate attachments."""
-        del client_id
+        """Orphan all forwards owned by the disconnecting client.
+
+        The forwarding process keeps running; ownership is cleared so any
+        reconnecting client can claim and manage the resource.
+        """
+        if client_id is None:
+            return
+        with self._lock:
+            for record in self._records.values():
+                if record.owner_client_id == client_id:
+                    record.owner_client_id = None
 
     # -- helpers ------------------------------------------------------
     @staticmethod
     def _require_owner(record: _ForwardRecord, client_id: ClientId) -> None:
-        if record.owner_client_id != client_id:
+        if record.owner_client_id is not None and record.owner_client_id != client_id:
             raise SshPilotError(
                 ErrorCode.SERVICE_OWNER_REQUIRED,
                 "Only the originating client may mutate this forward",

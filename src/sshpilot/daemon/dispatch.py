@@ -31,6 +31,7 @@ from sshpilot.api.transport.codec import (
     attach_session_result_to_wire,
     attach_sftp_request_from_wire,
     capabilities_to_wire,
+    claim_forward_request_from_wire,
     claim_terminal_input_request_from_wire,
     close_forward_request_from_wire,
     close_session_request_from_wire,
@@ -131,6 +132,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "forwards.get": Capability.FORWARDS_READ,
     "forwards.open": Capability.FORWARDS_WRITE,
     "forwards.close": Capability.FORWARDS_WRITE,
+    "forwards.claim": Capability.FORWARDS_WRITE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -329,6 +331,7 @@ class RequestDispatcher:
             "forwards.get": self._handle_get_forward,
             "forwards.open": self._handle_open_forward,
             "forwards.close": self._handle_close_forward,
+            "forwards.claim": self._handle_claim_forward,
         }
 
     def begin_shutdown(self) -> None:
@@ -1297,6 +1300,17 @@ class RequestDispatcher:
                 close_request.forward_id
             ),
         )
+
+    def _handle_claim_forward(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> Any:
+        client_id = self._required_client_id(state)
+        runtime = self._required_forward_runtime()
+        claim_request = claim_forward_request_from_wire(request.params)
+        summary = runtime.claim_forward(claim_request.forward_id, client_id=client_id)
+        return forward_summary_to_wire(summary)
 
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info

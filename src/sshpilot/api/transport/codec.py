@@ -82,6 +82,7 @@ from ..models.terminal import (
 )
 from ..models.operations import (
     AttachSftpRequest,
+    ClaimForwardRequest,
     CloseSftpRequest,
     ForwardSummary,
     ForwardType,
@@ -2523,6 +2524,19 @@ def close_forward_request_from_wire(value: Any) -> CloseForwardRequest:
         context="close forward request",
     )
     return CloseForwardRequest(forward_id=_forward_id(data["forward_id"], "forward id"))
+
+
+def claim_forward_request_to_wire(request: ClaimForwardRequest) -> Dict[str, Any]:
+    return {"forward_id": request.forward_id}
+
+
+def claim_forward_request_from_wire(value: Any) -> ClaimForwardRequest:
+    data = _strict_fields(
+        value,
+        required={"forward_id"},
+        context="claim forward request",
+    )
+    return ClaimForwardRequest(forward_id=_forward_id(data["forward_id"], "forward id"))
 
 
 def daemon_resource_counts_to_wire(counts: DaemonResourceCounts) -> Dict[str, Any]:

@@ -411,6 +411,14 @@ class CloseForwardRequest:
 
 
 @dataclass(frozen=True)
+class ClaimForwardRequest:
+    forward_id: ForwardId
+
+    def __post_init__(self) -> None:
+        require_identifier(self.forward_id, "forward id")
+
+
+@dataclass(frozen=True)
 class PluginArgument:
     """One deliberate plugin argument; secret values stay out of ``repr``."""
 

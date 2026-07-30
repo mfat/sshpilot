@@ -17,8 +17,8 @@ automated evidence, and manual evidence. Baseline start: `b9eca377`.
 | Headless core CLI | `sshpilot-core` / `core/cli.py` | N/A | `tests/core/test_cli.py`, headless imports | Smoke step 39 | Complete |
 | Temporary OpenSSH fixture | `tests/fixtures/temporary_openssh.py` | Smoke / integration | `tests/integration/test_temporary_openssh_fixture.py` | Interactive host ops | Complete |
 | Phase 13.1 production GUI smoke | `tests/manual/phase13_production_smoke.py` | Real GTK + ephemeral daemon | partial harness runs | See smoke doc gap table | **NOT READY** |
-| Phase 13.2 runtime repair + layered smoke | `tests/manual/phase13_production_smoke.py` + daemon auth gate | Real GTK + ephemeral daemon + DaemonClient | daemon/integration + 52-step smoke (gate PASS) | `phase13-production-smoke.md` layered PASS | **Complete** |
-| Phase 13.3 daemon lifecycle proof + shutdown | `tests/manual/phase13_production_smoke.py` (steps 41-52) + `tests/daemon/test_lifecycle_phase13_3.py` | Ephemeral daemon + public API shutdown + idle/force tests | 52-step smoke (50/52, gate PASS) + 18 lifecycle tests | `phase13-3-daemon-shutdown-proof.md` | **Complete** |
+| Phase 13.2 runtime repair + layered smoke | `tests/manual/phase13_production_smoke.py` + daemon auth gate | Real GTK + ephemeral daemon + DaemonClient | daemon/integration + 52-step smoke (52/52, gate PASS) | `phase13-production-smoke.md` layered PASS | **Complete** |
+| Phase 13.3 daemon lifecycle proof + shutdown | `tests/manual/phase13_production_smoke.py` (steps 41-52) + `tests/daemon/test_lifecycle_phase13_3.py` | Ephemeral daemon + public API shutdown + idle/force tests | 52-step smoke (52/52, gate PASS) + 19 lifecycle tests | `phase13-3-daemon-shutdown-proof.md` | **Complete** |
 
 ## Stale claims corrected
 
