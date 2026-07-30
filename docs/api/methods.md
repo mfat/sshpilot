@@ -57,6 +57,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `list_forwards` | Daemon only | `forwards.read` |
 | `get_forward` | Daemon only | `forwards.read` |
 | `open_forward` | Daemon only | `forwards.write` |
+| `claim_forward` | Daemon only | `forwards.write` |
 | `close_forward` | Daemon only | `forwards.write` |
 | `get_daemon_status` | Daemon only | `daemon.status` |
 | `get_daemon_diagnostics` | Daemon only | `daemon.status` |
@@ -74,6 +75,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: cancel_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: cancel_transfer status=daemon-only capability=transfers.write -->
 <!-- api-method-contract: claim_interaction status=daemon-only capability=interactions.respond -->
+<!-- api-method-contract: claim_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: close status=implemented capability=none -->
 <!-- api-method-contract: close_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: close_session status=daemon-only capability=sessions.write -->
