@@ -4,6 +4,8 @@ import types
 import subprocess
 import asyncio
 
+import pytest
+
 # Stub external modules not available in the test environment before importing the app code.
 # Create dummy 'gi' module
 if 'gi' not in sys.modules:
@@ -75,6 +77,10 @@ def _generate_key_and_certificate(tmpdir: str) -> tuple[str, str]:
 
 
 def test_certificate_support(tmp_path):
+    import shutil
+
+    if shutil.which("ssh-keygen") is None:
+        pytest.skip("ssh-keygen not available")
     key_path, cert_path = _generate_key_and_certificate(str(tmp_path))
 
     data = {

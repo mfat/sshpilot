@@ -42,7 +42,9 @@ def _generate_test_key(path):
 
 
 def test_discover_keys_recurses(tmp_path):
-    # Skip if gi (PyGObject) is unavailable in system python
+    # Skip if system python3 or gi (PyGObject) is unavailable
+    if not os.path.exists("/usr/bin/python3"):
+        pytest.skip("/usr/bin/python3 not available")
     gi_check = subprocess.run([
         "/usr/bin/python3", "-c", "import gi"
     ])

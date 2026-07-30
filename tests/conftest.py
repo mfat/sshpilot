@@ -17,24 +17,11 @@ import pytest
 os.environ["LANGUAGE"] = "en"
 
 
-# Pre-existing test failures tracked in #987. The original list (introduced by
-# the CI PR #985) bundled three buckets: API/architecture drift, gi/paramiko stub
-# gaps, and order-dependent module-state leakage. The drift and order-dependence
-# entries have since been fixed at the source (tests rewritten to today's
-# native-SSH behaviour; order-sensitive files made to re-import a consistent
-# module set / use the app's own class objects). What remains is purely
-# environment-specific: tests that need a binary/package absent from CI's slim
-# image. They pass locally (where the binary exists) but fail in CI, so they stay
-# marked xfail; ``strict=False`` means a local XPASS won't fail the build.
-#
-# Remove an entry once CI grows the dependency it needs.
-_KNOWN_FAILING_NODEIDS = {
-    # Environment-specific (need binaries / pip packages not in CI's slim image).
-    # These pass locally where the binaries exist but fail in CI's slim image, so
-    # they stay tracked (strict=False means a local XPASS won't fail the build).
-    "tests/test_certificate_support.py::test_certificate_support",  # needs ssh-keygen
-    "tests/test_key_discovery.py::test_discover_keys_recurses",     # needs /usr/bin/python3 + paramiko
-}
+# Pre-existing environment gaps used to be tracked as non-strict xfails in #987.
+# Those entries XPASS on developer machines (ssh-keygen / system python present).
+# Prefer explicit skipif inside the tests themselves so CI skips cleanly and a
+# local pass is a normal PASS — not an XPASS.
+_KNOWN_FAILING_NODEIDS: set[str] = set()
 
 
 def pytest_ignore_collect(collection_path, config):
