@@ -72,7 +72,7 @@ class GuiApp:
         self._saved_threadhook = None
 
     # -- lifecycle ---------------------------------------------------------
-    def boot(self):
+    def boot(self, application_id: str | None = None):
         Gio = self.Gio
         # The app installs process-wide exception hooks; remember the originals
         # so teardown can restore them for the rest of the (non-GUI) suite.
@@ -85,6 +85,10 @@ class GuiApp:
         # NON_UNIQUE: don't hijack a running sshpilot over D-Bus and don't trip
         # single-instance behaviour inside the test process.
         self.app.set_flags(self.app.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
+        # Unique bus path so smoke can restart GTK in-process without
+        # "object is already exported" collisions.
+        if application_id:
+            self.app.set_application_id(application_id)
         self.app.register(None)
         self.app.activate()  # runs on_activate -> builds + presents MainWindow
         self.window = self.app.window

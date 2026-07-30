@@ -15,7 +15,8 @@ automated evidence, and manual evidence. Baseline start: `b9eca377`.
 | Forwarding validation shared | `core/forwards.validate_forwarding_rule` | Connection dialog port-forward editor | `tests/core/test_validation.py` | Smoke steps 23–26 | Complete |
 | Daemon tests isolated | `tests/daemon/conftest.py` XDG fixtures | N/A (tests only) | `tests/daemon/test_daemon_isolation.py` | Smoke step 40 | Complete |
 | Headless core CLI | `sshpilot-core` / `core/cli.py` | N/A | `tests/core/test_cli.py`, headless imports | Smoke step 39 | Complete |
-| Temporary OpenSSH fixture | `tests/fixtures/temporary_openssh.py` | Smoke / integration | `tests/integration/test_temporary_openssh_fixture.py` | All interactive smoke host ops | Complete |
+| Temporary OpenSSH fixture | `tests/fixtures/temporary_openssh.py` | Smoke / integration | `tests/integration/test_temporary_openssh_fixture.py` | Interactive host ops | Complete |
+| Phase 13.1 production GUI smoke | `tests/manual/phase13_production_smoke.py` | Real GTK + ephemeral daemon | partial harness runs | See smoke doc gap table | **NOT READY** |
 
 ## Stale claims corrected
 
@@ -24,3 +25,6 @@ automated evidence, and manual evidence. Baseline start: `b9eca377`.
 * Production native SSH construction goes through `build_ssh_process_spec`.
 * Combined-auth tests are part of the unfiltered suite (not deselected for green).
 * Readiness uses only `READY FOR FINAL RELEASE HARDENING` or `NOT READY`.
+* A filtered pytest run or CLI/policy-only smoke is **not** Phase 13.1 acceptance.
+* The earlier “40/40 PASS” smoke table was **overstated** (external sftp/scp, daemon SSH off,
+  no real GTK restart). Current status: **NOT READY**.
