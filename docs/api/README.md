@@ -45,18 +45,16 @@ these documents describe the concrete contract.
 
 `InProcessClient` advertises connection read/event/write support.
 `DaemonClient` additionally negotiates daemon-lifetime session lifecycle,
-binary PTY terminal streaming, and typed authentication/trust interaction
-capabilities.
+binary PTY terminal streaming, typed authentication/trust interactions, SFTP,
+transfers, and port forwarding over a secure per-user Unix socket.
 
-The daemon supports handshake, capability discovery, connection CRUD/events,
-session control/events, terminal input/output/resize/replay, and typed
-host-key/password/private-key-passphrase interactions over a secure per-user
-Unix socket. SFTP, forwarding, plugins, remote transport, and broad secret
-operations remain unsupported.
+See the [Phase 13.2 topic guides](#phase-132-topic-guides) and
+[capabilities.md](capabilities.md) for the current advertised surface.
+Plugins, remote multi-host transport, and a broad frontend secret CRUD API
+remain out of scope for Protocol v1.
 
-The API package is GTK-free. The existing managers wrapped by
-`InProcessClient` are not yet GTK/GObject-free, so this is a frontend-neutral
-boundary rather than a completed headless core.
+The API package is GTK-free. Compatibility shims over existing managers are
+documented in [core-compatibility-shims.md](../architecture/core-compatibility-shims.md).
 
 See [the daemon transport architecture](../architecture/daemon-transport.md)
 for concurrency, socket security, lifecycle, and deferred platform work.

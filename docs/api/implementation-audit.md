@@ -1,6 +1,12 @@
 # API implementation audit
 
-Audit date: 2026-07-29. This inventory describes the repository after the
+> **Superseded for Phase 10–13.2 runtime status.** Prefer
+> [capabilities.md](capabilities.md), [methods.md](methods.md), and the
+> [Phase 13.2 topic guides](README.md#phase-132-topic-guides). This inventory
+> still documents early Protocol v1 scaffolding and should not be read as the
+> current SFTP/forward/interaction/terminal capability matrix.
+
+Audit date: 2026-07-29 (historical). This inventory describes the repository after the
 daemon-owned session lifecycle foundation. “Snapshot” means the
 name/field/value surface is protected by
 `tests/api/snapshots/public_api.json`; it does not prove runtime semantics.
