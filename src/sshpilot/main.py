@@ -169,9 +169,10 @@ class SshPilotApplication(Adw.Application):
 
     def __init__(self, verbose: bool = False, quiet: bool = False,
                  isolated: bool = False, log_gtk_warnings: bool = False,
-                 fatal_warnings: bool = False):
+                 fatal_warnings: bool = False,
+                 application_id: str | None = None):
         super().__init__(
-            application_id='io.github.mfat.sshpilot',
+            application_id=application_id or 'io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
 

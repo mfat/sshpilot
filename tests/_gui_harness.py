@@ -81,14 +81,15 @@ class GuiApp:
 
         from sshpilot.main import SshPilotApplication
 
-        self.app = SshPilotApplication(isolated=True)
+        # Unique application_id must be set at construction — set_application_id
+        # after Adw.Application.__init__ does not always rebind the D-Bus path.
+        self.app = SshPilotApplication(
+            isolated=True,
+            application_id=application_id or 'io.github.mfat.sshpilot',
+        )
         # NON_UNIQUE: don't hijack a running sshpilot over D-Bus and don't trip
         # single-instance behaviour inside the test process.
         self.app.set_flags(self.app.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
-        # Unique bus path so smoke can restart GTK in-process without
-        # "object is already exported" collisions.
-        if application_id:
-            self.app.set_application_id(application_id)
         self.app.register(None)
         self.app.activate()  # runs on_activate -> builds + presents MainWindow
         self.window = self.app.window
@@ -107,6 +108,7 @@ class GuiApp:
             tid = getattr(self.app, '_gc_timer_id', None)
             if tid:
                 self.GLib.source_remove(tid)
+                self.app._gc_timer_id = None
         except Exception:
             pass
         gc.enable()
@@ -120,6 +122,26 @@ class GuiApp:
             self.pump(200)
         except Exception:
             pass
+        # Fully quit so D-Bus exports are released before a second instance boots.
+        try:
+            if self.app is not None:
+                self.app.quit()
+                self.pump(300)
+        except Exception:
+            pass
+        try:
+            if self.app is not None:
+                # Hold a strong ref until unref; clear window first.
+                self.window = None
+                app = self.app
+                self.app = None
+                # Drop last Python refs; Gio releases the exported object.
+                del app
+                gc.collect()
+                self.pump(200)
+        except Exception:
+            self.app = None
+            self.window = None
 
     # -- main loop ---------------------------------------------------------
     def pump(self, ms=300):
