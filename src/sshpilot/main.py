@@ -964,6 +964,24 @@ class SshPilotApplication(Adw.Application):
         client = getattr(selection, 'client', None)
         if client is None and self.window is not None:
             client = getattr(self.window, 'client', None)
+
+        # App-launched daemon: request graceful stop before closing the
+        # transport.  Externally-managed daemons (daemon_process is None)
+        # are left alone — their own idle policy will shut them down.
+        daemon_process = getattr(selection, 'daemon_process', None)
+        if client is not None and daemon_process is not None:
+            try:
+                from .api.models.daemon import StopDaemonRequest
+                client.stop_daemon(StopDaemonRequest())
+                logger.info(
+                    "Requested graceful stop of app-launched daemon"
+                )
+            except Exception:
+                logger.debug(
+                    "Daemon graceful stop request failed (will idle out)",
+                    exc_info=True,
+                )
+
         if client is not None:
             try:
                 client.close()
