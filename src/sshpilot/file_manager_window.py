@@ -333,13 +333,18 @@ class FileManagerWindow(Adw.Window):
         self._clipboard_operation: Optional[str] = None
 
 
-        # Prime the left (local) pane with local home directory initially
-        try:
-            local_home = os.path.expanduser("~")
-            self._load_local(local_home)
-            self._left_pane.push_history(local_home)
-        except Exception as exc:
-            self._left_pane.show_toast(f"Failed to load local home: {exc}")
+        # Schedule initial local home directory load on the idle loop so widget
+        # instantiation in __init__ returns immediately without blocking on disk I/O.
+        def _deferred_load_local():
+            try:
+                local_home = os.path.expanduser("~")
+                self._load_local(local_home)
+                self._left_pane.push_history(local_home)
+            except Exception as exc:
+                self._left_pane.show_toast(f"Failed to load local home: {exc}")
+            return False
+
+        GLib.idle_add(_deferred_load_local, priority=GLib.PRIORITY_LOW)
 
         # Connect pane signals
         for pane in (self._left_pane, self._right_pane):
