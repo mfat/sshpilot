@@ -641,6 +641,42 @@ def test_broker_options_win_over_conflicting_preference_overrides(
     assert argv[-1] == "example"
 
 
+def test_strict_host_key_mode_selects_first_occurrence() -> None:
+    """Match OpenSSH: first obtained StrictHostKeyChecking wins."""
+    argv = (
+        "/usr/bin/ssh",
+        "-o",
+        "StrictHostKeyChecking=ask",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-oStrictHostKeyChecking=no",
+        "example",
+    )
+    assert InteractionBroker._strict_host_key_mode(argv, {}) == "ask"
+    assert InteractionBroker._strict_host_key_mode(
+        (
+            "/usr/bin/ssh",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "StrictHostKeyChecking=ask",
+            "example",
+        ),
+        {},
+    ) == "accept-new"
+    # Glued -o form as first hit.
+    assert InteractionBroker._strict_host_key_mode(
+        (
+            "/usr/bin/ssh",
+            "-oStrictHostKeyChecking=yes",
+            "-o",
+            "StrictHostKeyChecking=ask",
+            "example",
+        ),
+        {},
+    ) == "yes"
+
+
 def test_prepare_launch_ask_uses_session_known_hosts(
     broker: InteractionBroker,
     monkeypatch,

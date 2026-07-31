@@ -361,12 +361,16 @@ class InteractionBroker:
         argv: Sequence[str],
         effective: dict[str, str],
     ) -> str:
-        """Resolve StrictHostKeyChecking; default matches Preferences (accept-new)."""
+        """Resolve StrictHostKeyChecking; default matches Preferences (accept-new).
+
+        OpenSSH keeps the first obtained value for each option, so scan argv
+        left-to-right and stop at the first StrictHostKeyChecking=.
+        """
 
         index = 0
         end = len(argv) - 1
         found: Optional[str] = None
-        while index < end:
+        while index < end and found is None:
             argument = argv[index]
             if argument == "-o" and index + 1 < end:
                 value = argv[index + 1]
