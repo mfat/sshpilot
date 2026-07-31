@@ -373,20 +373,37 @@ class PreferencesWindow(Adw.NavigationPage):
 
         return self.pages.get(page_id)
 
+    # Pages with expensive setup (e.g. CLI subprocess probes, plugin indexing)
+    # that should remain strictly on-demand and not pre-built during idle.
+    _EXPENSIVE_PAGE_IDS = {"security-&-credentials", "plugins"}
+
     def _schedule_idle_page_building(self):
-        """Schedule background building of remaining preference pages on low-priority idle."""
+        """Schedule deferred main-thread building of remaining lightweight preference pages."""
         if not getattr(self, '_idle_building_scheduled', False):
             self._idle_building_scheduled = True
             GLib.idle_add(self._build_next_idle_page, priority=GLib.PRIORITY_LOW)
 
     def _build_next_idle_page(self):
         builders = getattr(self, '_page_builders', {})
-        if not builders:
+        next_id = next(
+            (pid for pid in builders.keys() if pid not in self._EXPENSIVE_PAGE_IDS),
+            None,
+        )
+        if next_id is None:
             self._idle_building_scheduled = False
             return GLib.SOURCE_REMOVE
-        page_id = next(iter(builders.keys()))
-        self._ensure_page_built(page_id)
-        return GLib.SOURCE_CONTINUE if getattr(self, '_page_builders', None) else GLib.SOURCE_REMOVE
+
+        self._ensure_page_built(next_id)
+
+        remaining_lightweight = any(
+            pid for pid in getattr(self, '_page_builders', {}).keys()
+            if pid not in self._EXPENSIVE_PAGE_IDS
+        )
+        if not remaining_lightweight:
+            self._idle_building_scheduled = False
+            return GLib.SOURCE_REMOVE
+
+        return GLib.SOURCE_CONTINUE
 
     def on_sidebar_row_selected(self, listbox, row):
         """Handle sidebar row selection"""

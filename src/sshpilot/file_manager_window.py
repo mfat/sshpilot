@@ -25,7 +25,6 @@ import posixpath
 import shutil
 import types
 import weakref
-import types
 from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -600,8 +599,18 @@ class FileManagerWindow(Adw.Window):
 
     def _teardown_backend(self) -> None:
         """Close the current SFTP backend and reset auth/error state."""
-        manager = self._manager
+        manager = getattr(self, "_manager", None)
+        if isinstance(manager, (types.FunctionType, types.MethodType)):
+            manager = None
+        handlers = getattr(self, "_manager_signal_handlers", None)
+        self._manager_signal_handlers = []
         self._manager = None
+        if manager is not None and isinstance(handlers, (list, tuple)):
+            for signal_name, handler_id in handlers:
+                try:
+                    manager.disconnect(handler_id)
+                except Exception:
+                    pass
         if manager is not None:
             try:
                 manager.close()
@@ -640,11 +649,6 @@ class FileManagerWindow(Adw.Window):
         manager = self._connection_manager
         if manager is None:
             return False
-        try:
-            if hasattr(manager, 'get_connection_password'):
-                if manager.get_connection_password(connection):
-                    return True
-        except Exception:
             pass
         try:
             host = (
@@ -943,7 +947,7 @@ class FileManagerWindow(Adw.Window):
             self._left_pane.set_visible(True)
             toggle_button.set_tooltip_text(_("Hide Local Pane"))
 
-    def _on_connected(self, *_args) -> None:
+    def _on_connected(self, sender=None, *_args) -> None:
         """Handle successful connection and load directories."""
         if getattr(self, "_is_disposed", False):
             logger.debug("Ignoring late connected event after file manager teardown")
@@ -951,6 +955,9 @@ class FileManagerWindow(Adw.Window):
         manager = getattr(self, "_manager", None)
         if manager is None or callable(manager):
             logger.debug("Ignoring late connected event after file manager teardown")
+            return
+        if sender is not None and not callable(sender) and sender is not manager:
+            logger.debug("Ignoring late connected event from stale backend")
             return
         self._password_retry_count = 0
         self._password_dialog_shown = False
@@ -964,13 +971,19 @@ class FileManagerWindow(Adw.Window):
                 manager.listdir(pending)
 
 
-    def _on_progress(self, _manager, fraction: float, message: str) -> None:
+    def _on_progress(self, sender, fraction: float, message: str) -> None:
+        manager = getattr(self, "_manager", None)
+        if sender is not None and sender is not manager:
+            return
         self._show_progress(fraction, message)
 
-    def _on_operation_error(self, _manager, message: str) -> None:
+    def _on_operation_error(self, sender, message: str) -> None:
         """Handle operation error with toast."""
-        if getattr(self, "_is_disposed", False) or getattr(self, "_manager", None) is None:
+        manager = getattr(self, "_manager", None)
+        if getattr(self, "_is_disposed", False) or manager is None:
             logger.debug("Ignoring late operation-error event after file manager teardown")
+            return
+        if sender is not None and sender is not manager:
             return
         logger.warning("File manager operation error: %s", message)
         # Cancel any pending loading toast timeouts since operation failed
@@ -1018,10 +1031,13 @@ class FileManagerWindow(Adw.Window):
             # Overlay might be destroyed or invalid, ignore
             pass
 
-    def _on_connection_error(self, _manager, message: str) -> None:
+    def _on_connection_error(self, sender, message: str) -> None:
         """Handle connection / authentication failure with toast or alert."""
-        if getattr(self, "_is_disposed", False) or getattr(self, "_manager", None) is None:
+        manager = getattr(self, "_manager", None)
+        if getattr(self, "_is_disposed", False) or manager is None:
             logger.debug("Ignoring late connection-error event after file manager teardown")
+            return
+        if sender is not None and sender is not manager:
             return
         logger.warning("File manager connection error: %s", message)
         def show_error():
@@ -1099,10 +1115,13 @@ class FileManagerWindow(Adw.Window):
         self._cleanup_manager()
 
     def _on_directory_loaded(
-        self, _manager, path: str, entries: Iterable[FileEntry]
+        self, sender, path: str, entries: Iterable[FileEntry]
     ) -> None:
-        if getattr(self, "_is_disposed", False) or getattr(self, "_manager", None) is None:
+        manager = getattr(self, "_manager", None)
+        if getattr(self, "_is_disposed", False) or manager is None:
             logger.debug("Ignoring late directory-loaded event after file manager teardown")
+            return
+        if sender is not None and sender is not manager:
             return
         entries_list = list(entries)  # Convert to list for logging and reuse
         logger.debug(f"_on_directory_loaded: path={path}, entries_count={len(entries_list)}")
@@ -1164,9 +1183,12 @@ class FileManagerWindow(Adw.Window):
         
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
 
-    def _on_directory_counts(self, _manager, path: str, counts) -> None:
+    def _on_directory_counts(self, sender, path: str, counts) -> None:
         """Background folder item-counts arrived; forward to whichever pane is
         currently showing this path (the pane also guards on its current path)."""
+        manager = getattr(self, "_manager", None)
+        if sender is not None and sender is not manager:
+            return
         for pane in (self._left_pane, self._right_pane):
             if pane is None:
                 continue

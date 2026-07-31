@@ -169,3 +169,64 @@ def test_placeholder_is_open_fails_closed_on_exception():
     # Verification failure must fail closed (return False) instead of allowing creation
     assert mixin._placeholder_is_open(placeholder_info) is False
     assert mixin._placeholder_is_open(None) is False
+
+
+def test_signals_disconnected_on_teardown_backend(monkeypatch):
+    _ensure_cairo_stub()
+    from sshpilot.file_manager_window import FileManagerWindow
+
+    win = FileManagerWindow.__new__(FileManagerWindow)
+    win._connection_error_reported = False
+
+    mock_manager = MagicMock()
+    disconnected_handlers = []
+    mock_manager.disconnect = lambda handler_id: disconnected_handlers.append(handler_id)
+
+    win._manager = mock_manager
+    win._manager_signal_handlers = [
+        ("connected", 201),
+        ("connection-error", 202),
+        ("directory-loaded", 203),
+    ]
+
+    win._teardown_backend()
+
+    assert win._manager is None
+    assert win._manager_signal_handlers == []
+    assert disconnected_handlers == [201, 202, 203]
+    mock_manager.close.assert_called_once()
+
+
+def test_stale_manager_events_ignored(monkeypatch):
+    _ensure_cairo_stub()
+    from sshpilot.file_manager_window import FileManagerWindow
+
+    win = FileManagerWindow.__new__(FileManagerWindow)
+    win._is_disposed = False
+    win._pending_paths = {}
+
+    current_manager = MagicMock()
+    stale_manager = MagicMock()
+
+    win._manager = current_manager
+
+    # _on_connected with stale_manager should be ignored
+    win._show_progress = MagicMock()
+    win._on_connected(stale_manager)
+    win._show_progress.assert_not_called()
+
+    # _on_directory_loaded with stale_manager should be ignored
+    win._right_pane = MagicMock()
+    win._left_pane = MagicMock()
+    win._on_directory_loaded(stale_manager, "/path", [])
+    win._right_pane.show_entries.assert_not_called()
+
+    # _on_progress with stale_manager should be ignored
+    win._on_progress(stale_manager, 0.5, "loading")
+    win._show_progress.assert_not_called()
+
+    # _on_connection_error with stale_manager should be ignored
+    win._clear_progress_toast = MagicMock()
+    win._on_connection_error(stale_manager, "error")
+    win._clear_progress_toast.assert_not_called()
+
