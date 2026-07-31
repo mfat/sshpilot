@@ -1,16 +1,27 @@
 # GTK / VTE bloom-filter crash
 
-## Summary
+## Update (Phase 14.1)
 
-On this development host, opening a real VTE terminal tab via
-`terminal_manager.connect_to_host` under daemon-backed SSH can abort the
-process with a GTK/GLib bloom-filter assertion (or related Adwaita
-`dialog_closing_cb` assert when dialogs race during teardown).
+On this host (GTK 4.22.4 / libadwaita 1.9.1 / VTE 0.84.0), production
+`TerminalManager.connect_to_host` → daemon `TerminalWidget` → `vte.feed` now
+passes repeatedly under:
 
-Phase 13.2 keeps **daemon/API acceptance independent** of the VTE widget path.
-The production smoke defaults to proving `DaemonClient.open_session` →
-`SessionState.RUNNING` (the same API the GTK terminal uses). Opt into the
-widget path with `SSHPILOT_SMOKE_GTK_TERMINAL=1`.
+```bash
+SSHPILOT_GUI_TESTS=1 GSK_RENDERER=cairo GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 \
+  xvfb-run -a pytest -m gui tests/gui/test_phase14_terminal_integration.py
+```
+
+Observed: 4/4 terminal integration tests PASS (connect, visible output, input,
+resize) without bloom-filter abort. Restore/FM/quit GTK tests also PASS in
+isolation.
+
+Remaining instability is intermittent `terminal input was rejected` during
+attach races (application logic), not the historical bloom-filter abort.
+
+## Historical summary
+
+Earlier Phase 13.2/13.3 smoke treated VTE as opt-in (`SSHPILOT_SMOKE_GTK_TERMINAL=1`)
+after bloom-filter / Adwaita dialog-host aborts under harness churn.
 
 ## Captured environment
 
@@ -23,43 +34,8 @@ widget path with `SSHPILOT_SMOKE_GTK_TERMINAL=1`.
 | VTE | 0.84.0 |
 | Renderer | `GSK_RENDERER=cairo`, `GDK_BACKEND=x11`, `LIBGL_ALWAYS_SOFTWARE=1` |
 
-## Observed aborts
+## Policy
 
-1. **VTE / bloom-filter** (historical, opt-in GTK terminal):
-   Process aborts when churning VTE tabs under the smoke harness.
-2. **Adwaita dialog host** (`adw-dialog-host.c:221` `dialog_closing_cb`):
-   Triggered when the harness poked `.response()` on toplevels, or when builtin
-   file-manager windows were opened/closed around import/export. Mitigated by
-   removing dialog poking and not requiring FM window open for Layer A SFTP.
-
-## Root-cause determination
-
-| Hypothesis | Status |
-| --- | --- |
-| Smoke harness lifecycle (dialog poking) | Confirmed contributor for Adwaita abort |
-| Multiple GTK application instances | Mitigated with unique `application_id` + `NON_UNIQUE` + quit |
-| VTE misuse in production path | Not proven; needs minimal reproducer |
-| External GTK/VTE/Adwaita bug | Possible on GTK 4.22.4 / Adw 1.9.1 / VTE 0.84.0 |
-
-## Isolation policy
-
-* Layer A (daemon/API) must pass without VTE tabs.
-* Layer B (GTK controllers) may use daemon client adapters without embedding VTE.
-* Layer C (widget) VTE terminal remains opt-in until a minimal reproducer either
-  proves app misuse or pins an upstream bug.
-
-## Minimal reproducer (opt-in)
-
-```bash
-SSHPILOT_SMOKE_GTK_TERMINAL=1 GSK_RENDERER=cairo GDK_BACKEND=x11 \
-  LIBGL_ALWAYS_SOFTWARE=1 SSHPILOT_GUI_TESTS=1 PYTHONPATH=src:. \
-  xvfb-run -a python3 -u tests/manual/phase13_production_smoke.py
-```
-
-Also try Wayland (if available) and `GSK_RENDERER=cairo` vs default.
-
-## Remaining limitation
-
-Do **not** mark the real GTK VTE terminal path green on this environment until
-the bloom-filter abort is fixed or conclusively attributed to an upstream
-dependency with a tracked minimal reproducer.
+* Phase 14 production VTE gate is mandatory (not opt-in).
+* Prefer `xvfb-run` + cairo for automated proof on this VM.
+* Do not mark packaged readiness from source-tree VTE success alone.

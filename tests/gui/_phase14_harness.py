@@ -13,7 +13,6 @@ import secrets
 import tempfile
 import threading
 import time
-import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -440,49 +439,64 @@ class Phase14Harness:
     def connect_terminal(self, connection, *, timeout: float = 45.0) -> Any:
         """User path: TerminalManager.connect_to_host → daemon TerminalWidget."""
         win = self.gui.window
-        self.start_auth_helper(submit_password=self.openssh.password)
-        win.terminal_manager.connect_to_host(connection, force_new=True)
-        self.pump_until(
-            lambda: self.find_terminal_widget(connection) is not None,
-            timeout=min(15.0, timeout),
-            label="terminal widget created",
-        )
-        term = self.find_terminal_widget(connection)
-
-        def _connected():
-            t = self.find_terminal_widget(connection)
-            if t is None:
-                return False
-            ctrl = getattr(t, "_daemon_controller", None)
-            if ctrl is None:
-                return False
-            if getattr(t, "is_connected", False):
-                return True
+        last_error = None
+        for attempt in range(2):
+            self.start_auth_helper(submit_password=self.openssh.password)
             try:
-                from sshpilot.terminal_session_controller import TerminalSessionState
+                win.terminal_manager.connect_to_host(connection, force_new=True)
+                self.pump_until(
+                    lambda: self.find_terminal_widget(connection) is not None,
+                    timeout=min(15.0, timeout),
+                    label="terminal widget created",
+                )
+                self.find_terminal_widget(connection)
 
-                state = getattr(ctrl, "state", None)
-                if state in {
-                    TerminalSessionState.FAILED,
-                    TerminalSessionState.CLOSED,
-                }:
-                    raise Phase14EvidenceError(
-                        "daemon terminal failed before connected",
-                        evidence={
-                            "state": getattr(state, "value", state),
-                            "session_id": getattr(
-                                getattr(ctrl, "tab_state", None), "session_id", None
-                            ),
-                        },
-                    )
-            except Phase14EvidenceError:
-                raise
-            except Exception:
-                pass
-            return False
+                def _connected():
+                    t = self.find_terminal_widget(connection)
+                    if t is None:
+                        return False
+                    ctrl = getattr(t, "_daemon_controller", None)
+                    if ctrl is None:
+                        return False
+                    if getattr(t, "is_connected", False):
+                        return True
+                    try:
+                        from sshpilot.terminal_session_controller import (
+                            TerminalSessionState,
+                        )
 
-        self.pump_until(_connected, timeout=timeout, label="daemon terminal connected")
-        return self.find_terminal_widget(connection)
+                        state = getattr(ctrl, "state", None)
+                        if state in {
+                            TerminalSessionState.FAILED,
+                            TerminalSessionState.CLOSED,
+                        }:
+                            raise Phase14EvidenceError(
+                                "daemon terminal failed before connected",
+                                evidence={
+                                    "state": getattr(state, "value", state),
+                                    "session_id": getattr(
+                                        getattr(ctrl, "tab_state", None),
+                                        "session_id",
+                                        None,
+                                    ),
+                                    "attempt": attempt,
+                                },
+                            )
+                    except Phase14EvidenceError:
+                        raise
+                    except Exception:
+                        pass
+                    return False
+
+                self.pump_until(
+                    _connected, timeout=timeout, label="daemon terminal connected"
+                )
+                return self.find_terminal_widget(connection)
+            except Phase14EvidenceError as exc:
+                last_error = exc
+                self.pump(300)
+                continue
+        raise last_error or Phase14EvidenceError("connect_terminal failed")
 
     def find_terminal_widget(self, connection=None) -> Any:
         win = self.gui.window

@@ -30,5 +30,6 @@ This document defines the ownership model, orphan rules, claim semantics, and re
 - Attempting to claim a forward currently owned by a live client returns `SshPilotError(ErrorCode.FORWARD_OWNED_BY_ANOTHER)`.
 
 ### 3. Application Quit & Reattachment
-- **Keep Running Policy**: GTK detaches all views. The daemon keeps active sessions, SFTP services, and forwards running.
-- Upon GTK restart, `daemon_session_restore.py` and `forward_service_controller.py` query the daemon and restore GTK tabs and forward UI entries with full output replay.
+- **Keep Running Policy**: GTK presents Keep connections running / Terminate everything / Cancel when `terminal.daemon_app_close_policy=ask` (default). Keep-running detaches all views; the daemon keeps active sessions, SFTP services, and forwards running. App-launched daemons are **not** stopped on keep-running.
+- **Terminate everything**: drains sessions/SFTP/transfers/forwards/interactions via public APIs, then `stop_daemon(force=True)` for app-launched daemons.
+- Upon GTK restart after keep-running, `daemon_session_restore.py` and `forward_service_controller.py` query the daemon and restore GTK tabs and forward UI entries with full output replay.

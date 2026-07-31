@@ -21,7 +21,7 @@ try:
 except Exception as error:  # pragma: no cover
     pytest.skip(f"VTE unavailable: {error}", allow_module_level=True)
 
-from tests.gui._phase14_harness import OUTPUT_MARKER, Phase14EvidenceError
+from tests.gui._phase14_harness import OUTPUT_MARKER
 
 pytestmark = pytest.mark.gui
 
