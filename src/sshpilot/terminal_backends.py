@@ -95,6 +95,24 @@ class BaseTerminalBackend(Protocol):
     def feed(self, data: bytes) -> None:
         """Feed raw data to the terminal display."""
 
+    def get_size(self) -> tuple:
+        """Return ``(rows, cols)`` for the visible terminal, if known."""
+        return (24, 80)
+
+    def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Connect to user input (keystrokes / paste) destined for the child.
+
+        Callback signature matches VTE's ``commit``: ``(widget, text, size)``.
+        """
+
+    def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Connect to terminal size changes.
+
+        Callback signature matches VTE's ``char-size-changed``:
+        ``(widget, char_width, char_height)``. Callers that need rows/cols
+        should use :meth:`get_size`.
+        """
+
     def search_set_regex(self, regex: Optional[Any]) -> None:
         """Configure the search regex for the backend, if supported."""
 
@@ -509,6 +527,20 @@ class VTETerminalBackend:
 
     def feed(self, data: bytes) -> None:
         self.vte.feed(data)
+
+    def get_size(self) -> tuple:
+        try:
+            rows = int(self.vte.get_row_count() or 24)
+            cols = int(self.vte.get_column_count() or 80)
+        except Exception:
+            rows, cols = 24, 80
+        return (max(1, rows), max(1, cols))
+
+    def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
+        return self.vte.connect("commit", callback)
+
+    def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        return self.vte.connect("char-size-changed", callback)
 
     def feed_child(self, data: bytes) -> None:
         # Deprecated alias — prefer feed_child_data.
@@ -1431,6 +1463,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._fc_pending = 0
         self._fc_paused = False
         self._fc_safety_id = None
+        self._commit_cb: Optional[Callable[..., None]] = None
+        self._size_changed_cb: Optional[Callable[..., None]] = None
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -1579,13 +1613,29 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 except Exception:  # noqa: BLE001
                     logger.debug("handle_search_results raised", exc_info=True)
         elif kind == "input":
+            data = payload.get("data", "")
             if self._bridge is not None:
-                self._bridge.write(payload.get("data", ""))
-            self._feed_autocomplete(payload.get("data", ""))
+                self._bridge.write(data)
+            elif self._commit_cb is not None:
+                # Daemon (or other no-local-PTY) mode: surface keystrokes via the
+                # same commit callback VTE uses, so TerminalWidget stays backend-agnostic.
+                try:
+                    text = data if isinstance(data, str) else data.decode("utf-8", "replace")
+                    self._commit_cb(self.widget, text, len(text))
+                except Exception:  # noqa: BLE001
+                    logger.debug("commit callback raised", exc_info=True)
+            self._feed_autocomplete(data if isinstance(data, str) else "")
         elif kind == "resize":
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
             if self._bridge is not None:
                 self._bridge.resize(*self._last_size)
+            elif self._size_changed_cb is not None:
+                try:
+                    # VTE passes char pixel size; we only need the signal — callers
+                    # read rows/cols via get_size().
+                    self._size_changed_cb(self.widget, 0, 0)
+                except Exception:  # noqa: BLE001
+                    logger.debug("size-changed callback raised", exc_info=True)
         elif kind == "title":
             # xterm.js OSC 0/2 title change — parity with VTE's window title +
             # termprops-based CONNECTING→CONNECTED promotion.
@@ -1885,6 +1935,34 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             return self._recent_output[-max_chars:]
         return self._recent_output
 
+    def feed(self, data: bytes) -> None:
+        """Paint display-only bytes (daemon PTY output — no local child).
+
+        Local shells use ``_on_pty_output`` from the in-process bridge; daemon
+        SSH delivers the same stream via ``TerminalWidget._on_daemon_output`` →
+        here. Reuse the preready / write path so the prompt is not dropped when
+        ``vte`` is None.
+        """
+        if not data:
+            return
+        if isinstance(data, bytes):
+            text = data.decode("utf-8", "replace")
+        else:
+            text = str(data)
+        self._on_pty_output(text)
+
+    def get_size(self) -> tuple:
+        rows, cols = self._last_size
+        return (max(1, int(rows)), max(1, int(cols)))
+
+    def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
+        self._commit_cb = callback
+        return "pyxterm_bridge_commit"
+
+    def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        self._size_changed_cb = callback
+        return "pyxterm_bridge_size_changed"
+
     # ---- PTY-backed capabilities (real ssh child, unlike the server path) -----
 
     def get_pty(self) -> Optional[Any]:
@@ -1923,6 +2001,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
     def disconnect(self, handler_id: Any) -> None:
         if handler_id == "pyxterm_bridge_child_exited":
             self._child_exited_cb = None
+            return
+        if handler_id == "pyxterm_bridge_commit":
+            self._commit_cb = None
+            return
+        if handler_id == "pyxterm_bridge_size_changed":
+            self._size_changed_cb = None
             return
         super().disconnect(handler_id)
 

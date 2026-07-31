@@ -1084,7 +1084,6 @@ class TerminalWidget(Gtk.Box):
         try:
             from .daemon_interaction_dialogs import DaemonInteractionDialogs
             from .terminal_session_controller import DaemonTerminalSessionController
-            from .api.models.terminal import TerminalDimensions
 
             # Mark as daemon mode
             self._daemon_mode = True
@@ -1115,20 +1114,14 @@ class TerminalWidget(Gtk.Box):
             self.connection_state_reason = 'Opening daemon session...'
             self._set_connecting_overlay_visible(True)
 
-            # Get terminal dimensions
-            dimensions = None
-            if hasattr(self, 'vte') and self.vte:
-                rows = max(1, min(1000, int(self.vte.get_row_count() or 24)))
-                columns = max(1, min(1000, int(self.vte.get_column_count() or 80)))
-                dimensions = TerminalDimensions(rows=rows, columns=columns)
+            # Get terminal dimensions from the active backend (VTE or PyXterm).
+            dimensions = self._daemon_terminal_dimensions()
 
             # Open session
             self._daemon_controller.open(connection_id, dimensions)
 
-            # Connect VTE signals for daemon mode
-            if hasattr(self, 'vte') and self.vte:
-                self.vte.connect("commit", self._on_daemon_commit)
-                self.vte.connect("char-size-changed", self._on_daemon_size_changed)
+            # Keystrokes + resize via the backend abstraction (not VTE-specific).
+            self._install_daemon_backend_io()
 
             return True
 
@@ -1191,9 +1184,7 @@ class TerminalWidget(Gtk.Box):
             self.connection_state = self.connection_state.__class__.CONNECTING
             self.connection_state_reason = "Attaching to daemon session..."
             self._set_connecting_overlay_visible(True)
-            if hasattr(self, "vte") and self.vte:
-                self.vte.connect("commit", self._on_daemon_commit)
-                self.vte.connect("char-size-changed", self._on_daemon_size_changed)
+            self._install_daemon_backend_io()
             self._daemon_controller.attach(
                 want_output=True,
                 request_input=request_input,
@@ -1208,24 +1199,47 @@ class TerminalWidget(Gtk.Box):
             self._on_connection_failed(str(error))
             return False
 
+    def _install_daemon_backend_io(self) -> None:
+        """Wire commit/resize through the terminal backend abstraction."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            return
+        try:
+            connect_commit = getattr(backend, 'connect_commit', None)
+            if callable(connect_commit):
+                connect_commit(self._on_daemon_commit)
+        except Exception:
+            logger.debug("Failed to connect daemon commit handler", exc_info=True)
+        try:
+            connect_size = getattr(backend, 'connect_size_changed', None)
+            if callable(connect_size):
+                connect_size(self._on_daemon_size_changed)
+        except Exception:
+            logger.debug("Failed to connect daemon size handler", exc_info=True)
+
+    def _feed_display(self, data: bytes) -> None:
+        """Paint bytes on the active terminal display via the backend abstraction."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            raise RuntimeError("No terminal backend to feed display output")
+        backend.feed(data)
+
     def _on_daemon_output(self, data):
         """Handle daemon terminal output."""
         try:
-            if hasattr(self, 'vte') and self.vte:
-                self.vte.feed(data)
+            self._feed_display(data)
 
             # Update connection state based on daemon session state
             self._update_daemon_connection_state()
 
         except Exception as e:
-            logger.error(f"Failed to feed daemon output to VTE: {e}")
+            logger.error(f"Failed to feed daemon output to terminal: {e}")
 
     def _on_daemon_continuity_lost(self):
         """Handle daemon terminal continuity loss."""
         try:
             marker = b"\r\n[Earlier terminal output is no longer available]\r\n"
-            if hasattr(self, 'vte') and self.vte:
-                self.vte.feed(marker)
+            self._feed_display(marker)
         except Exception as e:
             logger.error(f"Failed to feed continuity loss marker: {e}")
 
@@ -1265,27 +1279,41 @@ class TerminalWidget(Gtk.Box):
         logger.error(f"Daemon terminal error: {error}")
         self._on_connection_failed(str(error))
 
+    def _daemon_terminal_dimensions(self):
+        """Rows/cols from the active backend for daemon open/resize."""
+        from .api.models.terminal import TerminalDimensions
+
+        rows, columns = 24, 80
+        backend = getattr(self, 'backend', None)
+        if backend is not None:
+            try:
+                size = backend.get_size()
+                rows, columns = int(size[0]), int(size[1])
+            except Exception:
+                pass
+        return TerminalDimensions(
+            rows=max(1, min(1000, rows)),
+            columns=max(1, min(1000, columns)),
+        )
+
     def _on_daemon_commit(self, terminal, text, size):
-        """Handle VTE input commit for daemon terminals."""
+        """Handle backend input commit for daemon terminals."""
         if not self._daemon_controller or not self.has_input_ownership:
             return
 
         try:
-            data = text.encode('utf-8')
+            data = text.encode('utf-8') if isinstance(text, str) else text
             self._daemon_controller.send_input(data)
         except Exception as e:
             logger.error(f"Failed to send input to daemon: {e}")
 
     def _on_daemon_size_changed(self, terminal, char_width, char_height):
-        """Handle VTE size change for daemon terminals."""
+        """Handle backend size change for daemon terminals."""
         if not self._daemon_controller or not self.has_input_ownership:
             return
 
         try:
-            from .api.models.terminal import TerminalDimensions
-            rows = max(1, min(1000, int(terminal.get_row_count() or 24)))
-            columns = max(1, min(1000, int(terminal.get_column_count() or 80)))
-            dimensions = TerminalDimensions(rows=rows, columns=columns)
+            dimensions = self._daemon_terminal_dimensions()
             self._daemon_controller.resize(dimensions)
         except Exception as e:
             logger.error(f"Failed to resize daemon terminal: {e}")
