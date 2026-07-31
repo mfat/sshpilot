@@ -212,6 +212,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_sftp_services": Capability.SFTP_READ,
     "get_sftp_service": Capability.SFTP_READ,
     "open_sftp": Capability.SFTP_WRITE,
+    "claim_forward": Capability.FORWARDS_WRITE,
     "attach_sftp": Capability.SFTP_WRITE,
     "detach_sftp": Capability.SFTP_WRITE,
     "close_sftp": Capability.SFTP_WRITE,

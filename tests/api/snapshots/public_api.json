@@ -76,6 +76,10 @@
       "capability": "transfers.write",
       "status": "daemon-only"
     },
+    "claim_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
     "claim_interaction": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -290,6 +294,7 @@
     "attach_sftp",
     "cancel_interaction",
     "cancel_transfer",
+    "claim_forward",
     "claim_interaction",
     "claim_terminal_input",
     "close",
@@ -383,6 +388,16 @@
         }
       ],
       "return": "None"
+    },
+    "claim_forward": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ClaimForwardRequest"
+        }
+      ],
+      "return": "ForwardSummary"
     },
     "claim_interaction": {
       "parameters": [
@@ -908,6 +923,9 @@
     "daemon.stop": {
       "capability": "daemon.control"
     },
+    "forwards.claim": {
+      "capability": "forwards.write"
+    },
     "forwards.close": {
       "capability": "forwards.write"
     },
@@ -1170,6 +1188,7 @@
     "AttachmentInfo",
     "AuthenticationMethod",
     "CancelTransferRequest",
+    "ClaimForwardRequest",
     "ClaimTerminalInputRequest",
     "ClientId",
     "ClientInfo",
@@ -1306,6 +1325,9 @@
       "core",
       "supported",
       "compatibility"
+    ],
+    "ClaimForwardRequest": [
+      "forward_id"
     ],
     "ClaimTerminalInputRequest": [
       "session_id",

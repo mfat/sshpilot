@@ -38,6 +38,7 @@ from .models.interactions import (
 )
 from .models.operations import (
     AttachSftpRequest,
+    ClaimForwardRequest,
     CloseForwardRequest,
     CloseSftpRequest,
     ForwardSummary,
@@ -149,6 +150,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "list_forwards": Capability.FORWARDS_READ,
     "get_forward": Capability.FORWARDS_READ,
     "open_forward": Capability.FORWARDS_WRITE,
+    "claim_forward": Capability.FORWARDS_WRITE,
     "close_forward": Capability.FORWARDS_WRITE,
 }
 
@@ -881,6 +883,10 @@ class InProcessClient:
     def open_forward(self, request: OpenForwardRequest) -> ForwardSummary:
         del request
         raise self._unsupported("open_forward")
+
+    def claim_forward(self, request: ClaimForwardRequest) -> ForwardSummary:
+        del request
+        raise self._unsupported("claim_forward")
 
     def close_forward(self, request: CloseForwardRequest) -> None:
         del request

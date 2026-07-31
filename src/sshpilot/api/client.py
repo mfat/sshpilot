@@ -50,6 +50,7 @@ from .models.common import (
 )
 from .models.operations import (
     AttachSftpRequest,
+    ClaimForwardRequest,
     CloseForwardRequest,
     CloseSftpRequest,
     ForwardSummary,
@@ -258,8 +259,12 @@ class SshPilotClient(Protocol):
 
     def get_forward(self, forward_id: ForwardId) -> ForwardSummary:
         ...
-
     def open_forward(self, request: OpenForwardRequest) -> ForwardSummary:
+
+        ...
+
+    def claim_forward(self, request: ClaimForwardRequest) -> ForwardSummary:
+
         ...
 
     def close_forward(self, request: CloseForwardRequest) -> None:

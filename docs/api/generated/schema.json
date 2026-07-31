@@ -17,6 +17,10 @@
       "capability": "transfers.write",
       "status": "daemon-only"
     },
+    "claim_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
     "claim_interaction": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -253,6 +257,9 @@
     },
     "daemon.stop": {
       "capability": "daemon.control"
+    },
+    "forwards.claim": {
+      "capability": "forwards.write"
     },
     "forwards.close": {
       "capability": "forwards.write"
@@ -888,6 +895,18 @@
         }
       ],
       "status": "Implemented"
+    },
+    "ClaimForwardRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "forward_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardId"
+        }
+      ],
+      "status": "Schema only"
     },
     "ClaimTerminalInputRequest": {
       "fields": [

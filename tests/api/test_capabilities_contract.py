@@ -29,6 +29,7 @@ from sshpilot.api.models.common import (
 )
 from sshpilot.api.models.operations import (
     AttachSftpRequest,
+    ClaimForwardRequest,
     CloseForwardRequest,
     CloseSftpRequest,
     ForwardType,
@@ -452,6 +453,13 @@ UNSUPPORTED_OPERATION_CASES.extend(
                     destination_host="127.0.0.1",
                     destination_port=80,
                 )
+            ),
+            Capability.FORWARDS_WRITE,
+        ),
+        (
+            "claim_forward",
+            lambda client: client.claim_forward(
+                ClaimForwardRequest(forward_id=ForwardId("forward:test"))
             ),
             Capability.FORWARDS_WRITE,
         ),

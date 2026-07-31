@@ -64,6 +64,7 @@ from .interactions import (
 )
 from .operations import (
     AttachSftpRequest,
+    ClaimForwardRequest,
     CloseForwardRequest,
     CloseSftpRequest,
     FileEntryKind,
@@ -134,6 +135,7 @@ __all__ = [
     "AuthenticationMethod",
     "CancelTransferRequest",
     "ClaimTerminalInputRequest",
+    "ClaimForwardRequest",
     "ClientId",
     "ClientInfo",
     "CloseForwardRequest",

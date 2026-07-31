@@ -1644,6 +1644,74 @@ def run_smoke() -> int:
             if not any(r.step == step for r in ctx.results):
                 ctx.record(step, f"lifecycle {step}", "ok", repr(exc), False, traceback.format_exc())
 
+    # --- Steps 53–54: Phase 14 GTK integration proof ---
+    try:
+        with tempfile.TemporaryDirectory(prefix="sshpilot-phase14-smoke-") as phase14_home:
+            phase14_env = {
+                **os.environ,
+                "PYTHONPATH": f"{ROOT}/src:{ROOT}",
+                "HOME": phase14_home,
+                "XDG_CONFIG_HOME": f"{phase14_home}/.config",
+                "XDG_DATA_HOME": f"{phase14_home}/.local/share",
+                "XDG_STATE_HOME": f"{phase14_home}/.local/state",
+                # Unset GUI test mode so conftest installs gi stubs — the
+                # integration tests don't need real GTK widgets.
+                "SSHPILOT_GUI_TESTS": "",
+            }
+            gtk_integration = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "tests/daemon/test_gtk_integration_phase14.py",
+                    "-v",
+                    "--tb=line",
+                    "-q",
+                ],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                env=phase14_env,
+                timeout=120,
+            )
+            gtk_connected = gtk_integration.returncode == 0
+            ctx.record(
+                53,
+                "Phase 14 GTK integration tests (terminal, session, input, attach)",
+                "All integration tests pass",
+                (gtk_integration.stdout or gtk_integration.stderr)[-300:],
+                gtk_connected,
+            )
+
+            fm_integration = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "tests/daemon/test_gtk_integration_phase14.py::TestSftpDaemonPath",
+                    "-v",
+                    "--tb=line",
+                    "-q",
+                ],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                env=phase14_env,
+                timeout=60,
+            )
+            fm_connected = fm_integration.returncode == 0
+            ctx.record(
+                54,
+                "Phase 14 FM integration tests (SFTP service, listing)",
+                "All FM integration tests pass",
+                (fm_integration.stdout or fm_integration.stderr)[-300:],
+                fm_connected,
+            )
+    except Exception as exc:
+        for step in (53, 54):
+            if not any(r.step == step for r in ctx.results):
+                ctx.record(step, f"gtk integration {step}", "ok", repr(exc), False, traceback.format_exc())
+
     failed = _finalize(ctx)
     return 1 if failed else 0
 
@@ -1711,11 +1779,12 @@ def _write_report(ctx: SmokeContext):
     out = ROOT / "docs" / "testing" / "phase13-production-smoke.md"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Layer map for the 52-step acceptance sequence.
+    # Layer map for the 54-step acceptance sequence.
     layer_a = {9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 38, 39, 40}
     layer_b = {1, 2, 3, 4, 5, 6, 7, 8, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37}
     layer_c: set[int] = set()  # widget clicks not required for this gate
     layer_d = {41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52}  # lifecycle shutdown
+    layer_e = {53, 54}  # Phase 14 GTK integration proof
 
     def _layer(step: int) -> str:
         if step in layer_a:
@@ -1726,6 +1795,8 @@ def _write_report(ctx: SmokeContext):
             return "C"
         if step in layer_d:
             return "D"
+        if step in layer_e:
+            return "E"
         return "?"
 
     by_step = {r.step: r for r in ctx.results}
@@ -1742,9 +1813,10 @@ def _write_report(ctx: SmokeContext):
     b_pass, b_total = _count(layer_b)
     c_pass, c_total = _count(layer_c) if layer_c else (0, 0)
     d_pass, d_total = _count(layer_d)
+    e_pass, e_total = _count(layer_e)
     overall_pass = all(
         by_step.get(step) is not None and by_step[step].status == "PASS"
-        for step in range(1, 53)
+        for step in range(1, 55)
     )
     gate = "PASS" if overall_pass else "FAIL"
 
@@ -1770,13 +1842,15 @@ def _write_report(ctx: SmokeContext):
         "`SSHPILOT_SMOKE_GTK_TERMINAL=1` — see `gtk-vte-bloom-filter-crash.md`).",
         "Layer D = lifecycle shutdown: resource drain, graceful stop, natural exit,",
         "socket removal, child reaping, interaction cleanup.",
+        "Layer E = Phase 14 GTK integration proof: daemon terminal controller, SFTP",
+        "service API, session restore metadata, quit policy, protocol compatibility.",
         "",
         f"Emergency cleanup {'was NOT needed' if ctx.acceptance_shutdown_succeeded else 'was invoked (acceptance path failed)'}.",
         "",
         "| step | layer | action | expected result | actual result | pass/fail | evidence |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for step in range(1, 53):
+    for step in range(1, 55):
         r = by_step.get(step)
         if r is None:
             lines.append(f"| {step} | {_layer(step)} | (missing) | | | FAIL | not executed |")
@@ -1807,6 +1881,7 @@ def _write_report(ctx: SmokeContext):
         f"GTK controller: {b_pass}/{b_total}\n"
         f"Widget interaction: {c_pass}/{c_total}\n"
         f"Lifecycle shutdown: {d_pass}/{d_total}\n"
+        f"GTK integration proof: {e_pass}/{e_total}\n"
         f"Overall gate: {gate}"
     )
 

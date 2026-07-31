@@ -193,6 +193,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: daemon.status capability=daemon.status -->
 <!-- api-daemon-method: daemon.stop capability=daemon.control -->
 <!-- api-daemon-method: forwards.close capability=forwards.write -->
+<!-- api-daemon-method: forwards.claim capability=forwards.write -->
 <!-- api-daemon-method: forwards.get capability=forwards.read -->
 <!-- api-daemon-method: forwards.list capability=forwards.read -->
 <!-- api-daemon-method: forwards.open capability=forwards.write -->
@@ -548,6 +549,11 @@ Daemon-only lookup by strict `forward:<uuid>` identifier.
 
 Opens a local, remote, or dynamic forward. Type also requires
 `forwards.local`, `forwards.remote`, or `forwards.dynamic`.
+
+<!-- api-method: claim_forward -->
+## `claim_forward`
+
+Daemon-only request to become the owning client of an existing forward.
 
 <!-- api-method: close_forward -->
 ## `close_forward`

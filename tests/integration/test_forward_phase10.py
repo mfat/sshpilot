@@ -12,6 +12,7 @@ import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.operations import (
+    ClaimForwardRequest,
     CloseForwardRequest,
     ForwardState,
     ForwardType,
@@ -289,14 +290,13 @@ def test_forward_survives_client_detach_and_second_client_closes(tmp_path, phase
         observer = stack.connect_client(client_id="client:phase10-observer")
         rediscovered = observer.get_forward(opened.id)
         assert rediscovered.state is ForwardState.ACTIVE
-        # Ownership does not transfer on disconnect — observers cannot close.
-        with pytest.raises(SshPilotError):
-            observer.close_forward(CloseForwardRequest(forward_id=opened.id))
-        # Reconnect as the original owner to stop the forward.
-        owner = stack.connect_client(client_id=owner_id)
-        owner.close_forward(CloseForwardRequest(forward_id=opened.id))
+        # After detach_client orphans the forward, any client may claim ownership.
+        claimed = observer.claim_forward(ClaimForwardRequest(forward_id=opened.id))
+        assert claimed.owner_client_id == observer._client_id
+        # The claiming client can now close the forward.
+        observer.close_forward(CloseForwardRequest(forward_id=opened.id))
         wait_until(
-            lambda: owner.get_forward(opened.id).state is ForwardState.CLOSED,
+            lambda: observer.get_forward(opened.id).state is ForwardState.CLOSED,
             timeout=15,
             message="forward did not close",
         )

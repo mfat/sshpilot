@@ -102,6 +102,7 @@ def _build_secret_stub():
 # real import fails (no PyGObject), fall through to the stubs so the normal suite
 # still collects. Default behaviour (no env var) is unchanged.
 _USE_REAL_GTK = os.environ.get('SSHPILOT_GUI_TESTS') == '1'
+_real_gtk_available = False
 if _USE_REAL_GTK:
     try:
         import gi  # real PyGObject; populates sys.modules['gi'] + repository
@@ -109,8 +110,39 @@ if _USE_REAL_GTK:
         gi.require_version('Gtk', '4.0')
         gi.require_version('Adw', '1')
         from gi.repository import Gtk, Adw, Gio, GLib  # noqa: F401
+
+        _real_gtk_available = True
     except Exception:
         _USE_REAL_GTK = False
+
+
+# When real GTK is available (either opt-in GUI tests or a full test run that
+# already has `gi` in sys.modules), preload the GResource bundle so that any
+# module with ``@Gtk.Template(resource_path=...)`` can find its .ui files.
+# Without this, transitive imports of template-decorated widgets fail with
+# "resource does not exist" in subprocess environments (e.g. the smoke harness).
+def _preload_gresource():
+    if 'gi' not in sys.modules:
+        return
+    try:
+        from gi.repository import Gio as _Gio
+    except Exception:
+        return
+    for _res_path in [
+        os.path.join(ROOT, 'src', 'sshpilot', 'resources', 'sshpilot.gresource'),
+        os.path.join(ROOT, 'src', 'sshpilot', 'resources', 'io.github.mfat.sshpilot.gresource'),
+        '/usr/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource',
+    ]:
+        if os.path.exists(_res_path):
+            try:
+                _res = _Gio.Resource.load(_res_path)
+                _Gio.resources_register(_res)
+            except Exception:
+                pass
+            break
+
+
+_preload_gresource()
 
 
 if not _USE_REAL_GTK and 'gi' not in sys.modules:

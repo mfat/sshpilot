@@ -200,6 +200,28 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ClaimForwardRequest -->
+## `ClaimForwardRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** ClaimForwardRequest(forward_id: 'ForwardId')
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `forward_id` | `ForwardId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "forward_id": {}
+}
+```
+
 <!-- api-model: ClaimTerminalInputRequest -->
 ## `ClaimTerminalInputRequest`
 
