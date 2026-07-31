@@ -7,6 +7,7 @@ written only under ``tmp_path``.
 from __future__ import annotations
 
 import os
+import pwd
 import secrets
 import shutil
 import socket
@@ -19,6 +20,33 @@ from typing import Literal
 from tests.daemon.password_sshd import container_runtime
 
 AuthMode = Literal["password", "key", "key_plain"]
+
+
+def _login_home() -> Path:
+    """Return the account home, ignoring an isolated test ``HOME`` override."""
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except Exception:
+        return Path.home()
+
+
+def _container_env() -> dict[str, str]:
+    """Env for podman/docker so storage/subuids stay on the login account.
+
+    Phase 14 harnesses isolate ``HOME``/``XDG_*``. If podman inherits that, it
+    creates a fresh storage root that often cannot unpack images (insufficient
+    UIDs/GIDs). Keep container engine state on the real login home.
+    """
+    env = os.environ.copy()
+    home = _login_home()
+    env["HOME"] = str(home)
+    env["XDG_DATA_HOME"] = str(home / ".local" / "share")
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["XDG_RUNTIME_DIR"] = str(
+        Path(os.environ.get("XDG_RUNTIME_DIR_HOST")
+             or f"/run/user/{os.getuid()}")
+    )
+    return env
 
 
 def _free_port() -> int:
@@ -49,19 +77,27 @@ class TemporaryOpenSSH:
     host_alias_key: str = "phase13-key"
     host_alias_key_plain: str = "phase13-key-plain"
     remote_echo_port: int = 18080
+    container_name: str = ""
     _destroyed: bool = field(default=False, repr=False)
 
     def destroy(self) -> None:
         if self._destroyed:
             return
         self._destroyed = True
-        subprocess.run(
-            (self.runtime, "rm", "-f", self.container_id),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        targets = []
+        if self.container_id:
+            targets.append(self.container_id)
+        if self.container_name and self.container_name not in targets:
+            targets.append(self.container_name)
+        for target in targets:
+            subprocess.run(
+                (self.runtime, "rm", "-f", target),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                env=_container_env(),
+            )
 
     def clear_known_hosts(self) -> None:
         """Empty known_hosts for first-use / host-key confirmation tests."""
@@ -160,6 +196,7 @@ class TemporaryOpenSSH:
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=_container_env(),
         )
 
     def to_json(self) -> dict:
@@ -286,6 +323,7 @@ exec /usr/sbin/sshd -D -e
         check=False,
         capture_output=True,
         text=True,
+        env=_container_env(),
     )
     if create.returncode != 0:
         detail = (create.stderr or create.stdout or "").strip()
@@ -304,6 +342,7 @@ exec /usr/sbin/sshd -D -e
         ssh_config=ssh_config,
         client_home=client_home,
         remote_echo_port=remote_echo_port,
+        container_name=container_name,
     )
     try:
         deadline = time.monotonic() + 90.0
@@ -329,6 +368,7 @@ exec /usr/sbin/sshd -D -e
             check=False,
             capture_output=True,
             text=True,
+            env=_container_env(),
         )
         detail = ((logs.stderr or "") + (logs.stdout or "")).strip()[-800:]
         raise RuntimeError(f"sshd never became ready: {detail or 'no logs'}")

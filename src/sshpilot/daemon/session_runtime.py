@@ -325,6 +325,9 @@ class _SessionRecord:
     input_owner_attachment_id: Optional[AttachmentId] = None
     output_clients: Set[ClientId] = field(default_factory=set)
     originating_client_id: Optional[ClientId] = None
+    # Output produced before RUNNING (auth gate) — delivered on transition so
+    # clients do not mark connected / send input against a STARTING session.
+    deferred_live_output: List[TerminalOutput] = field(default_factory=list)
 
 
 _ALLOWED_TRANSITIONS = {
@@ -614,16 +617,28 @@ class SessionRuntime:
                 return
             terminate_after_start = True
             events: List[CoreEvent] = []
+            deferred_outputs: List[TerminalOutput] = []
+            deferred_callbacks: Tuple[Callable[[TerminalOutput], None], ...] = ()
             with self._lock:
                 if record.state is SessionState.STARTING:
                     record.process_handle = handle
                     record.started_at = self._clock()
                     events.append(self._transition_locked(record, SessionState.RUNNING))
+                    deferred_outputs = list(record.deferred_live_output)
+                    record.deferred_live_output.clear()
+                    deferred_callbacks = tuple(self._terminal_callbacks.values())
                     terminate_after_start = False
                 elif record.state is SessionState.CLOSING:
                     record.process_handle = handle
+                    record.deferred_live_output.clear()
                     terminate_after_start = False
             self._publish(events)
+            for output in deferred_outputs:
+                for callback in deferred_callbacks:
+                    try:
+                        callback(output)
+                    except Exception:
+                        continue
             if terminate_after_start:
                 self._terminate_handle(
                     handle,
@@ -875,6 +890,12 @@ class SessionRuntime:
                     "The attachment does not own terminal input",
                     session_id=request.session_id,
                 )
+            # Auth-gated startup: the PTY may already exist and emit banner
+            # bytes while the session is still STARTING. Drop early keystrokes
+            # quietly — askpass owns secrets, and clients must not see a hard
+            # input rejection that tears down the attachment.
+            if record.state is SessionState.STARTING:
+                return
             if record.state is not SessionState.RUNNING or record.process_handle is None:
                 raise SshPilotError(
                     ErrorCode.SESSION_INVALID_STATE,
@@ -1335,6 +1356,9 @@ class SessionRuntime:
                 sequence=start,
                 data=data,
             )
+            if record.state is not SessionState.RUNNING:
+                record.deferred_live_output.append(output)
+                return
             callbacks = tuple(self._terminal_callbacks.values())
         for callback in callbacks:
             try:
@@ -1431,6 +1455,7 @@ class SessionRuntime:
                 return
             record.startup_scheduled = False
             record.terminal_capable = False
+            record.deferred_live_output.clear()
             record.failure = SessionFailure(code=code.value, message=message)
             event = self._transition_locked(record, SessionState.FAILED)
         self._publish((event,))

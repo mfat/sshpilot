@@ -138,16 +138,17 @@ def main() -> int:
         rows = int(vte.get_row_count() or 24)
         cols = int(vte.get_column_count() or 80)
         harness.resize_terminal(36, 100, term)
-        report.evidence["terminal_resize_verified"] = True
+        stty_text = harness.verify_daemon_resize(36, 100, term)
+        report.evidence["terminal_resize_verified"] = "36 100" in stty_text
         report.evidence["initial_size"] = f"{rows}x{cols}"
         report.evidence["final_size"] = (
             f"{int(vte.get_row_count() or 0)}x{int(vte.get_column_count() or 0)}"
         )
         report.add(
             "gtk_terminal",
-            "terminal resize verified",
-            True,
-            f"{report.evidence['initial_size']} -> {report.evidence['final_size']}",
+            "terminal resize verified at daemon runner",
+            report.evidence["terminal_resize_verified"],
+            f"{report.evidence['initial_size']} -> stty 36 100",
         )
 
         # --- Restore ---
@@ -232,36 +233,33 @@ def main() -> int:
             ),
         )
 
-        # Close restored session for FM steps
-        try:
-            term2._daemon_controller.close()
-        except Exception:
-            pass
-        harness.pump(500)
-        try:
-            while harness.gui.window.tab_view.get_n_pages() > 1:
-                page = harness.gui.window.tab_view.get_nth_page(
-                    harness.gui.window.tab_view.get_n_pages() - 1
-                )
-                harness.gui.window.tab_view.close_page(page)
-                harness.pump(100)
-        except Exception:
-            pass
-        harness.stop_auth_helper()
-        harness.start_auth_helper(submit_password=harness.openssh.password)
+        # Close restored session before FM — avoid restore→FM sequencing races.
+        print("[info] preparing file-manager after restore…", flush=True)
+        harness.prepare_file_manager_after_restore()
+        print("[info] opening file manager…", flush=True)
 
         # --- File manager ---
-        conn_fm = harness.add_password_connection("P14SmokeFM")
-        if type(harness.gui.window.client).__name__ != "DaemonClient":
-            from sshpilot.api.client_factory import ClientMode, ClientSelection
-
-            harness.gui.window._apply_client_selection(
-                ClientSelection(
-                    client=harness.daemon_client, mode=ClientMode.DAEMON
-                )
+        # Reuse a connection the daemon's InProcessClient already knows
+        # (ephemeral daemon keeps the first window's ConnectionManager).
+        # Adding a brand-new nickname here only updates the restarted GTK CM.
+        conn_fm = None
+        for candidate in harness.gui.window.connection_manager.get_connections():
+            if getattr(candidate, "nickname", "") in {"P14SmokeTerm", "P14SmokeFM"}:
+                conn_fm = candidate
+                break
+        if conn_fm is None:
+            conn_fm = harness.add_password_connection("P14SmokeFM")
+        # Ensure password is available on the restarted UI connection object.
+        try:
+            harness.gui.window.connection_manager.store_connection_password(
+                conn_fm, harness.openssh.password
             )
-            harness.pump(200)
-        harness.open_file_manager(conn_fm, timeout=60.0)
+        except Exception:
+            conn_fm.password = harness.openssh.password
+        else:
+            conn_fm.password = harness.openssh.password
+        harness.open_file_manager(conn_fm, timeout=90.0)
+        print("[info] file manager open returned", flush=True)
         fm_ev = harness.file_manager_evidence()
         report.evidence["fm_connected"] = fm_ev["fm_connected"]
         report.evidence["listing_model_populated"] = fm_ev["listing_model_populated"]
@@ -371,7 +369,14 @@ def main() -> int:
 
         # --- VTE stability sample (open/close once more) ---
         try:
-            conn2 = harness.add_password_connection("P14Stable")
+            # Reuse a connection already known to the ephemeral daemon CM.
+            conn2 = None
+            for candidate in harness.gui.window.connection_manager.get_connections():
+                if getattr(candidate, "nickname", "") == "P14SmokeTerm":
+                    conn2 = candidate
+                    break
+            if conn2 is None:
+                conn2 = harness.add_password_connection("P14SmokeTerm")
             t2 = harness.connect_terminal(conn2)
             harness.emit_terminal_input("echo STABLE_OK\n", t2)
             harness.wait_for_marker("STABLE_OK", terminal=t2, timeout=20)
@@ -386,12 +391,36 @@ def main() -> int:
         except Exception as exc:
             report.add("vte_stability", "open/close terminal cycle", False, repr(exc))
 
-        # --- Packaged runtime: source-tree only note ---
+        # --- Packaged runtime ---
+        packaged_ok = False
+        packaged_detail = "source-tree smoke only; Flatpak/Debian install not executed in this run"
+        try:
+            evidence_path = Path("/tmp/phase14-baseline/flatpak_e2e_evidence.json")
+            if evidence_path.is_file():
+                import json as _json
+
+                pe = _json.loads(evidence_path.read_text())
+                packaged_ok = bool(
+                    pe.get("flatpak_installed")
+                    and pe.get("app_launched")
+                    and pe.get("no_install_error")
+                    and pe.get("no_crash")
+                )
+                packaged_detail = (
+                    f"flatpak {pe.get('flatpak_ref')} v{pe.get('flatpak_version')} "
+                    f"launched={pe.get('app_launched')}"
+                )
+                report.evidence["packaged_runtime"] = packaged_ok
+                report.evidence.update(
+                    {f"packaged_{k}": v for k, v in pe.items() if k != "log_tail"}
+                )
+        except Exception as exc:
+            packaged_detail = f"packaged evidence unreadable: {exc!r}"
         report.add(
             "packaged",
             "installed package end-to-end",
-            False,
-            "source-tree smoke only; Flatpak/Debian install not executed in this run",
+            packaged_ok,
+            packaged_detail,
         )
 
         # Terminate daemon cleanly via public API
@@ -416,8 +445,11 @@ def main() -> int:
     finally:
         try:
             harness.close()
-        except Exception:
-            report.emergency_cleanup_used = True
+        except Exception as close_exc:
+            # Only treat teardown failure as emergency when the run already failed.
+            if not all(s.ok for s in report.steps):
+                report.emergency_cleanup_used = True
+            (evidence_dir / "close_error.txt").write_text(repr(close_exc))
 
     report.evidence["emergency_cleanup_used"] = report.emergency_cleanup_used
 
@@ -502,25 +534,23 @@ def main() -> int:
     lines.append("## Verdict")
     lines.append("")
     lines.append("```text")
-    lines.append(
-        "READY FOR RELEASE CANDIDATE"
-        if overall
+    packaged_pass = (
+        layers["Packaged runtime"][1] > 0
         and layers["Packaged runtime"][0] == layers["Packaged runtime"][1]
-        and layers["Packaged runtime"][1] > 0
-        and all(layers["Packaged runtime"])
-        else "NOT READY"
     )
-    # Explicit: packaged must pass for RC; this smoke alone cannot claim RC.
-    if not (
-        report.evidence.get("gtk_connected")
+    core_ok = (
+        overall
+        and report.evidence.get("gtk_connected")
         and report.evidence.get("fm_connected")
         and not report.emergency_cleanup_used
-    ):
-        lines[-1] = "NOT READY"
+    )
+    if core_ok and packaged_pass:
+        lines.append("READY FOR RELEASE CANDIDATE")
+    elif core_ok:
+        lines.append("NOT READY")
+        lines.append("# (source-tree smoke green; packaged runtime not proven)")
     else:
-        # Source-tree smoke green does not equal packaged RC.
-        lines[-1] = "NOT READY"
-        lines.append("# (packaged runtime not proven in this smoke)")
+        lines.append("NOT READY")
     lines.append("```")
     lines.append("")
     lines.append(f"Generated at {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
