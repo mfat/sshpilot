@@ -223,6 +223,306 @@ def test_begin_terminate_intent_cancels_reconnect():
     assert cancelled == ["terminate_all"]
 
 
+def test_terminate_all_force_stop_does_not_relaunch_daemon(monkeypatch):
+    """Connected app → terminate intent → force-stop → transport_closed idle → no relaunch.
+
+    Mirrors production wiring: ``install_api_event_subscription`` queues
+    ``_on_daemon_transport_lost`` via ``GLib.idle_add``. Intent must be set
+    before ``stop_daemon`` so the idle callback does not ``connect_or_start``.
+    """
+    from sshpilot import main as main_module
+    import sshpilot.daemon_quit_policy as quit_policy
+    import sshpilot.shutdown as shutdown_mod
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+    from sshpilot.api.models.daemon import (
+        DaemonLifecycleState,
+        DaemonResourceCounts,
+        DaemonStopResult,
+    )
+
+    pending_idles: list = []
+    connect_or_start_calls: list = []
+    reconnect_requests: list = []
+
+    def _idle(callback, *args):
+        pending_idles.append((callback, args))
+        return 0
+
+    def _drain_idles() -> None:
+        while pending_idles:
+            callback, args = pending_idles.pop(0)
+            callback(*args) if args else callback()
+
+    monkeypatch.setattr(main_module.GLib, "idle_add", _idle)
+
+    class _Client:
+        def __init__(self):
+            self._on_transport_lost = None
+            self.server_instance_id = "connected-instance"
+            self._socket_path = "/tmp/sshpilot-test-daemon.sock"
+
+        def set_on_transport_lost(self, callback):
+            self._on_transport_lost = callback
+
+        def subscribe_events(self, _callback):
+            return SimpleNamespace(close=lambda: None)
+
+        def stop_daemon(self, request):
+            assert request.force is True
+            # Force-stop tears down the Unix transport; reader reports loss.
+            handler = self._on_transport_lost
+            if handler is not None:
+                handler(
+                    SshPilotError(ErrorCode.TRANSPORT_CLOSED, "daemon force-stopped")
+                )
+            return DaemonStopResult(
+                accepted=True,
+                state=DaemonLifecycleState.STOPPING,
+                resources=DaemonResourceCounts(),
+            )
+
+        def list_sessions(self):
+            return []
+
+        def list_transfers(self):
+            return []
+
+        def list_forwards(self):
+            return []
+
+        def list_sftp_services(self):
+            return []
+
+    client = _Client()
+    app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+    app.window = SimpleNamespace(
+        _is_quitting=False,
+        client=client,
+        welcome_view=None,
+        _daemon_shutdown_intent=None,
+        _daemon_quit_decision=None,
+        get_application=lambda: app,
+    )
+    app._api_client_bridge = None
+    app._api_client_selection = SimpleNamespace(
+        client=client, daemon_process=None
+    )
+    app._api_event_subscription = None
+    app._daemon_reconnect_in_progress = False
+    app._daemon_reconnect_generation = 0
+    app._daemon_shutdown_intent = None
+    app._daemon_quit_decision = None
+
+    class _Helper:
+        def note_transport_loss(self):
+            reconnect_requests.append("note_transport_loss")
+
+        def reconnect(self, **kwargs):
+            del kwargs
+            connect_or_start_calls.append("connect_or_start")
+            new_client = SimpleNamespace(server_instance_id="relaunched")
+            return DaemonReconnectResult(
+                client=new_client,
+                launched=DaemonLaunchResult(client=new_client, process=None),
+                decision=ReconnectDecision(
+                    outcome=ReconnectOutcome.ATTEMPT,
+                    message="should not happen",
+                ),
+            )
+
+    app._api_daemon_reconnect_helper = _Helper()
+    app.install_api_event_subscription(client)
+
+    monkeypatch.setattr(quit_policy, "_run_in_background", lambda fn: fn())
+    monkeypatch.setattr(quit_policy, "_invoke_on_main", lambda fn: fn())
+    monkeypatch.setattr(
+        quit_policy,
+        "wait_for_daemon_termination",
+        lambda **_kwargs: [],
+    )
+    quit_calls: list = []
+    monkeypatch.setattr(
+        shutdown_mod,
+        "cleanup_and_quit",
+        lambda window: quit_calls.append(window),
+    )
+
+    # Real terminate-all: intent first, then force-stop (fires transport idle).
+    quit_policy.apply_terminate_all(app.window)
+    _drain_idles()
+
+    assert app._daemon_shutdown_intent == "terminate"
+    assert connect_or_start_calls == []
+    assert reconnect_requests == []
+    assert quit_calls == [app.window]
+    assert app.window.client is client  # not replaced by a relaunched daemon
+
+
+def test_queued_reconnect_aborted_before_connect_or_start(monkeypatch):
+    """Reconnect already queued must not launch after terminate intent is set."""
+    from sshpilot import main as main_module
+    from sshpilot.daemon_quit_policy import begin_terminate_shutdown_intent
+
+    connect_or_start_calls: list = []
+    deferred_targets: list = []
+
+    class _DeferredThread:
+        def __init__(self, target=None, name=None, daemon=None):
+            del name, daemon
+            self._target = target
+
+        def start(self):
+            deferred_targets.append(self._target)
+
+    monkeypatch.setattr(main_module.threading, "Thread", _DeferredThread)
+
+    pending_idles: list = []
+
+    def _idle(callback, *args):
+        pending_idles.append((callback, args))
+        return 0
+
+    monkeypatch.setattr(main_module.GLib, "idle_add", _idle)
+
+    app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+    app.window = SimpleNamespace(
+        _is_quitting=False,
+        client=SimpleNamespace(server_instance_id="old"),
+        welcome_view=None,
+        get_application=lambda: app,
+    )
+    app._api_client_bridge = None
+    app._api_client_selection = None
+    app._daemon_reconnect_in_progress = False
+    app._daemon_reconnect_generation = 0
+    app._daemon_shutdown_intent = None
+    app._daemon_quit_decision = None
+
+    class _Helper:
+        def note_transport_loss(self):
+            return None
+
+        def reconnect(self, **kwargs):
+            del kwargs
+            connect_or_start_calls.append("connect_or_start")
+            new_client = SimpleNamespace(server_instance_id="relaunched")
+            return DaemonReconnectResult(
+                client=new_client,
+                launched=DaemonLaunchResult(client=new_client, process=None),
+                decision=ReconnectDecision(
+                    outcome=ReconnectOutcome.ATTEMPT,
+                    message="should not happen",
+                ),
+            )
+
+    app._api_daemon_reconnect_helper = _Helper()
+
+    # Queue reconnect (worker not yet run) — e.g. earlier transport loss.
+    app.request_daemon_reconnect(reason="transport_loss", immediate=True)
+    assert len(deferred_targets) == 1
+    assert app._daemon_reconnect_in_progress is True
+
+    begin_terminate_shutdown_intent(app.window)
+    assert app._daemon_shutdown_intent == "terminate"
+    assert app._daemon_reconnect_generation == 1
+    assert app._daemon_reconnect_in_progress is False
+
+    # Queued worker runs after intent: must abort before connect_or_start.
+    deferred_targets[0]()
+    while pending_idles:
+        callback, args = pending_idles.pop(0)
+        callback(*args) if args else callback()
+
+    assert connect_or_start_calls == []
+    assert app.window.client.server_instance_id == "old"
+
+
+def test_in_flight_reconnect_discarded_after_terminate_intent(monkeypatch):
+    """Worker already inside reconnect() must discard the relaunched daemon."""
+    import threading
+
+    from sshpilot import main as main_module
+    from sshpilot.daemon_quit_policy import begin_terminate_shutdown_intent
+
+    entered = threading.Event()
+    release = threading.Event()
+    connect_or_start_calls: list = []
+    discarded: list = []
+    pending_idles: list = []
+    started_threads: list = []
+
+    def _idle(callback, *args):
+        pending_idles.append((callback, args))
+        return 0
+
+    monkeypatch.setattr(main_module.GLib, "idle_add", _idle)
+
+    class _TrackingThread(threading.Thread):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            started_threads.append(self)
+
+    monkeypatch.setattr(main_module.threading, "Thread", _TrackingThread)
+
+    app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+    app.window = SimpleNamespace(
+        _is_quitting=False,
+        client=SimpleNamespace(server_instance_id="old"),
+        welcome_view=None,
+        get_application=lambda: app,
+    )
+    app._api_client_bridge = None
+    app._api_client_selection = None
+    app._daemon_reconnect_in_progress = False
+    app._daemon_reconnect_generation = 0
+    app._daemon_shutdown_intent = None
+    app._daemon_quit_decision = None
+
+    class _Helper:
+        def note_transport_loss(self):
+            return None
+
+        def reconnect(self, **kwargs):
+            del kwargs
+            entered.set()
+            assert release.wait(2.0)
+            connect_or_start_calls.append("connect_or_start")
+            new_client = SimpleNamespace(server_instance_id="accidental")
+            return DaemonReconnectResult(
+                client=new_client,
+                launched=DaemonLaunchResult(client=new_client, process=None),
+                decision=ReconnectDecision(
+                    outcome=ReconnectOutcome.ATTEMPT,
+                    message="too late",
+                ),
+            )
+
+    app._api_daemon_reconnect_helper = _Helper()
+
+    def _track_discard(result):
+        discarded.append(result)
+
+    app._discard_accidental_daemon_reconnect = _track_discard  # type: ignore[method-assign]
+
+    app.request_daemon_reconnect(reason="transport_loss", immediate=True)
+    assert entered.wait(2.0)
+    assert len(started_threads) == 1
+
+    begin_terminate_shutdown_intent(app.window)
+    release.set()
+    started_threads[0].join(timeout=2.0)
+    assert not started_threads[0].is_alive()
+
+    while pending_idles:
+        callback, args = pending_idles.pop(0)
+        callback(*args) if args else callback()
+
+    assert connect_or_start_calls == ["connect_or_start"]
+    assert len(discarded) == 1
+    assert app.window.client.server_instance_id == "old"
+    assert getattr(app, "_api_client_selection", None) is None
+
+
 def test_run_server_returns_restart_exit_code():
     from sshpilot.daemon.cli import run_server
     from sshpilot.daemon.lifecycle_policy import RESTART_EXIT_CODE
