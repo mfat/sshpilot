@@ -130,6 +130,7 @@ class FileManagerWindow(Adw.Window):
         self._password_dialog_shown = False
         self._password_retry_count = 0
         self._max_password_retries = 3
+        self._manager_signal_handlers: list = []
 
         # Use ToolbarView like other Adw.Window instances
         # Container skeleton (ToolbarView/ToastOverlay/Paned) lives in the
@@ -1054,7 +1055,7 @@ class FileManagerWindow(Adw.Window):
         """Close the file manager backend and clear UI state."""
         manager = getattr(self, "_manager", None)
         handlers = getattr(self, "_manager_signal_handlers", None)
-        if manager is not None and handlers:
+        if manager is not None and isinstance(handlers, (list, tuple)):
             for signal_name, handler_id in handlers:
                 try:
                     manager.disconnect(handler_id)
