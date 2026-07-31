@@ -269,15 +269,24 @@ class InteractionBroker:
             port = int(effective.get("port", spec.port))
         except (TypeError, ValueError):
             port = spec.port
-        # Session-first known_hosts: OpenSSH writes accepted keys here. User
-        # files remain readable so already-trusted hosts do not re-prompt.
-        # ACCEPT_AND_STORE later merges session entries into the user file.
+        # Prefer the app/CLI StrictHostKeyChecking already on argv (Preferences
+        # default is accept-new). Only fall back to ssh -G / accept-new.
+        strict_mode = self._strict_host_key_mode(argv, effective)
+        user_paths = self._known_hosts_paths(effective)
         session_known = self._private_dir / f"h-{spec.session_id[-12:]}"
         self._atomic_write(session_known, b"")
-        user_paths = self._known_hosts_paths(effective)
-        known_hosts_value = " ".join(
-            (str(session_known), *(str(path) for path in user_paths))
-        )
+        # ask: session-first known_hosts so ACCEPT_ONCE stays session-scoped and
+        # ACCEPT_AND_STORE can merge into the user file. accept-new/yes/no: leave
+        # UserKnownHostsFile alone so OpenSSH writes where Preferences expect.
+        host_key_options: tuple[str, ...] = ()
+        if strict_mode == "ask":
+            known_hosts_value = " ".join(
+                (str(session_known), *(str(path) for path in user_paths))
+            )
+            host_key_options = (
+                "-o",
+                f"UserKnownHostsFile={known_hosts_value}",
+            )
         token = secrets.token_urlsafe(32)
         control_path = str(self._private_dir / f"c-{spec.session_id[-12:]}")
         options = (
@@ -287,12 +296,7 @@ class InteractionBroker:
             "KbdInteractiveAuthentication=no",
             "-o",
             "NumberOfPasswordPrompts=3",
-            # ask: OpenSSH prompts via askpass for unknown hosts; changed keys
-            # still fail closed (same as OpenSSH ask semantics).
-            "-o",
-            "StrictHostKeyChecking=ask",
-            "-o",
-            f"UserKnownHostsFile={known_hosts_value}",
+            *host_key_options,
             "-o",
             "ControlMaster=yes",
             "-o",
@@ -301,8 +305,9 @@ class InteractionBroker:
             f"ControlPath={control_path}",
         )
         # OpenSSH keeps the first obtained value for each option. Insert broker
-        # trust/auth controls before any preference overrides and strip
-        # conflicting earlier copies so they cannot weaken the policy.
+        # controls before preference overrides and strip conflicting earlier
+        # copies of options we set — never strip StrictHostKeyChecking so the
+        # Preferences/default accept-new (or ask/yes/no) reaches ssh.
         argv = self._with_broker_options(argv, options)
         control_argv = (
             argv[0],
@@ -351,16 +356,52 @@ class InteractionBroker:
             argv = (*argv, *trailing_args)
         return argv, environment
 
-    _BROKER_OPTION_PREFIXES = (
-        "BatchMode=",
-        "KbdInteractiveAuthentication=",
-        "NumberOfPasswordPrompts=",
-        "StrictHostKeyChecking=",
-        "UserKnownHostsFile=",
-        "ControlMaster=",
-        "ControlPersist=",
-        "ControlPath=",
-    )
+    @staticmethod
+    def _strict_host_key_mode(
+        argv: Sequence[str],
+        effective: dict[str, str],
+    ) -> str:
+        """Resolve StrictHostKeyChecking; default matches Preferences (accept-new)."""
+
+        index = 0
+        end = len(argv) - 1
+        found: Optional[str] = None
+        while index < end:
+            argument = argv[index]
+            if argument == "-o" and index + 1 < end:
+                value = argv[index + 1]
+                if value.startswith("StrictHostKeyChecking="):
+                    found = value.split("=", 1)[1]
+                index += 2
+                continue
+            if argument.startswith("-o") and len(argument) > 2:
+                value = argument[2:]
+                if value.startswith("StrictHostKeyChecking="):
+                    found = value.split("=", 1)[1]
+            index += 1
+        raw = found or effective.get("stricthostkeychecking") or "accept-new"
+        mode = str(raw).strip().lower()
+        if mode == "off":
+            return "no"
+        if mode in {"accept-new", "yes", "no", "ask"}:
+            return mode
+        return "accept-new"
+
+    @staticmethod
+    def _broker_option_prefixes(options: Sequence[str]) -> tuple[str, ...]:
+        """Option name prefixes we insert — only those are stripped from argv."""
+
+        prefixes: list[str] = []
+        index = 0
+        while index < len(options):
+            if options[index] == "-o" and index + 1 < len(options):
+                value = options[index + 1]
+                if "=" in value:
+                    prefixes.append(value.split("=", 1)[0] + "=")
+                index += 2
+                continue
+            index += 1
+        return tuple(prefixes)
 
     @classmethod
     def _with_broker_options(
@@ -370,6 +411,7 @@ class InteractionBroker:
     ) -> tuple[str, ...]:
         if len(argv) < 2:
             raise ValueError("SSH launch argv is incomplete")
+        prefixes = cls._broker_option_prefixes(options)
         target = argv[-1]
         head: list[str] = []
         index = 0
@@ -378,9 +420,7 @@ class InteractionBroker:
             argument = argv[index]
             if argument == "-o" and index + 1 < end:
                 value = argv[index + 1]
-                if any(
-                    value.startswith(prefix) for prefix in cls._BROKER_OPTION_PREFIXES
-                ):
+                if any(value.startswith(prefix) for prefix in prefixes):
                     index += 2
                     continue
                 head.extend((argument, value))
@@ -388,9 +428,7 @@ class InteractionBroker:
                 continue
             if argument.startswith("-o") and len(argument) > 2:
                 value = argument[2:]
-                if any(
-                    value.startswith(prefix) for prefix in cls._BROKER_OPTION_PREFIXES
-                ):
+                if any(value.startswith(prefix) for prefix in prefixes):
                     index += 1
                     continue
             head.append(argument)

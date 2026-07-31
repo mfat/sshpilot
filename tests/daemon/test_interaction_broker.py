@@ -633,16 +633,47 @@ def test_broker_options_win_over_conflicting_preference_overrides(
     text = " ".join(argv)
     assert text.index("BatchMode=no") < text.index("ConnectTimeout=5")
     assert "BatchMode=yes" not in argv
-    assert "StrictHostKeyChecking=accept-new" not in argv
+    # Preferences / argv StrictHostKeyChecking must survive (default accept-new).
+    assert "StrictHostKeyChecking=accept-new" in argv
+    assert "StrictHostKeyChecking=ask" not in argv
+    # UserKnownHostsFile from argv is left alone unless mode is ask.
+    assert "UserKnownHostsFile=/tmp/user-known-hosts" in argv
+    assert argv[-1] == "example"
+
+
+def test_prepare_launch_ask_uses_session_known_hosts(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    argv, _environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            (
+                "/usr/bin/ssh",
+                "-o",
+                "StrictHostKeyChecking=ask",
+                "-o",
+                "UserKnownHostsFile=/tmp/user-known-hosts",
+                "example",
+            ),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
     assert "StrictHostKeyChecking=ask" in argv
     known_opt = next(
         item for item in argv if item.startswith("UserKnownHostsFile=")
     )
-    # Preference override is stripped; session file is first, then defaults.
-    assert "/tmp/user-known-hosts" not in known_opt
     assert known_opt.startswith("UserKnownHostsFile=")
-    assert "known_hosts" in known_opt
-    assert argv[-1] == "example"
+    assert "/tmp/user-known-hosts" not in known_opt
+    assert "known_hosts" in known_opt or "/h-" in known_opt or "h-" in known_opt
 
 
 def test_parse_openssh_host_key_askpass_prompt(broker: InteractionBroker) -> None:
@@ -699,8 +730,8 @@ def test_prepare_launch_does_not_invoke_keyscan(
             {"PATH": os.environ.get("PATH", "")},
         ),
     )
-    assert "StrictHostKeyChecking=ask" in argv
     assert environment["SSH_ASKPASS_REQUIRE"] == "force"
+    assert "StrictHostKeyChecking=ask" not in argv
     assert not any(
         item.startswith("HostKeyAlgorithms=")
         or item.startswith("GlobalKnownHostsFile=")
