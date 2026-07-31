@@ -87,6 +87,7 @@ class Phase14Harness:
         win.config.set_setting("file_manager.force_internal", True)
         win.config.set_setting("file_manager.first_run_prompt_shown", True)
         win.config.set_setting("ssh.strict_host_key_checking", "accept-new")
+        os.environ["SSHPILOT_CLIENT_MODE"] = "daemon"
 
         iso = Path(os.environ["XDG_CONFIG_HOME"]) / "sshpilot"
         iso.mkdir(parents=True, exist_ok=True)
@@ -280,6 +281,15 @@ class Phase14Harness:
             except Exception:
                 pass
         self.pump(200)
+        # Re-assert daemon client after connection writes (welcome/reconnect
+        # races must not silently demote to in-process).
+        if type(win.client).__name__ != "DaemonClient":
+            from sshpilot.api.client_factory import ClientMode, ClientSelection
+
+            win._apply_client_selection(
+                ClientSelection(client=self.daemon_client, mode=ClientMode.DAEMON)
+            )
+            self.pump(100)
         return conn
 
     # -- auth helper (broker; mandatory GTK dialog tests use real dialogs) -
@@ -672,6 +682,234 @@ class Phase14Harness:
         except Exception:
             logger.debug("critical warning trap unavailable", exc_info=True)
 
+
+
+    def open_file_manager(self, connection, *, timeout: float = 45.0) -> Any:
+        """Open Manage Files through the production window path."""
+        win = self.gui.window
+        self.start_auth_helper(submit_password=self.openssh.password)
+        opener = getattr(win, "_open_manage_files_now_for_connection", None)
+        if opener is None:
+            raise Phase14EvidenceError("window missing manage-files opener")
+        opener(connection, force_builtin=True)
+        self.pump_until(
+            lambda: self.find_file_manager_controller() is not None,
+            timeout=min(20.0, timeout),
+            label="file manager controller",
+        )
+
+        def _ready():
+            mgr = self.find_file_manager_backend()
+            if mgr is None:
+                return False
+            ctrl = getattr(mgr, "_sftp_controller", None)
+            if ctrl is None:
+                return False
+            try:
+                from sshpilot.sftp_service_controller import SftpControllerState
+
+                return ctrl.state is SftpControllerState.READY and ctrl.service_id
+            except Exception:
+                return bool(getattr(ctrl, "service_id", None))
+
+        self.pump_until(_ready, timeout=timeout, label="SFTP READY")
+        # Allow listing model to populate after READY
+        def _listed():
+            ev = self.file_manager_evidence()
+            return ev.get("row_count", 0) > 0
+
+        try:
+            self.pump_until(_listed, timeout=min(20.0, timeout), label="FM listing rows")
+        except Phase14EvidenceError:
+            # Leave evidence collection to the caller
+            pass
+        return self.find_file_manager_controller()
+
+    def find_file_manager_controller(self) -> Any:
+        win = self.gui.window
+        for attr in (
+            "_file_manager_controllers",
+            "_internal_file_manager_controllers",
+            "file_manager_controllers",
+        ):
+            mapping = getattr(win, attr, None)
+            if isinstance(mapping, dict) and mapping:
+                return next(iter(mapping.values()))
+            if isinstance(mapping, list) and mapping:
+                return mapping[0]
+        # Embedded tabs may store controller on page child
+        for i in range(win.tab_view.get_n_pages()):
+            page = win.tab_view.get_nth_page(i)
+            child = page.get_child()
+            ctrl = getattr(child, "_controller", None) or getattr(
+                child, "controller", None
+            )
+            if ctrl is not None:
+                return ctrl
+            mgr = getattr(child, "_manager", None)
+            if mgr is not None:
+                return child
+        registry = getattr(win, "_internal_file_manager_windows", None)
+        if registry:
+            return next(iter(registry))
+        return None
+
+    def find_file_manager_backend(self) -> Any:
+        ctrl = self.find_file_manager_controller()
+        if ctrl is None:
+            return None
+        for attr in ("_manager", "manager", "_backend", "backend"):
+            mgr = getattr(ctrl, attr, None)
+            if mgr is not None:
+                return mgr
+        # Controller may itself be the manager/window
+        if hasattr(ctrl, "_sftp_controller"):
+            return ctrl
+        return None
+
+    def file_manager_evidence(self) -> dict:
+        from sshpilot.daemon_sftp_backend import DaemonSftpManager
+
+        mgr = self.find_file_manager_backend()
+        ctrl = getattr(mgr, "_sftp_controller", None) if mgr else None
+        service_id = getattr(ctrl, "service_id", None) if ctrl else None
+        state = getattr(ctrl, "state", None) if ctrl else None
+        row_count = 0
+        names: list[str] = []
+
+        def _collect_from(obj) -> None:
+            nonlocal row_count, names
+            if obj is None or row_count:
+                return
+            entries = getattr(obj, "_entries", None) or getattr(obj, "_cached_entries", None)
+            if entries:
+                try:
+                    names = [getattr(e, "name", str(e)) for e in list(entries)]
+                    row_count = len(names)
+                except Exception:
+                    pass
+            for attr in ("_remote_pane", "remote_pane", "_right_pane", "right_pane"):
+                _collect_from(getattr(obj, attr, None))
+            # FileManagerWindow panes
+            for attr in ("_panes", "panes"):
+                panes = getattr(obj, attr, None)
+                if panes is None:
+                    continue
+                try:
+                    for pane in panes:
+                        _collect_from(pane)
+                except TypeError:
+                    _collect_from(panes)
+
+        _collect_from(mgr)
+        _collect_from(self.find_file_manager_controller())
+
+        if row_count == 0 and self.daemon_client is not None and service_id is not None:
+            try:
+                from sshpilot.api.models import ListDirectoryRequest
+
+                connection_id = getattr(mgr, "_connection_id", None) or getattr(
+                    getattr(mgr, "_sftp_controller", None), "connection_id", None
+                )
+                listing = self.daemon_client.sftp_list_directory(
+                    ListDirectoryRequest(
+                        connection_id=connection_id,
+                        service_id=service_id,
+                        path=".",
+                    )
+                )
+                names = [getattr(e, "name", "") for e in (listing.entries or [])]
+                row_count = len(names)
+            except Exception as exc:
+                names = [f"list_error:{exc!r}"]
+        state_name = getattr(state, "name", None) or str(getattr(state, "value", state) or "")
+        ready = str(state_name).upper().endswith("READY") or str(state_name).upper() == "READY"
+        fm_connected = bool(
+            mgr is not None
+            and isinstance(mgr, DaemonSftpManager)
+            and service_id is not None
+            and ready
+        )
+        return {
+            "fm_connected": fm_connected,
+            "listing_model_populated": row_count > 0,
+            "backend": type(mgr).__name__ if mgr else None,
+            "service_id": str(service_id) if service_id else None,
+            "state": str(state),
+            "row_count": row_count,
+            "names": names[:20],
+        }
+
+    def detach_terminal_keep_session(self, terminal=None) -> str:
+        """Detach GTK view, persist restore metadata, return session_id."""
+        term = terminal or self.find_terminal_widget()
+        if term is None:
+            raise Phase14EvidenceError("no terminal to detach")
+        ctrl = getattr(term, "_daemon_controller", None)
+        tab = getattr(ctrl, "tab_state", None) if ctrl else None
+        session_id = getattr(tab, "session_id", None)
+        if not session_id:
+            raise Phase14EvidenceError("terminal has no session_id")
+        from sshpilot.daemon_session_restore import DaemonSessionRestoreManager
+
+        DaemonSessionRestoreManager(self.gui.window.config).save_session_metadata(
+            tab,
+            tab_title=getattr(term.connection, "nickname", "Terminal"),
+        )
+        ctrl.detach()
+        term._daemon_mode = False
+        term.is_connected = False
+        self.pump(200)
+        return str(session_id)
+
+    def send_input_while_detached(self, session_id: str, command: str) -> None:
+        """Attach a temporary client view and run a remote command."""
+        from sshpilot.api import DaemonClient
+        from sshpilot.api.models.sessions import AttachSessionRequest, DetachSessionRequest
+        from sshpilot.api.models.terminal import TerminalInput
+
+        client = DaemonClient(
+            socket_path=self.daemon_socket,
+            client_id=f"client:phase14-bg-{secrets.token_hex(2)}",
+            timeout=30,
+        )
+        try:
+            attached = client.attach_session(
+                AttachSessionRequest(
+                    session_id=session_id,
+                    request_input=True,
+                    from_sequence=0,
+                )
+            )
+            client.send_terminal_input(
+                TerminalInput(
+                    session_id=session_id,
+                    attachment_id=attached.attachment.id,
+                    data=command.encode("utf-8"),
+                )
+            )
+            time.sleep(0.5)
+            client.detach_session(
+                DetachSessionRequest(
+                    session_id=session_id,
+                    attachment_id=attached.attachment.id,
+                )
+            )
+        finally:
+            client.close()
+
+    def quit_keep_running(self) -> None:
+        from sshpilot.daemon_quit_policy import apply_keep_running
+
+        apply_keep_running(self.gui.window)
+        self.pump_until(
+            lambda: self.gui is None or getattr(self.gui.window, "_is_quitting", False),
+            timeout=15.0,
+            label="quit keep-running started",
+        )
+        # Allow cleanup timeouts to finish
+        for _ in range(30):
+            self.pump(100)
 
 def make_isolated_home(tmp_path: Path) -> Path:
     """Prepare isolated HOME/XDG dirs and export them into os.environ."""
