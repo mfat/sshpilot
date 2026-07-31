@@ -290,7 +290,13 @@ def test_askpass_helper_disconnect_cancels_pending_interaction(
 
 def test_stored_password_is_used_once_without_public_secret_metadata(
     monkeypatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setenv("SSHPILOT_ASKPASS_LOG_DIR", str(tmp_path))
+    from sshpilot import askpass_utils
+
+    askpass_utils._ASKPASS_LOG_PATH = None
+
     lookups = []
     instance = InteractionBroker(
         secret_timeout=1,
@@ -324,8 +330,14 @@ def test_stored_password_is_used_once_without_public_secret_metadata(
         assert instance.list(CLIENT_A) == []
         secret[:] = b"\0" * len(secret)
         secret.clear()
+        log_text = (tmp_path / "sshpilot-askpass.log").read_text(encoding="utf-8")
+        assert "ASKPASS: daemon broker ready" in log_text
+        assert "ASKPASS: password prompt for alice@example.test" in log_text
+        assert "ASKPASS: Returning stored password" in log_text
+        assert "stored-value" not in log_text
     finally:
         instance.close()
+        askpass_utils._ASKPASS_LOG_PATH = None
 
 
 def test_stored_passphrase_autofills_unquoted_openssh_prompt(monkeypatch) -> None:

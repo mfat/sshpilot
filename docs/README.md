@@ -21,11 +21,13 @@ platform documentation that versions with the code:
 
 ## Askpass debug log
 
-The askpass helper doesn't log through the main logger. It writes debug
-information to `sshpilot-askpass.log` in the first available of:
+The askpass helper and the daemon interaction broker write debug information
+to `sshpilot-askpass.log` in the first available of:
 
 1. `$SSHPILOT_ASKPASS_LOG_DIR`, if set
 2. `$XDG_RUNTIME_DIR`
 3. the system temporary directory
 
-No askpass messages appear in the normal console or application log.
+While a connection is active, the GUI also forwards new askpass lines into
+the application logger (`ASKPASS: …`), so they appear under `--verbose` /
+Help → View Logs. The Askpass category in the log viewer reads the same file.

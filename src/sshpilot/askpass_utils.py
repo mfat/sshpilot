@@ -273,6 +273,21 @@ def get_askpass_log_path() -> str:
     return _ASKPASS_LOG_PATH
 
 
+def append_askpass_log(message: str) -> None:
+    """Append one line to the shared askpass log (GTK-free).
+
+    Used by the classic askpass helper and the daemon interaction broker so the
+    Help → Log Viewer Askpass category and the in-app log forwarder see the
+    same trail. Never write secrets here.
+    """
+
+    try:
+        with open(get_askpass_log_path(), "a", encoding="utf-8") as handle:
+            handle.write(f"{message}\n")
+    except Exception:
+        pass
+
+
 def read_new_askpass_log_lines(include_existing: bool = False) -> List[str]:
     """Read newly appended askpass log lines.
 
@@ -1107,14 +1122,8 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     or prompts for OTP/PIN. Returns the secret (or ``\"\"`` / ``\"yes\"`` for
     notify/confirm), or None on cancel/failure.
     """
-    log_path = get_askpass_log_path()
-
     def _log(msg: str) -> None:
-        try:
-            with open(log_path, "a") as f:
-                f.write(f"{msg}\n")
-        except Exception:
-            pass
+        append_askpass_log(msg)
 
     _log(
         f"ASKPASS: keyring {'available' if _keyring_available() else 'unavailable'}, "

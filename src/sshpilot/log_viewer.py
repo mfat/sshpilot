@@ -43,6 +43,7 @@ _CATEGORY_MASTER = 'master'
 _CATEGORY_APP = 'app'
 _CATEGORY_SSH = 'ssh'
 _CATEGORY_ASKPASS = 'askpass'
+_CATEGORY_DAEMON = 'daemon'
 _CATEGORY_CRASH = 'crash'
 
 
@@ -101,6 +102,8 @@ def _resolve_log_path(category: str = _CATEGORY_MASTER) -> str:
         except Exception as exc:
             logger.debug("Could not resolve askpass log path: %s", exc)
             return ''
+    if category == _CATEGORY_DAEMON:
+        return os.path.join(get_state_dir(), 'daemon.log')
     if category == _CATEGORY_CRASH:
         # Prefer a non-empty crash report (rotated previous run, else live).
         return _resolve_crash_path() or os.path.join(get_state_dir(), 'crash.log')
@@ -345,12 +348,20 @@ def build_diagnostics_zip(dest_path: str) -> str:
     with zipfile.ZipFile(dest_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         # Log files (current + rotated backups + crash reports).
         seen = set()
-        for name in ('sshpilot.log', 'app.log', 'ssh.log',
+        for name in ('sshpilot.log', 'app.log', 'ssh.log', 'daemon.log',
                      'crash.log', 'crash.log.previous'):
             path = os.path.join(state, name)
             if os.path.isfile(path):
                 zf.write(path, arcname='logs/' + name)
                 seen.add(path)
+        try:
+            from .askpass_utils import get_askpass_log_path
+            askpass_path = get_askpass_log_path()
+            if askpass_path and os.path.isfile(askpass_path):
+                zf.write(askpass_path, arcname='logs/sshpilot-askpass.log')
+                seen.add(askpass_path)
+        except Exception:
+            pass
         for path in sorted(glob.glob(os.path.join(state, '*.log.*'))):
             if path not in seen and os.path.isfile(path):
                 zf.write(path, arcname='logs/' + os.path.basename(path))
@@ -443,6 +454,7 @@ class LogViewerWindow(Adw.Window):
             (_CATEGORY_APP,     _("App"),     _resolve_log_path(_CATEGORY_APP)),
             (_CATEGORY_SSH,     _("SSH"),     _resolve_log_path(_CATEGORY_SSH)),
             (_CATEGORY_ASKPASS, _("Askpass"), _resolve_log_path(_CATEGORY_ASKPASS)),
+            (_CATEGORY_DAEMON,  _("Daemon"),  _resolve_log_path(_CATEGORY_DAEMON)),
             (_CATEGORY_CRASH,   _("Crash"),   _resolve_log_path(_CATEGORY_CRASH)),
         ]
         self._current_category: str = _CATEGORY_MASTER

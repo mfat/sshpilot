@@ -219,6 +219,47 @@ def test_process_launch_uses_argv_no_shell_and_sanitized_environment(
     assert captured["env"]["PYTHONPATH"].endswith("/src")
 
 
+def test_verbose_launch_passes_flag_and_starts_askpass_forwarder(tmp_path, monkeypatch):
+    class _Process:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def kill(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    client = object()
+    captured = {}
+    forwarder_calls = []
+
+    def _popen(argv, **kwargs):
+        captured["argv"] = argv
+        return _Process()
+
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils.ensure_askpass_log_forwarder",
+        lambda: forwarder_calls.append(True),
+    )
+    launcher = DaemonLauncher(
+        socket_path=tmp_path / "runtime" / "sshpilotd.sock",
+        environment={"PATH": "/usr/bin"},
+        popen=_popen,
+        verbose=True,
+    )
+    monkeypatch.setattr(launcher, "_wait_until_ready", lambda _process: client)
+
+    result = launcher.connect_or_start()
+
+    assert result.client is client
+    assert captured["argv"][-1] == "--verbose"
+    assert forwarder_calls == [True]
+
+
 def test_early_process_exit_is_bounded_and_classified(tmp_path):
     class _ExitedProcess:
         def poll(self):

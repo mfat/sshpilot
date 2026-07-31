@@ -192,6 +192,12 @@ class SshPilotApplication(Adw.Application):
         self.verbose_override = verbose and not quiet
         self.quiet_override = quiet and not verbose
         self.isolated_mode = isolated
+        # App-launched daemons inherit this so ``--verbose`` reaches sshpilotd
+        # (stdout/stderr are redirected to DEVNULL; file logging uses the flag).
+        if self.verbose_override:
+            os.environ["SSHPILOT_DAEMON_VERBOSE"] = "1"
+        else:
+            os.environ.pop("SSHPILOT_DAEMON_VERBOSE", None)
 
         # Session-scoped dismissals for the post-connect save prompt
         from .unsaved_host import SavePromptDismissals
@@ -613,7 +619,9 @@ class SshPilotApplication(Adw.Application):
 
         launcher = getattr(self, "_api_daemon_launcher", None)
         if launcher is None:
-            launcher = DaemonLauncher()
+            launcher = DaemonLauncher(
+                verbose=bool(getattr(self, "verbose_override", False)),
+            )
             self._api_daemon_launcher = launcher
         helper = DaemonReconnectHelper(launcher=launcher)
         self._api_daemon_reconnect_helper = helper
