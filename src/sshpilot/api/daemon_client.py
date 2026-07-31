@@ -279,6 +279,7 @@ class DaemonClient:
         *,
         socket_path: Optional[os.PathLike] = None,
         timeout: float = DEFAULT_REQUEST_TIMEOUT,
+        connect_timeout: Optional[float] = None,
         client_name: str = "daemon-client",
         client_version: str = sshpilot_version,
         client_id: Optional[str] = None,
@@ -287,9 +288,14 @@ class DaemonClient:
     ) -> None:
         if type(timeout) not in (int, float) or timeout <= 0:
             raise ValueError("daemon request timeout must be positive")
+        if connect_timeout is None:
+            connect_timeout = timeout
+        elif type(connect_timeout) not in (int, float) or connect_timeout <= 0:
+            raise ValueError("daemon connect timeout must be positive")
         if type(event_dispatch_limit) is not int or event_dispatch_limit < 1:
             raise ValueError("event dispatch limit must be positive")
         self._timeout = float(timeout)
+        self._connect_timeout = float(connect_timeout)
         self._socket_path = (
             Path(socket_path) if socket_path is not None else self.default_socket_path()
         )
@@ -1096,7 +1102,7 @@ class DaemonClient:
 
     def _connect_and_handshake(self) -> None:
         transport = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        transport.settimeout(self._timeout)
+        transport.settimeout(self._connect_timeout)
         try:
             transport.connect(str(self._socket_path))
         except (OSError, socket.timeout):

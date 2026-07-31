@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
 
 from sshpilot.api.capabilities import Capability
-from sshpilot.api.daemon_client import DaemonClient
+from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 
 from .lifecycle import (
@@ -177,9 +177,13 @@ class DaemonLauncher:
             return DaemonLaunchResult(client=client, process=handle)
 
     def _connect(self, timeout: float) -> DaemonClient:
+        # ``timeout`` here is the launcher probe budget for socket connect only.
+        # RPC waits must use DEFAULT_REQUEST_TIMEOUT — otherwise slow methods
+        # like sftp.list falsely trip transport_timeout (~probe 0.25s).
         client = DaemonClient(
             socket_path=self.socket_path,
-            timeout=timeout,
+            timeout=DEFAULT_REQUEST_TIMEOUT,
+            connect_timeout=timeout,
             client_name="sshpilot-gtk",
             frontend_type="gtk",
         )

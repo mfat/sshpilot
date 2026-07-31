@@ -63,6 +63,32 @@ def test_existing_compatible_daemon_is_reused_without_launch(daemon_factory):
         result.client.close()
 
 
+def test_launcher_keeps_request_timeout_separate_from_probe(daemon_factory):
+    """Probe budget is for connect only; RPCs must keep DEFAULT_REQUEST_TIMEOUT.
+
+    Regression: wiring probe_timeout (0.25s) into DaemonClient.timeout made
+    sftp.list (and other slow methods) report false transport_timeout.
+    """
+    from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT
+
+    server, _manager = daemon_factory()
+
+    launcher = DaemonLauncher(
+        socket_path=server.socket_path,
+        probe_timeout=0.25,
+        popen=lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("must reuse existing daemon")
+        ),
+    )
+    result = launcher.connect_or_start()
+    try:
+        assert result.client._timeout == DEFAULT_REQUEST_TIMEOUT
+        assert result.client._connect_timeout == 0.25
+        assert result.client.list_connections()[0].nickname == "demo"
+    finally:
+        result.client.close()
+
+
 def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
     socket_path = tmp_path / "runtime" / "sshpilotd.sock"
     environment = dict(os.environ)
