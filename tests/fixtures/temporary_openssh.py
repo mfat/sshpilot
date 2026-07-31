@@ -3,9 +3,15 @@
 Isolated from the developer's ``~/.ssh``. Uses podman/docker Alpine sshd on a
 localhost-only port. Host keys live inside the container; client material is
 written only under ``tmp_path``.
+
+Cleanup is fixture-owned: ``destroy()``, optional process-exit auto-cleanup,
+and ``cleanup_orphaned_temporary_openssh()`` for pytest session / handoff
+scripts. Production sshPilot daemon behavior is never involved.
 """
 from __future__ import annotations
 
+import atexit
+import logging
 import os
 import pwd
 import secrets
@@ -13,13 +19,22 @@ import shutil
 import socket
 import subprocess
 import time
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Iterable, Literal, Optional
 
 from tests.daemon.password_sshd import container_runtime
 
 AuthMode = Literal["password", "key", "key_plain"]
+
+logger = logging.getLogger(__name__)
+
+# Stable name prefix for orphan sweeps (must stay fixture-only).
+CONTAINER_NAME_PREFIX = "sshpilot-p13-"
+
+_LIVE: "weakref.WeakSet[TemporaryOpenSSH]" = weakref.WeakSet()
+_ATEXIT_REGISTERED = False
 
 
 def _login_home() -> Path:
@@ -58,7 +73,116 @@ def _free_port() -> int:
         listener.close()
 
 
-@dataclass
+def _run_container(
+    runtime: str,
+    args: Iterable[str],
+    *,
+    check: bool = False,
+    timeout: Optional[float] = 60.0,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        (runtime, *args),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=check,
+        timeout=timeout,
+        env=_container_env(),
+    )
+
+
+def _ensure_atexit() -> None:
+    global _ATEXIT_REGISTERED
+    if _ATEXIT_REGISTERED:
+        return
+    atexit.register(_atexit_destroy_live)
+    _ATEXIT_REGISTERED = True
+
+
+def _atexit_destroy_live() -> None:
+    for env in list(_LIVE):
+        try:
+            env.destroy()
+        except Exception:
+            logger.debug("atexit TemporaryOpenSSH.destroy failed", exc_info=True)
+
+
+def list_temporary_openssh_containers(runtime: Optional[str] = None) -> list[str]:
+    """Return names of live fixture containers (``sshpilot-p13-*``)."""
+    rt = runtime or container_runtime()
+    if rt is None:
+        return []
+    listed = _run_container(
+        rt,
+        ("ps", "-a", "--filter", f"name={CONTAINER_NAME_PREFIX}", "--format", "{{.Names}}"),
+        timeout=30.0,
+    )
+    if listed.returncode != 0:
+        logger.warning(
+            "failed to list temporary OpenSSH containers: %s",
+            (listed.stderr or listed.stdout or "").strip(),
+        )
+        return []
+    names: list[str] = []
+    for line in (listed.stdout or "").splitlines():
+        name = line.strip()
+        if name.startswith(CONTAINER_NAME_PREFIX):
+            names.append(name)
+    return names
+
+
+def cleanup_orphaned_temporary_openssh(
+    *,
+    runtime: Optional[str] = None,
+    keep_names: Optional[Iterable[str]] = None,
+) -> list[str]:
+    """Force-remove leftover ``sshpilot-p13-*`` containers (and their conmon).
+
+    Safe for pytest session start/finish and Flatpak handoff scripts. Never
+    touches the production sshPilot daemon socket or processes.
+    """
+    rt = runtime or container_runtime()
+    if rt is None:
+        return []
+    keep = {n for n in (keep_names or ()) if n}
+    removed: list[str] = []
+    for name in list_temporary_openssh_containers(rt):
+        if name in keep:
+            continue
+        result = _run_container(rt, ("rm", "-f", name), timeout=60.0)
+        if result.returncode == 0:
+            removed.append(name)
+            continue
+        # Retry via stop then rm — rootless podman occasionally needs both.
+        _run_container(rt, ("stop", "-t", "1", name), timeout=30.0)
+        retry = _run_container(rt, ("rm", "-f", name), timeout=60.0)
+        if retry.returncode == 0:
+            removed.append(name)
+        else:
+            detail = (retry.stderr or retry.stdout or result.stderr or "").strip()
+            logger.warning("failed to remove temporary OpenSSH %s: %s", name, detail)
+    return removed
+
+
+def destroy_temporary_openssh_meta(meta: dict) -> None:
+    """Destroy a fixture described by ``to_json()`` / handoff metadata."""
+    runtime = str(meta.get("runtime") or "") or container_runtime()
+    if not runtime:
+        return
+    targets: list[str] = []
+    for key in ("container_id", "container_name"):
+        value = str(meta.get(key) or "").strip()
+        if value and value not in targets:
+            targets.append(value)
+    for target in targets:
+        result = _run_container(str(runtime), ("rm", "-f", target), timeout=60.0)
+        if result.returncode == 0:
+            continue
+        _run_container(str(runtime), ("stop", "-t", "1", target), timeout=30.0)
+        _run_container(str(runtime), ("rm", "-f", target), timeout=60.0)
+
+
+@dataclass(eq=False)
 class TemporaryOpenSSH:
     """Controlled temporary OpenSSH for Phase 13 acceptance / GUI smoke."""
 
@@ -79,25 +203,74 @@ class TemporaryOpenSSH:
     remote_echo_port: int = 18080
     container_name: str = ""
     _destroyed: bool = field(default=False, repr=False)
+    _auto_cleanup: bool = field(default=True, repr=False)
+    _finalizer: Any = field(default=None, repr=False, compare=False)
+
+    def _register_auto_cleanup(self) -> None:
+        if not self._auto_cleanup:
+            return
+        _LIVE.add(self)
+        _ensure_atexit()
+        # GC backup when callers drop the object without destroy() (normal exit).
+        self._finalizer = weakref.finalize(self, _finalize_destroy, self.runtime, self.container_id, self.container_name)
+
+    def detach(self) -> "TemporaryOpenSSH":
+        """Keep the container after this process exits.
+
+        Use for handoff scripts that write metadata and exit while a later
+        step (Flatpak E2E, manual ENTER trap) is responsible for destroy.
+        """
+        self._auto_cleanup = False
+        _LIVE.discard(self)
+        finalizer = self._finalizer
+        self._finalizer = None
+        if finalizer is not None:
+            finalizer.detach()
+        return self
 
     def destroy(self) -> None:
         if self._destroyed:
             return
-        self._destroyed = True
-        targets = []
+
+        targets: list[str] = []
         if self.container_id:
             targets.append(self.container_id)
         if self.container_name and self.container_name not in targets:
             targets.append(self.container_name)
+
+        last_error = ""
         for target in targets:
-            subprocess.run(
-                (self.runtime, "rm", "-f", target),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                env=_container_env(),
+            for attempt in range(3):
+                result = _run_container(self.runtime, ("rm", "-f", target), timeout=60.0)
+                if result.returncode == 0 or not self._container_exists(target):
+                    break
+                last_error = (result.stderr or result.stdout or "").strip()
+                if attempt < 2:
+                    _run_container(self.runtime, ("stop", "-t", "1", target), timeout=30.0)
+                    time.sleep(0.2)
+
+        still = [target for target in targets if self._container_exists(target)]
+        if still:
+            logger.warning(
+                "TemporaryOpenSSH.destroy left containers behind: %s (%s)",
+                still,
+                last_error or "no stderr",
             )
+            # Keep auto-cleanup registration so atexit / session sweep can retry.
+            if self._auto_cleanup:
+                _LIVE.add(self)
+            return
+
+        self._destroyed = True
+        _LIVE.discard(self)
+        finalizer = self._finalizer
+        self._finalizer = None
+        if finalizer is not None:
+            finalizer.detach()
+
+    def _container_exists(self, target: str) -> bool:
+        probe = _run_container(self.runtime, ("inspect", target), timeout=15.0)
+        return probe.returncode == 0
 
     def clear_known_hosts(self) -> None:
         """Empty known_hosts for first-use / host-key confirmation tests."""
@@ -190,19 +363,17 @@ class TemporaryOpenSSH:
         return self.ssh_config
 
     def exec_in_container(self, *command: str, timeout: float = 15.0) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            (self.runtime, "exec", self.container_id, *command),
-            check=False,
-            capture_output=True,
-            text=True,
+        return _run_container(
+            self.runtime,
+            ("exec", self.container_id, *command),
             timeout=timeout,
-            env=_container_env(),
         )
 
     def to_json(self) -> dict:
         return {
             "runtime": self.runtime,
             "container_id": self.container_id,
+            "container_name": self.container_name,
             "port": self.port,
             "username": self.username,
             "password": self.password,
@@ -219,8 +390,29 @@ class TemporaryOpenSSH:
         }
 
 
-def start_temporary_openssh(tmp_path: Path) -> TemporaryOpenSSH:
-    """Start disposable Alpine sshd for Phase 13 acceptance testing."""
+def _finalize_destroy(runtime: str, container_id: str, container_name: str) -> None:
+    """weakref backup — best-effort rm when the object is collected."""
+    targets = [t for t in (container_id, container_name) if t]
+    for target in targets:
+        try:
+            _run_container(runtime, ("rm", "-f", target), timeout=30.0)
+        except Exception:
+            pass
+
+
+def start_temporary_openssh(
+    tmp_path: Path,
+    *,
+    auto_cleanup: bool = True,
+) -> TemporaryOpenSSH:
+    """Start disposable Alpine sshd for Phase 13 acceptance testing.
+
+    ``auto_cleanup=True`` (default) registers atexit + weakref destroy so
+    pytest/harness leaks are cleaned when the process exits. Handoff scripts
+    that write metadata and exit while keeping the container must pass
+    ``auto_cleanup=False`` (or call :meth:`TemporaryOpenSSH.detach`) and destroy
+    later via metadata / ``cleanup_orphaned_temporary_openssh``.
+    """
     runtime = container_runtime()
     if runtime is None:
         raise RuntimeError("no container runtime (podman/docker)")
@@ -243,7 +435,7 @@ def start_temporary_openssh(tmp_path: Path) -> TemporaryOpenSSH:
     ssh_config = client_home / "config"
     encrypted_key = ssh_dir / "id_ed25519_enc"
     plain_key = ssh_dir / "id_ed25519_plain"
-    container_name = f"sshpilot-p13-{secrets.token_hex(4)}"
+    container_name = f"{CONTAINER_NAME_PREFIX}{secrets.token_hex(4)}"
 
     for path, passphrase in ((encrypted_key, key_passphrase), (plain_key, "")):
         keygen = subprocess.run(
@@ -305,9 +497,9 @@ EOF
 /usr/sbin/sshd -t
 exec /usr/sbin/sshd -D -e
 """
-    create = subprocess.run(
+    create = _run_container(
+        runtime,
         (
-            runtime,
             "run",
             "--rm",
             "-d",
@@ -320,10 +512,7 @@ exec /usr/sbin/sshd -D -e
             "-c",
             boot,
         ),
-        check=False,
-        capture_output=True,
-        text=True,
-        env=_container_env(),
+        timeout=120.0,
     )
     if create.returncode != 0:
         detail = (create.stderr or create.stdout or "").strip()
@@ -343,6 +532,7 @@ exec /usr/sbin/sshd -D -e
         client_home=client_home,
         remote_echo_port=remote_echo_port,
         container_name=container_name,
+        _auto_cleanup=auto_cleanup,
     )
     try:
         deadline = time.monotonic() + 90.0
@@ -362,14 +552,9 @@ exec /usr/sbin/sshd -D -e
                 time.sleep(0.4)
                 continue
             env.write_all_host_blocks()
+            env._register_auto_cleanup()
             return env
-        logs = subprocess.run(
-            (runtime, "logs", container_id),
-            check=False,
-            capture_output=True,
-            text=True,
-            env=_container_env(),
-        )
+        logs = _run_container(runtime, ("logs", container_id), timeout=30.0)
         detail = ((logs.stderr or "") + (logs.stdout or "")).strip()[-800:]
         raise RuntimeError(f"sshd never became ready: {detail or 'no logs'}")
     except Exception:

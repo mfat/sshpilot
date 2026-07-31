@@ -31,9 +31,26 @@ def phase14_harness(tmp_path, monkeypatch):
         harness.boot()
         yield harness
     finally:
+        leftover_meta = None
+        try:
+            if harness.openssh is not None:
+                leftover_meta = {
+                    "runtime": harness.openssh.runtime,
+                    "container_id": harness.openssh.container_id,
+                    "container_name": harness.openssh.container_name,
+                }
+        except Exception:
+            leftover_meta = None
         try:
             harness.close()
         except Exception:
             pass
+        if leftover_meta:
+            try:
+                from tests.fixtures.temporary_openssh import destroy_temporary_openssh_meta
+
+                destroy_temporary_openssh_meta(leftover_meta)
+            except Exception:
+                pass
         # Brief settle so the next test does not inherit lingering PTYs/X11 grabs.
         time.sleep(0.15)

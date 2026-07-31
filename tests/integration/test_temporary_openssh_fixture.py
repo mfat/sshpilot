@@ -343,13 +343,64 @@ def test_remote_forward(openssh):
 
 
 def test_destroy_removes_container(openssh):
+    from tests.fixtures.temporary_openssh import _container_env
+
     cid = openssh.container_id
+    name = openssh.container_name
     runtime = openssh.runtime
     openssh.destroy()
+    for target in (cid, name):
+        probe = subprocess.run(
+            (runtime, "inspect", target),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_container_env(),
+        )
+        assert probe.returncode != 0, target
+
+
+def test_cleanup_orphaned_removes_detached_fixture(tmp_path):
+    """Handoff-style start (auto_cleanup=False) must still be sweepable."""
+    from tests.fixtures.temporary_openssh import (
+        _container_env,
+        cleanup_orphaned_temporary_openssh,
+        start_temporary_openssh,
+    )
+
+    env = start_temporary_openssh(tmp_path, auto_cleanup=False)
+    name = env.container_name
+    # Simulate starter process dropping the object without destroy.
+    env.detach()
+    removed = cleanup_orphaned_temporary_openssh()
+    assert name in removed
     probe = subprocess.run(
-        (runtime, "inspect", cid),
+        (env.runtime, "inspect", name),
         capture_output=True,
         text=True,
         check=False,
+        env=_container_env(),
+    )
+    assert probe.returncode != 0
+
+
+def test_destroy_from_meta_removes_container(tmp_path):
+    from tests.fixtures.temporary_openssh import (
+        _container_env,
+        destroy_temporary_openssh_meta,
+        start_temporary_openssh,
+    )
+
+    env = start_temporary_openssh(tmp_path, auto_cleanup=False)
+    meta = env.to_json()
+    name = env.container_name
+    env.detach()
+    destroy_temporary_openssh_meta(meta)
+    probe = subprocess.run(
+        (meta["runtime"], "inspect", name),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_container_env(),
     )
     assert probe.returncode != 0
