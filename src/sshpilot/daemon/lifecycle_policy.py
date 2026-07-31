@@ -302,8 +302,8 @@ class DaemonLifecycleController:
                 self._disconnect_reason = reason
                 self._restart_requested = bool(restart)
                 now_mono = self._monotonic()
-                if will_lose:
-                    # Keep serving close/status during drain until the deadline.
+                if will_lose and not request.force:
+                    # Graceful stop: keep serving close/status during drain.
                     self._shutdown_deadline_mono = (
                         now_mono + self._drain_timeout_seconds
                     )
@@ -312,6 +312,8 @@ class DaemonLifecycleController:
                     )
                     self._immediate_shutdown = False
                 else:
+                    # No live work, or force=True (Terminate everything): do not
+                    # wait out the drain window — tear down immediately.
                     self._shutdown_deadline_mono = now_mono
                     self._shutdown_deadline_wall = self._wall_clock()
                     self._immediate_shutdown = True

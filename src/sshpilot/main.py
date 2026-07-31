@@ -1074,7 +1074,20 @@ class SshPilotApplication(Adw.Application):
 
         daemon_process = getattr(selection, 'daemon_process', None)
         keep_running = quit_decision is DaemonQuitDecision.KEEP_RUNNING
-        if client is not None and daemon_process is not None and not keep_running:
+        already_force_stopped = (
+            getattr(self, "_daemon_shutdown_intent", None) == "terminate"
+            or (
+                self.window is not None
+                and getattr(self.window, "_daemon_shutdown_intent", None)
+                == "terminate"
+            )
+        )
+        if (
+            client is not None
+            and daemon_process is not None
+            and not keep_running
+            and not already_force_stopped
+        ):
             try:
                 from .api.models.daemon import StopDaemonRequest
                 force = quit_decision is DaemonQuitDecision.TERMINATE_ALL
@@ -1097,6 +1110,10 @@ class SshPilotApplication(Adw.Application):
                     "Daemon graceful stop request failed (will idle out)",
                     exc_info=True,
                 )
+        elif already_force_stopped:
+            logger.debug(
+                "Terminate-all already force-stopped the daemon; skipping on_shutdown stop"
+            )
         elif keep_running:
             logger.info(
                 "Keep-running quit: leaving app-launched daemon intact"

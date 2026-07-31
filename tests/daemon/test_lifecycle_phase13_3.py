@@ -238,6 +238,33 @@ def test_force_stop_terminates_all_resources(daemon_factory):
     assert not server.socket_path.exists()
 
 
+def test_force_stop_does_not_wait_full_drain(daemon_factory):
+    """force=True must tear down immediately, not wait out drain_timeout (5s)."""
+    runner = _BlockingSessionRunner()
+    server, _manager = daemon_factory(
+        idle_shutdown_seconds=0.0,
+        drain_timeout_seconds=5.0,
+        session_runner=runner,
+        session_shutdown_timeout=1.0,
+    )
+    client = DaemonClient(socket_path=server.socket_path)
+    connection = client.list_connections()[0]
+    client.open_session(OpenSessionRequest(connection_id=connection.id))
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if client.get_daemon_status().resources.sessions_active:
+            break
+        time.sleep(0.02)
+
+    started = time.monotonic()
+    result = client.stop_daemon(StopDaemonRequest(force=True))
+    assert result.accepted is True
+    client.close()
+    assert server.wait_stopped(timeout=2.0)
+    assert time.monotonic() - started < 2.0
+    assert not server.socket_path.exists()
+
+
 def test_repeated_stop_request_is_idempotent(daemon_factory):
     """Calling stop twice does not crash; second call returns accepted or transport error."""
     server, _manager = daemon_factory(idle_shutdown_seconds=0.0)
