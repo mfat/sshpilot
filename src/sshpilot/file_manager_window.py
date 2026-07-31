@@ -947,6 +947,7 @@ class FileManagerWindow(Adw.Window):
 
     def _on_operation_error(self, _manager, message: str) -> None:
         """Handle operation error with toast."""
+        logger.warning("File manager operation error: %s", message)
         # Cancel any pending loading toast timeouts since operation failed
         for pane, timeout_id in self._loading_toast_timeouts.items():
             if timeout_id is not None:
@@ -967,6 +968,12 @@ class FileManagerWindow(Adw.Window):
         if target is not None:
             failed_path = self._pending_paths[target]
             self._pending_paths[target] = None
+            logger.debug(
+                "File manager directory load error on %s path=%r: %s",
+                "right" if target is getattr(self, "_right_pane", None) else "left",
+                failed_path,
+                message,
+            )
             try:
                 target.dismiss_toasts()
             except (AttributeError, RuntimeError, GLib.GError):
@@ -988,6 +995,7 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connection_error(self, _manager, message: str) -> None:
         """Handle connection / authentication failure with toast or alert."""
+        logger.warning("File manager connection error: %s", message)
         def show_error():
             try:
                 self._clear_progress_toast()

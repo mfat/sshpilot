@@ -187,6 +187,12 @@ class DaemonSftpManager(GObject.GObject):
     def connect_to_server(self, password: Optional[str] = None) -> None:
         if password is not None:
             self._password = password
+        logger.debug(
+            "Daemon SFTP connect_to_server for %s@%s connection_id=%s",
+            self._username,
+            self._host,
+            self._connection_id,
+        )
         if self._parent_widget is not None and self._interaction_dialogs is None:
             from .daemon_interaction_dialogs import DaemonInteractionDialogs
 
@@ -201,6 +207,13 @@ class DaemonSftpManager(GObject.GObject):
             self._interaction_dialogs.set_session(SessionId(str(service_id)))
 
     def _on_service_ready(self, summary) -> None:
+        logger.debug(
+            "Daemon SFTP service ready for %s@%s id=%s state=%s",
+            self._username,
+            self._host,
+            getattr(summary, "id", None),
+            getattr(summary, "state", None),
+        )
         self._resolve_home()
 
     def _resolve_home(self) -> None:
@@ -218,7 +231,20 @@ class DaemonSftpManager(GObject.GObject):
         # Host-key/password/passphrase/MFA prompts are handled by
         # DaemonInteractionDialogs (the daemon's interaction broker), so
         # unlike the legacy backend this never emits authentication-required.
-        self.emit("connection-error", getattr(error, "message", str(error)))
+        message = getattr(error, "message", str(error))
+        logger.warning(
+            "Daemon SFTP service error for %s@%s: %s",
+            self._username,
+            self._host,
+            message,
+        )
+        logger.debug(
+            "Daemon SFTP service error detail for %s@%s",
+            self._username,
+            self._host,
+            exc_info=error,
+        )
+        self.emit("connection-error", message)
 
     def close(self) -> None:
         """Detach and stop using the service.
@@ -265,7 +291,18 @@ class DaemonSftpManager(GObject.GObject):
 
     def _require_ready_service_id(self) -> SftpServiceId:
         service_id = self._sftp_controller.service_id
-        if self._sftp_controller.state is not SftpControllerState.READY or service_id is None:
+        state = self._sftp_controller.state
+        if state is not SftpControllerState.READY or service_id is None:
+            logger.warning(
+                "SFTP connection is not available for %s@%s "
+                "(closed=%s, controller_state=%s, service_id=%s, connection_id=%s)",
+                self._username,
+                self._host,
+                self._closed,
+                state.value if hasattr(state, "value") else state,
+                service_id,
+                self._connection_id,
+            )
             raise OSError("SFTP connection is not available")
         return service_id
 

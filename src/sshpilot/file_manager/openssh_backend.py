@@ -114,6 +114,13 @@ class OpenSSHSFTPManager(GObject.GObject):
             try:
                 result = fut.result()
             except Exception as exc:  # pragma: no cover - uniform error path
+                logger.debug(
+                    "OpenSSH SFTP op failed for %s@%s: %s",
+                    self._username,
+                    self._host,
+                    exc,
+                    exc_info=True,
+                )
                 if on_error:
                     self._dispatcher(on_error, (exc,), {})
                 else:
@@ -176,6 +183,18 @@ class OpenSSHSFTPManager(GObject.GObject):
 
     def _emit_connect_error(self, exc: Exception) -> None:
         message = str(exc)
+        logger.warning(
+            "OpenSSH SFTP connect failed for %s@%s: %s",
+            self._username,
+            self._host,
+            message,
+        )
+        logger.debug(
+            "OpenSSH SFTP connect failure detail for %s@%s",
+            self._username,
+            self._host,
+            exc_info=exc,
+        )
         if isinstance(exc, PermissionError):
             self.emit("authentication-required", message)
         else:
@@ -307,7 +326,13 @@ class OpenSSHSFTPManager(GObject.GObject):
     def _connect_attempt(self, *, use_mux: bool = True) -> None:
         self._read_keepalive_config()
         argv, env = self._build_argv(use_mux=use_mux)
-        logger.debug("OpenSSH SFTP backend launching: %s", " ".join(argv))
+        logger.debug(
+            "OpenSSH SFTP backend launching (mux=%s) for %s@%s: %s",
+            use_mux,
+            self._username,
+            self._host,
+            " ".join(argv),
+        )
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -326,6 +351,13 @@ class OpenSSHSFTPManager(GObject.GObject):
         # hanging until ssh's ConnectTimeout fires.
         with self._lock:
             if self._closed:
+                logger.debug(
+                    "OpenSSH SFTP connect aborted before handshake "
+                    "(manager already closed) for %s@%s pid=%s",
+                    self._username,
+                    self._host,
+                    proc.pid,
+                )
                 self._terminate_proc(proc)
                 return
             self._proc = proc
@@ -342,6 +374,12 @@ class OpenSSHSFTPManager(GObject.GObject):
 
         def _watchdog_fire() -> None:
             timed_out.set()
+            logger.debug(
+                "OpenSSH SFTP handshake watchdog fired for %s@%s pid=%s",
+                self._username,
+                self._host,
+                proc.pid,
+            )
             self._terminate_proc(proc)
 
         watchdog = threading.Timer(self._connect_timeout(), _watchdog_fire)
@@ -359,8 +397,19 @@ class OpenSSHSFTPManager(GObject.GObject):
             with self._lock:
                 if self._proc is proc:
                     self._proc = None
+            stderr_text = self._drained_stderr()
+            logger.debug(
+                "OpenSSH SFTP handshake failed for %s@%s "
+                "(timed_out=%s, rc=%s): %s; stderr=%r",
+                self._username,
+                self._host,
+                timed_out.is_set(),
+                proc.poll(),
+                exc,
+                stderr_text,
+            )
             raise self._classify_handshake_failure(
-                self._drained_stderr(), exc, timed_out=timed_out.is_set()
+                stderr_text, exc, timed_out=timed_out.is_set()
             ) from exc
         finally:
             watchdog.cancel()
@@ -369,6 +418,12 @@ class OpenSSHSFTPManager(GObject.GObject):
             if self._closed:
                 # close() ran during the handshake — it already terminated proc
                 # and dropped our refs. Don't resurrect a live connection.
+                logger.debug(
+                    "OpenSSH SFTP handshake completed but manager closed "
+                    "during connect for %s@%s — discarding client",
+                    self._username,
+                    self._host,
+                )
                 self._terminate_proc(proc)
                 return
             self._client = client
@@ -376,6 +431,14 @@ class OpenSSHSFTPManager(GObject.GObject):
             self._home = client.realpath(".")
         except Exception:  # pragma: no cover - home is best-effort
             self._home = None
+        logger.debug(
+            "OpenSSH SFTP connected for %s@%s (home=%r, mux=%s, pid=%s)",
+            self._username,
+            self._host,
+            self._home,
+            use_mux,
+            proc.pid,
+        )
         self._start_keepalive_worker()
 
     def _start_stderr_drain(self, proc: subprocess.Popen) -> None:
@@ -571,6 +634,26 @@ class OpenSSHSFTPManager(GObject.GObject):
     # -- path helpers -----------------------------------------------------
     def _client_or_raise(self) -> OpenSSHSFTPClient:
         if self._client is None:
+            proc = self._proc
+            proc_rc = proc.poll() if proc is not None else None
+            stderr_tail = list(self._stderr_lines)[-20:]
+            logger.warning(
+                "SFTP connection is not available for %s@%s "
+                "(closed=%s, proc=%s, rc=%s, home=%r)",
+                self._username,
+                self._host,
+                self._closed,
+                None if proc is None else f"pid={proc.pid}",
+                proc_rc,
+                self._home,
+            )
+            if stderr_tail:
+                logger.debug(
+                    "OpenSSH SFTP stderr tail when client missing for %s@%s:\n%s",
+                    self._username,
+                    self._host,
+                    "\n".join(stderr_tail),
+                )
             raise OSError("SFTP connection is not available")
         return self._client
 

@@ -118,15 +118,29 @@ class DaemonSftpServiceController:
             generation = self._generation
             self._state = SftpControllerState.OPENING
             self._service_id = None
+        logger.debug(
+            "DaemonSftpServiceController.open connection_id=%s generation=%s",
+            self._connection_id,
+            generation,
+        )
         self._ensure_events()
 
         def _op():
             reuse = self._controlmaster_reuse_enabled()
             existing = self._ready_service_for_connection() if reuse else None
             if existing is not None:
+                logger.debug(
+                    "Reusing READY SFTP service %s for connection %s",
+                    existing.id,
+                    self._connection_id,
+                )
                 return self._client.attach_sftp(
                     AttachSftpRequest(service_id=existing.id)
                 )
+            logger.debug(
+                "Opening new SFTP service for connection %s",
+                self._connection_id,
+            )
             return self._client.open_sftp(
                 OpenSftpRequest(connection_id=self._connection_id)
             )
@@ -391,6 +405,14 @@ class DaemonSftpServiceController:
     def _on_open_accepted(self, summary: SftpServiceSummary, generation: int) -> None:
         with self._lock:
             if generation != self._generation:
+                logger.debug(
+                    "Ignoring stale SFTP open result id=%s state=%s "
+                    "(generation %s != %s)",
+                    summary.id,
+                    summary.state,
+                    generation,
+                    self._generation,
+                )
                 return
             self._service_id = summary.id
             if summary.state is SftpServiceState.READY:
@@ -401,12 +423,25 @@ class DaemonSftpServiceController:
                 self._state = SftpControllerState.CLOSED
             else:
                 self._state = SftpControllerState.OPENING
+        logger.debug(
+            "SFTP service %s state=%s for connection %s (controller=%s)",
+            summary.id,
+            summary.state,
+            self._connection_id,
+            self._state.value,
+        )
         if self._on_state_changed is not None:
             self._on_state_changed(summary)
         if summary.state is SftpServiceState.READY and self._on_ready is not None:
             self._on_ready(summary)
         if summary.state is SftpServiceState.FAILED and self._on_error is not None:
             message = summary.failure.message if summary.failure else "SFTP failed"
+            logger.warning(
+                "SFTP service %s FAILED for connection %s: %s",
+                summary.id,
+                self._connection_id,
+                message,
+            )
             self._on_error(
                 SshPilotError(ErrorCode.SFTP_SERVICE_NOT_READY, message)
             )
@@ -414,8 +449,24 @@ class DaemonSftpServiceController:
     def _fail(self, error: BaseException, generation: int) -> None:
         with self._lock:
             if generation != self._generation:
+                logger.debug(
+                    "Ignoring stale SFTP open failure (generation %s != %s): %s",
+                    generation,
+                    self._generation,
+                    error,
+                )
                 return
             self._state = SftpControllerState.FAILED
+        logger.warning(
+            "SFTP controller FAILED for connection %s: %s",
+            self._connection_id,
+            error,
+        )
+        logger.debug(
+            "SFTP controller failure detail for connection %s",
+            self._connection_id,
+            exc_info=error,
+        )
         if self._on_error is not None:
             self._on_error(error)
 
