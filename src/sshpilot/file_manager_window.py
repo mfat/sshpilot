@@ -649,6 +649,11 @@ class FileManagerWindow(Adw.Window):
         manager = self._connection_manager
         if manager is None:
             return False
+        try:
+            if hasattr(manager, 'get_connection_password'):
+                if manager.get_connection_password(connection):
+                    return True
+        except Exception:
             pass
         try:
             host = (
