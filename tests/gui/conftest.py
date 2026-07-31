@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
@@ -18,6 +19,9 @@ def phase14_harness(tmp_path, monkeypatch):
     monkeypatch.setenv("GDK_BACKEND", os.environ.get("GDK_BACKEND", "x11"))
     monkeypatch.setenv("LIBGL_ALWAYS_SOFTWARE", "1")
     monkeypatch.delenv("G_DEBUG", raising=False)
+    # Force serial-friendly isolation (one HOME / daemon / OpenSSH per test).
+    monkeypatch.setenv("SSHPILOT_GUI_TESTS", "1")
+    monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "daemon")
 
     from tests.gui._phase14_harness import Phase14Harness, make_isolated_home
 
@@ -31,3 +35,5 @@ def phase14_harness(tmp_path, monkeypatch):
             harness.close()
         except Exception:
             pass
+        # Brief settle so the next test does not inherit lingering PTYs/X11 grabs.
+        time.sleep(0.15)

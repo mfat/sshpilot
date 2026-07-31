@@ -1230,7 +1230,38 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to feed continuity loss marker: {e}")
 
     def _on_daemon_error(self, error):
-        """Handle daemon terminal errors."""
+        """Handle daemon terminal errors.
+
+        Binary terminal INPUT_ERROR frames and transient input/resize faults
+        must not tear down a live session — that race (attach/STARTING vs early
+        keystrokes) was failing connections with "The terminal input was rejected".
+        """
+        try:
+            from .api.errors import ErrorCode
+
+            code = getattr(error, "code", None)
+            if code in {
+                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+                ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                ErrorCode.SESSION_INVALID_STATE,
+            }:
+                logger.info(
+                    "Transient daemon terminal I/O error (ignored for connection): %s",
+                    error,
+                )
+                return
+            if getattr(error, "retryable", False) and code in {
+                ErrorCode.SERVER_BUSY,
+                ErrorCode.OPERATION_TIMED_OUT,
+            }:
+                logger.info(
+                    "Retryable daemon terminal error (ignored for connection): %s",
+                    error,
+                )
+                return
+        except Exception:
+            pass
         logger.error(f"Daemon terminal error: {error}")
         self._on_connection_failed(str(error))
 

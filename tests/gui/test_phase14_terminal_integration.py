@@ -101,15 +101,14 @@ def test_terminal_resize_verified(phase14_harness):
 
     h.resize_terminal(40, 100, term)
     h.pump(200)
+    text = h.verify_daemon_resize(40, 100, term)
     final_rows = max(1, int(vte.get_row_count() or 0))
     final_cols = max(1, int(vte.get_column_count() or 0))
-    # Daemon path must have accepted a resize call without error.
-    h.resize_terminal(36, 90, term)
-    h.pump(200)
 
     evidence = h.terminal_evidence(term)
-    evidence["terminal_resize_verified"] = final_rows > 0 and final_cols > 0
+    evidence["terminal_resize_verified"] = "40 100" in text
     evidence["initial_size"] = f"{initial_rows}x{initial_cols}"
     evidence["final_size"] = f"{final_rows}x{final_cols}"
+    evidence["stty_size"] = "40 100"
     assert evidence["terminal_resize_verified"] is True, evidence
     assert evidence["gtk_connected"] is True, evidence

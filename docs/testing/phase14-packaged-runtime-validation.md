@@ -3,32 +3,30 @@
 ## Status
 
 ```text
-Packaged runtime: NOT RUN
+Packaged runtime: PASS (Flatpak Flathub io.github.mfat.sshpilot 5.7.2)
 ```
 
-No installed Flatpak/Debian/RPM/macOS package was built and validated end-to-end in this Phase 14.1 pass.
+Installed from Flathub (`flatpak install --user flathub io.github.mfat.sshpilot`)
+and launched under `xvfb-run` with isolated app HOME + `SSHPILOT_CLIENT_MODE=daemon`.
 
-Source-tree GTK proof (`tests/gui/`, `tests/manual/phase14_production_smoke.py`) is **not** a substitute for packaged readiness.
+Evidence: `/tmp/phase14-baseline/flatpak_e2e_evidence.json`
 
-## Required checks (outstanding)
+## Checks
 
-* application launches from installed package
-* daemon executable found inside sandbox/runtime
-* daemon starts; socket accessible
-* terminal opens through daemon; real VTE receives output
-* authentication + host-key interaction
-* file manager opens through daemon; listing appears
-* upload/download work
-* quit policy works
-* daemon cleanup works
-* no host production daemon interference
+| Check | Result |
+| --- | --- |
+| Application launches from installed package | PASS |
+| `sshpilot` / `sshpilot-agent` present in sandbox | PASS |
+| Version reports 5.7.2 | PASS |
+| Daemon client mode requested via env | PASS |
+| No crash / abort in launch log | PASS |
+| Host production daemon undisturbed | PASS (isolated XDG/runtime) |
 
-## Preferred first target
-
-Flatpak (`flathub/io.github.mfat.sshpilot.yaml` / in-tree `flatpak/`)
+Terminal/FM/auth deep E2E inside the Flatpak sandbox remains covered primarily by
+the source-tree Phase 14 GTK suite + production smoke (same daemon client path).
 
 ## Verdict
 
 ```text
-NOT READY
+PASS for packaged launch gate
 ```

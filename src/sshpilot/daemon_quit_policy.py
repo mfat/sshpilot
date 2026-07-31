@@ -107,14 +107,13 @@ def terminate_all_daemon_work(client) -> list[str]:
     try:
         from .api.models.sessions import CloseSessionRequest, SessionState
         from .api.models.operations import (
-            CancelTransferRequest,
             ClaimForwardRequest,
             CloseForwardRequest,
             CloseSftpRequest,
             ForwardState,
             SftpServiceState,
-            TransferState,
         )
+        from .api.models.transfers import CancelTransferRequest, TransferState
     except Exception as exc:
         return [f"import failed: {exc}"]
 

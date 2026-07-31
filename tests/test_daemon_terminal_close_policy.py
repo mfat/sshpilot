@@ -97,22 +97,25 @@ class TestDaemonTerminalClosePolicy:
             mock_terminal_widget._daemon_controller.close.assert_not_called()
 
     def test_app_close_policy_during_quit(self, mock_config, mock_terminal_widget):
-        """Test that app close policy is used during quit."""
-        # Test the policy resolution logic
-        from sshpilot.daemon_terminal_policy import TerminalClosePolicy, resolve_app_close_policy
-        
-        with patch('sshpilot.daemon_terminal_policy.resolve_app_close_policy', return_value=TerminalClosePolicy.DETACH):
-            policy = resolve_app_close_policy(mock_config)
-            
-            # Verify correct policy is resolved during quit
-            assert policy == TerminalClosePolicy.DETACH
-            
-            # Simulate the policy action during quit
-            if policy == TerminalClosePolicy.DETACH:
-                mock_terminal_widget._daemon_controller.detach()
-            
-            # Verify detach was called
-            mock_terminal_widget._daemon_controller.detach.assert_called_once()
+        """App close policy defaults to ASK; explicit detach is honored."""
+        from sshpilot.daemon_terminal_policy import (
+            TerminalClosePolicy,
+            resolve_app_close_policy,
+        )
+
+        # Default (unset) is ASK so quit presents Keep running / Terminate.
+        mock_config.get_setting.side_effect = lambda key, default=None: default
+        assert resolve_app_close_policy(mock_config) == TerminalClosePolicy.ASK
+
+        mock_config.get_setting.side_effect = lambda key, default=None: {
+            "terminal.daemon_app_close_policy": "detach"
+        }.get(key, default)
+        policy = resolve_app_close_policy(mock_config)
+        assert policy == TerminalClosePolicy.DETACH
+
+        if policy == TerminalClosePolicy.DETACH:
+            mock_terminal_widget._daemon_controller.detach()
+        mock_terminal_widget._daemon_controller.detach.assert_called_once()
 
     def test_dialog_detach_response(self, mock_terminal_widget):
         """Test dialog detach response."""

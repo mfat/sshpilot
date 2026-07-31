@@ -15,8 +15,14 @@ Observed: 4/4 terminal integration tests PASS (connect, visible output, input,
 resize) without bloom-filter abort. Restore/FM/quit GTK tests also PASS in
 isolation.
 
-Remaining instability is intermittent `terminal input was rejected` during
-attach races (application logic), not the historical bloom-filter abort.
+Remaining instability after Phase 14.1 was an application-level
+`terminal input was rejected` race during STARTING→RUNNING. That is fixed by:
+
+* silently dropping terminal input while the session is still `STARTING`
+* deferring live output delivery until `RUNNING`
+* treating transient input/resize errors as non-fatal in `TerminalWidget`
+
+Phase 14 GUI stress (3× `tests/gui/`) and production smoke (2×) then stayed green.
 
 ## Historical summary
 

@@ -108,6 +108,7 @@ class PtyIoManager:
         return True
 
     def resize(self, handle: "PtyProcessHandle", dimensions: TerminalDimensions) -> None:
+        handle.last_dimensions = dimensions
         self._submit(("resize", handle, dimensions))
 
     def unregister(self, handle: "PtyProcessHandle") -> None:
@@ -311,6 +312,7 @@ class PtyProcessHandle(SessionProcessHandle):
         self._exit_notified = False
         self._eof_notified = False
         self._master_closed = False
+        self.last_dimensions: Optional[TerminalDimensions] = None
 
     def terminate(self) -> None:
         with self._lock:
@@ -342,6 +344,7 @@ class PtyProcessHandle(SessionProcessHandle):
         return self._manager.write(self, data)
 
     def resize(self, dimensions: TerminalDimensions) -> None:
+        self.last_dimensions = dimensions
         self._manager.resize(self, dimensions)
 
     def notify_output(self, data: bytes) -> None:

@@ -329,7 +329,7 @@ class DaemonTerminalSessionController:
                 )
             ),
             on_success=lambda _: None,
-            on_error=self._on_error,
+            on_error=self._on_input_error,
         )
 
     def resize(self, dimensions: TerminalDimensions) -> None:
@@ -349,7 +349,7 @@ class DaemonTerminalSessionController:
                 )
             ),
             on_success=lambda _: None,
-            on_error=self._on_error,
+            on_error=self._on_input_error,
         )
 
     def subscribe_output(
@@ -535,6 +535,26 @@ class DaemonTerminalSessionController:
     def _on_attach_error(self, error) -> None:
         """Handle session attach error."""
         self._tab_state.state = TerminalSessionState.FAILED
+        self._on_error(error)
+
+    def _on_input_error(self, error) -> None:
+        """Handle input/resize faults without failing the whole session."""
+        code = getattr(error, "code", None)
+        if code in {
+            ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+            ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+            ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+            ErrorCode.SESSION_INVALID_STATE,
+            ErrorCode.SERVER_BUSY,
+        }:
+            logger.debug(
+                "Transient terminal input/resize error: %s",
+                getattr(code, "value", code),
+            )
+            # Still surface to the widget so it can classify (non-fatal).
+            if self._on_error is not self._default_error_handler:
+                self._on_error(error)
+            return
         self._on_error(error)
 
     @staticmethod

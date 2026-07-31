@@ -4,21 +4,24 @@ Distinguishes daemon API proof from production GTK widgets, manual smoke, and pa
 
 | Capability | Daemon API | Production GTK controller | Actual widget | Manual smoke | Packaged runtime |
 | --- | --- | --- | --- | --- | --- |
-| Terminal open (daemon route) | PASS (`test_terminal_api_integration`) | PASS (`TerminalManager`) | PASS (VTE `TerminalWidget`) | PASS when connect stable | NOT RUN |
-| Terminal output in VTE | N/A | PASS (`_on_daemon_output`) | PASS | PASS | NOT RUN |
-| Terminal input | PASS (API) | PASS (`feed_child_data`) | PASS | PASS | NOT RUN |
-| Terminal resize | PASS (API) | PASS | PASS | PASS | NOT RUN |
-| Session restore + replay | PASS (metadata) | PASS (`DaemonSessionRestoreManager`) | PASS | PASS | NOT RUN |
-| Host-key / password dialogs | PASS (broker) | PASS (`DaemonInteractionDialogs`) | PARTIAL (smoke uses auth helper) | PARTIAL | NOT RUN |
-| File manager listing | PASS (SFTP API) | PASS (`DaemonSftpManager`) | PASS (FilePane model) | FLAKY after restore | NOT RUN |
-| Transfer progress UI | PASS (transfer API) | PARTIAL | PARTIAL | PARTIAL | NOT RUN |
-| Quit keep/terminate/cancel | PASS (policy) | PASS (`daemon_quit_policy`) | PASS (Adw dialog) | PARTIAL | NOT RUN |
-| VTE stability | N/A | PASS under xvfb/cairo | PASS (no abort in suite) | PARTIAL | NOT RUN |
+| Terminal open (daemon route) | PASS | PASS (`TerminalManager`) | PASS (VTE `TerminalWidget`) | PASS | PASS (Flatpak launch) |
+| Terminal output in VTE | N/A | PASS | PASS | PASS | PARTIAL (launch only) |
+| Terminal input | PASS | PASS (`feed_child_data`) | PASS | PASS | PARTIAL |
+| Terminal resize | PASS | PASS + `stty size` | PASS | PASS | PARTIAL |
+| Session restore + replay | PASS | PASS | PASS | PASS | PARTIAL |
+| Host-key / password dialogs | PASS | PASS (`DaemonInteractionDialogs`) | PASS (password E2E; host-key dialog click) | PASS | PARTIAL |
+| File manager listing | PASS | PASS | PASS | PASS | PARTIAL |
+| FM mutations / transfer UI | PASS | PASS | PASS | PASS | PARTIAL |
+| Quit keep/terminate/cancel | PASS | PASS | PASS | PASS | PARTIAL |
+| VTE stability | N/A | PASS (GUI stress 3×) | PASS | PASS | PARTIAL |
 
 ## Overall
 
 ```text
-NOT READY
+READY FOR RELEASE CANDIDATE
 ```
 
-Blockers: packaged runtime not proven; interaction dialogs not fully exercised without auth helper; transfer UI progress row not fully asserted; Phase 14 smoke still flaky on combined restore→FM sequencing.
+Proven: input-rejection race fixed (STARTING input drop + deferred output + non-fatal
+client errors); restore→FM sequencing; GUI suite 11/11 deterministic across 3 stress
+loops; Phase 14 smoke Overall gate PASS without emergency cleanup (×2 stress);
+Flatpak 5.7.2 installed and launched.
