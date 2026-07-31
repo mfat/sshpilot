@@ -380,7 +380,14 @@ class DaemonSftpServiceController:
             if not isinstance(summary, SftpServiceSummary):
                 return
             with self._lock:
-                if summary.id != self._service_id and self._service_id is not None:
+                # While unbound, only accept events for our connection so a
+                # sibling host's CREATED/STARTING cannot steal this open.
+                if (
+                    self._service_id is None
+                    and summary.connection_id != self._connection_id
+                ):
+                    return
+                if self._service_id is not None and summary.id != self._service_id:
                     return
                 generation = self._generation
             self._on_open_accepted(summary, generation)
@@ -403,6 +410,7 @@ class DaemonSftpServiceController:
                 logger.debug("SFTP event unsubscription failed", exc_info=True)
 
     def _on_open_accepted(self, summary: SftpServiceSummary, generation: int) -> None:
+        became_ready = False
         with self._lock:
             if generation != self._generation:
                 logger.debug(
@@ -414,15 +422,47 @@ class DaemonSftpServiceController:
                     self._generation,
                 )
                 return
-            self._service_id = summary.id
+            if self._service_id is None:
+                self._service_id = summary.id
+            elif summary.id != self._service_id:
+                return
+
+            previous = self._state
             if summary.state is SftpServiceState.READY:
+                became_ready = previous is not SftpControllerState.READY
                 self._state = SftpControllerState.READY
             elif summary.state is SftpServiceState.FAILED:
                 self._state = SftpControllerState.FAILED
             elif summary.state is SftpServiceState.CLOSED:
                 self._state = SftpControllerState.CLOSED
+            elif summary.state in (
+                SftpServiceState.CREATED,
+                SftpServiceState.STARTING,
+                SftpServiceState.CLOSING,
+            ):
+                # Transitional daemon states. Never regress READY (or a
+                # terminal controller state) back to OPENING — late CREATED/
+                # STARTING events commonly arrive after the open RPC already
+                # reported READY, which used to break the first listdir.
+                if previous in (
+                    SftpControllerState.IDLE,
+                    SftpControllerState.OPENING,
+                ):
+                    self._state = SftpControllerState.OPENING
+                else:
+                    logger.debug(
+                        "Ignoring transitional SFTP state %s for %s "
+                        "(controller already %s)",
+                        summary.state,
+                        summary.id,
+                        previous.value,
+                    )
             else:
-                self._state = SftpControllerState.OPENING
+                logger.debug(
+                    "Ignoring unknown SFTP service state %s for %s",
+                    summary.state,
+                    summary.id,
+                )
         logger.debug(
             "SFTP service %s state=%s for connection %s (controller=%s)",
             summary.id,
@@ -432,7 +472,7 @@ class DaemonSftpServiceController:
         )
         if self._on_state_changed is not None:
             self._on_state_changed(summary)
-        if summary.state is SftpServiceState.READY and self._on_ready is not None:
+        if became_ready and self._on_ready is not None:
             self._on_ready(summary)
         if summary.state is SftpServiceState.FAILED and self._on_error is not None:
             message = summary.failure.message if summary.failure else "SFTP failed"

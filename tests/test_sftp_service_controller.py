@@ -194,3 +194,98 @@ def test_open_creates_service_when_controlmaster_disabled(
     assert isinstance(mock_client.open_sftp.call_args.args[0], OpenSftpRequest)
     mock_client.attach_sftp.assert_not_called()
     assert controller.service_id == SftpServiceId("svc-new")
+
+
+def test_late_starting_event_does_not_regress_ready(controller):
+    """CREATED/STARTING after READY must not flip the controller back to opening.
+
+    Reproduces the GoogleRouter file-manager race: open RPC reports READY,
+    UI starts listdir, then a queued STARTING event used to set state=opening
+    and surface "SFTP connection is not available".
+    """
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
+
+    ready_events = []
+    controller._on_ready = ready_events.append
+    generation = 1
+    with controller._lock:
+        controller._generation = generation
+
+    ready = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.READY,
+        created_at=datetime.now(timezone.utc),
+    )
+    starting = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.STARTING,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    controller._on_open_accepted(ready, generation)
+    assert controller.state is SftpControllerState.READY
+    assert len(ready_events) == 1
+
+    controller._on_open_accepted(starting, generation)
+    assert controller.state is SftpControllerState.READY
+    assert controller.service_id == SftpServiceId("svc-1")
+    assert len(ready_events) == 1  # on_ready fires only on transition into READY
+
+
+def test_created_event_keeps_opening_before_ready(controller):
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
+
+    generation = 1
+    with controller._lock:
+        controller._generation = generation
+        controller._state = SftpControllerState.OPENING
+
+    created = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.CREATED,
+        created_at=datetime.now(timezone.utc),
+    )
+    controller._on_open_accepted(created, generation)
+    assert controller.state is SftpControllerState.OPENING
+    assert controller.service_id == SftpServiceId("svc-1")
+
+
+def test_event_for_other_connection_ignored_while_unbound(controller):
+    from datetime import datetime, timezone
+
+    from sshpilot.api.events import CoreEvent, EventType
+    from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
+
+    events = []
+
+    def _subscribe(cb):
+        events.append(cb)
+        return Mock(unsubscribe=Mock())
+
+    controller._client.subscribe_events = _subscribe
+    controller._ensure_events()
+    assert events
+
+    foreign = SftpServiceSummary(
+        id=SftpServiceId("svc-other"),
+        connection_id=ConnectionId("conn-other"),
+        state=SftpServiceState.STARTING,
+        created_at=datetime.now(timezone.utc),
+    )
+    events[0](
+        CoreEvent(
+            type=EventType.SFTP_STATE_CHANGED,
+            payload=foreign,
+            sequence=1,
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    assert controller.service_id is None
+    assert controller.state is SftpControllerState.IDLE
