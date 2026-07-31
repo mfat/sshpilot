@@ -59,8 +59,25 @@ Manual helper:
 ## Cleanup
 
 ```python
-env.destroy()  # podman/docker rm -f <container>
+env.destroy()  # podman/docker rm -f <container> (retries + verifies)
 ```
+
+`start_temporary_openssh()` registers process-exit auto-cleanup by default
+(atexit + weakref). Callers that **hand off** the container to a later step
+(Flatpak E2E, the manual helper) must disable that:
+
+```python
+env = start_temporary_openssh(root, auto_cleanup=False)
+# or: env.detach()
+meta = env.to_json()
+# … later …
+from tests.fixtures.temporary_openssh import destroy_temporary_openssh_meta
+destroy_temporary_openssh_meta(meta)
+```
+
+Pytest also sweeps leftover `sshpilot-p13-*` containers at session start and
+session finish (`cleanup_orphaned_temporary_openssh`). That path never touches
+the production sshPilot daemon.
 
 Automated:
 
@@ -68,7 +85,7 @@ Automated:
 PYTHONPATH=src:. pytest tests/integration/test_temporary_openssh_fixture.py -vv
 ```
 
-Orphan containers (if a smoke run is killed):
+Orphan containers (if a smoke run is killed with SIGKILL):
 
 ```bash
 podman ps -a --filter name=sshpilot-p13

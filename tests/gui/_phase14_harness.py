@@ -169,12 +169,25 @@ class Phase14Harness:
         except Exception:
             pass
         self.daemon_server = None
+        leftover_meta = None
         try:
             if self.openssh is not None:
+                leftover_meta = {
+                    "runtime": self.openssh.runtime,
+                    "container_id": self.openssh.container_id,
+                    "container_name": self.openssh.container_name,
+                }
                 self.openssh.destroy()
         except Exception:
             pass
         self.openssh = None
+        if leftover_meta:
+            try:
+                from tests.fixtures.temporary_openssh import destroy_temporary_openssh_meta
+
+                destroy_temporary_openssh_meta(leftover_meta)
+            except Exception:
+                pass
 
     def restart_app(self, *, application_id: Optional[str] = None) -> Any:
         """Shut down GTK only; keep ephemeral daemon + OpenSSH."""

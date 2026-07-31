@@ -62,6 +62,34 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(xfail_marker)
 
 
+def pytest_sessionstart(session):
+    """Remove leftover temporary OpenSSH fixture containers from prior crashes.
+
+    Only touches ``sshpilot-p13-*`` podman/docker containers — never the
+    production sshPilot daemon.
+    """
+    try:
+        from tests.fixtures.temporary_openssh import cleanup_orphaned_temporary_openssh
+
+        removed = cleanup_orphaned_temporary_openssh()
+        if removed:
+            print(f"[fixtures] removed orphan OpenSSH containers: {removed}")
+    except Exception as exc:
+        print(f"[fixtures] orphan OpenSSH cleanup skipped: {exc!r}")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Final sweep for temporary OpenSSH fixtures after the suite ends."""
+    try:
+        from tests.fixtures.temporary_openssh import cleanup_orphaned_temporary_openssh
+
+        removed = cleanup_orphaned_temporary_openssh()
+        if removed:
+            print(f"[fixtures] session-end removed OpenSSH containers: {removed}")
+    except Exception as exc:
+        print(f"[fixtures] session-end OpenSSH cleanup skipped: {exc!r}")
+
+
 # Ensure project root is on sys.path
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path:
