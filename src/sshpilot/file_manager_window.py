@@ -466,18 +466,23 @@ class FileManagerWindow(Adw.Window):
             config=self.config,
         )
 
-        # Connect signals with error handling
+        # Connect signals with error handling & track handlers for disconnect on teardown
+        self._manager_signal_handlers = []
         try:
-            self._manager.connect("connected", self._on_connected)
-            self._manager.connect("connection-error", self._on_connection_error)
-            # Stale saved password → askpass autofills once and fails; re-prompt.
-            self._manager.connect(
-                "authentication-required", self._on_authentication_required
-            )
-            self._manager.connect("progress", self._on_progress)
-            self._manager.connect("operation-error", self._on_operation_error)
-            self._manager.connect("directory-loaded", self._on_directory_loaded)
-            self._manager.connect("directory-counts", self._on_directory_counts)
+            for signal_name, handler in [
+                ("connected", self._on_connected),
+                ("connection-error", self._on_connection_error),
+                ("authentication-required", self._on_authentication_required),
+                ("progress", self._on_progress),
+                ("operation-error", self._on_operation_error),
+                ("directory-loaded", self._on_directory_loaded),
+                ("directory-counts", self._on_directory_counts),
+            ]:
+                try:
+                    handler_id = self._manager.connect(signal_name, handler)
+                    self._manager_signal_handlers.append((signal_name, handler_id))
+                except Exception:
+                    pass
         except Exception as exc:
             logger.exception("Error connecting signals: %s", exc)
 
@@ -935,6 +940,10 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connected(self, *_args) -> None:
         """Handle successful connection and load directories."""
+        manager = getattr(self, "_manager", None)
+        if manager is None:
+            logger.debug("Ignoring late connected event after file manager teardown")
+            return
         self._password_retry_count = 0
         self._password_dialog_shown = False
         self._show_progress(0.4, "Connected")
@@ -944,7 +953,7 @@ class FileManagerWindow(Adw.Window):
             pass
         for pane, pending in self._pending_paths.items():
             if pending:
-                self._manager.listdir(pending)
+                manager.listdir(pending)
 
 
     def _on_progress(self, _manager, fraction: float, message: str) -> None:
@@ -952,6 +961,9 @@ class FileManagerWindow(Adw.Window):
 
     def _on_operation_error(self, _manager, message: str) -> None:
         """Handle operation error with toast."""
+        if getattr(self, "_manager", None) is None:
+            logger.debug("Ignoring late operation-error event after file manager teardown")
+            return
         logger.warning("File manager operation error: %s", message)
         # Cancel any pending loading toast timeouts since operation failed
         for pane, timeout_id in self._loading_toast_timeouts.items():
@@ -1000,6 +1012,9 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connection_error(self, _manager, message: str) -> None:
         """Handle connection / authentication failure with toast or alert."""
+        if getattr(self, "_manager", None) is None:
+            logger.debug("Ignoring late connection-error event after file manager teardown")
+            return
         logger.warning("File manager connection error: %s", message)
         def show_error():
             try:
@@ -1038,14 +1053,22 @@ class FileManagerWindow(Adw.Window):
     def _cleanup_manager(self) -> None:
         """Close the file manager backend and clear UI state."""
         manager = getattr(self, "_manager", None)
+        handlers = getattr(self, "_manager_signal_handlers", None)
+        if manager is not None and handlers:
+            for signal_name, handler_id in handlers:
+                try:
+                    manager.disconnect(handler_id)
+                except Exception:
+                    pass
+            self._manager_signal_handlers = []
+
         if manager is not None:
+            self._manager = None
             try:
                 logger.info("Cleaning up file manager backend resources")
                 manager.close()
             except Exception as exc:
                 logger.error(f"Error closing file manager backend: {exc}", exc_info=True)
-            finally:
-                self._manager = None
         self._clear_progress_toast()
         try:
             _file_manager_windows_registry.discard(self)
@@ -1067,6 +1090,9 @@ class FileManagerWindow(Adw.Window):
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
     ) -> None:
+        if getattr(self, "_manager", None) is None:
+            logger.debug("Ignoring late directory-loaded event after file manager teardown")
+            return
         entries_list = list(entries)  # Convert to list for logging and reuse
         logger.debug(f"_on_directory_loaded: path={path}, entries_count={len(entries_list)}")
         
@@ -1270,7 +1296,7 @@ class FileManagerWindow(Adw.Window):
             timeout_id = GLib.timeout_add(500, show_loading_toast)
             self._loading_toast_timeouts[pane] = timeout_id
             
-            self._manager.listdir(path)
+            manager.listdir(path)
 
     def _restore_flatpak_folder(self) -> bool:
         """Open the local pane on a granted folder after window init.

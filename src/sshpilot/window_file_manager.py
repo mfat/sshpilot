@@ -679,8 +679,16 @@ class WindowFileManagerMixin:
         placeholder_info = None
         if use_internal and has_internal_file_manager():
             placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
+            placeholder_page = placeholder_info.get('page') if placeholder_info else None
 
             def _create_embedded_file_manager():
+                if placeholder_page is not None and hasattr(self, 'tab_view') and self.tab_view is not None:
+                    try:
+                        if placeholder_page not in list(self.tab_view.get_pages()):
+                            logger.debug("Placeholder tab was closed before creation; aborting.")
+                            return False
+                    except Exception:
+                        pass
                 try:
                     widget, controller = create_internal_file_manager_tab(
                         user=str(username or ''),
