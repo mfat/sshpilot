@@ -25,7 +25,7 @@ _KNOWN_FAILING_NODEIDS: set[str] = set()
 
 
 def pytest_ignore_collect(collection_path, config):
-    """In GUI mode, collect only ``test_gui_*`` modules.
+    """In GUI mode, collect only GUI test modules.
 
     ``SSHPILOT_GUI_TESTS=1`` makes the env-gate below load the *real* PyGObject.
     The rest of the suite is written against the stubbed ``gi`` and imports
@@ -34,10 +34,19 @@ def pytest_ignore_collect(collection_path, config):
     (``main.py`` loads a GResource bundle at import). So when GUI mode is on, skip
     every ``test_*`` module that is not a GUI test. CI never sets the env var, so
     this is a no-op there.
+
+    Collected when GUI mode is on:
+    * ``test_gui_*.py`` anywhere under ``tests/``
+    * any ``test_*.py`` under ``tests/gui/`` (Phase 14 production GTK gates)
     """
     if os.environ.get('SSHPILOT_GUI_TESTS') != '1':
         return False
-    name = os.path.basename(str(collection_path))
+    path_str = str(collection_path)
+    # Normalize separators for ``tests/gui`` package membership.
+    norm = path_str.replace('\\', '/')
+    if '/tests/gui/' in norm or norm.rstrip('/').endswith('/tests/gui'):
+        return False
+    name = os.path.basename(path_str)
     if name.startswith('test_') and not name.startswith('test_gui'):
         return True
     return False

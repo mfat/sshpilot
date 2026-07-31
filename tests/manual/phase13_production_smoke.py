@@ -1658,12 +1658,18 @@ def run_smoke() -> int:
                 # integration tests don't need real GTK widgets.
                 "SSHPILOT_GUI_TESTS": "",
             }
+            # Layer E (Phase 13 smoke): daemon API regression only. These are
+            # NOT production GTK proof — ``gtk_connected`` / ``fm_connected``
+            # here mean "API suite green", not VTE/FM widgets. Phase 14
+            # production smoke replaces this with real widget evidence.
             gtk_integration = subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "pytest",
-                    "tests/daemon/test_gtk_integration_phase14.py",
+                    "tests/daemon/test_terminal_api_integration.py",
+                    "tests/daemon/test_quit_policy_resolution.py",
+                    "tests/integration/test_session_restore_metadata.py",
                     "-v",
                     "--tb=line",
                     "-q",
@@ -1677,8 +1683,8 @@ def run_smoke() -> int:
             gtk_connected = gtk_integration.returncode == 0
             ctx.record(
                 53,
-                "Phase 14 GTK integration tests (terminal, session, input, attach)",
-                "All integration tests pass",
+                "Phase 14 daemon API regression (terminal/session/policy; not GTK widgets)",
+                "All daemon API integration tests pass",
                 (gtk_integration.stdout or gtk_integration.stderr)[-300:],
                 gtk_connected,
             )
@@ -1688,7 +1694,7 @@ def run_smoke() -> int:
                     sys.executable,
                     "-m",
                     "pytest",
-                    "tests/daemon/test_gtk_integration_phase14.py::TestSftpDaemonPath",
+                    "tests/daemon/test_sftp_api_integration.py",
                     "-v",
                     "--tb=line",
                     "-q",
@@ -1702,8 +1708,8 @@ def run_smoke() -> int:
             fm_connected = fm_integration.returncode == 0
             ctx.record(
                 54,
-                "Phase 14 FM integration tests (SFTP service, listing)",
-                "All FM integration tests pass",
+                "Phase 14 daemon SFTP API regression (not FM widgets)",
+                "All SFTP API integration tests pass",
                 (fm_integration.stdout or fm_integration.stderr)[-300:],
                 fm_connected,
             )
