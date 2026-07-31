@@ -46,6 +46,7 @@ class SftpControllerState(str, Enum):
     IDLE = "idle"
     OPENING = "opening"
     READY = "ready"
+    CLOSING = "closing"
     FAILED = "failed"
     CLOSED = "closed"
     DETACHED = "detached"
@@ -435,12 +436,27 @@ class DaemonSftpServiceController:
                 self._state = SftpControllerState.FAILED
             elif summary.state is SftpServiceState.CLOSED:
                 self._state = SftpControllerState.CLOSED
+            elif summary.state is SftpServiceState.CLOSING:
+                # Shutdown in progress: always leave READY so UI/ops stop
+                # treating the service as usable while waiting for CLOSED.
+                # Do not overwrite terminal controller states.
+                if previous not in (
+                    SftpControllerState.CLOSED,
+                    SftpControllerState.FAILED,
+                    SftpControllerState.DETACHED,
+                ):
+                    self._state = SftpControllerState.CLOSING
+                else:
+                    logger.debug(
+                        "Ignoring CLOSING for %s (controller already %s)",
+                        summary.id,
+                        previous.value,
+                    )
             elif summary.state in (
                 SftpServiceState.CREATED,
                 SftpServiceState.STARTING,
-                SftpServiceState.CLOSING,
             ):
-                # Transitional daemon states. Never regress READY (or a
+                # Startup transitional states. Never regress READY (or a
                 # terminal controller state) back to OPENING — late CREATED/
                 # STARTING events commonly arrive after the open RPC already
                 # reported READY, which used to break the first listdir.

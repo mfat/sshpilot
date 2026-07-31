@@ -236,6 +236,54 @@ def test_late_starting_event_does_not_regress_ready(controller):
     assert len(ready_events) == 1  # on_ready fires only on transition into READY
 
 
+def test_closing_event_leaves_ready_and_rejects_ops(controller, mock_bridge):
+    """READY → CLOSING must leave READY so local ops are rejected immediately.
+
+    CREATED/STARTING must not regress READY, but CLOSING is shutdown: keeping
+    READY lets is_connected stay true and sends list/upload/download to a
+    service already shutting down.
+    """
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
+
+    generation = 1
+    with controller._lock:
+        controller._generation = generation
+
+    ready = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.READY,
+        created_at=datetime.now(timezone.utc),
+    )
+    closing = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.CLOSING,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    controller._on_open_accepted(ready, generation)
+    assert controller.state is SftpControllerState.READY
+
+    controller._on_open_accepted(closing, generation)
+    assert controller.state is not SftpControllerState.READY
+    assert controller.state is SftpControllerState.CLOSING
+    assert controller.service_id == SftpServiceId("svc-1")
+
+    errors = []
+    controller.list_directory(
+        "/tmp",
+        on_success=lambda _r: pytest.fail("should not succeed while closing"),
+        on_error=errors.append,
+    )
+    assert len(errors) == 1
+    assert isinstance(errors[0], SshPilotError)
+    assert errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
+    mock_bridge.submit.assert_not_called()
+
+
 def test_created_event_keeps_opening_before_ready(controller):
     from datetime import datetime, timezone
 
