@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import queue
+import re
 import secrets
 import shutil
 import socket
@@ -133,6 +134,10 @@ class _AskpassContext:
     attempts: Dict[str, int]
     stored_attempted: set[str]
     pending_remember: list[_PendingRemember]
+    session_known_hosts: str = ""
+    user_known_hosts_paths: tuple[str, ...] = ()
+    hash_known_hosts: bool = False
+    pending_host_key_store: bool = False
     closed: bool = False
 
 
@@ -230,12 +235,17 @@ class InteractionBroker:
         *,
         trailing_args: Sequence[str] = (),
     ) -> tuple[tuple[str, ...], dict[str, str]]:
-        """Prepare canonical SSH argv, strict trust, and daemon askpass.
+        """Prepare canonical SSH argv, OpenSSH trust, and daemon askpass.
+
+        Host-key verification is left to the real OpenSSH child. Unknown hosts
+        surface as askpass prompts and are routed through
+        ``HOST_KEY_CONFIRMATION``. There is no ``ssh-keyscan`` preflight on the
+        connect critical path.
 
         ``trailing_args`` are appended after the target host once broker
-        trust/auth options have been inserted (e.g. ``("sftp",)`` for the
-        SFTP subsystem request) — the host must stay ``argv[-1]`` while the
-        broker computes host-key pinning and the ControlMaster check.
+        options have been inserted (e.g. ``("sftp",)`` for the SFTP subsystem
+        request) — the host must stay ``argv[-1]`` while ControlMaster options
+        are computed.
         """
 
         argv_value, environment_value = launch_builder(
@@ -259,11 +269,14 @@ class InteractionBroker:
             port = int(effective.get("port", spec.port))
         except (TypeError, ValueError):
             port = spec.port
-        pinned_file, key_type = self._prepare_host_key(
-            spec,
-            hostname=hostname,
-            port=port,
-            effective=effective,
+        # Session-first known_hosts: OpenSSH writes accepted keys here. User
+        # files remain readable so already-trusted hosts do not re-prompt.
+        # ACCEPT_AND_STORE later merges session entries into the user file.
+        session_known = self._private_dir / f"h-{spec.session_id[-12:]}"
+        self._atomic_write(session_known, b"")
+        user_paths = self._known_hosts_paths(effective)
+        known_hosts_value = " ".join(
+            (str(session_known), *(str(path) for path in user_paths))
         )
         token = secrets.token_urlsafe(32)
         control_path = str(self._private_dir / f"c-{spec.session_id[-12:]}")
@@ -274,14 +287,12 @@ class InteractionBroker:
             "KbdInteractiveAuthentication=no",
             "-o",
             "NumberOfPasswordPrompts=3",
+            # ask: OpenSSH prompts via askpass for unknown hosts; changed keys
+            # still fail closed (same as OpenSSH ask semantics).
             "-o",
-            "StrictHostKeyChecking=yes",
+            "StrictHostKeyChecking=ask",
             "-o",
-            f"UserKnownHostsFile={pinned_file}",
-            "-o",
-            "GlobalKnownHostsFile=/dev/null",
-            "-o",
-            f"HostKeyAlgorithms={key_type}",
+            f"UserKnownHostsFile={known_hosts_value}",
             "-o",
             "ControlMaster=yes",
             "-o",
@@ -291,7 +302,7 @@ class InteractionBroker:
         )
         # OpenSSH keeps the first obtained value for each option. Insert broker
         # trust/auth controls before any preference overrides and strip
-        # conflicting earlier copies so they cannot weaken the pin.
+        # conflicting earlier copies so they cannot weaken the policy.
         argv = self._with_broker_options(argv, options)
         control_argv = (
             argv[0],
@@ -314,6 +325,9 @@ class InteractionBroker:
             attempts={},
             stored_attempted=set(),
             pending_remember=[],
+            session_known_hosts=str(session_known),
+            user_known_hosts_paths=tuple(str(path) for path in user_paths),
+            hash_known_hosts=effective.get("hashknownhosts", "no") == "yes",
         )
         with self._condition:
             self._require_open_locked()
@@ -343,8 +357,6 @@ class InteractionBroker:
         "NumberOfPasswordPrompts=",
         "StrictHostKeyChecking=",
         "UserKnownHostsFile=",
-        "GlobalKnownHostsFile=",
-        "HostKeyAlgorithms=",
         "ControlMaster=",
         "ControlPersist=",
         "ControlPath=",
@@ -422,112 +434,168 @@ class InteractionBroker:
                 result[key.lower()] = value.strip()
         return result
 
-    def _prepare_host_key(
-        self,
-        spec: SessionLaunchSpec,
+    @staticmethod
+    def _parse_host_key_askpass_prompt(
+        raw_prompt: str,
         *,
         hostname: str,
         port: int,
-        effective: dict[str, str],
-    ) -> tuple[str, str]:
-        keyscan = shutil.which("ssh-keyscan")
-        if keyscan is None:
-            raise SshPilotError(
-                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
-                "Host-key verification support is unavailable",
-                connection_id=spec.connection_id,
-                session_id=spec.session_id,
-            )
-        try:
-            scan = subprocess.run(
-                (keyscan, "-T", "5", "-p", str(port), hostname),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                check=True,
-                timeout=7,
-                text=True,
-                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
-            )
-        except (OSError, subprocess.SubprocessError):
-            raise SshPilotError(
-                ErrorCode.SESSION_STARTUP_FAILED,
-                "The SSH host key could not be retrieved",
-                connection_id=spec.connection_id,
-                session_id=spec.session_id,
-            ) from None
-        candidates = []
-        for line in scan.stdout.splitlines():
-            parts = line.split()
-            if len(parts) == 3 and parts[1].startswith(("ssh-", "ecdsa-")):
-                candidates.append((parts[1], parts[2]))
-        if not candidates:
-            raise SshPilotError(
-                ErrorCode.SESSION_STARTUP_FAILED,
-                "The SSH host did not present a supported key",
-                connection_id=spec.connection_id,
-                session_id=spec.session_id,
-            )
-        preference = {"ssh-ed25519": 0, "ecdsa-sha2-nistp256": 1, "ssh-rsa": 2}
-        candidates.sort(key=lambda item: preference.get(item[0], 99))
-        host_token = hostname if port == 22 else f"[{hostname}]:{port}"
-        known_paths = self._known_hosts_paths(effective)
-        known_entries = self._known_entries(known_paths, host_token)
-        matching = next(
-            (
-                candidate
-                for candidate in candidates
-                if candidate in known_entries
-            ),
-            None,
+    ) -> Optional[HostKeyPrompt]:
+        """Build a typed host-key prompt from OpenSSH askpass text."""
+
+        fingerprint_match = re.search(r"(SHA256:[A-Za-z0-9+/=]+)", raw_prompt)
+        if fingerprint_match is None:
+            return None
+        fingerprint = fingerprint_match.group(1)
+        if len(fingerprint) > 128:
+            return None
+        type_match = re.search(
+            r"\b(ED25519|ECDSA|RSA|DSA)\b(?:\s+key)?\s+fingerprint",
+            raw_prompt,
+            flags=re.IGNORECASE,
         )
-        if matching is not None:
-            selected = matching
+        raw_type = (type_match.group(1) if type_match else "UNKNOWN").upper()
+        key_type = {
+            "ED25519": "ssh-ed25519",
+            "ECDSA": "ecdsa-sha2-nistp256",
+            "RSA": "ssh-rsa",
+            "DSA": "ssh-dss",
+        }.get(raw_type, raw_type.lower())
+        upper = raw_prompt.upper()
+        if (
+            "IDENTIFICATION HAS CHANGED" in upper
+            or "HOST KEY VERIFICATION FAILED" in upper
+            or "OFFENDING" in upper
+        ):
+            status = HostKeyStatus.CHANGED
         else:
-            selected = candidates[0]
-            status = HostKeyStatus.CHANGED if known_entries else HostKeyStatus.UNKNOWN
-            fingerprint = self._fingerprint(selected[1])
-            interaction = self.create(
-                session_id=spec.session_id,
-                connection_id=spec.connection_id,
-                interaction_type=InteractionType.HOST_KEY_CONFIRMATION,
-                prompt=HostKeyPrompt(
-                    hostname=hostname,
-                    port=port,
-                    key_type=selected[0],
-                    fingerprint=fingerprint,
-                    status=status,
-                ),
-            )
-            result = self.wait_for_result(interaction.id)
-            if (
-                result is None
-                or not isinstance(result.decision, HostKeyDecision)
-                or result.decision is HostKeyDecision.REJECT
-                or status is not HostKeyStatus.UNKNOWN
-            ):
-                if result is not None:
-                    result.clear()
-                raise SshPilotError(
-                    ErrorCode.SESSION_STARTUP_FAILED,
-                    "The SSH host key was not trusted",
-                    connection_id=spec.connection_id,
-                    session_id=spec.session_id,
-                )
-            if result.decision is HostKeyDecision.ACCEPT_AND_STORE:
-                self._persist_host_key(
-                    known_paths[0],
-                    host_token,
-                    selected,
-                    hash_host=effective.get("hashknownhosts", "no") == "yes",
-                )
-            result.clear()
-        pin_path = self._private_dir / f"k-{spec.session_id[-12:]}"
-        self._atomic_write(
-            pin_path,
-            f"{host_token} {selected[0]} {selected[1]}\n".encode(),
+            status = HostKeyStatus.UNKNOWN
+        host = hostname
+        host_match = re.search(
+            r"authenticity of host ['\[]([^'\]\s]+)",
+            raw_prompt,
+            flags=re.IGNORECASE,
         )
-        return str(pin_path), selected[0]
+        if host_match is not None:
+            host = host_match.group(1).strip("[]")
+        try:
+            return HostKeyPrompt(
+                hostname=host or hostname or "unknown",
+                port=port,
+                key_type=key_type,
+                fingerprint=fingerprint,
+                status=status,
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_host_key_askpass(
+        self,
+        token: str,
+        raw_prompt: str,
+        *,
+        helper_transport: Optional[socket.socket] = None,
+    ) -> Optional[bytearray]:
+        """Answer OpenSSH host-key askpass via HOST_KEY_CONFIRMATION."""
+
+        with self._condition:
+            context = self._askpass_contexts.get(token)
+            if context is None or context.closed or self._closed:
+                return None
+            session_id = context.session_id
+            connection_id = context.connection_id
+            hostname = context.hostname
+            port = context.port
+        prompt = self._parse_host_key_askpass_prompt(
+            raw_prompt,
+            hostname=hostname,
+            port=port,
+        )
+        if prompt is None:
+            logger.warning(
+                "askpass host-key prompt could not be parsed prompt=%r",
+                raw_prompt[:200],
+            )
+            return None
+        interaction = self.create(
+            session_id=session_id,
+            connection_id=connection_id,
+            interaction_type=InteractionType.HOST_KEY_CONFIRMATION,
+            prompt=prompt,
+        )
+        result = self.wait_for_result(
+            interaction.id,
+            cancel_check=(
+                None
+                if helper_transport is None
+                else lambda: self._transport_is_closed(helper_transport)
+            ),
+        )
+        if result is None or not isinstance(result.decision, HostKeyDecision):
+            if result is not None:
+                result.clear()
+            return None
+        decision = result.decision
+        result.clear()
+        if decision is HostKeyDecision.REJECT:
+            return None
+        # CHANGED keys: dialog only offers Reject; refuse accept paths defensively.
+        if prompt.status is not HostKeyStatus.UNKNOWN:
+            return None
+        if decision is HostKeyDecision.ACCEPT_AND_STORE:
+            with self._condition:
+                context = self._askpass_contexts.get(token)
+                if context is not None and not context.closed:
+                    context.pending_host_key_store = True
+        # OpenSSH askpass expects a yes/no line; helper appends the newline.
+        return bytearray(b"yes")
+
+    def _flush_accepted_host_keys(self, context: _AskpassContext) -> None:
+        """Copy session-written known_hosts lines into the user file after store."""
+
+        if not context.pending_host_key_store:
+            return
+        context.pending_host_key_store = False
+        if not context.user_known_hosts_paths:
+            return
+        session_path = Path(context.session_known_hosts)
+        if not session_path.is_file():
+            return
+        try:
+            lines = [
+                line.rstrip("\n")
+                for line in session_path.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+        except OSError:
+            return
+        if not lines:
+            return
+        destination = Path(context.user_known_hosts_paths[0]).expanduser()
+        try:
+            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            existing = ""
+            if destination.is_file():
+                existing = destination.read_text(encoding="utf-8")
+            additions = [
+                line for line in lines if line and line not in existing
+            ]
+            if not additions:
+                return
+            payload = existing
+            if payload and not payload.endswith("\n"):
+                payload += "\n"
+            payload += "\n".join(additions) + "\n"
+            self._atomic_write(destination, payload.encode("utf-8"))
+            try:
+                os.chmod(destination, 0o600)
+            except OSError:
+                pass
+        except OSError:
+            logger.warning(
+                "Accepted host key could not be stored path=%s",
+                destination,
+            )
 
     @staticmethod
     def _known_hosts_paths(effective: dict[str, str]) -> tuple[Path, ...]:
@@ -538,48 +606,6 @@ class InteractionBroker:
             if item and item.lower() != "none"
         )
         return paths or (Path("~/.ssh/known_hosts").expanduser(),)
-
-    @staticmethod
-    def _known_entries(
-        paths: Sequence[Path],
-        host_token: str,
-    ) -> set[tuple[str, str]]:
-        keygen = shutil.which("ssh-keygen")
-        entries: set[tuple[str, str]] = set()
-        if keygen is None:
-            return entries
-        for path in paths:
-            if not path.is_file():
-                continue
-            try:
-                result = subprocess.run(
-                    (keygen, "-F", host_token, "-f", str(path)),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                    timeout=3,
-                    text=True,
-                )
-            except (OSError, subprocess.SubprocessError):
-                continue
-            for line in result.stdout.splitlines():
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split()
-                if len(parts) >= 3:
-                    entries.add((parts[-2], parts[-1]))
-        return entries
-
-    @staticmethod
-    def _fingerprint(key_data: str) -> str:
-        try:
-            digest = hashlib.sha256(base64.b64decode(key_data, validate=True)).digest()
-        except (ValueError, TypeError):
-            raise SshPilotError(
-                ErrorCode.SESSION_STARTUP_FAILED,
-                "The SSH host key was malformed",
-            ) from None
-        return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
 
     def _persist_host_key(
         self,
@@ -891,15 +917,19 @@ class InteractionBroker:
             if context is None or context.closed:
                 return False
             if self._control_master_ready(context):
+                self._flush_accepted_host_keys(context)
                 return True
             sleep(0.05)
         context = self._context_for_session(session_id)
-        return bool(
+        ready = bool(
             context is not None
             and not context.closed
             and is_alive()
             and self._control_master_ready(context)
         )
+        if ready and context is not None:
+            self._flush_accepted_host_keys(context)
+        return ready
 
     def _context_for_session(self, session_id: SessionId) -> Optional[_AskpassContext]:
         with self._condition:
@@ -1272,6 +1302,12 @@ class InteractionBroker:
         helper_transport: Optional[socket.socket] = None,
     ) -> Optional[bytearray]:
         prompt_type = classify_prompt(raw_prompt)
+        if prompt_type == "hostkey":
+            return self._resolve_host_key_askpass(
+                token,
+                raw_prompt,
+                helper_transport=helper_transport,
+            )
         if prompt_type not in {"password", "passphrase"}:
             return None
         with self._condition:
@@ -1447,7 +1483,8 @@ class InteractionBroker:
                 candidates = tuple(
                     context
                     for context in self._askpass_contexts.values()
-                    if not context.closed and context.pending_remember
+                    if not context.closed
+                    and (context.pending_remember or context.pending_host_key_store)
                 )
                 if not candidates:
                     self._condition.wait(0.2)
@@ -1469,6 +1506,7 @@ class InteractionBroker:
                     continue
                 if result.returncode == 0:
                     self._store_authenticated_secrets(context.token)
+                    self._flush_accepted_host_keys(context)
             with self._condition:
                 if not self._closed:
                     self._condition.wait(0.1)

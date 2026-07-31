@@ -177,11 +177,6 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
-    monkeypatch.setattr(
-        broker,
-        "_prepare_host_key",
-        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
-    )
     _argv, environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -248,11 +243,6 @@ def test_askpass_helper_disconnect_cancels_pending_interaction(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
-    monkeypatch.setattr(
-        broker,
-        "_prepare_host_key",
-        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
-    )
     _argv, environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -310,11 +300,6 @@ def test_stored_password_is_used_once_without_public_secret_metadata(
         ),
     )
     monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
-    monkeypatch.setattr(
-        instance,
-        "_prepare_host_key",
-        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
-    )
     try:
         _argv, environment = instance.prepare_launch(
             SessionLaunchSpec(
@@ -354,11 +339,6 @@ def test_stored_passphrase_autofills_unquoted_openssh_prompt(monkeypatch) -> Non
         ),
     )
     monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
-    monkeypatch.setattr(
-        instance,
-        "_prepare_host_key",
-        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
-    )
     try:
         _argv, environment = instance.prepare_launch(
             SessionLaunchSpec(
@@ -407,11 +387,6 @@ def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
         passphrase_lookup=lookup,
     )
     monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
-    monkeypatch.setattr(
-        instance,
-        "_prepare_host_key",
-        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
-    )
     prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519': "
     prompt_waits = []
 
@@ -512,11 +487,6 @@ def test_remembered_password_is_stored_only_after_authenticated_status(
         ),
     )
     monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
-    monkeypatch.setattr(
-        instance,
-        "_prepare_host_key",
-        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
-    )
     try:
         _argv, environment = instance.prepare_launch(
             SessionLaunchSpec(
@@ -626,11 +596,6 @@ def test_broker_options_win_over_conflicting_preference_overrides(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
-    monkeypatch.setattr(
-        broker,
-        "_prepare_host_key",
-        lambda *_args, **_kwargs: ("/tmp/pinned-hosts", "ssh-ed25519"),
-    )
     argv, _environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -669,62 +634,75 @@ def test_broker_options_win_over_conflicting_preference_overrides(
     assert text.index("BatchMode=no") < text.index("ConnectTimeout=5")
     assert "BatchMode=yes" not in argv
     assert "StrictHostKeyChecking=accept-new" not in argv
-    assert "UserKnownHostsFile=/tmp/user-known-hosts" not in argv
-    assert "StrictHostKeyChecking=yes" in argv
-    assert "UserKnownHostsFile=/tmp/pinned-hosts" in argv
+    assert "StrictHostKeyChecking=ask" in argv
+    known_opt = next(
+        item for item in argv if item.startswith("UserKnownHostsFile=")
+    )
+    # Preference override is stripped; session file is first, then defaults.
+    assert "/tmp/user-known-hosts" not in known_opt
+    assert known_opt.startswith("UserKnownHostsFile=")
+    assert "known_hosts" in known_opt
     assert argv[-1] == "example"
 
 
-def test_changed_host_key_remains_blocking_even_if_client_accepts(
+def test_parse_openssh_host_key_askpass_prompt(broker: InteractionBroker) -> None:
+    prompt = broker._parse_host_key_askpass_prompt(
+        (
+            "The authenticity of host '127.0.0.1 (127.0.0.1)' can't be established.\n"
+            "ED25519 key fingerprint is: "
+            "SHA256:57moBNKAME3b6kuvL2DktyyfYIkZDCDA3nhyrdfTD9w\n"
+            "This key is not known by any other names.\n"
+            "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
+        ),
+        hostname="fallback.host",
+        port=22,
+    )
+    assert prompt is not None
+    assert prompt.hostname == "127.0.0.1"
+    assert prompt.key_type == "ssh-ed25519"
+    assert prompt.fingerprint.startswith("SHA256:")
+    assert prompt.status is HostKeyStatus.UNKNOWN
+
+
+def test_prepare_launch_does_not_invoke_keyscan(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    candidate = "QUJDRA=="
-    monkeypatch.setattr(
-        "sshpilot.daemon.interaction_broker.shutil.which",
-        lambda _name: "/usr/bin/tool",
-    )
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+
+    def _forbid_remote(*_args, **_kwargs):
+        cmd = _args[0] if _args else ()
+        if cmd and "ssh-keyscan" in str(cmd[0]):
+            raise AssertionError("ssh-keyscan must not run during prepare_launch")
+        # Allow ssh -G effective-config probes if any remain.
+        return SimpleNamespace(stdout="", returncode=0)
+
     monkeypatch.setattr(
         "sshpilot.daemon.interaction_broker.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            stdout=f"example.test ssh-ed25519 {candidate}\n"
-        ),
+        _forbid_remote,
     )
     monkeypatch.setattr(
-        broker,
-        "_known_entries",
-        lambda *_args: {("ssh-ed25519", "RUZHSA==")},
+        "sshpilot.daemon.interaction_broker.shutil.which",
+        lambda name: f"/usr/bin/{name}",
     )
-
-    def answer(event) -> None:
-        if event.type.value != "interaction.created":
-            return
-        broker.claim(event.payload.id, CLIENT_A)
-        broker.respond(
-            InteractionDecisionRequest(
-                interaction_id=event.payload.id,
-                host_key_decision=HostKeyDecision.ACCEPT_ONCE,
-            ),
-            CLIENT_A,
-        )
-
-    subscription = broker.subscribe_events(answer)
-    try:
-        with pytest.raises(SshPilotError) as caught:
-            broker._prepare_host_key(
-                SessionLaunchSpec(
-                    session_id=SESSION_ID,
-                    connection_id=CONNECTION_ID,
-                    protocol="ssh",
-                    hostname="example.test",
-                    username="alice",
-                    port=22,
-                ),
-                hostname="example.test",
-                port=22,
-                effective={},
-            )
-    finally:
-        subscription.close()
-
-    assert caught.value.code is ErrorCode.SESSION_STARTUP_FAILED
+    argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "-F", "/tmp/config", "example"),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+    assert "StrictHostKeyChecking=ask" in argv
+    assert environment["SSH_ASKPASS_REQUIRE"] == "force"
+    assert not any(
+        item.startswith("HostKeyAlgorithms=")
+        or item.startswith("GlobalKnownHostsFile=")
+        for item in argv
+    )
