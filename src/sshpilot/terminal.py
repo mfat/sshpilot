@@ -207,6 +207,8 @@ class TerminalWidget(Gtk.Box):
         self._daemon_controller = None
         self._daemon_tab_state = None
         self._daemon_interaction_dialogs = None
+        self._daemon_commit_handler = None
+        self._daemon_size_handler = None
         self._view_only_overlay = None
 
         # Register with process manager
@@ -1127,6 +1129,7 @@ class TerminalWidget(Gtk.Box):
 
         except Exception as e:
             logger.error(f"Failed to start daemon session: {e}")
+            self._uninstall_daemon_backend_io()
             self._daemon_mode = False
             self._daemon_controller = None
             self._daemon_tab_state = None
@@ -1193,28 +1196,54 @@ class TerminalWidget(Gtk.Box):
             return True
         except Exception as error:
             logger.error("Failed to attach daemon session: %s", error)
+            self._uninstall_daemon_backend_io()
             self._daemon_mode = False
             self._daemon_controller = None
             self._daemon_tab_state = None
             self._on_connection_failed(str(error))
             return False
 
+    def _uninstall_daemon_backend_io(self) -> None:
+        """Drop previously installed daemon commit/size handlers (idempotent)."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            self._daemon_commit_handler = None
+            self._daemon_size_handler = None
+            return
+        for attr in ('_daemon_commit_handler', '_daemon_size_handler'):
+            handler = getattr(self, attr, None)
+            if handler is None:
+                continue
+            try:
+                backend.disconnect(handler)
+            except Exception:
+                logger.debug("Failed to disconnect daemon backend handler", exc_info=True)
+            setattr(self, attr, None)
+
     def _install_daemon_backend_io(self) -> None:
-        """Wire commit/resize through the terminal backend abstraction."""
+        """Wire commit/resize through the terminal backend abstraction.
+
+        Idempotent: disconnects any previous handlers first so a second
+        attach/start on the same widget cannot stack VTE signal handlers
+        (which would duplicate each keystroke to the daemon).
+        """
         backend = getattr(self, 'backend', None)
         if backend is None:
             return
+        self._uninstall_daemon_backend_io()
         try:
             connect_commit = getattr(backend, 'connect_commit', None)
             if callable(connect_commit):
-                connect_commit(self._on_daemon_commit)
+                self._daemon_commit_handler = connect_commit(self._on_daemon_commit)
         except Exception:
+            self._daemon_commit_handler = None
             logger.debug("Failed to connect daemon commit handler", exc_info=True)
         try:
             connect_size = getattr(backend, 'connect_size_changed', None)
             if callable(connect_size):
-                connect_size(self._on_daemon_size_changed)
+                self._daemon_size_handler = connect_size(self._on_daemon_size_changed)
         except Exception:
+            self._daemon_size_handler = None
             logger.debug("Failed to connect daemon size handler", exc_info=True)
 
     def _feed_display(self, data: bytes) -> None:
@@ -1425,6 +1454,7 @@ class TerminalWidget(Gtk.Box):
                 logger.debug(f"Detached from daemon session {self._daemon_tab_state.session_id}")
 
             # Clean up daemon state
+            self._uninstall_daemon_backend_io()
             self._daemon_mode = False
             self._daemon_controller = None
             self._daemon_tab_state = None
@@ -1485,6 +1515,7 @@ class TerminalWidget(Gtk.Box):
 
             # Clean up daemon state if we proceeded with close
             if response != "cancel":
+                self._uninstall_daemon_backend_io()
                 self._daemon_mode = False
                 self._daemon_controller = None
                 self._daemon_tab_state = None

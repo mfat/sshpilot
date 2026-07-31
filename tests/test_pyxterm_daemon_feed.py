@@ -26,9 +26,12 @@ class _FakeJsValue:
 def _daemon_term(*, backend):
     t = TerminalWidget.__new__(TerminalWidget)
     t._daemon_mode = True
+    t._daemon_commit_handler = None
+    t._daemon_size_handler = None
     t._daemon_controller = types.SimpleNamespace(
         state=types.SimpleNamespace(value="active"),
         tab_state=types.SimpleNamespace(session_id="s1", expected_sequence=0),
+        input_owner=True,
         send_input=lambda data: None,
         resize=lambda dims: None,
     )
@@ -41,6 +44,41 @@ def _daemon_term(*, backend):
     t._set_connecting_overlay_visible = lambda *_a, **_k: None
     t._update_daemon_connection_state = lambda: None
     return t
+
+
+class _StackingBackend:
+    """VTE-like backend: each connect_* stacks another handler until disconnect."""
+
+    def __init__(self):
+        self._commit = []
+        self._size = []
+        self._next_id = 1
+        self._by_id = {}
+
+    def connect_commit(self, cb):
+        hid = self._next_id
+        self._next_id += 1
+        self._commit.append(cb)
+        self._by_id[hid] = ("commit", cb)
+        return hid
+
+    def connect_size_changed(self, cb):
+        hid = self._next_id
+        self._next_id += 1
+        self._size.append(cb)
+        self._by_id[hid] = ("size", cb)
+        return hid
+
+    def disconnect(self, handler_id):
+        kind, cb = self._by_id.pop(handler_id)
+        if kind == "commit":
+            self._commit.remove(cb)
+        else:
+            self._size.remove(cb)
+
+    def fire_commit(self, text="a"):
+        for cb in list(self._commit):
+            cb(None, text, len(text))
 
 
 def test_daemon_output_feeds_backend_when_vte_is_none():
@@ -77,9 +115,20 @@ def test_daemon_dimensions_use_backend_get_size_not_vte():
 
 def test_install_daemon_backend_io_uses_abstraction():
     connected = []
+    disconnected = []
+
+    def connect_commit(cb):
+        connected.append(("commit", cb))
+        return "commit-id"
+
+    def connect_size(cb):
+        connected.append(("size", cb))
+        return "size-id"
+
     backend = types.SimpleNamespace(
-        connect_commit=lambda cb: connected.append(("commit", cb)),
-        connect_size_changed=lambda cb: connected.append(("size", cb)),
+        connect_commit=connect_commit,
+        connect_size_changed=connect_size,
+        disconnect=lambda hid: disconnected.append(hid),
     )
     t = _daemon_term(backend=backend)
 
@@ -88,6 +137,39 @@ def test_install_daemon_backend_io_uses_abstraction():
     assert [kind for kind, _ in connected] == ["commit", "size"]
     assert connected[0][1] == t._on_daemon_commit
     assert connected[1][1] == t._on_daemon_size_changed
+    assert t._daemon_commit_handler == "commit-id"
+    assert t._daemon_size_handler == "size-id"
+    assert disconnected == []
+
+
+def test_install_daemon_backend_io_twice_sends_input_once():
+    """Re-attach must replace handlers, not stack VTE-style duplicates."""
+    sent = []
+    backend = _StackingBackend()
+    t = _daemon_term(backend=backend)
+    t._daemon_controller.send_input = lambda data: sent.append(data)
+
+    t._install_daemon_backend_io()
+    t._install_daemon_backend_io()  # second attach on same widget
+
+    assert len(backend._commit) == 1
+    assert len(backend._size) == 1
+    backend.fire_commit("x")
+    assert sent == [b"x"]
+
+
+def test_uninstall_daemon_backend_io_clears_handlers():
+    backend = _StackingBackend()
+    t = _daemon_term(backend=backend)
+    t._install_daemon_backend_io()
+    assert len(backend._commit) == 1
+
+    t._uninstall_daemon_backend_io()
+
+    assert backend._commit == []
+    assert backend._size == []
+    assert t._daemon_commit_handler is None
+    assert t._daemon_size_handler is None
 
 
 def test_pyxterm_bridge_feed_paints_via_write_to_term():
@@ -155,3 +237,26 @@ def test_pyxterm_resize_without_bridge_fires_size_callback():
 
     assert b._last_size == (40, 120)
     assert sizes == [(40, 120)]
+
+
+def test_pyxterm_connect_commit_replaces_previous_callback():
+    """PyXterm replaces rather than stacks; disconnect clears the slot."""
+    calls = []
+    b = object.__new__(PyXtermBridgeBackend)
+    b.widget = object()
+    b._bridge = None
+    b._js_ready = True
+    b._autocompleter = None
+    b._commit_cb = None
+    b._size_changed_cb = None
+    first = b.connect_commit(lambda *_a: calls.append("first"))
+    second = b.connect_commit(lambda *_a: calls.append("second"))
+    assert first == "pyxterm_bridge_commit"
+    assert second == "pyxterm_bridge_commit"
+
+    b._on_pty_message(None, _FakeJsValue({"type": "input", "data": "a"}))
+    assert calls == ["second"]
+
+    b.disconnect(second)
+    b._on_pty_message(None, _FakeJsValue({"type": "input", "data": "b"}))
+    assert calls == ["second"]
