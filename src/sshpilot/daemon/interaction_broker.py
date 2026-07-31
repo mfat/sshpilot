@@ -56,7 +56,11 @@ from sshpilot.api.models import (
 from sshpilot.api.transport.secret_frames import SecretFrame
 
 logger = logging.getLogger(__name__)
-from sshpilot.askpass_utils import _extract_key_path, classify_prompt
+from sshpilot.askpass_utils import (
+    _extract_key_path,
+    append_askpass_log,
+    classify_prompt,
+)
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
@@ -345,6 +349,10 @@ class InteractionBroker:
             self._askpass_socket_path
         )
         environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
+        append_askpass_log(
+            f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
+            f"session={spec.session_id}"
+        )
         source_root = str(Path(__file__).resolve().parents[2])
         current_pythonpath = environment.get("PYTHONPATH", "")
         environment["PYTHONPATH"] = (
@@ -558,7 +566,14 @@ class InteractionBroker:
                 "askpass host-key prompt could not be parsed prompt=%r",
                 raw_prompt[:200],
             )
+            append_askpass_log(
+                f"ASKPASS: host-key prompt unparsed prompt={raw_prompt[:200]!r}"
+            )
             return None
+        append_askpass_log(
+            f"ASKPASS: host-key confirmation for {hostname}:{port} "
+            f"status={getattr(prompt.status, 'name', prompt.status)}"
+        )
         interaction = self.create(
             session_id=session_id,
             connection_id=connection_id,
@@ -574,21 +589,27 @@ class InteractionBroker:
             ),
         )
         if result is None or not isinstance(result.decision, HostKeyDecision):
+            append_askpass_log("ASKPASS: host-key confirmation cancelled or failed")
             if result is not None:
                 result.clear()
             return None
         decision = result.decision
         result.clear()
         if decision is HostKeyDecision.REJECT:
+            append_askpass_log("ASKPASS: host-key rejected by user")
             return None
         # CHANGED keys: dialog only offers Reject; refuse accept paths defensively.
         if prompt.status is not HostKeyStatus.UNKNOWN:
+            append_askpass_log("ASKPASS: host-key accept refused (non-UNKNOWN status)")
             return None
         if decision is HostKeyDecision.ACCEPT_AND_STORE:
             with self._condition:
                 context = self._askpass_contexts.get(token)
                 if context is not None and not context.closed:
                     context.pending_host_key_store = True
+            append_askpass_log("ASKPASS: host-key accepted and will be stored")
+        else:
+            append_askpass_log("ASKPASS: host-key accepted for this session")
         # OpenSSH askpass expects a yes/no line; helper appends the newline.
         return bytearray(b"yes")
 
@@ -1297,6 +1318,10 @@ class InteractionBroker:
                     or len(prompt) > 4096
                 ):
                     continue
+                append_askpass_log(
+                    f"ASKPASS called with prompt: {prompt[:200]!r} "
+                    f"hint={(os.environ.get('SSH_ASKPASS_PROMPT') or '').strip().lower()!r}"
+                )
                 secret = self._resolve_askpass_secret(
                     token,
                     prompt,
@@ -1410,18 +1435,16 @@ class InteractionBroker:
                     self._passphrase_lookup is not None,
                     attempt,
                 )
-                try:
-                    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-                    log_path = os.path.join(runtime, "sshpilot", "askpass-broker.log")
-                    os.makedirs(os.path.dirname(log_path), mode=0o700, exist_ok=True)
-                    with open(log_path, "a", encoding="utf-8") as handle:
-                        handle.write(
-                            f"prompt={raw_prompt!r} key={key_path!r} "
-                            f"stored={bool(stored)} lookup={self._passphrase_lookup is not None} "
-                            f"attempt={attempt} try_stored={try_stored}\n"
-                        )
-                except Exception:
-                    pass
+                append_askpass_log(
+                    f"ASKPASS: passphrase prompt key={key_path or '<none>'} "
+                    f"stored={bool(stored)} lookup={self._passphrase_lookup is not None} "
+                    f"attempt={attempt}"
+                )
+            elif interaction_type is InteractionType.PASSWORD:
+                append_askpass_log(
+                    f"ASKPASS: password prompt for {username}@{hostname} "
+                    f"stored={bool(stored)} attempt={attempt}"
+                )
         elif interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
             logger.info(
                 "askpass passphrase: skipping stored (already offered) "
@@ -1430,6 +1453,14 @@ class InteractionBroker:
                 key_path or "<none>",
                 attempt,
             )
+            append_askpass_log(
+                f"ASKPASS: passphrase retry (stored already offered) "
+                f"key={key_path or '<none>'} attempt={attempt}"
+            )
+        elif interaction_type is InteractionType.PASSWORD:
+            append_askpass_log(
+                f"ASKPASS: password retry for {username}@{hostname} attempt={attempt}"
+            )
         if stored:
             encoded = stored.encode("utf-8")
             if b"\0" not in encoded and len(encoded) <= _MAX_SECRET_SIZE:
@@ -1437,6 +1468,14 @@ class InteractionBroker:
                     context = self._askpass_contexts.get(token)
                     if context is not None:
                         context.stored_attempted.add(attempt_key)
+                if interaction_type is InteractionType.PASSWORD:
+                    append_askpass_log(
+                        f"ASKPASS: Returning stored password for {username}@{hostname}"
+                    )
+                else:
+                    append_askpass_log(
+                        f"ASKPASS: Returning stored passphrase for {key_path or '<none>'}"
+                    )
                 return bytearray(encoded)
         if interaction_type is InteractionType.PASSWORD:
             public_prompt: InteractionPrompt = PasswordPrompt(
@@ -1447,6 +1486,9 @@ class InteractionBroker:
                 can_remember=self._password_store is not None,
                 stored_secret_available=bool(stored),
             )
+            append_askpass_log(
+                f"ASKPASS: no stored password for {username}@{hostname}; asking user"
+            )
         else:
             public_prompt = PassphrasePrompt(
                 key_display_name=Path(key_path).name if key_path else "SSH key",
@@ -1454,6 +1496,9 @@ class InteractionBroker:
                 attempt=attempt,
                 can_remember=self._passphrase_store is not None and bool(key_path),
                 stored_secret_available=bool(stored),
+            )
+            append_askpass_log(
+                f"ASKPASS: no stored passphrase for {key_path or '<none>'}; asking user"
             )
         interaction = self.create(
             session_id=session_id,
@@ -1475,11 +1520,13 @@ class InteractionBroker:
             or result.decision is not SecretDecision.SUBMIT
             or result.secret is None
         ):
+            append_askpass_log("ASKPASS: user cancelled or failed secret prompt")
             if result is not None:
                 result.clear()
             return None
         secret = result.secret
         result.secret = None
+        append_askpass_log("ASKPASS: Returning secret from user dialog")
         if result.remember_policy in {
             RememberPolicy.STORE_AFTER_SUCCESS,
             RememberPolicy.REPLACE_STORED_AFTER_SUCCESS,

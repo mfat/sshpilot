@@ -114,6 +114,7 @@ class DaemonLauncher:
         executable: Optional[str] = None,
         environment: Optional[Mapping[str, str]] = None,
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
+        verbose: Optional[bool] = None,
     ) -> None:
         if startup_timeout <= 0 or poll_interval <= 0 or probe_timeout <= 0:
             raise ValueError("daemon launcher timeouts must be positive")
@@ -125,6 +126,30 @@ class DaemonLauncher:
         self._environment = environment
         self._popen = popen
         self._lock = threading.Lock()
+        if verbose is None:
+            env = environment if environment is not None else os.environ
+            verbose = str(env.get("SSHPILOT_DAEMON_VERBOSE", "")).strip() in {
+                "1",
+                "true",
+                "yes",
+            }
+        self._verbose = bool(verbose)
+
+    @staticmethod
+    def _ensure_gtk_askpass_log_forwarder() -> None:
+        """Tail the shared askpass log into this (GTK) process logger.
+
+        The daemon broker writes ASKPASS lines into ``sshpilot-askpass.log``;
+        without a forwarder in the frontend those never reach ``--verbose``
+        console output or ``sshpilot.log``. GTK-free: only imports askpass_utils.
+        """
+
+        try:
+            from sshpilot.askpass_utils import ensure_askpass_log_forwarder
+
+            ensure_askpass_log_forwarder()
+        except Exception:
+            pass
 
     def connect_or_start(self) -> DaemonLaunchResult:
         """Return one compatible client, launching at most once per call."""
@@ -143,6 +168,7 @@ class DaemonLauncher:
                 if error.code is not ErrorCode.DAEMON_UNAVAILABLE:
                     raise self._classify_handshake_error(error) from error
             else:
+                self._ensure_gtk_askpass_log_forwarder()
                 return DaemonLaunchResult(client=client, process=None)
 
             command = (
@@ -151,6 +177,7 @@ class DaemonLauncher:
                 "sshpilot.daemon",
                 "--socket",
                 str(self.socket_path),
+                *(("--verbose",) if self._verbose else ()),
             )
             try:
                 process = self._popen(
@@ -174,6 +201,7 @@ class DaemonLauncher:
             except BaseException:
                 self._stop_failed_child(process)
                 raise
+            self._ensure_gtk_askpass_log_forwarder()
             return DaemonLaunchResult(client=client, process=handle)
 
     def _connect(self, timeout: float) -> DaemonClient:

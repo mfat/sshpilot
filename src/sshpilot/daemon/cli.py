@@ -24,7 +24,53 @@ from .lifecycle import resolve_socket_path
 
 
 def _configure_logging(verbose: bool) -> None:
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
+    """Configure daemon logging.
+
+    App-launched daemons have stdout/stderr pointed at ``DEVNULL``, so we
+    always attach a rotating file under the XDG state dir. Console basicConfig
+    still helps when the daemon is started by hand from a terminal.
+    """
+
+    level = logging.DEBUG if verbose else logging.INFO
+    root = logging.getLogger()
+    root.setLevel(level)
+    if not root.handlers:
+        logging.basicConfig(level=level)
+
+    try:
+        from sshpilot.platform_utils import get_state_dir
+
+        log_dir = get_state_dir()
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "daemon.log")
+    except Exception:
+        return
+
+    for handler in root.handlers:
+        if getattr(handler, "_sshpilot_daemon_file", False):
+            handler.setLevel(level)
+            return
+
+    try:
+        from logging.handlers import RotatingFileHandler
+
+        file_handler = RotatingFileHandler(
+            log_path,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(level)
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        file_handler._sshpilot_daemon_file = True  # type: ignore[attr-defined]
+        root.addHandler(file_handler)
+    except Exception:
+        pass
 
 
 def _print_json(payload: Any) -> None:
