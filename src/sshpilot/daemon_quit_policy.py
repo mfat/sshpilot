@@ -380,12 +380,35 @@ def _invoke_on_main(fn: Callable[[], Any]) -> None:
         fn()
 
 
+def begin_terminate_shutdown_intent(window) -> None:
+    """Mark intentional Terminate everything before any stop_daemon call.
+
+    Suppresses daemon auto-reconnect so transport_closed from the force-stop
+    cannot ``connect_or_start`` a replacement daemon while we wait for exit.
+    """
+    window._daemon_quit_decision = DaemonQuitDecision.TERMINATE_ALL
+    window._daemon_quit_close_policy = TerminalClosePolicy.TERMINATE
+    window._daemon_shutdown_intent = "terminate"
+    app = window.get_application() if hasattr(window, "get_application") else None
+    if app is not None:
+        app._daemon_quit_decision = DaemonQuitDecision.TERMINATE_ALL
+        app._daemon_shutdown_intent = "terminate"
+        cancel = getattr(app, "cancel_daemon_reconnect", None)
+        if callable(cancel):
+            try:
+                cancel(reason="terminate_all")
+            except Exception:
+                logger.debug("cancel_daemon_reconnect failed", exc_info=True)
+
+
 def _clear_terminate_quit_decision(window) -> None:
     window._daemon_quit_decision = None
     window._daemon_quit_close_policy = None
+    window._daemon_shutdown_intent = None
     app = window.get_application() if hasattr(window, "get_application") else None
     if app is not None:
         app._daemon_quit_decision = None
+        app._daemon_shutdown_intent = None
 
 
 def _present_terminate_failed(window, errors: list[str]) -> None:
@@ -415,11 +438,8 @@ def apply_terminate_all(window) -> None:
     main loop is not blocked for the full RPC or drain timeout. Quit proceeds
     only after termination is confirmed (or fails with an error dialog).
     """
-    window._daemon_quit_decision = DaemonQuitDecision.TERMINATE_ALL
-    window._daemon_quit_close_policy = TerminalClosePolicy.TERMINATE
-    app = window.get_application() if hasattr(window, "get_application") else None
-    if app is not None:
-        app._daemon_quit_decision = DaemonQuitDecision.TERMINATE_ALL
+    # Intent first — before stop_daemon — so transport_closed cannot reconnect.
+    begin_terminate_shutdown_intent(window)
 
     client, daemon_process, socket_path = _resolve_terminate_context(window)
 
@@ -510,6 +530,7 @@ __all__ = [
     "DaemonQuitDecision",
     "apply_keep_running",
     "apply_terminate_all",
+    "begin_terminate_shutdown_intent",
     "daemon_active_work_summary",
     "has_daemon_active_work",
     "present_daemon_quit_dialog",

@@ -529,10 +529,69 @@ class SshPilotApplication(Adw.Application):
                 type(error).__name__,
             )
 
+    def _daemon_reconnect_suppressed(self) -> bool:
+        """True when reconnect must not run (intentional terminate / quit)."""
+        if getattr(self, "_daemon_shutdown_intent", None) == "terminate":
+            return True
+        from .daemon_quit_policy import DaemonQuitDecision
+
+        if getattr(self, "_daemon_quit_decision", None) is DaemonQuitDecision.TERMINATE_ALL:
+            return True
+        window = self.window
+        if window is None:
+            return False
+        if getattr(window, "_is_quitting", False):
+            return True
+        if getattr(window, "_daemon_shutdown_intent", None) == "terminate":
+            return True
+        if getattr(window, "_daemon_quit_decision", None) is DaemonQuitDecision.TERMINATE_ALL:
+            return True
+        return False
+
+    def cancel_daemon_reconnect(self, *, reason: str = "shutdown") -> None:
+        """Abort in-flight / pending reconnect (Terminate everything / quit)."""
+        self._daemon_reconnect_generation = (
+            getattr(self, "_daemon_reconnect_generation", 0) + 1
+        )
+        self._daemon_reconnect_in_progress = False
+        logger.debug("daemon reconnect cancelled reason=%s", reason)
+
+    def _discard_accidental_daemon_reconnect(self, result) -> None:
+        """Stop a daemon that reconnect started during intentional terminate."""
+        if result is None:
+            return
+        client = getattr(result, "client", None)
+        if client is None:
+            return
+        try:
+            from .api.models.daemon import StopDaemonRequest
+
+            stop = getattr(client, "stop_daemon", None)
+            if callable(stop):
+                stop(StopDaemonRequest(force=True))
+        except Exception:
+            logger.debug(
+                "Failed to stop accidental reconnect daemon during terminate-all",
+                exc_info=True,
+            )
+        try:
+            client.close()
+        except Exception:
+            logger.debug(
+                "Failed to close accidental reconnect client during terminate-all",
+                exc_info=True,
+            )
+
     def _on_daemon_transport_lost(self, error) -> bool:
         """Schedule a bounded daemon reconnect after unexpected transport loss."""
 
-        if self.window is not None and getattr(self.window, "_is_quitting", False):
+        if self._daemon_reconnect_suppressed():
+            code = getattr(getattr(error, "code", None), "value", None)
+            logger.debug(
+                "Ignoring expected daemon transport loss during intentional "
+                "shutdown code=%s",
+                code or type(error).__name__,
+            )
             return False
         code = getattr(getattr(error, "code", None), "value", None)
         logger.warning(
@@ -572,7 +631,11 @@ class SshPilotApplication(Adw.Application):
         Concurrent requests are coalesced.
         """
 
-        if self.window is not None and getattr(self.window, "_is_quitting", False):
+        if self._daemon_reconnect_suppressed():
+            logger.debug(
+                "daemon reconnect suppressed reason=%s (intentional shutdown)",
+                reason,
+            )
             return
         if getattr(self, "_daemon_reconnect_in_progress", False):
             logger.debug(
@@ -581,11 +644,22 @@ class SshPilotApplication(Adw.Application):
             )
             return
         self._daemon_reconnect_in_progress = True
+        generation = getattr(self, "_daemon_reconnect_generation", 0)
         helper = self._ensure_daemon_reconnect_helper()
         helper.note_transport_loss()
         bridge = getattr(self, "_api_client_bridge", None)
 
         def _run():
+            if (
+                self._daemon_reconnect_suppressed()
+                or getattr(self, "_daemon_reconnect_generation", 0) != generation
+            ):
+                logger.debug(
+                    "daemon reconnect aborted before attempt reason=%s",
+                    reason,
+                )
+                GLib.idle_add(self._finish_daemon_reconnect, None, generation)
+                return None
             try:
                 result = helper.reconnect(wait_for_backoff=not immediate)
             except Exception as error:
@@ -594,9 +668,19 @@ class SshPilotApplication(Adw.Application):
                     type(error).__name__,
                     exc_info=True,
                 )
-                GLib.idle_add(self._finish_daemon_reconnect, None)
+                GLib.idle_add(self._finish_daemon_reconnect, None, generation)
                 return None
-            GLib.idle_add(self._finish_daemon_reconnect, result)
+            if (
+                self._daemon_reconnect_suppressed()
+                or getattr(self, "_daemon_reconnect_generation", 0) != generation
+            ):
+                logger.info(
+                    "Discarding daemon reconnect during intentional terminate-all"
+                )
+                self._discard_accidental_daemon_reconnect(result)
+                GLib.idle_add(self._finish_daemon_reconnect, None, generation)
+                return None
+            GLib.idle_add(self._finish_daemon_reconnect, result, generation)
             return None
 
         if bridge is not None and hasattr(bridge, "submit"):
@@ -607,6 +691,7 @@ class SshPilotApplication(Adw.Application):
                     on_error=lambda error: GLib.idle_add(
                         self._finish_daemon_reconnect,
                         None,
+                        generation,
                     ),
                 )
                 return
@@ -622,8 +707,21 @@ class SshPilotApplication(Adw.Application):
         )
         thread.start()
 
-    def _finish_daemon_reconnect(self, result) -> bool:
+    def _finish_daemon_reconnect(self, result, generation: int = -1) -> bool:
+        if (
+            generation >= 0
+            and getattr(self, "_daemon_reconnect_generation", 0) != generation
+        ):
+            logger.debug("Ignoring stale daemon reconnect finish")
+            return False
         self._daemon_reconnect_in_progress = False
+        if self._daemon_reconnect_suppressed():
+            if result is not None and getattr(result, "client", None) is not None:
+                logger.info(
+                    "Discarding daemon reconnect during intentional terminate-all"
+                )
+                self._discard_accidental_daemon_reconnect(result)
+            return False
         if result is None or getattr(result, "client", None) is None:
             decision = getattr(result, "decision", None) if result is not None else None
             message = getattr(decision, "message", None) if decision is not None else None
