@@ -99,10 +99,37 @@ def apply_keep_running(window) -> None:
 
 
 def terminate_all_daemon_work(client) -> list[str]:
-    """Close/cancel daemon resources via public APIs. Returns error messages."""
-    errors: list[str] = []
+    """Terminate all daemon resources for a Quit → Terminate everything.
+
+    Prefer ``daemon.stop(force=true)`` so orphaned SFTP/sessions/forwards are
+    torn down regardless of which client originally owned them. Per-resource
+    close is only a fallback for clients that lack stop_daemon.
+
+    Returns error messages; an empty list means termination was accepted.
+    """
     if client is None:
         return ["no daemon client"]
+
+    stop = getattr(client, "stop_daemon", None)
+    if callable(stop):
+        try:
+            from .api.models.daemon import StopDaemonRequest
+
+            result = stop(StopDaemonRequest(force=True))
+            if getattr(result, "accepted", False):
+                return []
+            message = getattr(result, "message", None) or "force stop was not accepted"
+            return [f"stop_daemon: {message}"]
+        except Exception as exc:
+            return [f"stop_daemon force: {exc}"]
+
+    # Client has no administrative stop — best-effort per-resource mutation.
+    return _terminate_all_per_resource(client)
+
+
+def _terminate_all_per_resource(client) -> list[str]:
+    """Fallback when ``stop_daemon`` is unavailable (incomplete test doubles)."""
+    errors: list[str] = []
 
     try:
         from .api.models.sessions import CloseSessionRequest, SessionState
@@ -196,8 +223,36 @@ def terminate_all_daemon_work(client) -> list[str]:
     return errors
 
 
+def _clear_terminate_quit_decision(window) -> None:
+    window._daemon_quit_decision = None
+    window._daemon_quit_close_policy = None
+    app = window.get_application() if hasattr(window, "get_application") else None
+    if app is not None:
+        app._daemon_quit_decision = None
+
+
+def _present_terminate_failed(window, errors: list[str]) -> None:
+    """Keep the window open and report that Terminate everything failed."""
+    from gi.repository import Adw
+
+    detail = "\n".join(f"• {message}" for message in errors[:8])
+    if len(errors) > 8:
+        detail += "\n" + _("…and {n} more").format(n=len(errors) - 8)
+    body = _(
+        "Could not terminate all daemon work. The application was not quit "
+        "so remote sessions and file transfers are not left half-closed.\n\n"
+        "{detail}"
+    ).format(detail=detail or _("Unknown error"))
+
+    dialog = Adw.AlertDialog.new(_("Terminate everything failed"), body)
+    dialog.add_response("ok", _("OK"))
+    dialog.set_default_response("ok")
+    dialog.set_close_response("ok")
+    dialog.present(window)
+
+
 def apply_terminate_all(window) -> None:
-    """Terminate daemon work then quit the GTK application."""
+    """Terminate daemon work then quit — only if termination succeeds."""
     window._daemon_quit_decision = DaemonQuitDecision.TERMINATE_ALL
     window._daemon_quit_close_policy = TerminalClosePolicy.TERMINATE
     app = window.get_application() if hasattr(window, "get_application") else None
@@ -206,8 +261,12 @@ def apply_terminate_all(window) -> None:
 
     client = getattr(window, "client", None)
     errors = terminate_all_daemon_work(client)
-    for message in errors:
-        logger.warning("terminate-all during quit: %s", message)
+    if errors:
+        for message in errors:
+            logger.warning("terminate-all during quit: %s", message)
+        _clear_terminate_quit_decision(window)
+        _present_terminate_failed(window, errors)
+        return
 
     from . import shutdown
 
