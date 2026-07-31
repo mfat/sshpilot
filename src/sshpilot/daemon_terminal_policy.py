@@ -367,7 +367,16 @@ def resolve_tab_close_policy(config) -> TerminalClosePolicy:
 
 
 def resolve_app_close_policy(config) -> TerminalClosePolicy:
-    return resolve_close_policy(config, APP_CLOSE_POLICY_SETTING)
+    # Default ASK so quitting with daemon work presents Keep running /
+    # Terminate everything / Cancel rather than silently detaching.
+    raw = str(
+        _get_setting(config, APP_CLOSE_POLICY_SETTING, TerminalClosePolicy.ASK.value)
+        or ""
+    )
+    try:
+        return TerminalClosePolicy(raw.strip().lower())
+    except ValueError:
+        return TerminalClosePolicy.ASK
 
 
 def preferred_daemon_emulator(config) -> str:

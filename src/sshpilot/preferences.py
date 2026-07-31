@@ -733,6 +733,29 @@ class PreferencesWindow(Adw.NavigationPage):
         self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
         daemon_group.add(self.tab_close_policy_row)
 
+        # App quit policy
+        self.app_close_policy_row = Adw.ComboRow()
+        self.app_close_policy_row.set_title(_("Quit policy"))
+        self.app_close_policy_row.set_subtitle(
+            _("Action when quitting with daemon-backed connections")
+        )
+        app_policy_model = Gtk.StringList()
+        app_policy_model.append(_("Keep connections running"))
+        app_policy_model.append(_("Terminate everything"))
+        app_policy_model.append(_("Ask each time"))
+        self.app_close_policy_row.set_model(app_policy_model)
+        current_app_policy = self.config.get_setting(
+            'terminal.daemon_app_close_policy', 'ask'
+        )
+        app_policy_index = {
+            'detach': 0, 'terminate': 1, 'ask': 2
+        }.get(current_app_policy, 2)
+        self.app_close_policy_row.set_selected(app_policy_index)
+        self.app_close_policy_row.connect(
+            'notify::selected', self.on_app_close_policy_changed
+        )
+        daemon_group.add(self.app_close_policy_row)
+
         # Session restore
         self.restore_sessions_switch = Adw.SwitchRow()
         self.restore_sessions_switch.set_title(_("Restore daemon sessions on startup"))
@@ -3351,6 +3374,15 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('terminal.daemon_tab_close_policy', policy)
         except Exception as exc:
             logger.error("Failed to update tab close policy: %s", exc)
+
+    def on_app_close_policy_changed(self, row, _pspec):
+        """Persist the application quit policy preference."""
+        try:
+            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
+            policy = policy_map.get(row.get_selected(), 'detach')
+            self.config.set_setting('terminal.daemon_app_close_policy', policy)
+        except Exception as exc:
+            logger.error("Failed to update app close policy: %s", exc)
 
     def on_restore_sessions_toggled(self, switch, _pspec):
         """Persist the restore sessions preference."""

@@ -966,13 +966,21 @@ class SshPilotApplication(Adw.Application):
             client = getattr(self.window, 'client', None)
 
         # App-launched daemon: request graceful stop before closing the
-        # transport.  Externally-managed daemons (daemon_process is None)
-        # are left alone — their own idle policy will shut them down.
+        # transport — unless the user chose Keep connections running.
+        # Externally-managed daemons (daemon_process is None) are left alone.
+        from .daemon_quit_policy import DaemonQuitDecision
+
+        quit_decision = getattr(self, "_daemon_quit_decision", None)
+        if quit_decision is None and self.window is not None:
+            quit_decision = getattr(self.window, "_daemon_quit_decision", None)
+
         daemon_process = getattr(selection, 'daemon_process', None)
-        if client is not None and daemon_process is not None:
+        keep_running = quit_decision is DaemonQuitDecision.KEEP_RUNNING
+        if client is not None and daemon_process is not None and not keep_running:
             try:
                 from .api.models.daemon import StopDaemonRequest
-                result = client.stop_daemon(StopDaemonRequest())
+                force = quit_decision is DaemonQuitDecision.TERMINATE_ALL
+                result = client.stop_daemon(StopDaemonRequest(force=force))
                 if not result.accepted and result.confirmation:
                     # Active resources exist — force stop to terminate all work.
                     logger.info(
@@ -991,6 +999,10 @@ class SshPilotApplication(Adw.Application):
                     "Daemon graceful stop request failed (will idle out)",
                     exc_info=True,
                 )
+        elif keep_running:
+            logger.info(
+                "Keep-running quit: leaving app-launched daemon intact"
+            )
 
         if client is not None:
             try:

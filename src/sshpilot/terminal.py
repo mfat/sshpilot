@@ -1332,10 +1332,13 @@ class TerminalWidget(Gtk.Box):
         try:
             from .daemon_terminal_policy import resolve_tab_close_policy, TerminalClosePolicy
 
-            # During app quit, use app close policy
             if is_quitting:
-                from .daemon_terminal_policy import resolve_app_close_policy
-                policy = resolve_app_close_policy(self.config)
+                override = getattr(self, "_daemon_quit_close_policy", None)
+                if override is not None:
+                    policy = override
+                else:
+                    from .daemon_terminal_policy import resolve_app_close_policy
+                    policy = resolve_app_close_policy(self.config)
             else:
                 policy = resolve_tab_close_policy(self.config)
 

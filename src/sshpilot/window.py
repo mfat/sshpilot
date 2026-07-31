@@ -5640,12 +5640,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def show_quit_confirmation_dialog(self):
-        """Show confirmation dialog when quitting with active connections"""
-        # Best-effort raise of the main window. On X11 / for a minimized window
-        # this brings it forward; on Wayland a background app can't force a raise
-        # without an activation token, so this only flags attention there. The
-        # confirmation itself is a real top-level Gtk.AlertDialog (below) so it is
-        # surfaced by the compositor regardless.
+        """Show confirmation dialog when quitting with active connections.
+
+        When daemon-backed work is active (or the app-close policy is ASK),
+        presents Keep running / Terminate everything / Cancel. Otherwise falls
+        back to Cancel / Quit Anyway for local-terminal jobs.
+        """
         try:
             self.unminimize()
         except Exception as e:
@@ -5655,7 +5655,54 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
 
-        # Categorize connected terminals
+        from .daemon_quit_policy import (
+            DaemonQuitDecision,
+            apply_keep_running,
+            apply_terminate_all,
+            has_daemon_active_work,
+            present_daemon_quit_dialog,
+            resolve_quit_decision_from_policy,
+        )
+
+        daemon_work = has_daemon_active_work(self)
+        auto = None
+        if daemon_work:
+            auto = resolve_quit_decision_from_policy(getattr(self, "config", None))
+            # ASK (None) → dialog; DETACH/TERMINATE apply immediately.
+            if auto is DaemonQuitDecision.KEEP_RUNNING:
+                apply_keep_running(self)
+                return
+            if auto is DaemonQuitDecision.TERMINATE_ALL:
+                apply_terminate_all(self)
+                return
+            if auto is None:
+                app = self.get_application()
+                if app is not None:
+                    app.hold()
+
+                def _on_daemon_decision(decision: DaemonQuitDecision) -> None:
+                    try:
+                        if decision is DaemonQuitDecision.KEEP_RUNNING:
+                            apply_keep_running(self)
+                        elif decision is DaemonQuitDecision.TERMINATE_ALL:
+                            apply_terminate_all(self)
+                        else:
+                            try:
+                                self.unminimize()
+                            except Exception:
+                                pass
+                            try:
+                                self.present()
+                            except Exception:
+                                pass
+                    finally:
+                        if app is not None:
+                            app.release()
+
+                present_daemon_quit_dialog(self, on_decision=_on_daemon_decision)
+                return
+
+        # Local terminals / no daemon work: Cancel / Quit Anyway.
         connected_items = []
         local_terminals = []
         ssh_terminals = []
@@ -5664,7 +5711,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     connected_items.append((conn, term))
-                    # Categorize terminals
                     if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
                         local_terminals.append((conn, term))
                     else:
@@ -5672,9 +5718,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         active_count = len(connected_items)
 
-        # Determine dialog content based on terminal types
         if ssh_terminals:
-            # SSH terminals present - use original messaging
             if active_count == 1:
                 message = _("You have 1 open terminal tab.")
                 detail = _("Closing the application will disconnect this connection.")
@@ -5682,7 +5726,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 message = _("You have {count} open terminal tabs.").format(count=active_count)
                 detail = _("Closing the application will disconnect all connections.")
         else:
-            # Only local terminals with active jobs
             if active_count == 1:
                 message = _("You have 1 local terminal with an active job.")
                 detail = _("Closing the application will terminate the running process.")
@@ -5690,17 +5733,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 message = _("You have {count} local terminals with active jobs.").format(count=active_count)
                 detail = _("Closing the application will terminate all running processes.")
 
-        # Use Gtk.AlertDialog: it builds its own top-level window, so the
-        # compositor maps it even when the main window is in the background
-        # (an in-window Adw.AlertDialog is drawn inside the background surface
-        # and stays unreachable on Wayland).
+        # Gtk.AlertDialog: own top-level window so Wayland still maps it when
+        # the main window is in the background (Adw.AlertDialog stays inside
+        # the background surface). Daemon path above uses Adw because the
+        # main window was just presented.
         dialog = Gtk.AlertDialog()
         dialog.set_modal(True)
         dialog.set_message(_("Quit SSH Pilot?"))
         dialog.set_detail("{message}\n\n{detail}".format(message=message, detail=detail))
         dialog.set_buttons([_('Cancel'), _('Quit Anyway')])
-        dialog.set_cancel_button(0)   # Escape / dismiss -> Cancel
-        dialog.set_default_button(1)  # Enter -> Quit Anyway
+        dialog.set_cancel_button(0)
+        dialog.set_default_button(1)
 
         app = self.get_application()
         if app is not None:
