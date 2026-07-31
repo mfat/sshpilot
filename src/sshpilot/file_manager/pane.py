@@ -2709,7 +2709,7 @@ class FilePane(Gtk.Box):
                 toast.set_timeout(timeout)
             self._overlay.add_toast(toast)
             self._current_toast = toast  # Keep reference for dismissal
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Overlay might be destroyed or invalid, ignore
             pass
 
@@ -2720,7 +2720,7 @@ class FilePane(Gtk.Box):
             if self._current_toast:
                 self._current_toast.dismiss()
                 self._current_toast = None
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Overlay might be destroyed or invalid, ignore
             pass
 

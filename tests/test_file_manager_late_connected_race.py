@@ -35,9 +35,9 @@ def test_late_connected_event_after_file_manager_teardown(monkeypatch):
     mock_manager = MagicMock()
     win._manager = mock_manager
 
-    # Simulate teardown: _cleanup_manager sets _manager to None
+    # Simulate teardown: _cleanup_manager sets _is_disposed to True
     win._cleanup_manager()
-    assert win._manager is None
+    assert win._is_disposed is True
 
     # Emit late _on_connected callback
     try:
@@ -69,7 +69,7 @@ def test_signals_disconnected_on_cleanup_manager(monkeypatch):
 
     win._cleanup_manager()
 
-    assert win._manager is None
+    assert win._is_disposed is True
     assert win._manager_signal_handlers == []
     assert disconnected_handlers == [101, 102, 103]
     mock_manager.close.assert_called_once()

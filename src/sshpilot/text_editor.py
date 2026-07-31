@@ -720,7 +720,7 @@ class RemoteFileEditorWindow(Adw.Window):
                 toast.set_timeout(timeout)
             self._toast_overlay.add_toast(toast)
             self._current_toast = toast  # Keep reference for dismissal
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Overlay might be destroyed or invalid, ignore
             pass
     

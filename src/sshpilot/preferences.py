@@ -268,7 +268,12 @@ class PreferencesWindow(Adw.NavigationPage):
         self._rbw_probe_in_flight = False
         self._secret_backend_selection_sync = False
         self._secrets_page_probes_done = False
-        self._secrets_page_id = None
+        self._secrets_page_id = self._page_id("Security & Credentials")
+
+        self.pages = {}
+        self._page_builders = {}
+        self._page_placeholders = {}
+        self._idle_building_scheduled = False
 
         if hasattr(self.config, 'connect'):
             try:
@@ -343,12 +348,53 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as e:
             logger.debug(f"Failed to sync NavigationSplitView show_content: {e}")
 
+    def _ensure_page_built(self, page_id: Optional[str]):
+        """Build the page for `page_id` if it was registered with a builder function."""
+        if not page_id:
+            return None
+        builder = getattr(self, '_page_builders', {}).pop(page_id, None)
+        if callable(builder):
+            try:
+                page = builder()
+            except Exception as e:
+                logger.error(f"Failed to build preference page '{page_id}': {e}")
+                page = Adw.PreferencesPage()
+
+            placeholder = getattr(self, '_page_placeholders', {}).pop(page_id, None)
+            if placeholder is not None:
+                try:
+                    self.content_stack.remove(placeholder)
+                except Exception:
+                    pass
+
+            self.content_stack.add_named(page, page_id)
+            self.pages[page_id] = page
+            return page
+
+        return self.pages.get(page_id)
+
+    def _schedule_idle_page_building(self):
+        """Schedule background building of remaining preference pages on low-priority idle."""
+        if not getattr(self, '_idle_building_scheduled', False):
+            self._idle_building_scheduled = True
+            GLib.idle_add(self._build_next_idle_page, priority=GLib.PRIORITY_LOW)
+
+    def _build_next_idle_page(self):
+        builders = getattr(self, '_page_builders', {})
+        if not builders:
+            self._idle_building_scheduled = False
+            return GLib.SOURCE_REMOVE
+        page_id = next(iter(builders.keys()))
+        self._ensure_page_built(page_id)
+        return GLib.SOURCE_CONTINUE if getattr(self, '_page_builders', None) else GLib.SOURCE_REMOVE
+
     def on_sidebar_row_selected(self, listbox, row):
         """Handle sidebar row selection"""
         if row is not None:
             page_name = row.get_name()
             changed = page_name != getattr(self, '_selected_page_name', None)
             self._selected_page_name = page_name
+            self._ensure_page_built(page_name)
             self.content_stack.set_visible_child_name(page_name)
             # Collapsed: show the detail page. Only on a real change — selecting
             # the already-selected row (e.g. when returning to the list) must not
@@ -378,6 +424,7 @@ class PreferencesWindow(Adw.NavigationPage):
         """
         if not page_id:
             return False
+        self._ensure_page_built(page_id)
         row = self.sidebar.get_first_child()
         while row is not None:
             if row.get_name() == page_id:
@@ -396,7 +443,9 @@ class PreferencesWindow(Adw.NavigationPage):
         return title.lower().replace(' ', '-')
 
     def add_page_to_layout(self, title, icon_name, page):
-        """Add a page to the custom layout"""
+        """Add a page to the custom layout. `page` can be an already-constructed
+        widget or a callable builder function that returns the page widget lazily.
+        """
         # Create sidebar row
         row = Adw.ActionRow()
         # Sidebar titles are plain text; disable Pango markup before setting the title
@@ -418,11 +467,18 @@ class PreferencesWindow(Adw.NavigationPage):
         # Add to sidebar
         self.sidebar.append(row)
 
-        # Add page to stack
-        self.content_stack.add_named(page, page_id)
+        if callable(page):
+            self._page_builders[page_id] = page
+            placeholder = Adw.PreferencesPage()
+            self._page_placeholders[page_id] = placeholder
+            self.content_stack.add_named(placeholder, page_id)
+            self.pages[page_id] = placeholder
+        else:
+            # Add page to stack
+            self.content_stack.add_named(page, page_id)
 
-        # Store reference
-        self.pages[page_id] = page
+            # Store reference
+            self.pages[page_id] = page
 
         # Select first page
         if len(self.pages) == 1:
@@ -2433,31 +2489,22 @@ class PreferencesWindow(Adw.NavigationPage):
     def setup_preferences(self):
         """Set up preferences UI with current values"""
         try:
-            terminal_page = self._build_terminal_preferences_page()
-            groups_page = self._build_groups_preferences_page()
+            # Build initial page immediately; register remaining page builders lazily
             interface_page = self._build_interface_preferences_page()
-            shortcuts_page = self._build_shortcuts_preferences_page()
-            advanced_page = self._build_advanced_preferences_page()
-            security_page = self._build_security_preferences_page()
-            ssh_settings_page = self._build_ssh_settings_preferences_page()
-            file_management_page = self._build_file_management_preferences_page()
-            updates_page = self._build_updates_preferences_page()
 
-            # Add pages to the custom layout
             self.add_page_to_layout(N_("Interface"), "applications-graphics-symbolic", interface_page)
-            self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", terminal_page)
-            self.add_page_to_layout(N_("File Management"), "folder-symbolic", file_management_page)
-            self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
-            self.add_page_to_layout(N_("Groups"), "folder-open-symbolic", groups_page)
-            self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", ssh_settings_page)
-            self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", security_page)
-            self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", updates_page)
-            plugins_page = self._create_plugins_page()
-            self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", plugins_page)
-            command_blocks_page = self._create_command_blocks_page()
-            self.add_page_to_layout(N_("Command Blocks"), "view-list-symbolic", command_blocks_page)
-            self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", advanced_page)
+            self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
+            self.add_page_to_layout(N_("File Management"), "folder-symbolic", self._build_file_management_preferences_page)
+            self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)
+            self.add_page_to_layout(N_("Groups"), "folder-open-symbolic", self._build_groups_preferences_page)
+            self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", self._build_ssh_settings_preferences_page)
+            self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", self._build_security_preferences_page)
+            self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", self._build_updates_preferences_page)
+            self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", self._create_plugins_page)
+            self.add_page_to_layout(N_("Command Blocks"), "view-list-symbolic", self._create_command_blocks_page)
+            self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", self._build_advanced_preferences_page)
 
+            self._schedule_idle_page_building()
             logger.info("Preferences window initialized")
         except Exception as e:
             logger.error(f"Failed to setup preferences: {e}")

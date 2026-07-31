@@ -769,6 +769,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
 
+        # Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant
+        try:
+            GLib.idle_add(self._preload_preferences_window, priority=GLib.PRIORITY_LOW)
+        except Exception as e:
+            logger.debug(f"Failed to schedule preferences preloading: {e}")
+
         # Apply header-bar button visibility preferences now that the buttons
         # exist (split view, commands, local terminal).
         try:
@@ -838,6 +844,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # If the previous run crashed, surface it once the UI has settled.
         GLib.timeout_add(1200, self._check_previous_crash)
+
+    def _preload_preferences_window(self) -> bool:
+        """Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant."""
+        if getattr(self, '_preferences_window', None) is not None or getattr(self, '_is_quitting', False):
+            return GLib.SOURCE_REMOVE
+        try:
+            from .preferences import PreferencesWindow
+            if getattr(self, '_preferences_window', None) is None:
+                self._preferences_window = PreferencesWindow(self, self.config)
+        except Exception as exc:
+            logger.debug("Preloading preferences page skipped/failed: %s", exc)
+        return GLib.SOURCE_REMOVE
 
     def _check_previous_crash(self):
         """If the previous run left a crash report, offer to view/report it."""

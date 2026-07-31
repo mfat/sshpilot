@@ -23,7 +23,9 @@ import os
 import pathlib
 import posixpath
 import shutil
+import types
 import weakref
+import types
 from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -130,6 +132,8 @@ class FileManagerWindow(Adw.Window):
         self._password_dialog_shown = False
         self._password_retry_count = 0
         self._max_password_retries = 3
+        self._is_disposed: bool = False
+        self._manager = None
         self._manager_signal_handlers: list = []
 
         # Use ToolbarView like other Adw.Window instances
@@ -497,7 +501,7 @@ class FileManagerWindow(Adw.Window):
         try:
             target = (str(self._nickname).strip() if self._nickname else '') or host
             self._right_pane.show_connecting(f"Connecting to {target}…")
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             pass
 
         # Headless SFTP worker + askpass (rides a live ControlMaster if any).
@@ -910,7 +914,7 @@ class FileManagerWindow(Adw.Window):
         if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
             try:
                 self._progress_dialog.close()
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 # Dialog might be destroyed or invalid, ignore
                 pass
             finally:
@@ -922,7 +926,7 @@ class FileManagerWindow(Adw.Window):
         if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
             try:
                 self._progress_dialog.update_progress(fraction, message)
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 # Dialog might be destroyed or invalid, ignore
                 pass
 
@@ -941,8 +945,11 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connected(self, *_args) -> None:
         """Handle successful connection and load directories."""
+        if getattr(self, "_is_disposed", False):
+            logger.debug("Ignoring late connected event after file manager teardown")
+            return
         manager = getattr(self, "_manager", None)
-        if manager is None:
+        if manager is None or callable(manager):
             logger.debug("Ignoring late connected event after file manager teardown")
             return
         self._password_retry_count = 0
@@ -962,7 +969,7 @@ class FileManagerWindow(Adw.Window):
 
     def _on_operation_error(self, _manager, message: str) -> None:
         """Handle operation error with toast."""
-        if getattr(self, "_manager", None) is None:
+        if getattr(self, "_is_disposed", False) or getattr(self, "_manager", None) is None:
             logger.debug("Ignoring late operation-error event after file manager teardown")
             return
         logger.warning("File manager operation error: %s", message)
@@ -974,7 +981,7 @@ class FileManagerWindow(Adw.Window):
                 # Dismiss any loading toast that might be showing
                 try:
                     pane.dismiss_toasts()
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     pass
         
         # A pane with a pending path means this error came from a directory
@@ -994,7 +1001,7 @@ class FileManagerWindow(Adw.Window):
             )
             try:
                 target.dismiss_toasts()
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 pass
             target.show_load_error(failed_path, message)
             return
@@ -1007,13 +1014,13 @@ class FileManagerWindow(Adw.Window):
             toast = Adw.Toast.new(message)
             toast.set_priority(Adw.ToastPriority.HIGH)
             self._toast_overlay.add_toast(toast)
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Overlay might be destroyed or invalid, ignore
             pass
 
     def _on_connection_error(self, _manager, message: str) -> None:
         """Handle connection / authentication failure with toast or alert."""
-        if getattr(self, "_manager", None) is None:
+        if getattr(self, "_is_disposed", False) or getattr(self, "_manager", None) is None:
             logger.debug("Ignoring late connection-error event after file manager teardown")
             return
         logger.warning("File manager connection error: %s", message)
@@ -1034,7 +1041,7 @@ class FileManagerWindow(Adw.Window):
                         self._loading_toast_timeouts[self._right_pane] = None
                     try:
                         self._right_pane.dismiss_toasts()
-                    except (AttributeError, RuntimeError, GLib.GError):
+                    except (AttributeError, RuntimeError, GLib.Error):
                         pass
                     self._right_pane.show_load_error(
                         self._pending_paths.get(self._right_pane),
@@ -1044,7 +1051,7 @@ class FileManagerWindow(Adw.Window):
                     toast = Adw.Toast.new(message or "Connection failed")
                     toast.set_priority(Adw.ToastPriority.HIGH)
                     self._toast_overlay.add_toast(toast)
-            except (AttributeError, RuntimeError, GLib.GError, TypeError) as exc:
+            except (AttributeError, RuntimeError, GLib.Error, TypeError) as exc:
                 # Overlay might be destroyed or invalid, ignore
                 logger.debug(f"Error showing connection error toast: {exc}")
             return False  # Don't repeat
@@ -1053,7 +1060,10 @@ class FileManagerWindow(Adw.Window):
 
     def _cleanup_manager(self) -> None:
         """Close the file manager backend and clear UI state."""
+        self._is_disposed = True
         manager = getattr(self, "_manager", None)
+        if isinstance(manager, (types.FunctionType, types.MethodType)):
+            manager = None
         handlers = getattr(self, "_manager_signal_handlers", None)
         if manager is not None and isinstance(handlers, (list, tuple)):
             for signal_name, handler_id in handlers:
@@ -1091,7 +1101,7 @@ class FileManagerWindow(Adw.Window):
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
     ) -> None:
-        if getattr(self, "_manager", None) is None:
+        if getattr(self, "_is_disposed", False) or getattr(self, "_manager", None) is None:
             logger.debug("Ignoring late directory-loaded event after file manager teardown")
             return
         entries_list = list(entries)  # Convert to list for logging and reuse
@@ -1138,7 +1148,7 @@ class FileManagerWindow(Adw.Window):
         try:
             target.dismiss_toasts()
             logger.debug(f"_on_directory_loaded: dismissed loading toasts for target pane")
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Method might not exist or overlay might be destroyed, ignore
             pass
         
@@ -1147,7 +1157,7 @@ class FileManagerWindow(Adw.Window):
             try:
                 target.show_toast("Directory refreshed", timeout=2)
                 logger.debug(f"_on_directory_loaded: showed refresh success toast for {('remote' if target._is_remote else 'local')} pane")
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 pass
             finally:
                 self._refreshing_panes.discard(target)
@@ -1219,7 +1229,7 @@ class FileManagerWindow(Adw.Window):
                 try:
                     self._left_pane.show_toast("Directory reloadeds", timeout=2)
                     logger.debug(f"_load_local: showed refresh success toast for local pane")
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     pass
                 finally:
                     self._refreshing_panes.discard(self._left_pane)
@@ -1288,7 +1298,7 @@ class FileManagerWindow(Adw.Window):
                     try:
                         pane.show_toast("Loading directory…", timeout=-1)
                         logger.debug(f"Showing loading toast for pane at path: {path}")
-                    except (AttributeError, RuntimeError, GLib.GError):
+                    except (AttributeError, RuntimeError, GLib.Error):
                         pass
                 self._loading_toast_timeouts[pane] = None
                 return False  # Don't repeat
@@ -2886,7 +2896,7 @@ class FileManagerWindow(Adw.Window):
                         self._progress_dialog.update_progress(overall_progress, message)
                     else:
                         self._progress_dialog.update_progress(progress, message)
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     # Dialog may have been destroyed mid-emit.
                     pass
 
@@ -2895,7 +2905,7 @@ class FileManagerWindow(Adw.Window):
                     return
                 try:
                     GLib.idle_add(self._progress_dialog.on_bytes, transferred, total)
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     pass
 
             self._progress_handler_id = self._manager.connect("progress", _on_progress)
@@ -2997,7 +3007,7 @@ class FileManagerWindow(Adw.Window):
                             except CancelledError:
                                 # Future was cancelled, ignore
                                 pass
-                    except (AttributeError, RuntimeError, GLib.GError):
+                    except (AttributeError, RuntimeError, GLib.Error):
                         # Dialog may have been destroyed
                         pass
                 
