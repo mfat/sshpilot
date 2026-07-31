@@ -993,7 +993,9 @@ class ConnectionManager(GObject.Object):
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
 
-        # Defer slower operations to idle to avoid blocking startup
+        # Defer slower operations to idle to avoid blocking GTK startup.
+        # Daemon callers without a GLib loop must invoke ``_post_init_slow_path``
+        # themselves (see ``daemon.cli._production_core_client``).
         GLib.idle_add(self._post_init_slow_path)
 
     @property

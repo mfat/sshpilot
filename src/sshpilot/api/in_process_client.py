@@ -238,6 +238,11 @@ class InProcessClient:
                 "The SSH session could not be prepared",
                 connection_id=connection_id,
             )
+        # Classic VTE preload unlocks stored-passphrase keys in ssh-agent
+        # (including gnome-keyring/gcr identities that advertise locked keys).
+        # Broker policy strips in-process askpass, so without this OpenSSH falls
+        # back to the on-disk encrypted key and the user gets a passphrase dialog.
+        self._preload_connection_keys(connection)
         argv = tuple(getattr(command, "command", ()) or ())
         environment = dict(getattr(command, "env", {}) or {})
         if (
@@ -259,6 +264,22 @@ class InProcessClient:
                 connection_id=connection_id,
             )
         return (executable, *argv[1:]), environment
+
+    @staticmethod
+    def _preload_connection_keys(connection) -> None:
+        """Best-effort agent preload; never raises (mirrors classic VTE path)."""
+
+        preload = getattr(connection, "_preload_keys_into_agent", None)
+        if not callable(preload):
+            return
+        try:
+            preload()
+        except Exception:
+            logger.debug(
+                "daemon key preload failed connection=%s",
+                getattr(connection, "nickname", None),
+                exc_info=True,
+            )
 
     def prepare_daemon_sftp_launch(
         self,
@@ -311,6 +332,7 @@ class InProcessClient:
             interaction_policy=interaction_policy,
         )
         prepared = build_ssh_connection(ctx)
+        self._preload_connection_keys(connection)
         argv = tuple(prepared.command)
         environment = dict(prepared.env)
         if not argv:

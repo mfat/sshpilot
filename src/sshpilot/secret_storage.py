@@ -299,7 +299,12 @@ def normalize_key_path_for_storage(key_path: str) -> str:
 def key_path_lookup_candidates(key_path: str) -> List[str]:
     """Account variants to probe for a key passphrase: the canonical (home-relative) title, the
     absolute expansion, home aliases, and the raw input — so both portable ``~`` entries and
-    legacy absolute entries resolve, and passphrases saved under a previous backend still hit."""
+    legacy absolute entries resolve, and passphrases saved under a previous backend still hit.
+
+    Also synthesizes ``~/.ssh/...`` from any absolute ``.../.ssh/...`` path so a secret stored
+    under the portable tilde account still resolves when ``$HOME`` differs from the machine
+    that saved it (daemon sandbox, relocated profile, etc.).
+    """
     if not key_path:
         return []
     candidates: List[str] = []
@@ -317,6 +322,16 @@ def key_path_lookup_candidates(key_path: str) -> List[str]:
     for base in (canonical, expanded):
         _add(home_alias_for_path(base))
     _add(key_path)
+    # Portable vault titles use ``~/.ssh/<name>``. When $HOME is not the home that
+    # owned the absolute path (daemon XDG isolation, portable backups),
+    # ``home_alias_for_path`` returns '' — still probe the tilde form.
+    for existing in list(candidates):
+        normalized = existing.replace("\\", "/")
+        marker = "/.ssh/"
+        if marker in normalized:
+            tail = normalized.split(marker, 1)[1]
+            if tail:
+                _add("~/.ssh/" + tail)
     return candidates
 
 

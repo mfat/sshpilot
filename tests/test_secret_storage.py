@@ -98,6 +98,36 @@ def test_passphrase_spec_legacy_format():
     assert spec.pass_path == 'sshpilot/passphrase/_home_u_.ssh_id_ed25519'
 
 
+def test_key_path_lookup_candidates_include_tilde_when_home_differs(monkeypatch, tmp_path):
+    """Secrets stored as ``~/.ssh/key`` must still resolve if $HOME is a sandbox.
+
+    The daemon (and some test harnesses) may run with an isolated HOME that does
+    not contain the real key path; OpenSSH still prompts with the absolute path.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "sandbox-home"))
+    (tmp_path / "sandbox-home").mkdir()
+    candidates = ss.key_path_lookup_candidates("/home/other/.ssh/kwp4")
+    assert "~/.ssh/kwp4" in candidates
+    assert "/home/other/.ssh/kwp4" in candidates
+
+
+def test_lookup_passphrase_finds_tilde_account_when_home_differs(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "sandbox-home"))
+    (tmp_path / "sandbox-home").mkdir()
+    backend = FakeBackend("libsecret")
+    backend.data["~/.ssh/kwp4"] = "secret-pp"
+    mgr = SecretManager()
+    mgr._backends = {
+        "libsecret": backend,
+        "keyring": FakeBackend("keyring", available=False),
+    }
+    mgr.set_selected("libsecret")
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: mgr)
+    from sshpilot.askpass_utils import lookup_passphrase
+
+    assert lookup_passphrase("/home/other/.ssh/kwp4") == "secret-pp"
+
+
 # --- manager semantics -------------------------------------------------------
 
 def test_store_uses_primary_then_lookup(manager):

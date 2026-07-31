@@ -252,6 +252,188 @@ def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
     return False
 
 
+def test_stored_passphrase_autofills_without_pythonpath(tmp_path) -> None:
+    """Stored passphrase must autofill even when askpass has no PYTHONPATH.
+
+    Reproduces the daemon failure mode where OpenSSH's askpass child runs with a
+    reduced environment: the old ``from sshpilot.daemon.askpass_helper import main``
+    wrapper exits 1, askpass never reaches the broker, and the user is prompted
+    (or auth fails). The inlined helper must not import sshpilot.
+    """
+    tools = {
+        name: shutil.which(name)
+        for name in ("ssh", "sshd", "ssh-keygen", "ssh-keyscan")
+    }
+    if not all(tools.values()):
+        pytest.skip("OpenSSH integration tools are unavailable")
+    username = os.environ.get("USER") or os.environ.get("LOGNAME")
+    if not username:
+        pytest.skip("Current user identity is unavailable")
+    port = _free_port()
+    host_key = tmp_path / "host_key"
+    client_key = tmp_path / "client_key"
+    subprocess.run(
+        (tools["ssh-keygen"], "-q", "-t", "ed25519", "-N", "", "-f", str(host_key)),
+        check=True,
+    )
+    passphrase = "stored-autofill-passphrase"
+    subprocess.run(
+        (
+            tools["ssh-keygen"],
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            passphrase,
+            "-f",
+            str(client_key),
+        ),
+        check=True,
+    )
+    authorized = tmp_path / "authorized_keys"
+    authorized.write_bytes(client_key.with_suffix(".pub").read_bytes())
+    authorized.chmod(0o600)
+    sshd_config = tmp_path / "sshd_config"
+    sshd_config.write_text(
+        "\n".join(
+            (
+                f"Port {port}",
+                "ListenAddress 127.0.0.1",
+                f"HostKey {host_key}",
+                f"PidFile {tmp_path / 'sshd.pid'}",
+                f"AuthorizedKeysFile {authorized}",
+                f"AllowUsers {username}",
+                "PubkeyAuthentication yes",
+                "PasswordAuthentication no",
+                "KbdInteractiveAuthentication no",
+                "UsePAM no",
+                "StrictModes no",
+                "LogLevel ERROR",
+            )
+        )
+        + "\n"
+    )
+    known_hosts = tmp_path / "known_hosts"
+    ssh_config = tmp_path / "ssh_config"
+    ssh_config.write_text(
+        "\n".join(
+            (
+                "Host autofill-test",
+                "    HostName 127.0.0.1",
+                f"    Port {port}",
+                f"    User {username}",
+                f"    IdentityFile {client_key}",
+                "    IdentitiesOnly yes",
+                f"    UserKnownHostsFile {known_hosts}",
+                "    StrictHostKeyChecking yes",
+                "    RequestTTY force",
+                "    RemoteCommand printf 'AUTOFILL_OK\\n'; sleep 1",
+                "    LogLevel ERROR",
+            )
+        )
+        + "\n"
+    )
+    daemon = subprocess.Popen(
+        (tools["sshd"], "-D", "-f", str(sshd_config)),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    lookups = []
+    interactions = []
+    broker = InteractionBroker(
+        passphrase_lookup=lambda key_path: (
+            lookups.append(key_path) or passphrase
+        ),
+    )
+    helper_source = broker._askpass_helper_path.read_text()
+    assert "from sshpilot" not in helper_source
+    assert "def main(" in helper_source
+    runner = None
+    session_id = SessionId("session:550e8400-e29b-41d4-a716-446655440050")
+    connection_id = ConnectionId(
+        "connection:550e8400-e29b-41d4-a716-446655440051"
+    )
+    client_id = ClientId("client:autofill")
+
+    def answer(event) -> None:
+        if event.type is not EventType.INTERACTION_CREATED:
+            return
+        summary = event.payload
+        interactions.append(summary.type)
+        broker.claim(summary.id, client_id)
+        if summary.type is InteractionType.HOST_KEY_CONFIRMATION:
+            broker.respond(
+                InteractionDecisionRequest(
+                    interaction_id=summary.id,
+                    host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+                ),
+                client_id,
+            )
+        else:
+            raise AssertionError(
+                f"stored passphrase must not prompt for {summary.type}"
+            )
+
+    broker.subscribe_events(answer)
+    try:
+        if not _wait_for_port(port):
+            pytest.skip("Temporary sshd cannot run in this environment")
+        output = bytearray()
+        exited = threading.Event()
+
+        def launch(spec):
+            argv, environment = broker.prepare_launch(
+                spec,
+                lambda _connection_id, **_kwargs: (
+                    (tools["ssh"], "-F", str(ssh_config), "autofill-test"),
+                    {
+                        "HOME": str(tmp_path),
+                        "LANG": "C.UTF-8",
+                        "LOGNAME": username,
+                        "PATH": os.environ.get("PATH", ""),
+                        "TERM": "xterm-256color",
+                        "USER": username,
+                        # No SSH_AUTH_SOCK — force askpass passphrase path.
+                    },
+                ),
+            )
+            # Hostile askpass env: OpenSSH may not forward PYTHONPATH.
+            environment.pop("PYTHONPATH", None)
+            return argv, environment
+
+        runner = PtySessionProcessRunner(launch)
+        runner.start(
+            SessionLaunchSpec(
+                session_id=session_id,
+                connection_id=connection_id,
+                protocol="ssh",
+                hostname="127.0.0.1",
+                username=username,
+                port=port,
+            ),
+            lambda _info: exited.set(),
+            output.extend,
+            lambda: None,
+        )
+        assert exited.wait(12)
+        assert b"AUTOFILL_OK" in output
+        assert passphrase.encode() not in output
+        assert lookups == [str(client_key)]
+        assert interactions == [InteractionType.HOST_KEY_CONFIRMATION]
+        assert InteractionType.PRIVATE_KEY_PASSPHRASE not in interactions
+    finally:
+        if runner is not None:
+            runner.close()
+        broker.close()
+        daemon.terminate()
+        try:
+            daemon.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            daemon.kill()
+            daemon.wait(timeout=1)
+
+
 def test_accept_and_store_persists_known_hosts(tmp_path) -> None:
     tools = {
         name: shutil.which(name)

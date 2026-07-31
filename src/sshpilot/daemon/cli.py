@@ -226,6 +226,15 @@ def _production_core_client():
 
     config = Config()
     connection_manager = ConnectionManager(config)
+    # Daemon has no GLib main loop, so the idle-deferred secret/identity init
+    # from ConnectionManager.__init__ never runs unless we call it here.
+    try:
+        connection_manager._post_init_slow_path()
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "daemon secret/identity slow-path init failed",
+            exc_info=True,
+        )
     if connection_manager.identity_migration_error is not None:
         raise RuntimeError("connection identity migration failed")
     group_manager = GroupManager(

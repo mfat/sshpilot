@@ -196,15 +196,20 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
             {
                 "HOME": "/tmp",
                 "PATH": os.environ.get("PATH", ""),
-                "PYTHONPATH": str(Path.cwd() / "src"),
             },
         ),
     )
+    # Helper must work without PYTHONPATH (OpenSSH may spawn with a reduced env).
+    helper_env = {
+        key: value
+        for key, value in environment.items()
+        if key != "PYTHONPATH"
+    }
     helper = subprocess.Popen(
         (environment["SSH_ASKPASS"], "alice@example.test's password:"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=environment,
+        env=helper_env,
     )
     deadline = time.monotonic() + 2
     interactions = []
@@ -336,6 +341,163 @@ def test_stored_password_is_used_once_without_public_secret_metadata(
         secret.clear()
     finally:
         instance.close()
+
+
+def test_stored_passphrase_autofills_unquoted_openssh_prompt(monkeypatch) -> None:
+    """OpenSSH often asks without quotes around the key path; still autofill."""
+    lookups = []
+    instance = InteractionBroker(
+        secret_timeout=1,
+        host_key_timeout=1,
+        passphrase_lookup=lambda key_path: (
+            lookups.append(key_path) or "stored-passphrase"
+        ),
+    )
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(
+        instance,
+        "_prepare_host_key",
+        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
+    )
+    try:
+        _argv, environment = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                {"PATH": os.environ.get("PATH", "")},
+            ),
+        )
+        secret = instance._resolve_askpass_secret(
+            environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"],
+            "Enter passphrase for /home/mahdi/.ssh/kwp4: ",
+        )
+        assert secret == bytearray(b"stored-passphrase")
+        assert lookups == ["/home/mahdi/.ssh/kwp4"]
+        assert instance.list(CLIENT_A) == []
+        secret[:] = b"\0" * len(secret)
+        secret.clear()
+    finally:
+        instance.close()
+
+
+def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
+    """A first miss must not burn autofill — secrets may not be ready yet.
+
+    Reproduces: daemon marks stored_attempted before lookup succeeds; OpenSSH
+    asks again and the user is prompted even though the passphrase is stored.
+    """
+    lookups = []
+
+    def lookup(key_path: str):
+        lookups.append(key_path)
+        if len(lookups) == 1:
+            return None
+        return "stored-passphrase"
+
+    instance = InteractionBroker(
+        secret_timeout=1,
+        host_key_timeout=1,
+        passphrase_lookup=lookup,
+    )
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(
+        instance,
+        "_prepare_host_key",
+        lambda *_args, **_kwargs: ("/dev/null", "ssh-ed25519"),
+    )
+    prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519': "
+    prompt_waits = []
+
+    def wait_fail(*_args, **_kwargs):
+        prompt_waits.append(True)
+        return None
+
+    try:
+        _argv, environment = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                {"PATH": os.environ.get("PATH", "")},
+            ),
+        )
+        token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+        monkeypatch.setattr(instance, "wait_for_result", wait_fail)
+        first = instance._resolve_askpass_secret(token, prompt)
+        assert first is None
+        assert lookups == ["/home/u/.ssh/id_ed25519"]
+        assert prompt_waits == [True]
+        context = instance._askpass_contexts[token]
+        assert "passphrase:/home/u/.ssh/id_ed25519" not in context.stored_attempted
+        # Second askpass: must retry stored and autofill (no second prompt).
+        second = instance._resolve_askpass_secret(token, prompt)
+        assert second == bytearray(b"stored-passphrase")
+        assert lookups == [
+            "/home/u/.ssh/id_ed25519",
+            "/home/u/.ssh/id_ed25519",
+        ]
+        assert prompt_waits == [True]
+        assert "passphrase:/home/u/.ssh/id_ed25519" in context.stored_attempted
+        second[:] = b"\0" * len(second)
+        second.clear()
+    finally:
+        instance.close()
+
+
+def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
+    """Daemon launch must preload keys like the classic VTE path."""
+    from sshpilot.api.in_process_client import InProcessClient
+    from sshpilot.connection_identity import new_connection_uuid
+    from tests.daemon.conftest import TestConnection, TestConnectionManager
+
+    preloads = []
+
+    class PreloadConnection(TestConnection):
+        def __init__(self):
+            super().__init__(nickname="preload", hostname="h", username="u")
+            self.uuid = new_connection_uuid()
+            self.data["uuid"] = self.uuid
+
+        async def native_connect(self, **kwargs):
+            from types import SimpleNamespace
+
+            self.ssh_connection_cmd = SimpleNamespace(
+                command=("ssh", "preload"),
+                env={"PATH": "/usr/bin", "HOME": "/tmp", "TERM": "xterm"},
+                use_askpass=False,
+            )
+            return True
+
+        def _preload_keys_into_agent(self, app_config=None):
+            preloads.append(True)
+
+    manager = TestConnectionManager()
+    connection = PreloadConnection()
+    manager.connections = [connection]
+    client = InProcessClient(manager, allow_cross_thread_commands=True)
+    cid = InProcessClient.connection_id_for(connection)
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name, path=None: "/usr/bin/ssh" if name == "ssh" else None,
+    )
+    argv, env = client.prepare_daemon_terminal_launch(
+        cid, interaction_policy="broker"
+    )
+    assert argv[0] == "/usr/bin/ssh"
+    assert preloads == [True]
 
 
 def test_remembered_password_is_stored_only_after_authenticated_status(

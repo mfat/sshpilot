@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import queue
-import re
 import secrets
 import shutil
 import socket
@@ -56,7 +55,7 @@ from sshpilot.api.models import (
 from sshpilot.api.transport.secret_frames import SecretFrame
 
 logger = logging.getLogger(__name__)
-from sshpilot.askpass_utils import classify_prompt
+from sshpilot.askpass_utils import _extract_key_path, classify_prompt
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
@@ -67,7 +66,6 @@ DEFAULT_ASKPASS_QUEUE_LIMIT = 32
 _ASKPASS_LENGTH = struct.Struct(">I")
 _MAX_ASKPASS_REQUEST = 8 * 1024
 _MAX_SECRET_SIZE = 16 * 1024
-_KEY_PATH_PATTERN = re.compile(r"""['"]([^'"]+)['"]""")
 
 _FINAL_STATES = frozenset(
     {
@@ -397,6 +395,14 @@ class InteractionBroker:
         # probe can hang instead of dumping config.
         probe = tuple(argument for argument in argv[:-1] if argument != "-s")
         try:
+            # Keep HOME so ``~`` in IdentityFile / UserKnownHostsFile expands the
+            # same way as the real SSH child (PATH-only env breaks that).
+            probe_env = {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            }
+            home = os.environ.get("HOME")
+            if home:
+                probe_env["HOME"] = home
             completed = subprocess.run(
                 (*probe, "-G", target),
                 stdin=subprocess.DEVNULL,
@@ -405,7 +411,7 @@ class InteractionBroker:
                 check=True,
                 timeout=5,
                 text=True,
-                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                env=probe_env,
             )
         except (OSError, subprocess.SubprocessError):
             return {}
@@ -1119,18 +1125,32 @@ class InteractionBroker:
         shutil.rmtree(self._private_dir, ignore_errors=True)
 
     def _write_helper_launcher(self) -> None:
-        source = (
-            f"#!{sys.executable}\n"
-            "from sshpilot.daemon.askpass_helper import main\n"
-            "raise SystemExit(main())\n"
-        ).encode()
+        # Inline the helper module so the OpenSSH askpass child does not depend
+        # on PYTHONPATH or an installed sshpilot package (ssh may spawn with a
+        # reduced environment; import failures look like missing secrets).
+        helper_source = Path(__file__).with_name("askpass_helper.py").read_text(
+            encoding="utf-8"
+        )
+        lines = []
+        skipping_main_guard = False
+        for line in helper_source.splitlines():
+            if line.startswith("if __name__"):
+                skipping_main_guard = True
+                continue
+            if skipping_main_guard:
+                if line and not line.startswith((" ", "\t")):
+                    skipping_main_guard = False
+                else:
+                    continue
+            lines.append(line)
+        source = f"#!{sys.executable}\n" + "\n".join(lines) + "\nraise SystemExit(main())\n"
         descriptor = os.open(
             self._askpass_helper_path,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
             0o700,
         )
         try:
-            os.write(descriptor, source)
+            os.write(descriptor, source.encode())
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
@@ -1264,8 +1284,11 @@ class InteractionBroker:
             context.attempts[attempt_key] = attempt
             if attempt > 3:
                 return None
+            # Only skip stored autofill after we already *returned* a stored
+            # secret for this prompt. A miss/exception must not burn the only
+            # autofill chance — secrets may not be ready on the first askpass
+            # call (daemon secret init), and OpenSSH will ask again.
             try_stored = attempt_key not in context.stored_attempted
-            context.stored_attempted.add(attempt_key)
             interaction_type = (
                 InteractionType.PASSWORD
                 if prompt_type == "password"
@@ -1284,11 +1307,58 @@ class InteractionBroker:
                         stored = self._password_lookup(connection_id)
                 elif self._passphrase_lookup is not None and key_path:
                     stored = self._passphrase_lookup(key_path)
+                elif interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
+                    logger.warning(
+                        "askpass passphrase: lookup skipped prompt=%r key=%r "
+                        "has_lookup=%s",
+                        raw_prompt[:200],
+                        key_path,
+                        self._passphrase_lookup is not None,
+                    )
             except Exception:
+                logger.exception(
+                    "askpass stored-secret lookup failed type=%s key=%r",
+                    interaction_type,
+                    key_path,
+                )
                 stored = None
+            if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
+                logger.info(
+                    "askpass passphrase: prompt=%r key=%s stored=%s lookup=%s "
+                    "attempt=%s",
+                    raw_prompt[:160],
+                    key_path or "<none>",
+                    bool(stored),
+                    self._passphrase_lookup is not None,
+                    attempt,
+                )
+                try:
+                    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+                    log_path = os.path.join(runtime, "sshpilot", "askpass-broker.log")
+                    os.makedirs(os.path.dirname(log_path), mode=0o700, exist_ok=True)
+                    with open(log_path, "a", encoding="utf-8") as handle:
+                        handle.write(
+                            f"prompt={raw_prompt!r} key={key_path!r} "
+                            f"stored={bool(stored)} lookup={self._passphrase_lookup is not None} "
+                            f"attempt={attempt} try_stored={try_stored}\n"
+                        )
+                except Exception:
+                    pass
+        elif interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
+            logger.info(
+                "askpass passphrase: skipping stored (already offered) "
+                "prompt=%r key=%s attempt=%s",
+                raw_prompt[:160],
+                key_path or "<none>",
+                attempt,
+            )
         if stored:
             encoded = stored.encode("utf-8")
             if b"\0" not in encoded and len(encoded) <= _MAX_SECRET_SIZE:
+                with self._condition:
+                    context = self._askpass_contexts.get(token)
+                    if context is not None:
+                        context.stored_attempted.add(attempt_key)
                 return bytearray(encoded)
         if interaction_type is InteractionType.PASSWORD:
             public_prompt: InteractionPrompt = PasswordPrompt(
@@ -1362,11 +1432,10 @@ class InteractionBroker:
 
     @staticmethod
     def _passphrase_key(raw_prompt: str) -> str:
-        match = _KEY_PATH_PATTERN.search(raw_prompt)
-        if match is None:
-            return ""
-        value = match.group(1)
-        if len(value) > 4096 or "\0" in value:
+        # Same quoted + unquoted OpenSSH forms as askpass_utils._extract_key_path
+        # (e.g. "Enter passphrase for /home/u/.ssh/id_rsa: ").
+        value = _extract_key_path(raw_prompt)
+        if not value or len(value) > 4096 or "\0" in value:
             return ""
         return value
 
