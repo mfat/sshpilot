@@ -150,11 +150,13 @@ class DaemonSftpServiceController:
 
     def detach(self) -> None:
         service_id = self.service_id
-        if service_id is None:
-            with self._lock:
-                self._state = SftpControllerState.DETACHED
-            return
         generation = self._bump()
+        # Mark non-ready immediately so in-flight UI callbacks (e.g. the
+        # background directory-count pass) cannot start new RPCs against a
+        # service we are already leaving — mirrors terminal detach.
+        self._mark(SftpControllerState.DETACHED, generation)
+        if service_id is None:
+            return
 
         def _op():
             self._client.detach_sftp(service_id)
@@ -162,7 +164,7 @@ class DaemonSftpServiceController:
 
         self._submit(
             _op,
-            on_success=lambda _r: self._mark(SftpControllerState.DETACHED, generation),
+            on_success=lambda _r: None,
             on_error=lambda error: logger.debug("SFTP detach failed: %s", error),
         )
 
@@ -170,8 +172,9 @@ class DaemonSftpServiceController:
         service_id = self.service_id
         generation = self._bump()
         self._unsubscribe_events()
+        # Mark closed immediately so callback-driven follow-up work stops.
+        self._mark(SftpControllerState.CLOSED, generation)
         if service_id is None:
-            self._mark(SftpControllerState.CLOSED, generation)
             return
 
         def _op():
@@ -180,7 +183,7 @@ class DaemonSftpServiceController:
 
         self._submit(
             _op,
-            on_success=lambda _r: self._mark(SftpControllerState.CLOSED, generation),
+            on_success=lambda _r: None,
             on_error=lambda error: self._fail(error, generation),
         )
 
@@ -193,7 +196,9 @@ class DaemonSftpServiceController:
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> None:
-        service_id = self._require_ready_service_id()
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
 
         def _op():
             return self._client.sftp_list_directory(
@@ -215,7 +220,9 @@ class DaemonSftpServiceController:
         on_success: Callable[[str], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
-        service_id = self._require_ready_service_id()
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
 
         def _op():
             return self._client.sftp_realpath(
@@ -232,7 +239,9 @@ class DaemonSftpServiceController:
         on_success: Callable[[RemoteFileEntry], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
-        service_id = self._require_ready_service_id()
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
         method = self._client.sftp_stat if follow_symlinks else self._client.sftp_lstat
 
         def _op():
@@ -276,7 +285,9 @@ class DaemonSftpServiceController:
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
-        service_id = self._require_ready_service_id()
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
 
         def _op():
             return self._client.sftp_rename(
@@ -298,7 +309,9 @@ class DaemonSftpServiceController:
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
-        service_id = self._require_ready_service_id()
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
         method = getattr(self._client, method_name)
 
         def _op():
@@ -392,6 +405,22 @@ class DaemonSftpServiceController:
                     "The SFTP service is not ready",
                 )
             return self._service_id
+
+    def _ready_service_id_or_error(
+        self,
+        on_error: Callable[[BaseException], None],
+    ) -> Optional[SftpServiceId]:
+        """Return the ready service id, or deliver not-ready via ``on_error``.
+
+        Callback-based APIs must not raise synchronously — callers chain work
+        from bridge success callbacks (e.g. directory-count passes), and a
+        raise there surfaces as an unhandled exception during shutdown.
+        """
+        try:
+            return self._require_ready_service_id()
+        except SshPilotError as exc:
+            on_error(exc)
+            return None
 
     def _submit(
         self,

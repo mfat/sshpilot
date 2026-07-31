@@ -347,19 +347,32 @@ class DaemonSftpManager(GObject.GObject):
             return
 
         def _count_next(index: int) -> None:
-            if index >= len(folders):
+            # Quit / panel close abandons the background pass — do not kick
+            # off another list_directory against a detached SFTP service.
+            if self._closed or index >= len(folders):
                 return
             name = folders[index]
             child = path.rstrip("/") + "/" + name
 
             def _on_success(result) -> None:
+                if self._closed:
+                    return
                 self.emit("directory-counts", path, {name: len(result.entries)})
                 _count_next(index + 1)
 
-            def _on_error(_exc) -> None:
+            def _on_error(exc) -> None:
+                if self._closed:
+                    return
+                if (
+                    isinstance(exc, SshPilotError)
+                    and exc.code is ErrorCode.SFTP_SERVICE_NOT_READY
+                ):
+                    return
                 _count_next(index + 1)
 
-            self._sftp_controller.list_directory(child, on_success=_on_success, on_error=_on_error)
+            self._sftp_controller.list_directory(
+                child, on_success=_on_success, on_error=_on_error
+            )
 
         _count_next(0)
 
