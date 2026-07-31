@@ -769,12 +769,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
 
-        # Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant
-        try:
-            GLib.idle_add(self._preload_preferences_window, priority=GLib.PRIORITY_LOW)
-        except Exception as e:
-            logger.debug(f"Failed to schedule preferences preloading: {e}")
-
         # Apply header-bar button visibility preferences now that the buttons
         # exist (split view, commands, local terminal).
         try:
@@ -1119,6 +1113,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug(f"Failed to execute pending focus operation: {e}")
 
         self._pending_focus_operations.clear()
+
+        # Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant
+        try:
+            GLib.idle_add(self._preload_preferences_window, priority=GLib.PRIORITY_LOW)
+        except Exception as e:
+            logger.debug(f"Failed to schedule preferences preloading: {e}")
 
         # Check for updates if enabled in preferences
         try:
