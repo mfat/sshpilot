@@ -92,7 +92,8 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     assert app._daemon_reconnect_in_progress is False
 
 
-def test_preferences_schedules_reconnect_after_restart():
+def test_preferences_schedules_reconnect_after_restart(monkeypatch):
+    from gi.repository import Gio
     from sshpilot.preferences import PreferencesWindow
 
     prefs = PreferencesWindow.__new__(PreferencesWindow)
@@ -102,7 +103,27 @@ def test_preferences_schedules_reconnect_after_restart():
         def request_daemon_reconnect(self, **kwargs):
             called.update(kwargs)
 
-    prefs.get_application = lambda: _App()  # type: ignore[method-assign]
+    monkeypatch.setattr(Gio.Application, "get_default", lambda: _App())
+    prefs.parent_window = None
+    prefs._schedule_daemon_reconnect_after_restart()
+    assert called == {"reason": "preferences_restart", "immediate": True}
+
+
+def test_preferences_schedules_reconnect_via_parent_window():
+    from sshpilot.preferences import PreferencesWindow
+
+    prefs = PreferencesWindow.__new__(PreferencesWindow)
+    called = {}
+
+    class _App:
+        def request_daemon_reconnect(self, **kwargs):
+            called.update(kwargs)
+
+    class _Parent:
+        def get_application(self):
+            return _App()
+
+    prefs.parent_window = _Parent()
     prefs._schedule_daemon_reconnect_after_restart()
     assert called == {"reason": "preferences_restart", "immediate": True}
 

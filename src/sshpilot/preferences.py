@@ -3567,7 +3567,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     return
                 if result.accepted:
                     self._schedule_daemon_reconnect_after_restart()
-                _ = status
             finally:
                 client.close()
         except Exception as exc:
@@ -3585,7 +3584,29 @@ class PreferencesWindow(Adw.NavigationPage):
     def _schedule_daemon_reconnect_after_restart(self) -> None:
         """Ask the running application to spawn/reconnect after an explicit restart."""
 
-        app = self.get_application()
+        app = None
+        if hasattr(self, "get_application"):
+            try:
+                app = self.get_application()
+            except Exception:
+                app = None
+        if app is None and hasattr(self, "get_root"):
+            root = self.get_root()
+            if root and hasattr(root, "get_application"):
+                try:
+                    app = root.get_application()
+                except Exception:
+                    app = None
+        if app is None and getattr(self, "parent_window", None):
+            parent = self.parent_window
+            if hasattr(parent, "get_application"):
+                try:
+                    app = parent.get_application()
+                except Exception:
+                    app = None
+        if app is None:
+            app = Gio.Application.get_default()
+
         request = getattr(app, "request_daemon_reconnect", None) if app else None
         if not callable(request):
             logger.debug("No application reconnect hook after daemon restart")
