@@ -111,3 +111,86 @@ def test_count_pass_abandons_on_service_not_ready():
     DaemonSftpManager._start_count_pass(fake, "/home/user", folders)
     assert calls == ["/home/user/a"]
     fake.emit.assert_not_called()
+
+
+def test_open_attaches_ready_service_when_controlmaster_enabled(
+    controller, mock_client, monkeypatch
+):
+    """With multiplexing on, a second open reuses a READY daemon SFTP service."""
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
+
+    existing = SftpServiceSummary(
+        id=SftpServiceId("svc-ready"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.READY,
+        created_at=datetime.now(timezone.utc),
+    )
+    mock_client.list_sftp_services.return_value = [existing]
+    mock_client.attach_sftp.return_value = existing
+    monkeypatch.setattr(controller, "_controlmaster_reuse_enabled", lambda: True)
+
+    def _bridge_submit(op, on_success=None, on_error=None):
+        try:
+            result = op()
+        except Exception as exc:  # pragma: no cover
+            on_error(exc)
+            return
+        on_success(result)
+
+    controller._submit = (
+        lambda op, on_success=None, on_error=None: _bridge_submit(
+            op, on_success=on_success, on_error=on_error
+        )
+    )
+
+    controller.open(ConnectionId("conn-1"))
+
+    mock_client.attach_sftp.assert_called_once()
+    mock_client.open_sftp.assert_not_called()
+    assert controller.service_id == SftpServiceId("svc-ready")
+
+
+def test_open_creates_service_when_controlmaster_disabled(
+    controller, mock_client, monkeypatch
+):
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import (
+        OpenSftpRequest,
+        SftpServiceState,
+        SftpServiceSummary,
+    )
+
+    existing = SftpServiceSummary(
+        id=SftpServiceId("svc-ready"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.READY,
+        created_at=datetime.now(timezone.utc),
+    )
+    created = SftpServiceSummary(
+        id=SftpServiceId("svc-new"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.READY,
+        created_at=datetime.now(timezone.utc),
+    )
+    mock_client.list_sftp_services.return_value = [existing]
+    mock_client.open_sftp.return_value = created
+    monkeypatch.setattr(controller, "_controlmaster_reuse_enabled", lambda: False)
+
+    def _bridge_submit(op, on_success=None, on_error=None):
+        on_success(op())
+
+    controller._submit = (
+        lambda op, on_success=None, on_error=None: _bridge_submit(
+            op, on_success=on_success, on_error=on_error
+        )
+    )
+
+    controller.open(ConnectionId("conn-1"))
+
+    mock_client.open_sftp.assert_called_once()
+    assert isinstance(mock_client.open_sftp.call_args.args[0], OpenSftpRequest)
+    mock_client.attach_sftp.assert_not_called()
+    assert controller.service_id == SftpServiceId("svc-new")

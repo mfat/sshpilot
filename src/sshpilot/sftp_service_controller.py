@@ -121,6 +121,12 @@ class DaemonSftpServiceController:
         self._ensure_events()
 
         def _op():
+            reuse = self._controlmaster_reuse_enabled()
+            existing = self._ready_service_for_connection() if reuse else None
+            if existing is not None:
+                return self._client.attach_sftp(
+                    AttachSftpRequest(service_id=existing.id)
+                )
             return self._client.open_sftp(
                 OpenSftpRequest(connection_id=self._connection_id)
             )
@@ -130,6 +136,33 @@ class DaemonSftpServiceController:
             on_success=lambda summary: self._on_open_accepted(summary, generation),
             on_error=lambda error: self._fail(error, generation),
         )
+
+    def _controlmaster_reuse_enabled(self) -> bool:
+        """Whether Preferences ▸ SSH multiplexing should share a live SFTP service."""
+        try:
+            from .config import Config
+
+            return bool(Config().get_setting("ssh.controlmaster", False))
+        except Exception:
+            return False
+
+    def _ready_service_for_connection(self) -> Optional[SftpServiceSummary]:
+        """Return a READY daemon SFTP service for this connection, if any."""
+        try:
+            services = self._client.list_sftp_services()
+        except Exception:
+            logger.debug("list_sftp_services failed during reuse lookup", exc_info=True)
+            return None
+        for summary in services:
+            try:
+                if (
+                    summary.connection_id == self._connection_id
+                    and summary.state is SftpServiceState.READY
+                ):
+                    return summary
+            except Exception:
+                continue
+        return None
 
     def attach(self, service_id: SftpServiceId) -> None:
         with self._lock:
