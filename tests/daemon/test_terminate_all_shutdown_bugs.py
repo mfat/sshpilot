@@ -317,11 +317,23 @@ def test_issue2_controller_list_directory_does_not_raise_when_not_ready():
 # ---------------------------------------------------------------------------
 
 
+def _sync_terminate_dispatch(monkeypatch, quit_policy):
+    """Run terminate-all worker + UI finish synchronously in unit tests."""
+    monkeypatch.setattr(quit_policy, "_run_in_background", lambda fn: fn())
+    monkeypatch.setattr(quit_policy, "_invoke_on_main", lambda fn: fn())
+    monkeypatch.setattr(
+        quit_policy,
+        "wait_for_daemon_termination",
+        lambda **_kwargs: [],
+    )
+
+
 def test_issue3_apply_terminate_all_must_not_quit_when_termination_fails(monkeypatch):
     """Failed Terminate everything must not call cleanup_and_quit."""
     import sshpilot.daemon_quit_policy as quit_policy
     import sshpilot.shutdown as shutdown_mod
 
+    _sync_terminate_dispatch(monkeypatch, quit_policy)
     monkeypatch.setattr(
         quit_policy,
         "terminate_all_daemon_work",
@@ -363,6 +375,7 @@ def test_issue3_apply_terminate_all_quits_when_termination_succeeds(monkeypatch)
     import sshpilot.daemon_quit_policy as quit_policy
     import sshpilot.shutdown as shutdown_mod
 
+    _sync_terminate_dispatch(monkeypatch, quit_policy)
     monkeypatch.setattr(
         quit_policy,
         "terminate_all_daemon_work",
@@ -384,3 +397,109 @@ def test_issue3_apply_terminate_all_quits_when_termination_succeeds(monkeypatch)
     window = _Window()
     quit_policy.apply_terminate_all(window)
     assert quit_calls == [window]
+
+
+def test_issue3_apply_terminate_all_waits_for_daemon_exit_before_quit(monkeypatch):
+    """Quit is gated on wait_for_daemon_termination, not stop accepted alone."""
+    import sshpilot.daemon_quit_policy as quit_policy
+    import sshpilot.shutdown as shutdown_mod
+
+    monkeypatch.setattr(quit_policy, "_run_in_background", lambda fn: fn())
+    monkeypatch.setattr(quit_policy, "_invoke_on_main", lambda fn: fn())
+    monkeypatch.setattr(quit_policy, "terminate_all_daemon_work", lambda _c: [])
+    monkeypatch.setattr(
+        quit_policy,
+        "wait_for_daemon_termination",
+        lambda **_kwargs: ["daemon did not finish shutting down: socket still present"],
+    )
+
+    quit_calls: list[object] = []
+    presented: list[list[str]] = []
+    monkeypatch.setattr(
+        shutdown_mod,
+        "cleanup_and_quit",
+        lambda window: quit_calls.append(window),
+    )
+    monkeypatch.setattr(
+        quit_policy,
+        "_present_terminate_failed",
+        lambda window, errors: presented.append(list(errors)),
+    )
+
+    class _Window:
+        client = object()
+        _daemon_quit_decision = "terminate_all"
+
+        def get_application(self):
+            return None
+
+    quit_policy.apply_terminate_all(_Window())
+    assert quit_calls == []
+    assert presented and "socket still present" in presented[0][0]
+
+
+def test_wait_for_daemon_termination_requires_process_and_socket(tmp_path):
+    """Confirmed termination needs process exit and socket removal when both known."""
+    from sshpilot.daemon_quit_policy import wait_for_daemon_termination
+
+    sock = tmp_path / "sshpilotd.sock"
+    sock.write_text("")
+
+    class _Proc:
+        def __init__(self):
+            self._code = None
+
+        def poll(self):
+            return self._code
+
+    proc = _Proc()
+    handle = types.SimpleNamespace(process=proc)
+
+    # Still running + socket present → timeout error.
+    errors = wait_for_daemon_termination(
+        daemon_process=handle,
+        socket_path=sock,
+        timeout=0.15,
+        poll_interval=0.05,
+    )
+    assert errors and "still" in errors[0]
+
+    # Process exits but socket remains → still an error.
+    proc._code = 0
+    errors = wait_for_daemon_termination(
+        daemon_process=handle,
+        socket_path=sock,
+        timeout=0.15,
+        poll_interval=0.05,
+    )
+    assert errors and "socket" in errors[0]
+
+    # Both gone → success.
+    sock.unlink()
+    assert (
+        wait_for_daemon_termination(
+            daemon_process=handle,
+            socket_path=sock,
+            timeout=0.5,
+            poll_interval=0.05,
+        )
+        == []
+    )
+
+
+def test_terminate_refuses_daemon_control_without_stop_daemon():
+    """Production clients advertising DAEMON_CONTROL must expose stop_daemon."""
+    from sshpilot.api.capabilities import Capability
+    from sshpilot.daemon_quit_policy import terminate_all_daemon_work
+
+    caps = types.SimpleNamespace(supported=frozenset({Capability.DAEMON_CONTROL}))
+    client = types.SimpleNamespace(
+        get_capabilities=lambda: caps,
+        # no stop_daemon
+        list_sessions=lambda: [],
+        list_sftp_services=lambda: [],
+        list_transfers=lambda: [],
+        list_forwards=lambda: [],
+    )
+    errors = terminate_all_daemon_work(client)
+    assert errors and "DAEMON_CONTROL" in errors[0]

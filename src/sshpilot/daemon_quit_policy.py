@@ -8,13 +8,23 @@ machines in GTK.
 from __future__ import annotations
 
 import logging
+import os
+import threading
+import time
 from enum import Enum
 from gettext import gettext as _
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from .daemon_terminal_policy import TerminalClosePolicy, resolve_app_close_policy
 
 logger = logging.getLogger(__name__)
+
+# How long Terminate everything waits for process exit / socket removal after
+# the daemon accepts force-stop. Kept short enough for quit UX, long enough for
+# drain of a few local sessions/SFTP children.
+_TERMINATE_WAIT_SECONDS = 10.0
+_TERMINATE_POLL_SECONDS = 0.05
 
 
 class DaemonQuitDecision(str, Enum):
@@ -98,14 +108,29 @@ def apply_keep_running(window) -> None:
     shutdown.cleanup_and_quit(window)
 
 
+def _client_supports_daemon_control(client) -> Optional[bool]:
+    """Return True/False when capabilities are known, else None."""
+    get_caps = getattr(client, "get_capabilities", None)
+    if not callable(get_caps):
+        return None
+    try:
+        from .api.capabilities import Capability
+
+        supported = getattr(get_caps(), "supported", None) or frozenset()
+        return Capability.DAEMON_CONTROL in supported
+    except Exception:
+        return None
+
+
 def terminate_all_daemon_work(client) -> list[str]:
-    """Terminate all daemon resources for a Quit → Terminate everything.
+    """Request administrative teardown of all daemon resources.
 
     Prefer ``daemon.stop(force=true)`` so orphaned SFTP/sessions/forwards are
-    torn down regardless of which client originally owned them. Per-resource
-    close is only a fallback for clients that lack stop_daemon.
+    torn down regardless of which client originally owned them.
 
-    Returns error messages; an empty list means termination was accepted.
+    An empty return means the stop request was *accepted*. Callers that need
+    the stronger "daemon process and socket are gone" guarantee must also call
+    :func:`wait_for_daemon_termination`.
     """
     if client is None:
         return ["no daemon client"]
@@ -123,7 +148,15 @@ def terminate_all_daemon_work(client) -> list[str]:
         except Exception as exc:
             return [f"stop_daemon force: {exc}"]
 
-    # Client has no administrative stop — best-effort per-resource mutation.
+    # Real daemon clients advertise DAEMON_CONTROL and must expose stop_daemon.
+    # Quietly falling back would leave orphaned SFTP services alive.
+    if _client_supports_daemon_control(client) is True:
+        return [
+            "stop_daemon unavailable despite DAEMON_CONTROL capability; "
+            "refusing incomplete per-resource terminate"
+        ]
+
+    # Incomplete mocks / legacy doubles without stop_daemon.
     return _terminate_all_per_resource(client)
 
 
@@ -223,6 +256,130 @@ def _terminate_all_per_resource(client) -> list[str]:
     return errors
 
 
+def _socket_is_gone(socket_path: Optional[os.PathLike]) -> bool:
+    if socket_path is None:
+        return True
+    path = Path(socket_path)
+    try:
+        return not path.exists()
+    except OSError:
+        return True
+
+
+def _process_has_exited(daemon_process) -> bool:
+    if daemon_process is None:
+        return True
+    process = getattr(daemon_process, "process", daemon_process)
+    poll = getattr(process, "poll", None)
+    if not callable(poll):
+        return True
+    try:
+        return poll() is not None
+    except Exception:
+        return True
+
+
+def wait_for_daemon_termination(
+    *,
+    client=None,
+    daemon_process=None,
+    socket_path: Optional[os.PathLike] = None,
+    timeout: float = _TERMINATE_WAIT_SECONDS,
+    poll_interval: float = _TERMINATE_POLL_SECONDS,
+) -> list[str]:
+    """Block until the force-stopped daemon is confirmed gone.
+
+    Success when:
+    * an app-launched process handle has exited, and
+    * the Unix socket (when known) no longer exists.
+
+    When neither handle nor socket is known, probes ``get_daemon_status`` until
+    the daemon is unreachable. Returns error messages on timeout.
+    """
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    have_process = daemon_process is not None
+    have_socket = socket_path is not None
+
+    while True:
+        process_done = _process_has_exited(daemon_process)
+        socket_gone = _socket_is_gone(socket_path)
+
+        if have_process and have_socket:
+            if process_done and socket_gone:
+                return []
+        elif have_process:
+            if process_done:
+                return []
+        elif have_socket:
+            if socket_gone:
+                return []
+        else:
+            # External / unknown layout: treat unreachable status as gone.
+            if client is None:
+                return []
+            try:
+                client.get_daemon_status()
+            except Exception:
+                return []
+
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(max(0.01, float(poll_interval)))
+
+    details = []
+    if have_process and not _process_has_exited(daemon_process):
+        details.append("daemon process still running")
+    if have_socket and not _socket_is_gone(socket_path):
+        details.append(f"socket still present ({socket_path})")
+    if not have_process and not have_socket:
+        details.append("daemon still responding to status probes")
+    return [
+        "daemon did not finish shutting down: "
+        + (", ".join(details) if details else "timeout")
+    ]
+
+
+def _resolve_terminate_context(window):
+    """Return ``(client, daemon_process, socket_path)`` for Terminate everything."""
+    client = getattr(window, "client", None)
+    app = window.get_application() if hasattr(window, "get_application") else None
+    selection = getattr(app, "_api_client_selection", None) if app is not None else None
+    if selection is None:
+        selection = getattr(window, "_api_client_selection", None)
+
+    daemon_process = getattr(selection, "daemon_process", None) if selection else None
+
+    socket_path = None
+    if client is not None:
+        socket_path = getattr(client, "_socket_path", None)
+        if socket_path is None:
+            socket_path = getattr(client, "socket_path", None)
+    if socket_path is None:
+        try:
+            from .daemon.lifecycle import resolve_socket_path
+
+            socket_path = resolve_socket_path()
+        except Exception:
+            socket_path = None
+
+    return client, daemon_process, socket_path
+
+
+def _run_in_background(fn: Callable[[], None]) -> None:
+    """Run ``fn`` off the GTK main thread (overridable in tests)."""
+    threading.Thread(target=fn, name="sshpilot-terminate-all", daemon=True).start()
+
+
+def _invoke_on_main(fn: Callable[[], Any]) -> None:
+    """Schedule ``fn`` on the GTK main loop (overridable in tests)."""
+    try:
+        from gi.repository import GLib
+
+        GLib.idle_add(fn)
+    except Exception:
+        fn()
+
+
 def _clear_terminate_quit_decision(window) -> None:
     window._daemon_quit_decision = None
     window._daemon_quit_close_policy = None
@@ -252,25 +409,45 @@ def _present_terminate_failed(window, errors: list[str]) -> None:
 
 
 def apply_terminate_all(window) -> None:
-    """Terminate daemon work then quit — only if termination succeeds."""
+    """Force-stop the daemon, wait for confirmed exit, then quit.
+
+    The stop RPC and process/socket wait run on a background thread so the GTK
+    main loop is not blocked for the full RPC or drain timeout. Quit proceeds
+    only after termination is confirmed (or fails with an error dialog).
+    """
     window._daemon_quit_decision = DaemonQuitDecision.TERMINATE_ALL
     window._daemon_quit_close_policy = TerminalClosePolicy.TERMINATE
     app = window.get_application() if hasattr(window, "get_application") else None
     if app is not None:
         app._daemon_quit_decision = DaemonQuitDecision.TERMINATE_ALL
 
-    client = getattr(window, "client", None)
-    errors = terminate_all_daemon_work(client)
-    if errors:
-        for message in errors:
-            logger.warning("terminate-all during quit: %s", message)
-        _clear_terminate_quit_decision(window)
-        _present_terminate_failed(window, errors)
-        return
+    client, daemon_process, socket_path = _resolve_terminate_context(window)
 
-    from . import shutdown
+    def _worker() -> None:
+        errors = terminate_all_daemon_work(client)
+        if not errors:
+            errors = wait_for_daemon_termination(
+                client=client,
+                daemon_process=daemon_process,
+                socket_path=socket_path,
+            )
 
-    shutdown.cleanup_and_quit(window)
+        def _finish() -> bool:
+            if errors:
+                for message in errors:
+                    logger.warning("terminate-all during quit: %s", message)
+                _clear_terminate_quit_decision(window)
+                _present_terminate_failed(window, errors)
+                return False
+
+            from . import shutdown
+
+            shutdown.cleanup_and_quit(window)
+            return False
+
+        _invoke_on_main(_finish)
+
+    _run_in_background(_worker)
 
 
 def present_daemon_quit_dialog(window, *, on_decision) -> Any:
@@ -338,5 +515,6 @@ __all__ = [
     "present_daemon_quit_dialog",
     "resolve_quit_decision_from_policy",
     "terminate_all_daemon_work",
+    "wait_for_daemon_termination",
     "window_has_daemon_terminals",
 ]
