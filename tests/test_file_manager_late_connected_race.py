@@ -4,7 +4,9 @@ Tests:
 1. Late 'connected' signal emitted after FileManagerWindow teardown does not crash
    with AttributeError: 'NoneType' object has no attribute 'listdir'.
 2. Signal handlers are disconnected from backend manager on _cleanup_manager.
-3. Placeholder tab closed before creation timeout expires aborts embedded controller creation.
+3. Placeholder tab closed before creation timeout expires aborts embedded controller creation
+   for both _open_manage_files_now_for_connection and _open_file_manager_with_picker.
+4. _placeholder_is_open fails closed (returns False) on exceptions or model errors.
 """
 
 import sys
@@ -114,3 +116,56 @@ def test_placeholder_closed_before_creation_aborts(monkeypatch):
 
     # Verify controller was NOT created because placeholder tab was missing from tab_view
     assert created == []
+
+
+def test_picker_placeholder_closed_before_creation_aborts(monkeypatch):
+    _ensure_cairo_stub()
+    from sshpilot.window_file_manager import WindowFileManagerMixin
+
+    mixin = WindowFileManagerMixin()
+    mixin.config = MagicMock()
+    mixin.config.get_setting.return_value = False
+    mixin.connection_manager = MagicMock()
+    mixin._show_manage_files_error = MagicMock()
+
+    page_in_tabview = object()
+    other_page = object()
+
+    mixin.tab_view = MagicMock()
+    mixin.tab_view.get_pages.return_value = [other_page]
+
+    created = []
+    monkeypatch.setattr(
+        "sshpilot.window_file_manager.create_internal_file_manager_tab",
+        lambda **kwargs: (created.append(kwargs) or (MagicMock(), MagicMock())),
+    )
+
+    placeholder_info = {'page': page_in_tabview, 'container': MagicMock()}
+    mixin._create_file_manager_placeholder_tab = lambda *args: placeholder_info
+
+    def capture_timeout(delay, callback):
+        result = callback()
+        assert result is False
+        return 1
+
+    monkeypatch.setattr("gi.repository.GLib.timeout_add", capture_timeout)
+
+    mixin._open_file_manager_with_picker()
+
+    # Verify host picker controller was NOT created because placeholder tab was missing
+    assert created == []
+
+
+def test_placeholder_is_open_fails_closed_on_exception():
+    _ensure_cairo_stub()
+    from sshpilot.window_file_manager import WindowFileManagerMixin
+
+    mixin = WindowFileManagerMixin()
+    mixin.tab_view = MagicMock()
+    mixin.tab_view.get_pages.side_effect = RuntimeError("GTK TabView destroyed")
+
+    placeholder_info = {'page': object()}
+
+    # Verification failure must fail closed (return False) instead of allowing creation
+    assert mixin._placeholder_is_open(placeholder_info) is False
+    assert mixin._placeholder_is_open(None) is False

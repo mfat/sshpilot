@@ -88,6 +88,10 @@ class WindowFileManagerMixin:
         placeholder_info = self._create_file_manager_placeholder_tab(_('Files'), '')
 
         def _create_embedded():
+            if not self._placeholder_is_open(placeholder_info):
+                logger.debug("Host picker placeholder tab closed before creation; aborting.")
+                return False
+
             ssh_config = None
             try:
                 ssh_config = self.config.get_ssh_config()
@@ -679,16 +683,11 @@ class WindowFileManagerMixin:
         placeholder_info = None
         if use_internal and has_internal_file_manager():
             placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
-            placeholder_page = placeholder_info.get('page') if placeholder_info else None
 
             def _create_embedded_file_manager():
-                if placeholder_page is not None and hasattr(self, 'tab_view') and self.tab_view is not None:
-                    try:
-                        if placeholder_page not in list(self.tab_view.get_pages()):
-                            logger.debug("Placeholder tab was closed before creation; aborting.")
-                            return False
-                    except Exception:
-                        pass
+                if not self._placeholder_is_open(placeholder_info):
+                    logger.debug("Placeholder tab closed before embedded file manager creation; aborting.")
+                    return False
                 try:
                     widget, controller = create_internal_file_manager_tab(
                         user=str(username or ''),
@@ -771,6 +770,32 @@ class WindowFileManagerMixin:
             message = error_msg or "Failed to start file manager process"
             logger.error(f"Failed to start file manager process for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
+
+    def _placeholder_is_open(self, placeholder_info: Optional[dict]) -> bool:
+        """Return True if the placeholder page is still attached to tab_view.
+
+        Fails closed (returns False) if placeholder_info is missing, tab_view is
+        unavailable, or any error occurs while inspecting the page model.
+        """
+        if not placeholder_info:
+            return False
+        page = placeholder_info.get('page')
+        if page is None:
+            return False
+        if not hasattr(self, 'tab_view') or self.tab_view is None:
+            return False
+
+        try:
+            pages = self.tab_view.get_pages()
+            if pages is None:
+                return False
+            if hasattr(pages, 'get_n_items') and hasattr(pages, 'get_item'):
+                n_items = pages.get_n_items()
+                return any(pages.get_item(i) is page for i in range(n_items))
+            return any(item is page for item in pages)
+        except Exception as exc:
+            logger.debug("Unable to verify placeholder page status; aborting creation: %s", exc)
+            return False
 
     def _track_internal_file_manager_window(self, window, *, widget=None):
         """Keep a reference to in-app file manager controllers to prevent GC."""

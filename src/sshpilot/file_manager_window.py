@@ -481,8 +481,8 @@ class FileManagerWindow(Adw.Window):
                 try:
                     handler_id = self._manager.connect(signal_name, handler)
                     self._manager_signal_handlers.append((signal_name, handler_id))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.exception("Failed to connect file-manager signal %s: %s", signal_name, exc)
         except Exception as exc:
             logger.exception("Error connecting signals: %s", exc)
 
