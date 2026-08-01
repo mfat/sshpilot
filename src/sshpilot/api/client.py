@@ -13,6 +13,7 @@ from .terminal_events import (
 )
 from .models.connections import (
     ConnectionDetails,
+    ConnectionEditorDetails,
     ConnectionSummary,
     CreateConnectionRequest,
     DeleteConnectionRequest,
@@ -89,6 +90,11 @@ class SshPilotClient(Protocol):
         ...
 
     def get_connection(self, connection_id: ConnectionId) -> ConnectionDetails:
+        ...
+
+    def get_connection_editor(
+        self, connection_id: ConnectionId
+    ) -> ConnectionEditorDetails:
         ...
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:

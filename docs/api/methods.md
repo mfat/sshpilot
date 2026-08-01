@@ -86,6 +86,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: detach_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
+<!-- api-method-contract: get_connection_editor status=implemented capability=connections.config.read -->
 <!-- api-method-contract: get_forward status=daemon-only capability=forwards.read -->
 <!-- api-method-contract: get_interaction status=daemon-only capability=interactions.read -->
 <!-- api-method-contract: get_session status=daemon-only capability=sessions.read -->
@@ -186,6 +187,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
+<!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: daemon.diagnostics capability=daemon.status -->
@@ -310,6 +312,30 @@ for connection in client.list_connections():
 ```python
 summary = client.list_connections()[0]
 details = client.get_connection(summary.id)
+```
+
+<!-- api-method: get_connection_editor -->
+## `get_connection_editor`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.config.read`; retrieve full editor state
+  including filesystem paths, identity configuration, forwarding rules, and
+  all advanced SSH settings.
+- **Parameters / return:** `connection_id: ConnectionId`; returns
+  `ConnectionEditorDetails`.
+- **Errors:** `connection_not_found`, `unsupported_capability`, `invalid_request`,
+  or `internal_error`.
+- **Events:** None directly.
+- **Cancellation / ordering:** Not cancellable; one point-in-time result.
+- **Threading:** In-process calls use the owner thread; daemon calls are
+  serialized over the persistent socket.
+- **Side effects / security:** Reads manager state. Contains filesystem paths
+  and complete configuration; not safe for untrusted consumers.
+
+```python
+summary = client.list_connections()[0]
+editor = client.get_connection_editor(summary.id)
+print(editor.identity_files, editor.forwarding_rules)
 ```
 
 <!-- api-method: create_connection -->

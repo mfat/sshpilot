@@ -38,6 +38,7 @@ from sshpilot.api.transport.codec import (
     close_session_request_from_wire,
     close_sftp_request_from_wire,
     connection_details_to_wire,
+    connection_editor_details_to_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
     delete_connection_request_from_wire,
@@ -88,6 +89,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.create": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
+    "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
     "daemon.status": Capability.DAEMON_STATUS,
     "daemon.diagnostics": Capability.DAEMON_STATUS,
     "daemon.stop": Capability.DAEMON_CONTROL,
@@ -291,6 +293,7 @@ class RequestDispatcher:
             "connections.create": self._handle_create_connection,
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
+            "connections.get_editor": self._handle_get_connection_editor,
             "interactions.list": self._handle_list_interactions,
             "interactions.get": self._handle_get_interaction,
             "interactions.claim": self._handle_claim_interaction,
@@ -626,6 +629,26 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=mutation.connection_id,
+        )
+
+    def _handle_get_connection_editor(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"connection_id"}:
+            raise ValueError("connections.get_editor requires connection_id")
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        typed_id = ConnectionId(connection_id)
+        return DeferredResult(
+            operation=lambda: connection_editor_details_to_wire(
+                self._core_client.get_connection_editor(typed_id)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_id,
         )
 
     def _handle_list_sessions(
@@ -1373,6 +1396,7 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_READ,
                 Capability.CONNECTIONS_EVENTS,
                 Capability.CONNECTIONS_WRITE,
+                Capability.CONNECTIONS_CONFIG_READ,
             }
         )
         daemon_capabilities = connection_capabilities | frozenset(

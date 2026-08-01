@@ -22,14 +22,17 @@ from .models.common import (
 from .models.connections import (
     AuthenticationMethod,
     ConnectionDetails,
+    ConnectionEditorDetails,
     ConnectionHealth,
     ConnectionSummary,
     CreateConnectionRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    ForwardingRule,
     GroupReference,
     UNSET,
     UpdateConnectionRequest,
+    forwarding_rule_from_dict,
 )
 from .models.interactions import (
     InteractionClaim,
@@ -90,6 +93,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "close": None,
     "get_capabilities": None,
     "get_connection": Capability.CONNECTIONS_READ,
+    "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
@@ -181,6 +185,7 @@ class InProcessClient:
         supported = {
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
+            Capability.CONNECTIONS_CONFIG_READ,
         }
         if all(
             callable(getattr(connection_manager, method_name, None))
@@ -538,6 +543,20 @@ class InProcessClient:
             )
         return self._to_details(connection)
 
+    def get_connection_editor(
+        self, connection_id: ConnectionId
+    ) -> ConnectionEditorDetails:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=connection_id,
+            )
+        return self._to_editor_details(connection)
+
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_WRITE)
@@ -630,6 +649,15 @@ class InProcessClient:
             value = getattr(request, name)
             if value is not None and value is not UNSET:
                 data[name] = value
+        if request.config_patch:
+            for key, value in request.config_patch.items():
+                if key in ("proxy_jump", "identity_files", "certificate_files"):
+                    data[key] = list(value) if value else []
+                elif key == "forwarding_rules":
+                    from .models.connections import forwarding_rule_to_dict
+                    data[key] = [forwarding_rule_to_dict(r) for r in value]
+                else:
+                    data[key] = value
         updater = getattr(self._connection_manager, "update_connection", None)
         if not callable(updater):
             raise self._persistence_error(connection_id)
@@ -1224,6 +1252,145 @@ class InProcessClient:
             x11_forwarding=bool(getattr(connection, "x11_forwarding", False)),
             forwarding_rule_count=len(forwarding_rules),
             proxy_jump=proxy_jump,
+        )
+
+    def _to_editor_details(self, connection: Any) -> ConnectionEditorDetails:
+        summary = self._to_summary(connection)
+        details = self._to_details(connection)
+
+        def _str(val: Any, default: str = "") -> str:
+            v = str(val) if val is not None else default
+            return v
+
+        def _int(val: Any, default: int = 0) -> int:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return default
+
+        def _bool(val: Any) -> bool:
+            return bool(val)
+
+        def _tuple_str(val: Any) -> Tuple[str, ...]:
+            return self._string_tuple(val)
+
+        def _tuple_fw(val: Any) -> Tuple[ForwardingRule, ...]:
+            if not val:
+                return ()
+            rules = []
+            for item in val:
+                if isinstance(item, dict):
+                    try:
+                        rules.append(forwarding_rule_from_dict(item))
+                    except (ValueError, TypeError):
+                        pass
+                elif isinstance(item, ForwardingRule):
+                    rules.append(item)
+            return tuple(rules)
+
+        data = getattr(connection, "data", None)
+        data = data if isinstance(data, dict) else {}
+
+        return ConnectionEditorDetails(
+            id=summary.id,
+            nickname=summary.nickname,
+            host=summary.host,
+            hostname=summary.hostname,
+            username=summary.username,
+            port=summary.port,
+            protocol=summary.protocol,
+            health=summary.health,
+            groups=summary.groups,
+            aliases=details.aliases,
+            authentication_method=details.authentication_method,
+            identity_configured=details.identity_configured,
+            certificate_configured=details.certificate_configured,
+            x11_forwarding=details.x11_forwarding,
+            forwarding_rule_count=details.forwarding_rule_count,
+            proxy_jump=details.proxy_jump,
+            key_select_mode=_int(
+                getattr(connection, "key_select_mode", None)
+                or data.get("key_select_mode", 0)
+            ),
+            identity_files=_tuple_str(
+                getattr(connection, "identity_files", None)
+                or data.get("identity_files", ())
+            ),
+            certificate_files=_tuple_str(
+                getattr(connection, "certificate_files", None)
+                or data.get("certificate_files", ())
+            ),
+            identity_agent=_str(
+                getattr(connection, "identity_agent", None)
+                or data.get("identity_agent", "")
+            ),
+            add_keys_to_agent=_str(
+                getattr(connection, "add_keys_to_agent", None)
+                or data.get("add_keys_to_agent", "")
+            ),
+            pkcs11_provider=_str(
+                getattr(connection, "pkcs11_provider", None)
+                or data.get("pkcs11_provider", "")
+            ),
+            security_key_provider=_str(
+                getattr(connection, "security_key_provider", None)
+                or data.get("security_key_provider", "")
+            ),
+            pubkey_auth_no=_bool(
+                getattr(connection, "pubkey_auth_no", None)
+                or data.get("pubkey_auth_no", False)
+            ),
+            forward_agent=_bool(
+                getattr(connection, "forward_agent", None)
+                or data.get("forward_agent", False)
+            ),
+            forward_agent_target=_str(
+                getattr(connection, "forward_agent_target", None)
+                or data.get("forward_agent_target", "")
+            ),
+            proxy_command=_str(
+                getattr(connection, "proxy_command", None)
+                or data.get("proxy_command", "")
+            ),
+            forwarding_rules=_tuple_fw(
+                getattr(connection, "forwarding_rules", None)
+                or data.get("forwarding_rules", ())
+            ),
+            pre_command=_str(
+                getattr(connection, "pre_command", None)
+                or data.get("pre_command", "")
+            ),
+            local_command=_str(
+                getattr(connection, "local_command", None)
+                or data.get("local_command", "")
+            ),
+            remote_command=_str(
+                getattr(connection, "remote_command", None)
+                or data.get("remote_command", "")
+            ),
+            request_tty=_str(
+                getattr(connection, "request_tty", None)
+                or data.get("request_tty", "")
+            ),
+            extra_ssh_config=_str(
+                getattr(connection, "extra_ssh_config", None)
+                or data.get("extra_ssh_config", "")
+            ),
+            identity_file_none=_bool(
+                data.get("identity_file_none", False)
+            ),
+            preferred_authentications=_str(
+                getattr(connection, "preferred_authentications", None)
+                or data.get("preferred_authentications", "")
+            ),
+            source=_str(
+                getattr(connection, "source", None)
+                or data.get("source", "")
+            ),
+            generation=_int(
+                getattr(connection, "generation", None)
+                or data.get("generation", 0)
+            ),
         )
 
     @staticmethod

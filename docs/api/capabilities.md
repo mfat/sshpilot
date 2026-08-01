@@ -22,9 +22,11 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-runtime-capability: connections.read -->
 <!-- api-runtime-capability: connections.events -->
 <!-- api-runtime-capability: connections.write -->
+<!-- api-runtime-capability: connections.config.read -->
 <!-- api-daemon-runtime-capability: connections.read -->
 <!-- api-daemon-runtime-capability: connections.events -->
 <!-- api-daemon-runtime-capability: connections.write -->
+<!-- api-daemon-runtime-capability: connections.config.read -->
 <!-- api-daemon-runtime-capability: sessions.read -->
 <!-- api-daemon-runtime-capability: sessions.write -->
 <!-- api-daemon-runtime-capability: sessions.events -->

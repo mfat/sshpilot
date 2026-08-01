@@ -35,6 +35,7 @@ from .models.common import (
 )
 from .models.connections import (
     ConnectionDetails,
+    ConnectionEditorDetails,
     ConnectionSummary,
     CreateConnectionRequest,
     DeleteConnectionRequest,
@@ -112,6 +113,7 @@ from .transport.codec import (
     close_session_request_to_wire,
     close_sftp_request_to_wire,
     connection_details_from_wire,
+    connection_editor_details_from_wire,
     connection_summary_from_wire,
     create_connection_request_to_wire,
     daemon_diagnostics_from_wire,
@@ -458,6 +460,21 @@ class DaemonClient:
             return connection_details_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
+
+    def get_connection_editor(
+        self, connection_id: ConnectionId
+    ) -> ConnectionEditorDetails:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request(
+            "connections.get_editor",
+            {"connection_id": connection_id},
+        )
+        try:
+            return connection_editor_details_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned invalid connection editor details"
+            )
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
         self._require_capability(Capability.CONNECTIONS_WRITE)

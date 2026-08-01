@@ -6412,51 +6412,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # request or trigger local secret storage after a daemon write.
         connection_data['password'] = ''
 
-        advanced_defaults = {
-            'auth_method': 0,
-            'keyfile': '',
-            'identity_files': (),
-            'certificate': '',
-            'certificate_files': (),
-            'key_select_mode': 0,
-            'identity_agent': '',
-            'add_keys_to_agent': '',
-            'pkcs11_provider': '',
-            'security_key_provider': '',
-            'x11_forwarding': False,
-            'pubkey_auth_no': False,
-            'proxy_jump': (),
-            'forward_agent': False,
-            'forwarding_rules': (),
-            'pre_command': '',
-            'local_command': '',
-            'remote_command': '',
-            'extra_ssh_config': '',
-            'aliases': (),
-        }
-        connection = getattr(dialog, 'connection', None)
-        current_data = getattr(connection, 'data', None)
-        current_data = current_data if isinstance(current_data, dict) else {}
-        for key, default in advanced_defaults.items():
-            submitted = connection_data.get(key, default)
-            if connection is None:
-                current = default
-            else:
-                current = getattr(
-                    connection,
-                    key,
-                    current_data.get(key, default),
-                )
-                if current is None:
-                    current = default
-            if self._normalise_daemon_editor_value(
-                submitted
-            ) != self._normalise_daemon_editor_value(current):
-                return _(
-                    "Experimental service mode currently supports only "
-                    "nickname, host, username, and port changes."
-                )
-
         if connection_data.get('__split_from_group'):
             return _(
                 "Splitting grouped SSH host entries is not supported in "
@@ -6470,6 +6425,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             'wol_port': 9,
             'tags': [],
         }
+        connection = getattr(dialog, 'connection', None)
         if connection is None:
             current_meta = empty_meta
         else:
@@ -6489,6 +6445,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     "Groups, tags, and Wake-on-LAN metadata cannot be changed "
                     "in experimental service mode yet."
                 )
+
         return None
 
     def _save_connection_via_client(
@@ -6499,19 +6456,53 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     ) -> None:
         from .api import SshPilotError
         from .api.in_process_client import InProcessClient
+        from .api.models.connections import (
+            EDITABLE_CONFIG_FIELDS,
+            ForwardingRule,
+            forwarding_rule_to_dict,
+        )
         from .api.models import CreateConnectionRequest, UpdateConnectionRequest
 
         bridge = self.client_bridge
         if bridge is None:
             complete_save(False)
             return
+
+        def _build_config_patch():
+            patch = {}
+            for key in EDITABLE_CONFIG_FIELDS:
+                if key in ("nickname", "hostname", "username", "port", "protocol"):
+                    continue
+                if key == "forwarding_rules":
+                    raw = connection_data.get(key, ())
+                    if raw:
+                        patch[key] = [
+                            forwarding_rule_to_dict(r) if isinstance(r, ForwardingRule)
+                            else r if isinstance(r, dict) else {}
+                            for r in raw
+                        ]
+                    else:
+                        patch[key] = []
+                elif key in ("identity_files", "certificate_files", "proxy_jump", "aliases"):
+                    val = connection_data.get(key, ())
+                    patch[key] = list(val) if val else []
+                elif isinstance(connection_data.get(key), bool):
+                    patch[key] = connection_data[key]
+                else:
+                    val = connection_data.get(key, '')
+                    if val is not None:
+                        patch[key] = val
+            return patch
+
         if dialog.is_editing:
             connection_id = InProcessClient.connection_id_for(dialog.connection)
+            config_patch = _build_config_patch()
             request = UpdateConnectionRequest(
                 nickname=connection_data.get('nickname'),
                 hostname=connection_data.get('hostname'),
                 username=connection_data.get('username'),
                 port=connection_data.get('port'),
+                config_patch=config_patch,
             )
             operation = lambda: self.client.update_connection(
                 connection_id,

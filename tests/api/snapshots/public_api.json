@@ -134,6 +134,10 @@
       "capability": "connections.read",
       "status": "implemented"
     },
+    "get_connection_editor": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "get_daemon_diagnostics": {
       "capability": "daemon.status",
       "status": "daemon-only"
@@ -313,6 +317,7 @@
     "detach_sftp",
     "get_capabilities",
     "get_connection",
+    "get_connection_editor",
     "get_daemon_diagnostics",
     "get_daemon_status",
     "get_forward",
@@ -512,6 +517,16 @@
         }
       ],
       "return": "ConnectionDetails"
+    },
+    "get_connection_editor": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "connection_id",
+          "type": "ConnectionId"
+        }
+      ],
+      "return": "ConnectionEditorDetails"
     },
     "get_daemon_diagnostics": {
       "parameters": [],
@@ -910,6 +925,9 @@
     },
     "connections.get": {
       "capability": "connections.read"
+    },
+    "connections.get_editor": {
+      "capability": "connections.config.read"
     },
     "connections.list": {
       "capability": "connections.read"
