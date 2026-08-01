@@ -76,6 +76,7 @@ def test_successful_protocol_v1_handshake(raw_peer):
             Capability.CONNECTIONS_READ.value,
             Capability.CONNECTIONS_WRITE.value,
             Capability.CONNECTIONS_CONFIG_READ.value,
+            Capability.CONNECTIONS_SECRETS_WRITE.value,
             Capability.SESSIONS_EVENTS.value,
             Capability.SESSIONS_READ.value,
             Capability.SESSIONS_WRITE.value,

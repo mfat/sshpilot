@@ -16,8 +16,11 @@ from .models.connections import (
     ConnectionEditorDetails,
     ConnectionSummary,
     CreateConnectionRequest,
+    DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    StoreConnectionPasswordRequest,
+    StoreKeyPassphraseRequest,
     UpdateConnectionRequest,
 )
 from .models.interactions import (
@@ -108,6 +111,18 @@ class SshPilotClient(Protocol):
         ...
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
+        ...
+
+    def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
+        ...
+
+    def delete_connection_password(self, request: DeleteConnectionPasswordRequest) -> bool:
+        ...
+
+    def store_key_passphrase(self, request: StoreKeyPassphraseRequest) -> bool:
+        ...
+
+    def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
         ...
 
     def get_daemon_status(self) -> DaemonStatus:

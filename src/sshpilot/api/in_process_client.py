@@ -26,10 +26,14 @@ from .models.connections import (
     ConnectionHealth,
     ConnectionSummary,
     CreateConnectionRequest,
+    DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
     ForwardingRule,
     GroupReference,
+    LookupKeyPassphraseRequest,
+    StoreConnectionPasswordRequest,
+    StoreKeyPassphraseRequest,
     UNSET,
     UpdateConnectionRequest,
     forwarding_rule_from_dict,
@@ -97,6 +101,10 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
+    "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "lookup_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "subscribe_events": Capability.CONNECTIONS_EVENTS,
     "update_connection": Capability.CONNECTIONS_WRITE,
 }
@@ -186,6 +194,7 @@ class InProcessClient:
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
             Capability.CONNECTIONS_CONFIG_READ,
+            Capability.CONNECTIONS_SECRETS_WRITE,
         }
         if all(
             callable(getattr(connection_manager, method_name, None))
@@ -500,19 +509,84 @@ class InProcessClient:
 
     def lookup_daemon_password(self, connection_id: ConnectionId) -> Optional[str]:
         connection = self._find_connection(connection_id)
+        if connection is None:
+            return None
         return self._connection_manager.get_connection_password(connection)
 
     def store_daemon_password(
         self,
         connection_id: ConnectionId,
         password: str,
+        *,
+        previous_hostname: str = "",
+        previous_host: str = "",
+        previous_username: str = "",
     ) -> bool:
         connection = self._find_connection(connection_id)
+        if connection is None:
+            return False
+        previous_connection = None
+        if previous_hostname or previous_host or previous_username:
+            previous_connection = {
+                "hostname": previous_hostname,
+                "host": previous_host,
+                "username": previous_username,
+            }
         return bool(
             self._connection_manager.store_connection_password(
                 connection,
                 password,
+                previous_connection=previous_connection,
             )
+        )
+
+    def delete_daemon_password(
+        self,
+        connection_id: ConnectionId,
+        *,
+        previous_hostname: str = "",
+        previous_host: str = "",
+        previous_username: str = "",
+    ) -> bool:
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            return False
+        removed = self._connection_manager.delete_connection_passwords(connection)
+        if previous_hostname or previous_host or previous_username:
+            previous_connection = {
+                "hostname": previous_hostname,
+                "host": previous_host,
+                "username": previous_username,
+            }
+            username = getattr(connection, "username", "") or ""
+            self._connection_manager.delete_connection_passwords(
+                previous_connection, username=username,
+            )
+        return removed
+
+    def store_connection_password_rpc(
+        self, request: StoreConnectionPasswordRequest
+    ) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.store_daemon_password(
+            request.connection_id,
+            request.password,
+            previous_hostname=request.previous_hostname,
+            previous_host=request.previous_host,
+            previous_username=request.previous_username,
+        )
+
+    def delete_connection_password_rpc(
+        self, request: DeleteConnectionPasswordRequest
+    ) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.delete_daemon_password(
+            request.connection_id,
+            previous_hostname=request.previous_hostname,
+            previous_host=request.previous_host,
+            previous_username=request.previous_username,
         )
 
     def lookup_daemon_passphrase(self, key_path: str) -> Optional[str]:
@@ -522,6 +596,20 @@ class InProcessClient:
         return bool(
             self._connection_manager.store_key_passphrase(key_path, passphrase)
         )
+
+    def store_key_passphrase_rpc(
+        self, request: StoreKeyPassphraseRequest
+    ) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.store_daemon_passphrase(request.key_path, request.passphrase)
+
+    def lookup_key_passphrase_rpc(
+        self, request: LookupKeyPassphraseRequest
+    ) -> Optional[str]:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.lookup_daemon_passphrase(request.key_path)
 
     def enable_serialized_command_threads(self) -> None:
         """Allow daemon-owned serialized workers to invoke this adapter."""

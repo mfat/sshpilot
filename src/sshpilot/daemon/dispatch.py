@@ -41,6 +41,7 @@ from sshpilot.api.transport.codec import (
     connection_editor_details_to_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
+    delete_connection_password_request_from_wire,
     delete_connection_request_from_wire,
     delete_connection_result_to_wire,
     detach_session_request_from_wire,
@@ -52,6 +53,7 @@ from sshpilot.api.transport.codec import (
     interaction_summary_to_wire,
     list_directory_request_from_wire,
     list_directory_result_to_wire,
+    lookup_key_passphrase_request_from_wire,
     open_forward_request_from_wire,
     open_session_request_from_wire,
     open_sftp_request_from_wire,
@@ -68,6 +70,8 @@ from sshpilot.api.transport.codec import (
     sftp_service_summary_to_wire,
     sftp_symlink_request_from_wire,
     start_transfer_request_from_wire,
+    store_connection_password_request_from_wire,
+    store_key_passphrase_request_from_wire,
     transfer_summary_to_wire,
     update_connection_request_from_wire,
 )
@@ -90,6 +94,10 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.delete_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.store_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.lookup_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "daemon.status": Capability.DAEMON_STATUS,
     "daemon.diagnostics": Capability.DAEMON_STATUS,
     "daemon.stop": Capability.DAEMON_CONTROL,
@@ -294,6 +302,10 @@ class RequestDispatcher:
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
             "connections.get_editor": self._handle_get_connection_editor,
+            "connections.store_password": self._handle_store_connection_password,
+            "connections.delete_password": self._handle_delete_connection_password,
+            "connections.store_passphrase": self._handle_store_key_passphrase,
+            "connections.lookup_passphrase": self._handle_lookup_key_passphrase,
             "interactions.list": self._handle_list_interactions,
             "interactions.get": self._handle_get_interaction,
             "interactions.claim": self._handle_claim_interaction,
@@ -650,6 +662,72 @@ class RequestDispatcher:
             on_rejected=lambda: None,
             connection_id=typed_id,
         )
+
+    def _handle_store_connection_password(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if "connection_id" not in request.params:
+            raise ValueError("connections.store_password requires connection_id")
+        if "password" not in request.params:
+            raise ValueError("connections.store_password requires password")
+        typed_request = store_connection_password_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._core_client.store_daemon_password(
+                typed_request.connection_id,
+                typed_request.password,
+                previous_hostname=typed_request.previous_hostname,
+                previous_host=typed_request.previous_host,
+                previous_username=typed_request.previous_username,
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
+
+    def _handle_delete_connection_password(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if "connection_id" not in request.params:
+            raise ValueError("connections.delete_password requires connection_id")
+        typed_request = delete_connection_password_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._core_client.delete_daemon_password(
+                typed_request.connection_id,
+                previous_hostname=typed_request.previous_hostname,
+                previous_host=typed_request.previous_host,
+                previous_username=typed_request.previous_username,
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
+
+    def _handle_store_key_passphrase(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = store_key_passphrase_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._core_client.store_daemon_passphrase(
+                typed_request.key_path,
+                typed_request.passphrase,
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_lookup_key_passphrase(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> Optional[str]:
+        typed_request = lookup_key_passphrase_request_from_wire(request.params)
+        return self._core_client.lookup_daemon_passphrase(typed_request.key_path)
 
     def _handle_list_sessions(
         self,
@@ -1397,6 +1475,7 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_EVENTS,
                 Capability.CONNECTIONS_WRITE,
                 Capability.CONNECTIONS_CONFIG_READ,
+                Capability.CONNECTIONS_SECRETS_WRITE,
             }
         )
         daemon_capabilities = connection_capabilities | frozenset(

@@ -118,6 +118,10 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "delete_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
     "detach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -189,6 +193,10 @@
     "list_transfers": {
       "capability": "transfers.read",
       "status": "daemon-only"
+    },
+    "lookup_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
     },
     "open_forward": {
       "capability": "forwards.write",
@@ -286,6 +294,14 @@
       "capability": "daemon.control",
       "status": "daemon-only"
     },
+    "store_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "store_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
     "subscribe_events": {
       "capability": "connections.events",
       "status": "implemented"
@@ -313,6 +329,7 @@
     "close_sftp",
     "create_connection",
     "delete_connection",
+    "delete_connection_password",
     "detach_session",
     "detach_sftp",
     "get_capabilities",
@@ -331,6 +348,7 @@
     "list_sessions",
     "list_sftp_services",
     "list_transfers",
+    "lookup_key_passphrase",
     "open_forward",
     "open_session",
     "open_sftp",
@@ -355,6 +373,8 @@
     "sftp_symlink",
     "start_transfer",
     "stop_daemon",
+    "store_connection_password",
+    "store_key_passphrase",
     "subscribe_events",
     "subscribe_terminal",
     "update_connection"
@@ -484,6 +504,16 @@
       ],
       "return": "DeleteConnectionResult"
     },
+    "delete_connection_password": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "DeleteConnectionPasswordRequest"
+        }
+      ],
+      "return": "bool"
+    },
     "detach_session": {
       "parameters": [
         {
@@ -609,6 +639,16 @@
     "list_transfers": {
       "parameters": [],
       "return": "list[TransferSummary]"
+    },
+    "lookup_key_passphrase": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "key_path",
+          "type": "str"
+        }
+      ],
+      "return": "str | None"
     },
     "open_forward": {
       "parameters": [
@@ -860,6 +900,26 @@
       ],
       "return": "DaemonStopResult"
     },
+    "store_connection_password": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "StoreConnectionPasswordRequest"
+        }
+      ],
+      "return": "bool"
+    },
+    "store_key_passphrase": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "StoreKeyPassphraseRequest"
+        }
+      ],
+      "return": "bool"
+    },
     "subscribe_events": {
       "parameters": [
         {
@@ -923,6 +983,9 @@
     "connections.delete": {
       "capability": "connections.write"
     },
+    "connections.delete_password": {
+      "capability": "connections.secrets.write"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -931,6 +994,15 @@
     },
     "connections.list": {
       "capability": "connections.read"
+    },
+    "connections.lookup_passphrase": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_passphrase": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_password": {
+      "capability": "connections.secrets.write"
     },
     "connections.update": {
       "capability": "connections.write"
@@ -1237,6 +1309,7 @@
     "DaemonResourceCounts",
     "DaemonStatus",
     "DaemonStopResult",
+    "DeleteConnectionPasswordRequest",
     "DeleteConnectionRequest",
     "DeleteConnectionResult",
     "DetachSessionRequest",
@@ -1270,6 +1343,7 @@
     "InteractionType",
     "ListDirectoryRequest",
     "ListDirectoryResult",
+    "LookupKeyPassphraseRequest",
     "OpenForwardRequest",
     "OpenSessionRequest",
     "OpenSftpRequest",
@@ -1307,6 +1381,8 @@
     "SftpSymlinkRequest",
     "StartTransferRequest",
     "StopDaemonRequest",
+    "StoreConnectionPasswordRequest",
+    "StoreKeyPassphraseRequest",
     "TerminalDimensions",
     "TerminalInput",
     "TerminalOutput",
@@ -1544,6 +1620,12 @@
       "message",
       "restart_requested"
     ],
+    "DeleteConnectionPasswordRequest": [
+      "connection_id",
+      "previous_hostname",
+      "previous_host",
+      "previous_username"
+    ],
     "DeleteConnectionRequest": [
       "connection_id"
     ],
@@ -1704,6 +1786,9 @@
       "entries",
       "truncated",
       "next_cursor"
+    ],
+    "LookupKeyPassphraseRequest": [
+      "key_path"
     ],
     "OpenForwardRequest": [
       "connection_id",
@@ -1889,6 +1974,17 @@
     "StopDaemonRequest": [
       "force",
       "confirmation"
+    ],
+    "StoreConnectionPasswordRequest": [
+      "connection_id",
+      "password",
+      "previous_hostname",
+      "previous_host",
+      "previous_username"
+    ],
+    "StoreKeyPassphraseRequest": [
+      "key_path",
+      "passphrase"
     ],
     "SuccessResponseEnvelope": [
       "protocol_version",

@@ -53,6 +53,10 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "delete_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
     "detach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -124,6 +128,10 @@
     "list_transfers": {
       "capability": "transfers.read",
       "status": "daemon-only"
+    },
+    "lookup_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
     },
     "open_forward": {
       "capability": "forwards.write",
@@ -221,6 +229,14 @@
       "capability": "daemon.control",
       "status": "daemon-only"
     },
+    "store_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "store_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
     "subscribe_events": {
       "capability": "connections.events",
       "status": "implemented"
@@ -241,6 +257,9 @@
     "connections.delete": {
       "capability": "connections.write"
     },
+    "connections.delete_password": {
+      "capability": "connections.secrets.write"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -249,6 +268,15 @@
     },
     "connections.list": {
       "capability": "connections.read"
+    },
+    "connections.lookup_passphrase": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_passphrase": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_password": {
+      "capability": "connections.secrets.write"
     },
     "connections.update": {
       "capability": "connections.write"
@@ -2015,6 +2043,39 @@
       ],
       "status": "Implemented"
     },
+    "DeleteConnectionPasswordRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": "",
+          "name": "previous_hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
     "DeleteConnectionRequest": {
       "fields": [
         {
@@ -2934,6 +2995,18 @@
         }
       ],
       "status": "Implemented"
+    },
+    "LookupKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
     },
     "OpenForwardRequest": {
       "fields": [
@@ -3961,6 +4034,65 @@
         }
       ],
       "status": "Implemented"
+    },
+    "StoreConnectionPasswordRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "password",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "StoreKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "passphrase",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
     },
     "SuccessResponseEnvelope": {
       "fields": [

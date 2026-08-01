@@ -170,7 +170,7 @@ def test_daemon_mutation_failure_keeps_ui_state_and_uses_safe_completion():
     assert window.rebuilds == 0
 
 
-def test_daemon_editor_rejects_secret_and_advanced_changes_without_mutation():
+def test_daemon_editor_rejects_secret_changes_without_mutation():
     window = _MutationWindow()
     dialog = SimpleNamespace(
         is_editing=False,
@@ -182,14 +182,25 @@ def test_daemon_editor_rejects_secret_and_advanced_changes_without_mutation():
         dialog,
         _basic_data(password="do-not-send", password_changed=True),
     )
+
+    assert "Passwords" in secret_problem
+    assert window.client_bridge.calls == []
+
+
+def test_daemon_editor_allows_config_patch_fields():
+    window = _MutationWindow()
+    dialog = SimpleNamespace(
+        is_editing=False,
+        connection=None,
+        key_editor=None,
+    )
+
     advanced_problem = window.prepare_connection_save_for_client(
         dialog,
         _basic_data(proxy_jump=["jump.example"]),
     )
 
-    assert "Passwords" in secret_problem
-    assert "nickname" in advanced_problem
-    assert window.client_bridge.calls == []
+    assert advanced_problem is None
 
 
 def test_daemon_delete_is_not_optimistic_and_disconnects_only_after_success():

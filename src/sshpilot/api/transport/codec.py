@@ -47,10 +47,14 @@ from ..models.connections import (
     ConnectionValidationError,
     ConnectionValidationResult,
     CreateConnectionRequest,
+    DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
     ForwardingRule,
     GroupReference,
+    LookupKeyPassphraseRequest,
+    StoreConnectionPasswordRequest,
+    StoreKeyPassphraseRequest,
     UNSET,
     UpdateConnectionRequest,
 )
@@ -1382,6 +1386,147 @@ def delete_connection_result_from_wire(value: Any) -> DeleteConnectionResult:
     return DeleteConnectionResult(
         connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         deleted=_boolean(data["deleted"], "connection deleted result"),
+    )
+
+
+def store_connection_password_request_to_wire(
+    request: StoreConnectionPasswordRequest,
+) -> Dict[str, Any]:
+    if type(request) is not StoreConnectionPasswordRequest:
+        raise TypeError("store connection password request is required")
+    payload: Dict[str, Any] = {
+        "connection_id": request.connection_id,
+        "password": request.password,
+    }
+    if request.previous_hostname:
+        payload["previous_hostname"] = request.previous_hostname
+    if request.previous_host:
+        payload["previous_host"] = request.previous_host
+    if request.previous_username:
+        payload["previous_username"] = request.previous_username
+    return payload
+
+
+def store_connection_password_request_from_wire(
+    value: Any,
+) -> StoreConnectionPasswordRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "password"},
+        optional={"previous_hostname", "previous_host", "previous_username"},
+        context="store connection password request",
+    )
+    return StoreConnectionPasswordRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        password=_text(data["password"], "connection password"),
+        previous_hostname=_text(
+            data.get("previous_hostname", ""),
+            "previous hostname",
+            allow_empty=True,
+        ),
+        previous_host=_text(
+            data.get("previous_host", ""),
+            "previous host",
+            allow_empty=True,
+        ),
+        previous_username=_text(
+            data.get("previous_username", ""),
+            "previous username",
+            allow_empty=True,
+        ),
+    )
+
+
+def delete_connection_password_request_to_wire(
+    request: DeleteConnectionPasswordRequest,
+) -> Dict[str, Any]:
+    if type(request) is not DeleteConnectionPasswordRequest:
+        raise TypeError("delete connection password request is required")
+    payload: Dict[str, Any] = {
+        "connection_id": request.connection_id,
+    }
+    if request.previous_hostname:
+        payload["previous_hostname"] = request.previous_hostname
+    if request.previous_host:
+        payload["previous_host"] = request.previous_host
+    if request.previous_username:
+        payload["previous_username"] = request.previous_username
+    return payload
+
+
+def delete_connection_password_request_from_wire(
+    value: Any,
+) -> DeleteConnectionPasswordRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id"},
+        optional={"previous_hostname", "previous_host", "previous_username"},
+        context="delete connection password request",
+    )
+    return DeleteConnectionPasswordRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        previous_hostname=_text(
+            data.get("previous_hostname", ""),
+            "previous hostname",
+            allow_empty=True,
+        ),
+        previous_host=_text(
+            data.get("previous_host", ""),
+            "previous host",
+            allow_empty=True,
+        ),
+        previous_username=_text(
+            data.get("previous_username", ""),
+            "previous username",
+            allow_empty=True,
+        ),
+    )
+
+
+def store_key_passphrase_request_to_wire(
+    request: StoreKeyPassphraseRequest,
+) -> Dict[str, Any]:
+    if type(request) is not StoreKeyPassphraseRequest:
+        raise TypeError("store key passphrase request is required")
+    return {"key_path": request.key_path, "passphrase": request.passphrase}
+
+
+def store_key_passphrase_request_from_wire(
+    value: Any,
+) -> StoreKeyPassphraseRequest:
+    data = _strict_fields(
+        value,
+        required={"key_path", "passphrase"},
+        context="store key passphrase request",
+    )
+    return StoreKeyPassphraseRequest(
+        key_path=_text(data["key_path"], "key path"),
+        passphrase=_text(data["passphrase"], "passphrase"),
+    )
+
+
+def lookup_key_passphrase_request_to_wire(
+    request: LookupKeyPassphraseRequest,
+) -> Dict[str, Any]:
+    if type(request) is not LookupKeyPassphraseRequest:
+        raise TypeError("lookup key passphrase request is required")
+    return {"key_path": request.key_path}
+
+
+def lookup_key_passphrase_request_from_wire(
+    value: Any,
+) -> LookupKeyPassphraseRequest:
+    data = _strict_fields(
+        value,
+        required={"key_path"},
+        context="lookup key passphrase request",
+    )
+    return LookupKeyPassphraseRequest(
+        key_path=_text(data["key_path"], "key path"),
     )
 
 

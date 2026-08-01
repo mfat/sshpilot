@@ -38,8 +38,11 @@ from .models.connections import (
     ConnectionEditorDetails,
     ConnectionSummary,
     CreateConnectionRequest,
+    DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    StoreConnectionPasswordRequest,
+    StoreKeyPassphraseRequest,
     UpdateConnectionRequest,
 )
 from .models.daemon import (
@@ -120,6 +123,7 @@ from .transport.codec import (
     daemon_status_from_wire,
     daemon_stop_result_from_wire,
     decode_envelope,
+    delete_connection_password_request_to_wire,
     delete_connection_request_to_wire,
     delete_connection_result_from_wire,
     detach_session_request_to_wire,
@@ -151,6 +155,8 @@ from .transport.codec import (
     sftp_symlink_request_to_wire,
     start_transfer_request_to_wire,
     stop_daemon_request_to_wire,
+    store_connection_password_request_to_wire,
+    store_key_passphrase_request_to_wire,
     transfer_summary_from_wire,
     update_connection_request_to_wire,
 )
@@ -518,6 +524,48 @@ class DaemonClient:
             return delete_connection_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid delete result")
+
+    def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        result = self._request(
+            "connections.store_password",
+            store_connection_password_request_to_wire(request),
+            mutation_connection_id=request.connection_id,
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid password store result")
+        return result
+
+    def delete_connection_password(self, request: DeleteConnectionPasswordRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        result = self._request(
+            "connections.delete_password",
+            delete_connection_password_request_to_wire(request),
+            mutation_connection_id=request.connection_id,
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid password delete result")
+        return result
+
+    def store_key_passphrase(self, request: StoreKeyPassphraseRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        result = self._request(
+            "connections.store_passphrase",
+            store_key_passphrase_request_to_wire(request),
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid passphrase store result")
+        return result
+
+    def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        result = self._request(
+            "connections.lookup_passphrase",
+            {"key_path": key_path},
+        )
+        if result is not None and type(result) is not str:
+            self._fail_protocol("The daemon returned an invalid passphrase lookup result")
+        return result
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
         self._require_capability(Capability.SESSIONS_WRITE)

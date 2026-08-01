@@ -285,6 +285,58 @@ class ConnectionEditorDetails(ConnectionDetails):
     generation: int = 0  # revision counter for stale detection
 
 
+# -- Secret request / response models --------------------------------------
+
+@dataclass(frozen=True)
+class StoreConnectionPasswordRequest:
+    """Store or update a login password for a connection."""
+
+    connection_id: ConnectionId
+    password: str
+    previous_hostname: str = ""
+    previous_host: str = ""
+    previous_username: str = ""
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+
+
+@dataclass(frozen=True)
+class DeleteConnectionPasswordRequest:
+    """Delete all stored login passwords for a connection."""
+
+    connection_id: ConnectionId
+    previous_hostname: str = ""
+    previous_host: str = ""
+    previous_username: str = ""
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+
+
+@dataclass(frozen=True)
+class StoreKeyPassphraseRequest:
+    """Store or update a key passphrase."""
+
+    key_path: str
+    passphrase: str
+
+    def __post_init__(self) -> None:
+        if not self.key_path.strip():
+            raise ValueError("key_path must not be empty")
+
+
+@dataclass(frozen=True)
+class LookupKeyPassphraseRequest:
+    """Look up a stored key passphrase."""
+
+    key_path: str
+
+    def __post_init__(self) -> None:
+        if not self.key_path.strip():
+            raise ValueError("key_path must not be empty")
+
+
 # -- Request / Response models ----------------------------------------------
 
 @dataclass(frozen=True)

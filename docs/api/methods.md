@@ -14,6 +14,11 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `create_connection` | Implemented | `connections.write` |
 | `update_connection` | Implemented | `connections.write` |
 | `delete_connection` | Implemented | `connections.write` |
+| `get_connection_editor` | Implemented | `connections.config.read` |
+| `store_connection_password` | Implemented | `connections.secrets.write` |
+| `delete_connection_password` | Implemented | `connections.secrets.write` |
+| `store_key_passphrase` | Implemented | `connections.secrets.write` |
+| `lookup_key_passphrase` | Implemented | `connections.secrets.write` |
 | `list_sessions` | Daemon only | `sessions.read` |
 | `get_session` | Daemon only | `sessions.read` |
 | `open_session` | Daemon only | `sessions.write` |
@@ -82,6 +87,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: close_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
+<!-- api-method-contract: delete_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: detach_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
@@ -98,6 +104,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: list_sessions status=daemon-only capability=sessions.read -->
 <!-- api-method-contract: list_sftp_services status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: list_transfers status=daemon-only capability=transfers.read -->
+<!-- api-method-contract: lookup_key_passphrase status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: open_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_sftp status=daemon-only capability=sftp.write -->
@@ -119,6 +126,8 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: sftp_stat status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_symlink status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
+<!-- api-method-contract: store_connection_password status=implemented capability=connections.secrets.write -->
+<!-- api-method-contract: store_key_passphrase status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: claim_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: release_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
@@ -138,6 +147,11 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.create` | `connections.write` | Implemented |
 | `connections.update` | `connections.write` | Implemented |
 | `connections.delete` | `connections.write` | Implemented |
+| `connections.get_editor` | `connections.config.read` | Implemented |
+| `connections.store_password` | `connections.secrets.write` | Implemented |
+| `connections.delete_password` | `connections.secrets.write` | Implemented |
+| `connections.store_passphrase` | `connections.secrets.write` | Implemented |
+| `connections.lookup_passphrase` | `connections.secrets.write` | Implemented |
 | `interactions.list` | `interactions.read` | Implemented |
 | `interactions.get` | `interactions.read` | Implemented |
 | `interactions.claim` | `interactions.respond` | Implemented |
@@ -186,9 +200,13 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
+<!-- api-daemon-method: connections.delete_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
+<!-- api-daemon-method: connections.lookup_passphrase capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.store_passphrase capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: daemon.diagnostics capability=daemon.status -->
 <!-- api-daemon-method: daemon.restart capability=daemon.control -->
@@ -404,6 +422,72 @@ client.update_connection(
 
 ```python
 client.delete_connection(DeleteConnectionRequest(connection_id))
+```
+
+<!-- api-method: store_connection_password -->
+## `store_connection_password`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.secrets.write`; store or update
+  a login password for a saved connection.
+- **Parameters / return:** `StoreConnectionPasswordRequest` (connection_id,
+  password); returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `ConnectionManager.store_connection_password`;
+  passwords never cross the wire in plaintext.
+
+```python
+client.store_connection_password(
+    StoreConnectionPasswordRequest(connection_id, password)
+)
+```
+
+<!-- api-method: delete_connection_password -->
+## `delete_connection_password`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.secrets.write`; delete all stored
+  login passwords for a saved connection.
+- **Parameters / return:** `DeleteConnectionPasswordRequest` (connection_id);
+  returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `ConnectionManager.delete_connection_passwords`.
+
+```python
+client.delete_connection_password(
+    DeleteConnectionPasswordRequest(connection_id)
+)
+```
+
+<!-- api-method: store_key_passphrase -->
+## `store_key_passphrase`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.secrets.write`; store or update a
+  key passphrase.
+- **Parameters / return:** `StoreKeyPassphraseRequest` (key_path, passphrase);
+  returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `ConnectionManager.store_key_passphrase`.
+
+```python
+client.store_key_passphrase(
+    StoreKeyPassphraseRequest(key_path="/home/user/.ssh/id_rsa", passphrase="s3cret")
+)
+```
+
+<!-- api-method: lookup_key_passphrase -->
+## `lookup_key_passphrase`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.secrets.write`; look up a stored
+  key passphrase.
+- **Parameters / return:** `key_path: str`; returns `Optional[str]`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Returns the stored passphrase or `None`.
+
+```python
+passphrase = client.lookup_key_passphrase("/home/user/.ssh/id_rsa")
 ```
 
 <!-- api-method: list_interactions -->

@@ -913,6 +913,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: DeleteConnectionPasswordRequest -->
+## `DeleteConnectionPasswordRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Delete all stored login passwords for a connection.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `previous_hostname` | `str` | No | `` | No |
+| `previous_host` | `str` | No | `` | No |
+| `previous_username` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "previous_host": "",
+  "previous_hostname": "",
+  "previous_username": ""
+}
+```
+
 <!-- api-model: DeleteConnectionRequest -->
 ## `DeleteConnectionRequest`
 
@@ -1613,6 +1641,28 @@ Synthetic representation:
   "next_cursor": null,
   "path": "/remote/example",
   "truncated": false
+}
+```
+
+<!-- api-model: LookupKeyPassphraseRequest -->
+## `LookupKeyPassphraseRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Look up a stored key passphrase.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_path` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key_path": "example"
 }
 ```
 
@@ -2472,6 +2522,60 @@ Synthetic representation:
 {
   "confirmation": null,
   "force": false
+}
+```
+
+<!-- api-model: StoreConnectionPasswordRequest -->
+## `StoreConnectionPasswordRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Store or update a login password for a connection.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `password` | `str` | Yes | — | No |
+| `previous_hostname` | `str` | No | `` | No |
+| `previous_host` | `str` | No | `` | No |
+| `previous_username` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "password": "example",
+  "previous_host": "",
+  "previous_hostname": "",
+  "previous_username": ""
+}
+```
+
+<!-- api-model: StoreKeyPassphraseRequest -->
+## `StoreKeyPassphraseRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Store or update a key passphrase.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_path` | `str` | Yes | — | No |
+| `passphrase` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key_path": "example",
+  "passphrase": "example"
 }
 ```
 

@@ -3160,6 +3160,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 'host': getattr(self.connection, 'host', ''),
                 'username': getattr(self.connection, 'username', ''),
             }
+            # Provide connection ID for daemon secret RPCs
+            from .api.in_process_client import InProcessClient
+            connection_data['__connection_id'] = InProcessClient.connection_id_for(self.connection)
 
         # Editing rewrites the block as `Host <nickname>` (multi-host blocks go
         # through the split path), so aliases are cleared via the payload. The
@@ -3285,31 +3288,81 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         self._set_secret_save_busy(True)
 
+        # Check if we should route through daemon RPCs.
+        parent = getattr(self, 'parent_window', None)
+        client = getattr(parent, 'client', None)
+        bridge = getattr(parent, 'client_bridge', None)
+        use_daemon = (
+            bridge is not None
+            and client is not None
+            and hasattr(client, 'store_connection_password')
+        )
+
         def _worker():
             ok = True
             try:
                 for secret_type, action, key, value in operations:
                     if secret_type == 'password':
                         username = connection_data.get('username') or ''
-                        if action == 'store':
-                            ok = bool(manager.store_connection_password(
-                                connection_data, value, username=username,
-                                previous_connection=previous_identity))
+                        if use_daemon:
+                            # Route through daemon RPCs
+                            from .api.models.connections import (
+                                StoreConnectionPasswordRequest,
+                                DeleteConnectionPasswordRequest,
+                            )
+                            conn_id = connection_data.get('__connection_id', '')
+                            if conn_id and action == 'store':
+                                req = StoreConnectionPasswordRequest(
+                                    connection_id=conn_id,
+                                    password=value,
+                                )
+                                ok = client.store_connection_password(req)
+                            elif conn_id:
+                                req = DeleteConnectionPasswordRequest(
+                                    connection_id=conn_id,
+                                )
+                                ok = client.delete_connection_password(req)
+                            else:
+                                # Create case: no connection_id yet, use local manager
+                                if action == 'store':
+                                    ok = bool(manager.store_connection_password(
+                                        connection_data, value, username=username,
+                                        previous_connection=previous_identity))
+                                else:
+                                    manager.delete_connection_passwords(
+                                        connection_data, username=username)
+                                    if previous_identity:
+                                        previous_user = previous_identity.get('username') or username
+                                        manager.delete_connection_passwords(
+                                            previous_identity, username=previous_user)
+                                    ok = True
                         else:
-                            # Delete is idempotent: "nothing was stored" already is the
-                            # desired end state, not a storage failure. Real backend
-                            # errors raise and are caught below.
-                            manager.delete_connection_passwords(
-                                connection_data, username=username)
-                            if previous_identity:
-                                previous_user = previous_identity.get('username') or username
+                            # Direct local storage
+                            if action == 'store':
+                                ok = bool(manager.store_connection_password(
+                                    connection_data, value, username=username,
+                                    previous_connection=previous_identity))
+                            else:
                                 manager.delete_connection_passwords(
-                                    previous_identity, username=previous_user)
-                            ok = True
+                                    connection_data, username=username)
+                                if previous_identity:
+                                    previous_user = previous_identity.get('username') or username
+                                    manager.delete_connection_passwords(
+                                        previous_identity, username=previous_user)
+                                ok = True
                     elif action == 'store':
-                        ok = bool(manager.store_key_passphrase(key, value))
+                        if use_daemon:
+                            from .api.models.connections import StoreKeyPassphraseRequest
+                            req = StoreKeyPassphraseRequest(key_path=key, passphrase=value)
+                            ok = client.store_key_passphrase(req)
+                        else:
+                            ok = bool(manager.store_key_passphrase(key, value))
                     else:
-                        manager.delete_key_passphrase(key)
+                        if use_daemon:
+                            # Passphrase deletion not yet supported via daemon RPCs
+                            manager.delete_key_passphrase(key)
+                        else:
+                            manager.delete_key_passphrase(key)
                         ok = True
                     if not ok:
                         break
