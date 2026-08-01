@@ -1,14 +1,7 @@
-"""Legacy SCP-in-a-VTE transfer UI.
+"""SCP-in-a-VTE transfer UI.
 
-This module is an **explicit legacy compatibility path**. Production file
-manager upload/download must use daemon-owned SFTP/transfers
-(:class:`sshpilot.daemon_sftp_backend.DaemonSftpManager`) and must not call
-into this module.
-
-In daemon client mode the sidebar / omni-search SCP entry points are gated
-behind ``file_manager.legacy_scp`` (see
-:mod:`sshpilot.extended_service_policy`). In-process mode keeps this UI
-available without that setting. Prefer Manage Files for daemon-mode transfers.
+Provides upload and download functionality via SCP running inside a VTE
+terminal widget.
 """
 
 import os
@@ -133,14 +126,10 @@ class ScpTransferDialog(Adw.Dialog):
 
 
 class ScpWindowController:
-    """Legacy SCP-in-a-terminal-window feature, extracted from MainWindow.
+    """SCP-in-a-terminal-window feature, extracted from MainWindow.
 
     Collaborator of MainWindow (terminal_manager-style): borrows config,
     connection_manager, toast_overlay and connection_list from ``self.window``.
-
-    Production file-manager transfers must not use this controller. Daemon
-    mode requires ``file_manager.legacy_scp``; otherwise callers are directed
-    to Manage Files.
     """
 
     def __init__(self, window):
@@ -149,64 +138,20 @@ class ScpWindowController:
         self._scp_strip_askpass = False
         self._scp_askpass_helpers = []
 
-    def _legacy_scp_allowed(self) -> bool:
-        from .extended_service_policy import allow_legacy_scp
-
-        config = getattr(self.window, "config", None)
-        client = getattr(self.window, "client", None)
-        return allow_legacy_scp(config, client=client)
-
-    def _refuse_legacy_scp(self) -> None:
-        from .extended_service_policy import daemon_scp_unavailable_message
-
-        message = daemon_scp_unavailable_message()
-        logger.info("Refusing legacy SCP UI: %s", message)
-        toast_overlay = getattr(self.window, "toast_overlay", None)
-        if toast_overlay is not None:
-            try:
-                toast_overlay.add_toast(Adw.Toast(title=_("Use Manage Files for transfers")))
-            except Exception:
-                pass
-        dialog = Adw.AlertDialog(
-            heading=_("Legacy SCP unavailable"),
-            body=message,
-        )
-        dialog.add_response("ok", _("OK"))
-        dialog.add_response("files", _("Manage Files"))
-        dialog.set_response_appearance("files", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("files")
-        dialog.set_close_response("ok")
-
-        def _on_response(_dialog, response):
-            if response == "files":
-                open_fm = getattr(self.window, "open_file_manager_from_menu", None)
-                if callable(open_fm):
-                    open_fm()
-
-        dialog.connect("response", _on_response)
-        dialog.present(self.window)
-
     def on_scp_button_clicked(self, button):
         """Prompt the user to choose between uploading or downloading with scp."""
-        if not self._legacy_scp_allowed():
-            self._refuse_legacy_scp()
-            return
         selected_row = self.window.connection_list.get_selected_row()
         connection = getattr(selected_row, 'connection', None) if selected_row else None
         if connection is not None:
             self.open_for_connection(connection)
 
     def open_for_connection(self, connection):
-        """Open the legacy SCP transfer chooser for a connection.
+        """Open the SCP transfer chooser for a connection.
 
         Mirrors the ssh-copy-id window: a styled ``Adw.Window`` with a header
         bar and a searchable server picker (so the target can be changed here),
-        plus the Upload/Download cards. Gated in daemon mode by
-        ``file_manager.legacy_scp``.
+        plus the Upload/Download cards.
         """
-        if not self._legacy_scp_allowed():
-            self._refuse_legacy_scp()
-            return
         try:
             from sshpilot import icon_utils
             from .host_picker import show_host_picker

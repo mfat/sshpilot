@@ -5362,15 +5362,6 @@ class TerminalWidget(Gtk.Box):
             if not callable(start_scp):
                 logger.debug("Drop rejected: legacy SCP controller unavailable")
                 return False
-            from .extended_service_policy import allow_legacy_scp
-
-            if not allow_legacy_scp(
-                getattr(root, "config", None),
-                client=getattr(root, "client", None),
-            ):
-                logger.info("Drop rejected: legacy SCP disabled in daemon mode")
-                return False
-
             # Get current directory from the active terminal session
             # Method 3: Use VTE window-title-changed approach (primary method)
             # The remote shell emits OSC escape sequences that set the window title with the directory
