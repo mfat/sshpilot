@@ -264,7 +264,7 @@ runner blocking, not claimed to be free of every possible filesystem delay.
 
 The production runner owns a real Unix PTY and canonical OpenSSH child.
 Control-only clients retain safe non-interactive failure. A
-`binary-secret-v1` client may use typed host-key/password/passphrase
+`binary-secret-v2` client may use typed host-key/password/passphrase
 interactions through the daemon broker. See
 [session runtime](session-runtime.md), [terminal streaming](terminal-streaming.md),
 and [interaction broker](interaction-broker.md).

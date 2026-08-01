@@ -168,7 +168,7 @@ local `error.occurred` continuity notification where delivery remains possible.
 - **Capability / intended trigger:** None. Runtime PTY output deliberately does
   not use `CoreEvent`.
 - **Payload / IDs:** Terminal subscriptions receive `TerminalOutput` DTOs from
-  `binary-terminal-v1` frames.
+  `binary-terminal-v2` frames.
 - **Guarantees:** See
   [terminal streaming](../architecture/terminal-streaming.md) for sequencing,
   replay, backpressure, and continuity rules.

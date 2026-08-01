@@ -51,7 +51,7 @@ per-peer 1 MiB limit inside the existing total 4 MiB peer limit, so a noisy or
 slow terminal cannot consume the response reserve. Terminal bytes never enter
 the CoreEvent queue, deferred completion queue, JSON, or logs.
 
-## Binary frame v1
+## Binary frame v2
 
 The existing four-byte unsigned big-endian outer length prefix is retained.
 An outer payload beginning with `SPTB` is a terminal frame rather than JSON.
@@ -59,19 +59,19 @@ The fixed binary header is:
 
 ```text
 magic[4] = "SPTB"
-stream_version: u8 = 1
+stream_version: u8 = 2
 kind: u8
 flags: u16
-session_uuid: 16 bytes
+session_id: 32 bytes (null-padded UTF-8)
 sequence: u64
-attachment_uuid: 16 bytes (zero for output/status)
+attachment_id: 32 bytes (null-padded UTF-8, zero for output/status)
 data: remaining raw bytes
 ```
 
 Kinds currently cover output, input, continuity loss, and safe input rejection.
 An input-rejection frame carries only a stable `ErrorCode` string and its safe
 session/attachment identifiers; it never echoes input. Output flags identify
-replay, EOF, and truncation. Each terminal payload is at most 64 KiB. UUIDs,
+replay, EOF, and truncation. Each terminal payload is at most 64 KiB. IDs,
 flags, lengths, kinds, stream versions, and attachment requirements are
 validated before dispatch. Invalid binary input closes only the offending peer.
 

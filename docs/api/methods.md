@@ -240,7 +240,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 Unknown wire methods return `unsupported_method`. Terminal output and input use
 the negotiated binary frame path; resize and replay metadata use the two
 explicit wire methods above. Password/passphrase values use the negotiated
-one-use `binary-secret-v1` frame and never an ordinary JSON method.
+one-use `binary-secret-v2` frame and never an ordinary JSON method.
 
 <!-- api-method: get_capabilities -->
 ## `get_capabilities`
@@ -419,7 +419,7 @@ and daemon shutdown also cancel pending interactions.
 <!-- api-method: send_interaction_secret -->
 ## `send_interaction_secret`
 
-Sends a bounded mutable byte buffer through `binary-secret-v1` after a typed
+Sends a bounded mutable byte buffer through `binary-secret-v2` after a typed
 submit action reserved the slot. The client clears the supplied buffer after
 the send attempt; the operation is never retried.
 

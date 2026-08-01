@@ -51,8 +51,8 @@ capabilities. Application versions are diagnostic identity only and never
 substitute for protocol negotiation.
 
 <!-- api-wire-framing: length-prefixed-json-v1 -->
-<!-- api-terminal-framing: binary-terminal-v1 -->
-<!-- api-secret-framing: binary-secret-v1 -->
+<!-- api-terminal-framing: binary-terminal-v2 -->
+<!-- api-secret-framing: binary-secret-v2 -->
 <!-- api-handshake: required-once-before-ordinary-methods -->
 
 ## Wire framing and envelopes
@@ -60,12 +60,12 @@ substitute for protocol negotiation.
 Each local IPC message is four unsigned big-endian bytes followed by that many
 payload bytes. Control payloads are UTF-8 JSON and remain limited to 1,048,576
 bytes. Negotiated terminal payloads begin with binary magic `SPTB`, use stream
-version 1, and are limited to a 48-byte header plus 65,536 raw bytes.
-Negotiated one-use secret responses begin with `SPSB`, use version 1, and carry
-an interaction ID, a 16-byte responder nonce, and at most 16,384 raw secret
-bytes. Frames may be fragmented or coalesced by the socket. Empty, oversized,
-incomplete, invalid JSON, malformed binary frames, unsupported flags, and
-non-canonical identifiers are rejected. Pickle, marshal, arbitrary class
+version 2, and are limited to a 68-byte header plus 65,536 raw bytes.
+Negotiated one-use secret responses begin with `SPSB`, use version 2, and carry
+a 32-byte interaction ID, a 16-byte responder nonce, and at most 16,384 raw
+secret bytes. Frames may be fragmented or coalesced by the socket. Empty,
+oversized, incomplete, invalid JSON, malformed binary frames, unsupported flags,
+and non-canonical identifiers are rejected. Pickle, marshal, arbitrary class
 serialization, and object `repr` are never used.
 
 Every envelope has a strict `type` and rejects missing or extra fields:
@@ -76,11 +76,11 @@ Every envelope has a strict `type` and rejects missing or extra fields:
 - event: `protocol_version`, `event`, `sequence`, `payload`.
 
 JSON remains the control-plane encoding. Terminal output/input use the
-capability-gated `binary-terminal-v1` format documented in
+capability-gated `binary-terminal-v2` format documented in
 [terminal streaming](../architecture/terminal-streaming.md); raw bytes are
 never base64-encoded.
 
-Secret bytes use only capability-gated `binary-secret-v1`. A frontend first
+Secret bytes use only capability-gated `binary-secret-v2`. A frontend first
 claims an interaction and sends typed JSON decision metadata. The daemon then
 reserves one exact interaction/client/nonce slot. Only that peer may send one
 secret frame; it is delivered directly to the waiting private askpass channel,

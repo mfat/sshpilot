@@ -21,8 +21,7 @@ ConnectionSummary(
 ```
 
 `~/.ssh/config` is the source of truth. The app does not write or require
-`# sshpilot:ConnectionUUID` metadata. Legacy UUID comments are ignored on load
-and dropped when a managed block is rewritten by a normal edit.
+UUID metadata comments.
 
 ## Rules
 

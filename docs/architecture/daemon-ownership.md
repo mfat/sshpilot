@@ -165,10 +165,8 @@ binary framing, replay, and slow-peer isolation are defined in
   internal data dictionaries and manager instances are never serialized.
 - Connection DTOs omit passwords, passphrases, private keys, provider tokens,
   environment variables and internal source paths.
-- Connection IDs are stable opaque `connection:<uuid>` values backed by an
-  immutable persisted UUID. Rename and host metadata changes retain identity.
-- Former nickname hashes are deprecated lookup-only aliases during Protocol
-  v1 and are removed in Protocol v2. New DTOs and events never emit them.
+- Connection IDs are the SSH Host alias (`connection.id == connection.nickname`).
+  Rename is deletion of the old alias plus creation of the new alias.
 - Expected failures use stable `ErrorCode` values. Unexpected exceptions are
   logged internally and become safe `internal_error` responses.
 

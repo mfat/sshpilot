@@ -20,7 +20,7 @@ daemon forward services. Do not launch both for the same rule.
 ## Identity
 
 ```text
-forward:<UUIDv4>
+forward-<n>
 ```
 
 ## Lifecycle

@@ -100,11 +100,11 @@ on success and none on failure, ambiguity/no-auto-retry tests, secret-exclusion
 checks, and total outbound-byte backpressure coverage.
 
 Connection identity changes additionally require real-file migration and
-rollback tests, duplicate/malformed UUID repair, reload and daemon-restart
-stability, transitional-input compatibility, group/reference migration, and
-rename tests proving response/event/GTK identity remains unchanged. Migration
-tests must use isolated temporary configuration roots and never a developer's
-real SSH configuration.
+rollback tests, reload and daemon-restart stability, transitional-input
+compatibility, group/reference migration, and rename tests proving
+response/event/GTK identity remains unchanged. Migration tests must use
+isolated temporary configuration roots and never a developer's real SSH
+configuration.
 
 Session lifecycle changes additionally require the complete transition matrix,
 strict session-ID and request codecs, runner startup/failure/exit races,

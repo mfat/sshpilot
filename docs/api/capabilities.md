@@ -75,8 +75,8 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `terminal.resize` | Resize the owned PTY | Daemon: Implemented after binary-frame negotiation | `resize_terminal`; wire `terminal.resize` | None | Attached input owner and `TIOCSWINSZ` | v1 / API 0.8 |
 | `terminal.replay` | Replay retained terminal bytes | Daemon: Implemented after binary-frame negotiation | `replay_terminal`; wire `terminal.replay` | Dedicated replay binary frames | Bounded per-session replay ring | v1 / API 0.8 |
 | `interactions` | Legacy broad interaction identifier | Deprecated and never advertised | None | None | Replaced by narrow interaction capabilities | v1 |
-| `interactions.read` | Read safe typed interaction metadata | Daemon implemented after `binary-secret-v1` negotiation | `list_interactions`, `get_interaction` | Interaction lifecycle events | Daemon interaction broker | v1 / API 0.9 |
-| `interactions.respond` | Claim and answer eligible interactions | Daemon implemented after `binary-secret-v1` negotiation | claim/release/respond/cancel and one-use secret send | Interaction lifecycle events | Responder-bound nonce and secure Unix socket | v1 / API 0.9 |
+| `interactions.read` | Read safe typed interaction metadata | Daemon implemented after `binary-secret-v2` negotiation | `list_interactions`, `get_interaction` | Interaction lifecycle events | Daemon interaction broker | v1 / API 0.9 |
+| `interactions.respond` | Claim and answer eligible interactions | Daemon implemented after `binary-secret-v2` negotiation | claim/release/respond/cancel and one-use secret send | Interaction lifecycle events | Responder-bound nonce and secure Unix socket | v1 / API 0.9 |
 | `interactions.events` | Observe safe interaction lifecycle metadata | Daemon implemented | `subscribe_events` | `interaction.created`, `interaction.state_changed` | Bounded daemon event stream | v1 / API 0.9 |
 | `interactions.host_key` | Strict unknown-host trust decisions | Daemon implemented | Typed host-key decisions | Interaction lifecycle events | Key scan plus exact session pinning | v1 / API 0.9 |
 | `interactions.password` | Typed login-password askpass | Daemon implemented | One-use secret response | Interaction lifecycle events | Daemon askpass helper and selected secret backend | v1 / API 0.9 |
@@ -168,7 +168,7 @@ Deprecated compatibility identifier. Logical attachment remains guarded by
 <!-- api-capability: terminal.output -->
 ## `terminal.output`
 
-Daemon-only raw PTY output over `binary-terminal-v1`. A client negotiates the
+Daemon-only raw PTY output over `binary-terminal-v2`. A client negotiates the
 frame type, subscribes locally, and attaches with `want_terminal_output=True`.
 Output uses per-session absolute byte offsets and never enters the CoreEvent
 queue.

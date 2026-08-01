@@ -8,13 +8,13 @@ events, terminal frames, replay, logs, argv, and environment values.
 After an eligible client claims a password/passphrase interaction it sends
 typed decision metadata over JSON. A submit decision reserves one exact
 interaction/client/nonce slot. The value then uses negotiated
-`binary-secret-v1`:
+`binary-secret-v2`:
 
 ```text
 magic "SPSB"
-version 1
+version 2
 flags 0
-canonical interaction UUID
+canonical interaction ID (32-byte null-padded UTF-8)
 16-byte claim nonce
 1..16384 raw secret bytes
 ```

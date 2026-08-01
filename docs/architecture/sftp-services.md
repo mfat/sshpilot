@@ -20,11 +20,10 @@ GTK must not spawn an internal SFTP subprocess on the production daemon path.
 Service IDs are daemon-lifetime only:
 
 ```text
-sftp:<UUIDv4>
+sftp-<n>
 ```
 
-Nil UUIDs are rejected. IDs are never reused and are not persisted across
-daemon restart.
+IDs are never reused and are not persisted across daemon restart.
 
 ## Lifecycle
 

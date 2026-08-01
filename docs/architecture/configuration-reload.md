@@ -26,7 +26,7 @@ Watcher callbacks only mark the configuration dirty. One coordinator uses a
 200 ms monotonic debounce. At most one reload is active and at most one
 follow-up is represented by a dirty flag. Reload work is submitted without
 waiting to the daemon's bounded command executor under one configuration key.
-Daemon connection mutations use the same key, so parsing, UUID migration, and
+Daemon connection mutations use the same key, so parsing and
 CRUD persistence cannot run concurrently. Other executor keys and selector
 work remain live.
 
@@ -34,9 +34,9 @@ work remain live.
 
 `ConnectionManager` has a re-entrant authoritative-state transaction. Reloads
 build a new connection collection with object reuse disabled, then publish the
-new visible collection only after parsing and required UUID marker writes
-succeed. Readers therefore see either the prior committed collection or the
-new one. Malformed input preserves the previous visible collection.
+new visible collection only after parsing succeeds. Readers therefore see either
+the prior committed collection or the new one. Malformed input preserves the
+previous visible collection.
 
 The JSON document is read strictly before it replaces the in-memory document.
 Invalid JSON or invalid group container types preserve the prior JSON, groups,
@@ -44,18 +44,17 @@ and connection snapshot. Short-lived missing or empty root-file states receive
 two bounded stabilization retries; persistent removal is then treated as an
 authoritative edit.
 
-Diffing uses stable `connection:<uuid>` IDs and public `ConnectionSummary`
+Diffing uses stable connection alias IDs and public `ConnectionSummary`
 values. Events are emitted after commit in deterministic order:
 
 1. `connection.deleted`
 2. `connection.created`
 3. `connection.updated`
 
-A rename that retains the adjacent UUID marker is one update with the same ID.
-The loader also recognizes a single stale-token marker in a single-host block,
-which covers the common external `Host old` to `Host new` edit and rewrites the
-marker authoritatively. A genuinely new host without a marker receives a UUIDv4
-from the daemon before it becomes visible.
+A rename is one update with the same alias if the editor retains the Host
+block. The loader also recognizes a single stale token in a single-host block,
+which covers the common external `Host old` to `Host new` edit. A genuinely
+new host is created with its SSH Host alias as the connection ID.
 
 Daemon writes are not ignored by a timing window. Their filesystem notices
 coalesce into a reload, and semantic equality produces no duplicate event or

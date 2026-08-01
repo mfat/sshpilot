@@ -149,7 +149,7 @@ interactions.passphrase
 terminal, and interaction control because current production GTK terminal
 ownership has not moved. Daemon terminal capabilities require
 `binary-terminal-v1`; responder/secret capabilities require
-`binary-secret-v1`. Neither provider advertises SFTP, forwarding, plugins, or
+`binary-secret-v2`. Neither provider advertises SFTP, forwarding, plugins, or
 broad secret access.
 
 The write DTO intentionally contains only basic connection metadata. Daemon
@@ -179,18 +179,10 @@ Ordinary responses never contain:
 - environment variables;
 - subprocess, PTY, provider, GTK or VTE objects.
 
-Every persisted connection now has an immutable UUID. Protocol v1 emits the
-opaque form `connection:<uuid>` in all connection DTOs, mutation results, and
-events. Rename and host/user/port/protocol updates preserve it. The UUID is not
-separately exposed and ordinary create/update requests cannot supply or replace
-it.
-
-For one bounded Protocol v1 compatibility window, get/update/delete also accept
-the former `connection:v1:<hash>` value when it matches the connection's
-current nickname and protocol. Transitional values are deprecated input aliases
-only, are never emitted, and may stop resolving after rename. They are removed
-in Protocol v2. See
-[stable connection identity](connection-identity.md).
+Every persisted connection has an identifier equal to its SSH Host alias.
+Protocol v1 emits this alias in all connection DTOs, mutation results, and
+events. Rename is deletion of the old alias plus creation of a new alias;
+host/user/port/protocol updates preserve the alias.
 
 `ConnectionHealth` is separate from `SessionState`. The current
 terminal-derived `ConnectionState` is not converted into reachability;
@@ -198,7 +190,7 @@ terminal-derived `ConnectionState` is not converted into reachability;
 
 ## Session DTOs and IDs
 
-Daemon sessions use strict opaque `session:<uuid>` IDs unique for one daemon
+Daemon sessions use strict opaque `session-<n>` IDs unique for one daemon
 process. `SessionSummary` exposes lifecycle state, creation time, safe
 exit/failure metadata, empty terminal capabilities, and logical attachment
 count. It never exposes a process/PID, command, environment, PTY, secret, or
@@ -283,7 +275,7 @@ They use separately negotiated binary frame types and bounded ownership paths.
 - Rows/columns must be positive and bounded.
 - Public models never expose PTY descriptors or subprocess objects.
 - Interaction decisions contain no secret values. A claimed responder sends a
-  secret only through one-use `binary-secret-v1`.
+  secret only through one-use `binary-secret-v2`.
 - Secret answers must never enter event histories, error details or logs.
 - Answered/cancelled/expired/failed interactions are final.
 

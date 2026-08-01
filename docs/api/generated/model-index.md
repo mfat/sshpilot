@@ -30,7 +30,7 @@ Synthetic representation:
 {
   "from_sequence": 0,
   "request_input": true,
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "session-12",
   "want_terminal_output": false
 }
 ```
@@ -62,7 +62,7 @@ Synthetic representation:
     "client_id": "client:example",
     "id": "id:example",
     "input_owner": false,
-    "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+    "session_id": "session-12"
   },
   "available_start": 0,
   "eof": false,
@@ -73,7 +73,7 @@ Synthetic representation:
     "capabilities": {
       "supported": []
     },
-    "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+    "connection_id": "production",
     "created_at": "<UTC timestamp at creation>",
     "exit_info": null,
     "failure": null,
@@ -130,7 +130,7 @@ Synthetic representation:
   "client_id": "client:example",
   "id": "id:example",
   "input_owner": false,
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -242,7 +242,7 @@ Synthetic representation:
 ```json
 {
   "attachment_id": "attachment:example",
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -312,7 +312,7 @@ Synthetic representation:
 
 ```json
 {
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -800,7 +800,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000"
+  "connection_id": "production"
 }
 ```
 
@@ -823,7 +823,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "deleted": false
 }
 ```
@@ -848,7 +848,7 @@ Synthetic representation:
 ```json
 {
   "attachment_id": "attachment:example",
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -978,7 +978,7 @@ Synthetic representation:
   "bind_host": "127.0.0.1",
   "bind_port": 8022,
   "closed_at": null,
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "created_at": "<UTC timestamp at creation>",
   "destination_host": null,
   "destination_port": null,
@@ -1343,7 +1343,7 @@ Synthetic representation:
 ```json
 {
   "attempt": 0,
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "created_at": "2030-01-01T00:00:00Z",
   "expires_at": null,
   "id": "id:example",
@@ -1355,7 +1355,7 @@ Synthetic representation:
     "status": "unknown"
   },
   "responder_client_id": null,
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "session-12",
   "state": "pending",
   "type": "host_key_confirmation"
 }
@@ -1407,7 +1407,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "cursor": null,
   "limit": null,
   "path": "/remote/example",
@@ -1468,7 +1468,7 @@ Synthetic representation:
 {
   "bind_host": "127.0.0.1",
   "bind_port": 8022,
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "destination_host": null,
   "destination_port": null,
   "type": {}
@@ -1494,7 +1494,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "dimensions": null
 }
 ```
@@ -1517,7 +1517,7 @@ Synthetic representation:
 
 ```json
 {
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000"
+  "connection_id": "production"
 }
 ```
 
@@ -1692,7 +1692,7 @@ Synthetic representation:
   "bind_port": 8022,
   "id": "id:example",
   "kind": {},
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "session-12",
   "state": {},
   "target_host": "",
   "target_port": null
@@ -1719,7 +1719,7 @@ Synthetic representation:
 ```json
 {
   "attachment_id": "attachment:example",
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -1811,7 +1811,7 @@ Synthetic representation:
   "after_sequence": null,
   "attachment_id": null,
   "max_bytes": 1048576,
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -1848,7 +1848,7 @@ Synthetic representation:
   "eof": false,
   "first_sequence": 0,
   "next_sequence": 1,
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "session-12",
   "truncated": false
 }
 ```
@@ -1908,7 +1908,7 @@ Synthetic representation:
     "columns": 80,
     "rows": 24
   },
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -2062,7 +2062,7 @@ Synthetic representation:
   "capabilities": {
     "supported": []
   },
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "created_at": "<UTC timestamp at creation>",
   "exit_info": null,
   "failure": null,
@@ -2206,7 +2206,7 @@ Synthetic representation:
 {
   "attachment_count": 0,
   "closed_at": null,
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "created_at": "<UTC timestamp at creation>",
   "failure": null,
   "id": "id:example",
@@ -2268,7 +2268,7 @@ Synthetic representation:
 ```json
 {
   "conflict_policy": "fail",
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "direction": {},
   "local_mode": "daemon_path",
   "local_path": {},
@@ -2374,7 +2374,7 @@ Synthetic representation:
 {
   "attachment_id": "attachment:example",
   "data": "<sensitive value omitted>",
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -2406,7 +2406,7 @@ Synthetic representation:
   "eof": false,
   "replay": false,
   "sequence": 0,
-  "session_id": "session:550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "session-12"
 }
 ```
 
@@ -2447,7 +2447,7 @@ Synthetic representation:
   "bytes_total": null,
   "bytes_transferred": null,
   "completed_at": null,
-  "connection_id": "connection:550e8400-e29b-41d4-a716-446655440000",
+  "connection_id": "production",
   "created_at": "<UTC timestamp at creation>",
   "destination_display": {},
   "direction": {},

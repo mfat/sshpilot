@@ -12,7 +12,7 @@ is deferred (API rejects non-`daemon_path` mode).
 ## Identity
 
 ```text
-transfer:<UUIDv4>
+transfer-<n>
 ```
 
 ## Lifecycle

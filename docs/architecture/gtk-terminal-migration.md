@@ -390,8 +390,8 @@ REQUIRED_DAEMON_TERMINAL_CAPABILITIES = frozenset({
 ```
 
 Absence of terminal capabilities maps to `terminal_transport_unavailable`
-(binary-terminal-v1). Absence of interaction capabilities maps to
-`secret_transport_unavailable` (binary-secret-v1).
+(binary-terminal-v2). Absence of interaction capabilities maps to
+`secret_transport_unavailable` (binary-secret-v2).
 
 ### Capability Gating
 

@@ -187,7 +187,7 @@ def attach_daemon_session(self, client, bridge, session_id, *,
         client=client,
         bridge=bridge,
         connection_id=connection_id or self.connection.id,
-        view_id=str(uuid.uuid4()),
+        view_id=str(uuid.uuid4()),  # GTK-local view identifier
         on_output=self._on_daemon_output,
         on_continuity_lost=self._on_continuity_lost,
         on_error=self._on_daemon_error,
@@ -339,7 +339,7 @@ The complete restoration metadata schema:
 @dataclass
 class SessionRestoreMetadata:
     # Required identifiers
-    session_id: str              # Daemon session UUID
+    session_id: str              # Daemon session identifier (e.g. session-12)
     daemon_instance_id: str      # Daemon instance for stale detection
     connection_id: str           # SSH connection identifier
 

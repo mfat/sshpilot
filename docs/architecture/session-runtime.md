@@ -36,11 +36,10 @@ secret, or GTK/GObject value.
 
 ## Identity and lifetime
 
-Each open allocates a random UUIDv4 and exposes it as
-`session:<canonical-lowercase-uuid>`. Parsing is strict, bounded, rejects wrong
-prefixes and nil UUIDs, and never interprets PIDs, timestamps, connection
-names, or other input as identity. IDs are stable only for one daemon process;
-sessions are intentionally not persisted or restored after restart.
+Each open allocates a monotonic counter ID and exposes it as
+`session-<n>`. Parsing is strict, bounded, and rejects wrong prefixes.
+IDs are stable only for one daemon process; sessions are intentionally not
+persisted or restored after restart.
 
 Records remain visible in creation order after closure. Retention is bounded
 to the newest 100 closed records. Active records are never evicted.

@@ -214,11 +214,8 @@ terminal-derived `ConnectionState` into a false reachability claim.
 
 ## Key conflicts and blockers
 
-- Connection identity is now backed by an immutable persisted UUID and
-  Protocol v1 emits stable opaque UUID-derived IDs. Deprecated nickname hashes
-  remain input-only aliases until Protocol v2.
-- Active terminals, sidebar rows, and several maps depend on `Connection`
-  object identity. Reload deliberately reuses objects by UUID, preserving those
+- Connection identity is the SSH Host alias. Protocol v1 emits the alias
+  in connection DTOs. Reload reuses objects by alias, preserving those
   maps without prematurely moving terminal ownership.
 - `TerminalManager` combines session policy with tabs, colors, dialogs, vault
   prompts, plugin events, and reconnect presentation.
