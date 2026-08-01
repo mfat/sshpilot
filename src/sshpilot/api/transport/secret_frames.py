@@ -12,7 +12,7 @@ from sshpilot.api.models.common import InteractionId, require_identifier
 from .framing import FramingError, MAX_FRAME_SIZE
 from .wire_ids import id_to_wire_bytes, wire_bytes_to_id
 
-SECRET_STREAM_VERSION = 1
+SECRET_STREAM_VERSION = 2
 MAX_SECRET_PAYLOAD_SIZE = 16 * 1024
 _MAGIC = b"SPSB"
 _HEADER = struct.Struct(">4sBBH32s16s")
