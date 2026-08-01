@@ -59,8 +59,8 @@ Synthetic representation:
 ```json
 {
   "attachment": {
-    "client_id": "client:example",
-    "id": "id:example",
+    "client_id": "client-abc123",
+    "id": "production",
     "input_owner": false,
     "session_id": "session-12"
   },
@@ -77,7 +77,7 @@ Synthetic representation:
     "created_at": "<UTC timestamp at creation>",
     "exit_info": null,
     "failure": null,
-    "id": "id:example",
+    "id": "production",
     "input_owner": null,
     "state": "created"
   }
@@ -127,8 +127,8 @@ Synthetic representation:
 
 ```json
 {
-  "client_id": "client:example",
-  "id": "id:example",
+  "client_id": "client-abc123",
+  "id": "production",
   "input_owner": false,
   "session_id": "session-12"
 }
@@ -152,7 +152,7 @@ Synthetic representation:
 
 ```json
 {
-  "transfer_id": "transfer:example"
+  "transfer_id": "transfer-3"
 }
 ```
 
@@ -241,7 +241,7 @@ Synthetic representation:
 
 ```json
 {
-  "attachment_id": "attachment:example",
+  "attachment_id": "attachment-2",
   "session_id": "session-12"
 }
 ```
@@ -405,7 +405,7 @@ Synthetic representation:
   "health": "unknown",
   "host": "example",
   "hostname": "example.invalid",
-  "id": "id:example",
+  "id": "production",
   "identity_configured": false,
   "nickname": "example",
   "port": 22,
@@ -446,7 +446,7 @@ Synthetic representation:
   "health": "unknown",
   "host": "example",
   "hostname": "example.invalid",
-  "id": "id:example",
+  "id": "production",
   "nickname": "example",
   "port": 22,
   "protocol": "ssh",
@@ -847,7 +847,7 @@ Synthetic representation:
 
 ```json
 {
-  "attachment_id": "attachment:example",
+  "attachment_id": "attachment-2",
   "session_id": "session-12"
 }
 ```
@@ -908,7 +908,7 @@ Synthetic representation:
 {
   "error": "<sensitive value omitted>",
   "protocol_version": {},
-  "request_id": "request:example"
+  "request_id": "request-3"
 }
 ```
 
@@ -983,7 +983,7 @@ Synthetic representation:
   "destination_host": null,
   "destination_port": null,
   "failure": null,
-  "id": "id:example",
+  "id": "production",
   "owner_client_id": null,
   "session_id": null,
   "state": {},
@@ -1010,7 +1010,7 @@ Synthetic representation:
 
 ```json
 {
-  "id": "id:example",
+  "id": "production",
   "name": ""
 }
 ```
@@ -1134,8 +1134,8 @@ Synthetic representation:
 
 ```json
 {
-  "attachment_id": "attachment:example",
-  "client_id": "client:example"
+  "attachment_id": "attachment-2",
+  "client_id": "client-abc123"
 }
 ```
 
@@ -1158,7 +1158,7 @@ Synthetic representation:
 
 ```json
 {
-  "interaction_id": "interaction:example",
+  "interaction_id": "interaction-4",
   "reason": ""
 }
 ```
@@ -1185,9 +1185,9 @@ Synthetic representation:
 ```json
 {
   "expires_at": null,
-  "interaction_id": "interaction:example",
+  "interaction_id": "interaction-4",
   "nonce": "example",
-  "responder_client_id": "client:example"
+  "responder_client_id": "client-abc123"
 }
 ```
 
@@ -1213,7 +1213,7 @@ Synthetic representation:
 ```json
 {
   "host_key_decision": null,
-  "interaction_id": "interaction:example",
+  "interaction_id": "interaction-4",
   "remember_policy": "do_not_store",
   "secret_decision": null
 }
@@ -1238,7 +1238,7 @@ Synthetic representation:
 
 ```json
 {
-  "interaction_id": "interaction:example",
+  "interaction_id": "interaction-4",
   "reason": "example"
 }
 ```
@@ -1276,11 +1276,11 @@ Synthetic representation:
   "choices": [],
   "created_at": "<UTC timestamp at creation>",
   "expires_at": null,
-  "id": "id:example",
+  "id": "production",
   "kind": "password",
   "message": "Example request",
   "originating_client_id": null,
-  "request_id": "request:example",
+  "request_id": "request-3",
   "secret": false,
   "session_id": null,
   "status": "pending"
@@ -1309,7 +1309,7 @@ Synthetic representation:
 ```json
 {
   "choice": null,
-  "interaction_id": "interaction:example",
+  "interaction_id": "interaction-4",
   "status": "pending",
   "value": "<sensitive value omitted>"
 }
@@ -1346,7 +1346,7 @@ Synthetic representation:
   "connection_id": "production",
   "created_at": "2030-01-01T00:00:00Z",
   "expires_at": null,
-  "id": "id:example",
+  "id": "production",
   "prompt": {
     "fingerprint": "example",
     "hostname": "example.invalid",
@@ -1381,7 +1381,7 @@ Synthetic representation:
 ```json
 {
   "expired_at": "<UTC timestamp at creation>",
-  "interaction_id": "interaction:example"
+  "interaction_id": "interaction-4"
 }
 ```
 
@@ -1633,7 +1633,7 @@ Synthetic representation:
   "arguments": [],
   "operation": "status",
   "plugin_id": "example.plugin",
-  "request_id": "request:example"
+  "request_id": "request-3"
 }
 ```
 
@@ -1658,7 +1658,7 @@ Synthetic representation:
 ```json
 {
   "plugin_id": "example.plugin",
-  "request_id": "request:example",
+  "request_id": "request-3",
   "values": "<sensitive value omitted>"
 }
 ```
@@ -1690,7 +1690,7 @@ Synthetic representation:
 {
   "bind_host": "127.0.0.1",
   "bind_port": 8022,
-  "id": "id:example",
+  "id": "production",
   "kind": {},
   "session_id": "session-12",
   "state": {},
@@ -1718,7 +1718,7 @@ Synthetic representation:
 
 ```json
 {
-  "attachment_id": "attachment:example",
+  "attachment_id": "attachment-2",
   "session_id": "session-12"
 }
 ```
@@ -1879,7 +1879,7 @@ Synthetic representation:
   "method": {},
   "params": "<sensitive value omitted>",
   "protocol_version": {},
-  "request_id": "request:example"
+  "request_id": "request-3"
 }
 ```
 
@@ -1903,7 +1903,7 @@ Synthetic representation:
 
 ```json
 {
-  "attachment_id": "attachment:example",
+  "attachment_id": "attachment-2",
   "dimensions": {
     "columns": 80,
     "rows": 24
@@ -2066,7 +2066,7 @@ Synthetic representation:
   "created_at": "<UTC timestamp at creation>",
   "exit_info": null,
   "failure": null,
-  "id": "id:example",
+  "id": "production",
   "input_owner": null,
   "state": "created"
 }
@@ -2209,7 +2209,7 @@ Synthetic representation:
   "connection_id": "production",
   "created_at": "<UTC timestamp at creation>",
   "failure": null,
-  "id": "id:example",
+  "id": "production",
   "owner_client_id": null,
   "started_at": null,
   "state": {}
@@ -2323,7 +2323,7 @@ Synthetic representation:
 ```json
 {
   "protocol_version": {},
-  "request_id": "request:example",
+  "request_id": "request-3",
   "result": "<sensitive value omitted>"
 }
 ```
@@ -2372,7 +2372,7 @@ Synthetic representation:
 
 ```json
 {
-  "attachment_id": "attachment:example",
+  "attachment_id": "attachment-2",
   "data": "<sensitive value omitted>",
   "session_id": "session-12"
 }
@@ -2452,7 +2452,7 @@ Synthetic representation:
   "destination_display": {},
   "direction": {},
   "failure": null,
-  "id": "id:example",
+  "id": "production",
   "owner_client_id": null,
   "sftp_service_id": {},
   "source_display": {},

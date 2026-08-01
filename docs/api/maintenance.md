@@ -99,12 +99,11 @@ contract against both clients, strict request/result codecs, exactly one event
 on success and none on failure, ambiguity/no-auto-retry tests, secret-exclusion
 checks, and total outbound-byte backpressure coverage.
 
-Connection identity changes additionally require real-file migration and
-rollback tests, reload and daemon-restart stability, transitional-input
-compatibility, group/reference migration, and rename tests proving
-response/event/GTK identity remains unchanged. Migration tests must use
-isolated temporary configuration roots and never a developer's real SSH
-configuration.
+Connection identity changes additionally require config reload tests,
+alias-preserving update tests, alias rename tests proving delete-plus-create
+semantics, group/reference updates, duplicate-alias handling, and GTK
+snapshot reconciliation. Tests must use isolated temporary configuration
+roots and never a developer's real SSH configuration.
 
 Session lifecycle changes additionally require the complete transition matrix,
 strict session-ID and request codecs, runner startup/failure/exit races,
