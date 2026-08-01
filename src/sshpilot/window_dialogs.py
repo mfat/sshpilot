@@ -2321,7 +2321,13 @@ class WindowConfigDialogsMixin:
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                self.group_manager.create_group(name, color=color)
+                if self._daemon_mode_active():
+                    try:
+                        self.client.create_group(name, color=color or "")
+                    except Exception:
+                        self.group_manager.create_group(name, color=color)
+                else:
+                    self.group_manager.create_group(name, color=color)
                 self.rebuild_connection_list()
                 return True
 
@@ -2360,8 +2366,16 @@ class WindowConfigDialogsMixin:
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                self.group_manager.rename_group(group_id, name)
-                self.group_manager.set_group_color(group_id, color)
+                if self._daemon_mode_active():
+                    try:
+                        self.client.rename_group(group_id, name)
+                        self.group_manager.set_group_color(group_id, color)
+                    except Exception:
+                        self.group_manager.rename_group(group_id, name)
+                        self.group_manager.set_group_color(group_id, color)
+                else:
+                    self.group_manager.rename_group(group_id, name)
+                    self.group_manager.set_group_color(group_id, color)
                 self.rebuild_connection_list()
                 return True
 
@@ -2453,8 +2467,24 @@ class WindowConfigDialogsMixin:
             def assign(nickname: str, target_group_id) -> None:
                 if is_copy:
                     if target_group_id:
+                        if self._daemon_mode_active():
+                            connection_id = self._find_connection_id_for_nickname(nickname)
+                            if connection_id:
+                                try:
+                                    self.client.assign_connection_to_group(connection_id, target_group_id)
+                                    return
+                                except Exception:
+                                    pass
                         self.group_manager.copy_connection_to_group(nickname, target_group_id)
                 else:
+                    if self._daemon_mode_active():
+                        connection_id = self._find_connection_id_for_nickname(nickname)
+                        if connection_id:
+                            try:
+                                self.client.assign_connection_to_group(connection_id, target_group_id)
+                                return
+                            except Exception:
+                                pass
                     self.group_manager.move_connection(nickname, target_group_id)
 
             available_groups = self.get_available_groups()
@@ -2633,7 +2663,15 @@ class WindowConfigDialogsMixin:
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        new_group_id = self.group_manager.create_group(group_name, color=selected_color)
+                        if self._daemon_mode_active():
+                            try:
+                                new_group_id = self.client.create_group(
+                                    group_name, color=selected_color or ""
+                                )
+                            except Exception:
+                                new_group_id = self.group_manager.create_group(group_name, color=selected_color)
+                        else:
+                            new_group_id = self.group_manager.create_group(group_name, color=selected_color)
                         for nickname in connection_nicknames:
                             assign(nickname, new_group_id)
                         self.rebuild_connection_list()

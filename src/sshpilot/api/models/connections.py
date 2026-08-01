@@ -350,6 +350,57 @@ class UpdateConnectionMetadataRequest:
             raise TypeError("meta must be a mapping")
 
 
+# -- Group request / response models ---------------------------------------
+
+@dataclass(frozen=True)
+class AssignConnectionToGroupRequest:
+    """Move a connection to a group (or root if group_id is empty)."""
+
+    connection_id: ConnectionId
+    group_id: str = ""
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+
+
+@dataclass(frozen=True)
+class CreateGroupRequest:
+    """Create a new group."""
+
+    name: str
+    parent_id: str = ""
+    color: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("group name must not be empty")
+
+
+@dataclass(frozen=True)
+class DeleteGroupRequest:
+    """Delete a group."""
+
+    group_id: str
+
+    def __post_init__(self) -> None:
+        if not self.group_id.strip():
+            raise ValueError("group_id must not be empty")
+
+
+@dataclass(frozen=True)
+class RenameGroupRequest:
+    """Rename a group."""
+
+    group_id: str
+    new_name: str
+
+    def __post_init__(self) -> None:
+        if not self.group_id.strip():
+            raise ValueError("group_id must not be empty")
+        if not self.new_name.strip():
+            raise ValueError("new_name must not be empty")
+
+
 # -- Request / Response models ----------------------------------------------
 
 @dataclass(frozen=True)

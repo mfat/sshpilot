@@ -39,6 +39,7 @@ from ..models.interactions import (
 from ..models.connections import (
     EDITABLE_CONFIG_FIELDS,
     AuthenticationMethod,
+    AssignConnectionToGroupRequest,
     ConnectionDetails,
     ConnectionEditorCapabilities,
     ConnectionEditorDetails,
@@ -47,12 +48,15 @@ from ..models.connections import (
     ConnectionValidationError,
     ConnectionValidationResult,
     CreateConnectionRequest,
+    CreateGroupRequest,
     DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    DeleteGroupRequest,
     ForwardingRule,
     GroupReference,
     LookupKeyPassphraseRequest,
+    RenameGroupRequest,
     StoreConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
     UNSET,
@@ -1557,6 +1561,100 @@ def update_connection_metadata_request_from_wire(
             _identifier(data["connection_id"], "connection id")
         ),
         meta=data["meta"],
+    )
+
+
+def assign_connection_to_group_request_to_wire(
+    request: AssignConnectionToGroupRequest,
+) -> Dict[str, Any]:
+    if type(request) is not AssignConnectionToGroupRequest:
+        raise TypeError("assign connection to group request is required")
+    payload: Dict[str, Any] = {"connection_id": request.connection_id}
+    if request.group_id:
+        payload["group_id"] = request.group_id
+    return payload
+
+
+def assign_connection_to_group_request_from_wire(
+    value: Any,
+) -> AssignConnectionToGroupRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id"},
+        optional={"group_id"},
+        context="assign connection to group request",
+    )
+    return AssignConnectionToGroupRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        group_id=_text(data.get("group_id", ""), "group_id", allow_empty=True),
+    )
+
+
+def create_group_request_to_wire(
+    request: CreateGroupRequest,
+) -> Dict[str, Any]:
+    if type(request) is not CreateGroupRequest:
+        raise TypeError("create group request is required")
+    payload: Dict[str, Any] = {"name": request.name}
+    if request.parent_id:
+        payload["parent_id"] = request.parent_id
+    if request.color:
+        payload["color"] = request.color
+    return payload
+
+
+def create_group_request_from_wire(value: Any) -> CreateGroupRequest:
+    data = _strict_fields(
+        value,
+        required={"name"},
+        optional={"parent_id", "color"},
+        context="create group request",
+    )
+    return CreateGroupRequest(
+        name=_text(data["name"], "group name"),
+        parent_id=_text(data.get("parent_id", ""), "parent_id", allow_empty=True),
+        color=_text(data.get("color", ""), "color", allow_empty=True),
+    )
+
+
+def delete_group_request_to_wire(
+    request: DeleteGroupRequest,
+) -> Dict[str, Any]:
+    if type(request) is not DeleteGroupRequest:
+        raise TypeError("delete group request is required")
+    return {"group_id": request.group_id}
+
+
+def delete_group_request_from_wire(value: Any) -> DeleteGroupRequest:
+    data = _strict_fields(
+        value,
+        required={"group_id"},
+        context="delete group request",
+    )
+    return DeleteGroupRequest(
+        group_id=_text(data["group_id"], "group_id"),
+    )
+
+
+def rename_group_request_to_wire(
+    request: RenameGroupRequest,
+) -> Dict[str, Any]:
+    if type(request) is not RenameGroupRequest:
+        raise TypeError("rename group request is required")
+    return {"group_id": request.group_id, "new_name": request.new_name}
+
+
+def rename_group_request_from_wire(value: Any) -> RenameGroupRequest:
+    data = _strict_fields(
+        value,
+        required={"group_id", "new_name"},
+        context="rename group request",
+    )
+    return RenameGroupRequest(
+        group_id=_text(data["group_id"], "group_id"),
+        new_name=_text(data["new_name"], "new_name"),
     )
 
 

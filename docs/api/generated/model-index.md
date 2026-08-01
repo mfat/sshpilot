@@ -7,6 +7,30 @@ It is transport-neutral and is not an OpenAPI document. Runtime semantics live
 in [../models.md](../models.md). Synthetic examples never read live objects or
 stored connection data.
 
+<!-- api-model: AssignConnectionToGroupRequest -->
+## `AssignConnectionToGroupRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Move a connection to a group (or root if group_id is empty).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `group_id` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "group_id": ""
+}
+```
+
 <!-- api-model: AttachSessionRequest -->
 ## `AttachSessionRequest`
 
@@ -725,6 +749,32 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: CreateGroupRequest -->
+## `CreateGroupRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Create a new group.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `name` | `str` | Yes | — | No |
+| `parent_id` | `str` | No | `` | No |
+| `color` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "color": "",
+  "name": "example",
+  "parent_id": ""
+}
+```
+
 <!-- api-model: DaemonDiagnostics -->
 ## `DaemonDiagnostics`
 
@@ -984,6 +1034,28 @@ Synthetic representation:
 {
   "connection_id": "production",
   "deleted": false
+}
+```
+
+<!-- api-model: DeleteGroupRequest -->
+## `DeleteGroupRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Delete a group.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `group_id` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "group_id": "example"
 }
 ```
 
@@ -1981,6 +2053,30 @@ Synthetic representation:
   "path": "/remote/example",
   "size": null,
   "uid": null
+}
+```
+
+<!-- api-model: RenameGroupRequest -->
+## `RenameGroupRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Rename a group.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `group_id` | `str` | Yes | — | No |
+| `new_name` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "group_id": "example",
+  "new_name": "example"
 }
 ```
 

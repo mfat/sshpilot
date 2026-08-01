@@ -106,6 +106,10 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "lookup_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "update_connection_metadata": Capability.CONNECTIONS_METADATA_WRITE,
+    "assign_connection_to_group": Capability.CONNECTIONS_GROUPS,
+    "create_group": Capability.CONNECTIONS_GROUPS,
+    "delete_group": Capability.CONNECTIONS_GROUPS,
+    "rename_group": Capability.CONNECTIONS_GROUPS,
     "subscribe_events": Capability.CONNECTIONS_EVENTS,
     "update_connection": Capability.CONNECTIONS_WRITE,
 }
@@ -197,6 +201,7 @@ class InProcessClient:
             Capability.CONNECTIONS_CONFIG_READ,
             Capability.CONNECTIONS_SECRETS_WRITE,
             Capability.CONNECTIONS_METADATA_WRITE,
+            Capability.CONNECTIONS_GROUPS,
         }
         if all(
             callable(getattr(connection_manager, method_name, None))
@@ -631,6 +636,68 @@ class InProcessClient:
             return True
         except Exception:
             logger.exception("Failed to update connection metadata via daemon RPC")
+            return False
+
+    def assign_connection_to_group(
+        self, connection_id: ConnectionId, group_id: str
+    ) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            return False
+        nickname = getattr(connection, "nickname", "")
+        if not nickname:
+            return False
+        try:
+            group_manager = getattr(self._connection_manager, "group_manager", None)
+            if group_manager is None:
+                return False
+            target = group_id if group_id else None
+            group_manager.move_connection(nickname, target)
+            return True
+        except Exception:
+            logger.exception("Failed to assign connection to group via daemon RPC")
+            return False
+
+    def create_group_rpc(
+        self, name: str, parent_id: str = "", color: str = ""
+    ) -> Optional[str]:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        try:
+            group_manager = getattr(self._connection_manager, "group_manager", None)
+            if group_manager is None:
+                return None
+            return group_manager.create_group(name, parent_id=parent_id or None, color=color or None)
+        except Exception:
+            logger.exception("Failed to create group via daemon RPC")
+            return None
+
+    def delete_group_rpc(self, group_id: str) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        try:
+            group_manager = getattr(self._connection_manager, "group_manager", None)
+            if group_manager is None:
+                return False
+            group_manager.delete_group(group_id)
+            return True
+        except Exception:
+            logger.exception("Failed to delete group via daemon RPC")
+            return False
+
+    def rename_group_rpc(self, group_id: str, new_name: str) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        try:
+            group_manager = getattr(self._connection_manager, "group_manager", None)
+            if group_manager is None:
+                return False
+            group_manager.rename_group(group_id, new_name)
+            return True
+        except Exception:
+            logger.exception("Failed to rename group via daemon RPC")
             return False
 
     def enable_serialized_command_threads(self) -> None:

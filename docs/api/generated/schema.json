@@ -1,6 +1,10 @@
 {
   "api_implementation_version": "0.11",
   "client_method_contract": {
+    "assign_connection_to_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
     "attach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -49,12 +53,20 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "create_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
     "delete_connection": {
       "capability": "connections.write",
       "status": "implemented"
     },
     "delete_connection_password": {
       "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "delete_group": {
+      "capability": "connections.groups",
       "status": "implemented"
     },
     "detach_session": {
@@ -152,6 +164,10 @@
     "release_terminal_input": {
       "capability": "terminal.input",
       "status": "daemon-only"
+    },
+    "rename_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
     },
     "replay_terminal": {
       "capability": "terminal.replay",
@@ -255,11 +271,20 @@
     }
   },
   "daemon_method_contract": {
+    "connections.assign_to_group": {
+      "capability": "connections.groups"
+    },
     "connections.create": {
       "capability": "connections.write"
     },
+    "connections.create_group": {
+      "capability": "connections.groups"
+    },
     "connections.delete": {
       "capability": "connections.write"
+    },
+    "connections.delete_group": {
+      "capability": "connections.groups"
     },
     "connections.delete_password": {
       "capability": "connections.secrets.write"
@@ -275,6 +300,9 @@
     },
     "connections.lookup_passphrase": {
       "capability": "connections.secrets.write"
+    },
+    "connections.rename_group": {
+      "capability": "connections.groups"
     },
     "connections.store_passphrase": {
       "capability": "connections.secrets.write"
@@ -760,6 +788,25 @@
     "TransferId"
   ],
   "models": {
+    "AssignConnectionToGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": "",
+          "name": "group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
     "AttachSessionRequest": {
       "fields": [
         {
@@ -1717,6 +1764,32 @@
       ],
       "status": "Schema only"
     },
+    "CreateGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "parent_id",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "color",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
     "DaemonDiagnostics": {
       "fields": [
         {
@@ -2110,6 +2183,18 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "DeleteGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Schema only"
@@ -3412,6 +3497,25 @@
         }
       ],
       "status": "Implemented"
+    },
+    "RenameGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "new_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
     },
     "ReplayBounds": {
       "fields": [

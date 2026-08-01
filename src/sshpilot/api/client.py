@@ -130,6 +130,22 @@ class SshPilotClient(Protocol):
     ) -> bool:
         ...
 
+    def assign_connection_to_group(
+        self, connection_id: ConnectionId, group_id: str
+    ) -> bool:
+        ...
+
+    def create_group(
+        self, name: str, parent_id: str = "", color: str = ""
+    ) -> Optional[str]:
+        ...
+
+    def delete_group(self, group_id: str) -> bool:
+        ...
+
+    def rename_group(self, group_id: str, new_name: str) -> bool:
+        ...
+
     def get_daemon_status(self) -> DaemonStatus:
         ...
 

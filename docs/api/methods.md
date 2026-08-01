@@ -134,6 +134,10 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
 <!-- api-method-contract: update_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: update_connection_metadata status=implemented capability=connections.metadata.write -->
+<!-- api-method-contract: assign_connection_to_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: create_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
 
 ## Daemon wire methods
 
@@ -154,6 +158,10 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.store_passphrase` | `connections.secrets.write` | Implemented |
 | `connections.lookup_passphrase` | `connections.secrets.write` | Implemented |
 | `connections.update_metadata` | `connections.metadata.write` | Implemented |
+| `connections.assign_to_group` | `connections.groups` | Implemented |
+| `connections.create_group` | `connections.groups` | Implemented |
+| `connections.delete_group` | `connections.groups` | Implemented |
+| `connections.rename_group` | `connections.groups` | Implemented |
 | `interactions.list` | `interactions.read` | Implemented |
 | `interactions.get` | `interactions.read` | Implemented |
 | `interactions.claim` | `interactions.respond` | Implemented |
@@ -211,6 +219,10 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: connections.update_metadata capability=connections.metadata.write -->
+<!-- api-daemon-method: connections.assign_to_group capability=connections.groups -->
+<!-- api-daemon-method: connections.create_group capability=connections.groups -->
+<!-- api-daemon-method: connections.delete_group capability=connections.groups -->
+<!-- api-daemon-method: connections.rename_group capability=connections.groups -->
 <!-- api-daemon-method: daemon.diagnostics capability=daemon.status -->
 <!-- api-daemon-method: daemon.restart capability=daemon.control -->
 <!-- api-daemon-method: daemon.status capability=daemon.status -->
@@ -424,6 +436,62 @@ client.update_connection_metadata(
     connection_id,
     {"tags": ["production", "us-east"], "wol_mac": "AA:BB:CC:DD:EE:FF"},
 )
+```
+
+<!-- api-method: assign_connection_to_group -->
+## `assign_connection_to_group`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.groups`; move a connection to a
+  group (or root if group_id is empty).
+- **Parameters / return:** `connection_id` and `group_id: str`;
+  returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `GroupManager.move_connection`.
+
+```python
+client.assign_connection_to_group(connection_id, "group-production")
+```
+
+<!-- api-method: create_group -->
+## `create_group`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.groups`; create a new group.
+- **Parameters / return:** `name`, optional `parent_id` and `color`;
+  returns the new group ID as `Optional[str]`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `GroupManager.create_group`.
+
+```python
+group_id = client.create_group("Production Servers", color="#4CAF50")
+```
+
+<!-- api-method: delete_group -->
+## `delete_group`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.groups`; delete a group.
+- **Parameters / return:** `group_id: str`; returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `GroupManager.delete_group`.
+
+```python
+client.delete_group("group-production")
+```
+
+<!-- api-method: rename_group -->
+## `rename_group`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.groups`; rename a group.
+- **Parameters / return:** `group_id` and `new_name: str`;
+  returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `GroupManager.rename_group`.
+
+```python
+client.rename_group("group-production", "Staging Servers")
 ```
 
 <!-- api-method: delete_connection -->

@@ -82,6 +82,7 @@ def test_runtime_capability_markers_match_the_provider(
         Capability.CONNECTIONS_CONFIG_READ.value,
         Capability.CONNECTIONS_SECRETS_WRITE.value,
         Capability.CONNECTIONS_METADATA_WRITE.value,
+        Capability.CONNECTIONS_GROUPS.value,
     }
     if client_backend == "daemon":
         expected.update(
@@ -193,6 +194,7 @@ def test_schema_only_capabilities_are_not_advertised(
         Capability.CONNECTIONS_CONFIG_READ,
         Capability.CONNECTIONS_SECRETS_WRITE,
         Capability.CONNECTIONS_METADATA_WRITE,
+        Capability.CONNECTIONS_GROUPS,
     }
     if client_backend == "daemon":
         runtime_capabilities.update(

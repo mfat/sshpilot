@@ -28,6 +28,7 @@ from sshpilot.api.models.common import (
     require_identifier,
 )
 from sshpilot.api.transport.codec import (
+    assign_connection_to_group_request_from_wire,
     attach_session_request_from_wire,
     attach_session_result_to_wire,
     attach_sftp_request_from_wire,
@@ -41,9 +42,11 @@ from sshpilot.api.transport.codec import (
     connection_editor_details_to_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
+    create_group_request_from_wire,
     delete_connection_password_request_from_wire,
     delete_connection_request_from_wire,
     delete_connection_result_to_wire,
+    delete_group_request_from_wire,
     detach_session_request_from_wire,
     forward_summary_to_wire,
     handshake_request_from_wire,
@@ -62,6 +65,7 @@ from sshpilot.api.transport.codec import (
     remote_file_entry_to_wire,
     replay_request_from_wire,
     replay_result_to_wire,
+    rename_group_request_from_wire,
     resize_terminal_request_from_wire,
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
@@ -100,6 +104,10 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.store_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.lookup_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.update_metadata": Capability.CONNECTIONS_METADATA_WRITE,
+    "connections.assign_to_group": Capability.CONNECTIONS_GROUPS,
+    "connections.create_group": Capability.CONNECTIONS_GROUPS,
+    "connections.delete_group": Capability.CONNECTIONS_GROUPS,
+    "connections.rename_group": Capability.CONNECTIONS_GROUPS,
     "daemon.status": Capability.DAEMON_STATUS,
     "daemon.diagnostics": Capability.DAEMON_STATUS,
     "daemon.stop": Capability.DAEMON_CONTROL,
@@ -309,6 +317,10 @@ class RequestDispatcher:
             "connections.store_passphrase": self._handle_store_key_passphrase,
             "connections.lookup_passphrase": self._handle_lookup_key_passphrase,
             "connections.update_metadata": self._handle_update_connection_metadata,
+            "connections.assign_to_group": self._handle_assign_to_group,
+            "connections.create_group": self._handle_create_group,
+            "connections.delete_group": self._handle_delete_group,
+            "connections.rename_group": self._handle_rename_group,
             "interactions.list": self._handle_list_interactions,
             "interactions.get": self._handle_get_interaction,
             "interactions.claim": self._handle_claim_interaction,
@@ -746,6 +758,52 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_request.connection_id,
+        )
+
+    def _handle_assign_to_group(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = assign_connection_to_group_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._core_client.assign_connection_to_group(
+                typed_request.connection_id,
+                typed_request.group_id,
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
+
+    def _handle_create_group(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> Optional[str]:
+        typed_request = create_group_request_from_wire(request.params)
+        return self._core_client.create_group_rpc(
+            typed_request.name,
+            parent_id=typed_request.parent_id,
+            color=typed_request.color,
+        )
+
+    def _handle_delete_group(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> bool:
+        typed_request = delete_group_request_from_wire(request.params)
+        return self._core_client.delete_group_rpc(typed_request.group_id)
+
+    def _handle_rename_group(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> bool:
+        typed_request = rename_group_request_from_wire(request.params)
+        return self._core_client.rename_group_rpc(
+            typed_request.group_id, typed_request.new_name
         )
 
     def _handle_list_sessions(
@@ -1496,6 +1554,7 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_CONFIG_READ,
                 Capability.CONNECTIONS_SECRETS_WRITE,
                 Capability.CONNECTIONS_METADATA_WRITE,
+                Capability.CONNECTIONS_GROUPS,
             }
         )
         daemon_capabilities = connection_capabilities | frozenset(

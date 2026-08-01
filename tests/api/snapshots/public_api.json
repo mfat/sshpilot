@@ -66,6 +66,10 @@
     "transfers.write"
   ],
   "client_method_contract": {
+    "assign_connection_to_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
     "attach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -114,12 +118,20 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "create_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
     "delete_connection": {
       "capability": "connections.write",
       "status": "implemented"
     },
     "delete_connection_password": {
       "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "delete_group": {
+      "capability": "connections.groups",
       "status": "implemented"
     },
     "detach_session": {
@@ -217,6 +229,10 @@
     "release_terminal_input": {
       "capability": "terminal.input",
       "status": "daemon-only"
+    },
+    "rename_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
     },
     "replay_terminal": {
       "capability": "terminal.replay",
@@ -320,6 +336,7 @@
     }
   },
   "client_methods": [
+    "assign_connection_to_group",
     "attach_session",
     "attach_sftp",
     "cancel_interaction",
@@ -332,8 +349,10 @@
     "close_session",
     "close_sftp",
     "create_connection",
+    "create_group",
     "delete_connection",
     "delete_connection_password",
+    "delete_group",
     "detach_session",
     "detach_sftp",
     "get_capabilities",
@@ -358,6 +377,7 @@
     "open_sftp",
     "release_interaction",
     "release_terminal_input",
+    "rename_group",
     "replay_terminal",
     "resize_terminal",
     "respond_to_interaction",
@@ -385,6 +405,21 @@
     "update_connection_metadata"
   ],
   "client_signatures": {
+    "assign_connection_to_group": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "connection_id",
+          "type": "ConnectionId"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "group_id",
+          "type": "str"
+        }
+      ],
+      "return": "bool"
+    },
     "attach_session": {
       "parameters": [
         {
@@ -499,6 +534,26 @@
       ],
       "return": "ConnectionDetails"
     },
+    "create_group": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "name",
+          "type": "str"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "parent_id",
+          "type": "str"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "color",
+          "type": "str"
+        }
+      ],
+      "return": "str | None"
+    },
     "delete_connection": {
       "parameters": [
         {
@@ -515,6 +570,16 @@
           "kind": "positional_or_keyword",
           "name": "request",
           "type": "DeleteConnectionPasswordRequest"
+        }
+      ],
+      "return": "bool"
+    },
+    "delete_group": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "group_id",
+          "type": "str"
         }
       ],
       "return": "bool"
@@ -704,6 +769,21 @@
         }
       ],
       "return": "None"
+    },
+    "rename_group": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "group_id",
+          "type": "str"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "new_name",
+          "type": "str"
+        }
+      ],
+      "return": "bool"
     },
     "replay_terminal": {
       "parameters": [
@@ -997,11 +1077,20 @@
     }
   },
   "daemon_method_contract": {
+    "connections.assign_to_group": {
+      "capability": "connections.groups"
+    },
     "connections.create": {
       "capability": "connections.write"
     },
+    "connections.create_group": {
+      "capability": "connections.groups"
+    },
     "connections.delete": {
       "capability": "connections.write"
+    },
+    "connections.delete_group": {
+      "capability": "connections.groups"
     },
     "connections.delete_password": {
       "capability": "connections.secrets.write"
@@ -1017,6 +1106,9 @@
     },
     "connections.lookup_passphrase": {
       "capability": "connections.secrets.write"
+    },
+    "connections.rename_group": {
+      "capability": "connections.groups"
     },
     "connections.store_passphrase": {
       "capability": "connections.secrets.write"
@@ -1300,6 +1392,7 @@
     "TransferId"
   ],
   "model_exports": [
+    "AssignConnectionToGroupRequest",
     "AttachSessionRequest",
     "AttachSessionResult",
     "AttachSftpRequest",
@@ -1325,6 +1418,7 @@
     "ConnectionValidationResult",
     "CoreInfo",
     "CreateConnectionRequest",
+    "CreateGroupRequest",
     "DaemonDiagnostics",
     "DaemonDisconnectReason",
     "DaemonIdleInfo",
@@ -1335,6 +1429,7 @@
     "DeleteConnectionPasswordRequest",
     "DeleteConnectionRequest",
     "DeleteConnectionResult",
+    "DeleteGroupRequest",
     "DetachSessionRequest",
     "EDITABLE_CONFIG_FIELDS",
     "FORBIDDEN_IN_PATCH",
@@ -1380,6 +1475,7 @@
     "RememberPolicy",
     "RemoteFileEntry",
     "RemoteFileType",
+    "RenameGroupRequest",
     "ReplayBounds",
     "ReplayRequest",
     "ReplayResult",
@@ -1425,6 +1521,10 @@
     "validate_config_patch"
   ],
   "models": {
+    "AssignConnectionToGroupRequest": [
+      "connection_id",
+      "group_id"
+    ],
     "AttachSessionRequest": [
       "session_id",
       "request_input",
@@ -1590,6 +1690,11 @@
       "port",
       "protocol"
     ],
+    "CreateGroupRequest": [
+      "name",
+      "parent_id",
+      "color"
+    ],
     "DaemonDiagnostics": [
       "status",
       "uptime_seconds",
@@ -1656,6 +1761,9 @@
     "DeleteConnectionResult": [
       "connection_id",
       "deleted"
+    ],
+    "DeleteGroupRequest": [
+      "group_id"
     ],
     "DetachSessionRequest": [
       "session_id",
@@ -1884,6 +1992,10 @@
       "gid",
       "modified_at",
       "link_target"
+    ],
+    "RenameGroupRequest": [
+      "group_id",
+      "new_name"
     ],
     "ReplayBounds": [
       "earliest_sequence",

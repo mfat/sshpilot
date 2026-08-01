@@ -105,6 +105,7 @@ from .terminal_events import (
     TerminalSubscription,
 )
 from .transport.codec import (
+    assign_connection_to_group_request_to_wire,
     attach_session_request_to_wire,
     attach_session_result_from_wire,
     attach_sftp_request_to_wire,
@@ -119,6 +120,7 @@ from .transport.codec import (
     connection_editor_details_from_wire,
     connection_summary_from_wire,
     create_connection_request_to_wire,
+    create_group_request_to_wire,
     daemon_diagnostics_from_wire,
     daemon_status_from_wire,
     daemon_stop_result_from_wire,
@@ -126,6 +128,7 @@ from .transport.codec import (
     delete_connection_password_request_to_wire,
     delete_connection_request_to_wire,
     delete_connection_result_from_wire,
+    delete_group_request_to_wire,
     detach_session_request_to_wire,
     encode_envelope,
     error_from_wire,
@@ -143,6 +146,7 @@ from .transport.codec import (
     public_event_from_envelope,
     release_terminal_input_request_to_wire,
     remote_file_entry_from_wire,
+    rename_group_request_to_wire,
     replay_request_to_wire,
     replay_result_from_wire,
     resize_terminal_request_to_wire,
@@ -581,6 +585,61 @@ class DaemonClient:
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid metadata update result")
+        return result
+
+    def assign_connection_to_group(
+        self, connection_id: ConnectionId, group_id: str
+    ) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        from .models.connections import AssignConnectionToGroupRequest
+        request = AssignConnectionToGroupRequest(
+            connection_id=connection_id, group_id=group_id
+        )
+        result = self._request(
+            "connections.assign_to_group",
+            assign_connection_to_group_request_to_wire(request),
+            mutation_connection_id=connection_id,
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group assignment result")
+        return result
+
+    def create_group(
+        self, name: str, parent_id: str = "", color: str = ""
+    ) -> Optional[str]:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        from .models.connections import CreateGroupRequest
+        request = CreateGroupRequest(name=name, parent_id=parent_id, color=color)
+        result = self._request(
+            "connections.create_group",
+            create_group_request_to_wire(request),
+        )
+        if result is not None and type(result) is not str:
+            self._fail_protocol("The daemon returned an invalid group ID")
+        return result
+
+    def delete_group(self, group_id: str) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        from .models.connections import DeleteGroupRequest
+        request = DeleteGroupRequest(group_id=group_id)
+        result = self._request(
+            "connections.delete_group",
+            delete_group_request_to_wire(request),
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group delete result")
+        return result
+
+    def rename_group(self, group_id: str, new_name: str) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        from .models.connections import RenameGroupRequest
+        request = RenameGroupRequest(group_id=group_id, new_name=new_name)
+        result = self._request(
+            "connections.rename_group",
+            rename_group_request_to_wire(request),
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group rename result")
         return result
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:

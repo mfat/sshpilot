@@ -6015,7 +6015,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     # Only detach from the group the row is displayed under
                     self.group_manager.remove_connection_from_group(nickname, context_group_id)
                 else:
-                    self.group_manager.move_connection(nickname, None)
+                    if self._daemon_mode_active():
+                        connection_id = None
+                        from .api.in_process_client import InProcessClient
+                        for conn in self.connection_manager.connections:
+                            if getattr(conn, 'nickname', '') == nickname:
+                                connection_id = InProcessClient.connection_id_for(conn)
+                                break
+                        if connection_id:
+                            try:
+                                self.client.assign_connection_to_group(connection_id, "")
+                            except Exception:
+                                self.group_manager.move_connection(nickname, None)
+                        else:
+                            self.group_manager.move_connection(nickname, None)
+                    else:
+                        self.group_manager.move_connection(nickname, None)
             self.rebuild_connection_list()
 
         except Exception as e:
@@ -6024,10 +6039,36 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def move_connection_to_group(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a specific group"""
         try:
-            self.group_manager.move_connection(connection_nickname, target_group_id)
+            if self._daemon_mode_active():
+                connection_id = None
+                from .api.in_process_client import InProcessClient as _IPC
+                for conn in self.connection_manager.connections:
+                    if getattr(conn, 'nickname', '') == connection_nickname:
+                        connection_id = _IPC.connection_id_for(conn)
+                        break
+                if connection_id:
+                    try:
+                        self.client.assign_connection_to_group(
+                            connection_id, target_group_id or ""
+                        )
+                    except Exception:
+                        logger.debug("Group move via daemon RPC failed, falling back to local")
+                        self.group_manager.move_connection(connection_nickname, target_group_id)
+                else:
+                    self.group_manager.move_connection(connection_nickname, target_group_id)
+            else:
+                self.group_manager.move_connection(connection_nickname, target_group_id)
             self.rebuild_connection_list()
         except Exception as e:
             logger.error(f"Failed to move connection {connection_nickname} to group: {e}")
+
+    def _find_connection_id_for_nickname(self, nickname: str):
+        """Find the daemon connection ID for a connection by nickname."""
+        from .api.in_process_client import InProcessClient
+        for conn in self.connection_manager.connections:
+            if getattr(conn, 'nickname', '') == nickname:
+                return InProcessClient.connection_id_for(conn)
+        return None
 
     def get_available_groups(self) -> List[Dict]:
         """Get list of available groups for selection"""
