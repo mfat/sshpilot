@@ -104,6 +104,12 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `daemon.events` | Observe daemon lifecycle state changes | Daemon: Implemented | `subscribe_events` | `daemon.state_changed` | Bounded daemon event stream | v1 / API 0.11 |
 | `plugins` | Invoke core plugin operations | Schema only; no client method | None | None defined | Split core plugin service | v1 |
 | `secrets` | Core-mediated secret operations/interactions | Schema only; no client method | None | No dedicated event; interaction schemas may be used later | Secret service and permissions | v1 |
+| `connections.config.read` | Read full editor state including filesystem paths | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_READ` capability | v1 |
+| `connections.config.write` | Write connection config fields beyond nickname/host/user/port | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_WRITE` capability | v1 |
+| `connections.secrets.write` | Write passwords and passphrases through daemon RPCs | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
+| `connections.metadata.write` | Write non-SSH metadata (tags, aliases, WoL settings) | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_METADATA_WRITE` capability | v1 |
+| `connections.groups` | Assign and reorder connections within groups | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_GROUPS` capability | v1 |
+| `connections.split` | Split a connection block from a multi-host group | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
 
 <!-- api-capability: connections.read -->
 ## `connections.read`
@@ -365,6 +371,46 @@ from `SshPilotClient`.
 
 Schema only. Frontends must not interpret this as permission to access
 `SecretManager` or its providers directly.
+
+<!-- api-capability: connections.config.read -->
+## `connections.config.read`
+
+Schema only. Provides full editor state including filesystem paths, identity
+configuration, forwarding rules, and all advanced SSH settings. Gated behind
+the `CONNECTIONS_CONFIG_READ` capability in the handshake response.
+
+<!-- api-capability: connections.config.write -->
+## `connections.config.write`
+
+Schema only. Enables writing connection config fields beyond the basic
+nickname/host/user/port set. Includes forwarding rules, proxy jump, identity
+files, X11 forwarding, extra SSH config, and all advanced settings. Gated
+behind the `CONNECTIONS_CONFIG_WRITE` capability.
+
+<!-- api-capability: connections.secrets.write -->
+## `connections.secrets.write`
+
+Schema only. Enables writing passwords and passphrases through daemon RPCs
+rather than local GTK writes. Ensures secrets flow through the daemon's
+identity-transition saga. Gated behind `CONNECTIONS_SECRETS_WRITE`.
+
+<!-- api-capability: connections.metadata.write -->
+## `connections.metadata.write`
+
+Schema only. Enables writing non-SSH metadata such as tags, aliases, and
+Wake-on-LAN settings. Gated behind `CONNECTIONS_METADATA_WRITE`.
+
+<!-- api-capability: connections.groups -->
+## `connections.groups`
+
+Schema only. Enables assigning connections to groups and reordering within
+groups. Gated behind `CONNECTIONS_GROUPS`.
+
+<!-- api-capability: connections.split -->
+## `connections.split`
+
+Schema only. Enables splitting a connection block from a multi-host group
+into its own standalone entry. Gated behind `CONNECTIONS_SPLIT`.
 
 ## Frontend behaviour
 

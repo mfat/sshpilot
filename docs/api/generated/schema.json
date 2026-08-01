@@ -400,6 +400,12 @@
       "connections.read",
       "connections.events",
       "connections.write",
+      "connections.config.read",
+      "connections.config.write",
+      "connections.secrets.write",
+      "connections.metadata.write",
+      "connections.groups",
+      "connections.split",
       "sessions.read",
       "sessions.write",
       "sessions.events",
@@ -1131,6 +1137,310 @@
         }
       ],
       "status": "Implemented"
+    },
+    "ConnectionEditorCapabilities": {
+      "fields": [
+        {
+          "default": [],
+          "name": "writable_fields",
+          "required": false,
+          "sensitive": false,
+          "type": "frozenset[str]"
+        },
+        {
+          "default": false,
+          "name": "supports_secrets",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "supports_metadata",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "supports_groups",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "supports_split",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionEditorDetails": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "unknown",
+          "name": "health",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionHealth"
+        },
+        {
+          "default": [],
+          "name": "groups",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[GroupReference, ...]"
+        },
+        {
+          "default": [],
+          "name": "aliases",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "key",
+          "name": "authentication_method",
+          "required": false,
+          "sensitive": false,
+          "type": "AuthenticationMethod"
+        },
+        {
+          "default": false,
+          "name": "identity_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "certificate_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "x11_forwarding",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "forwarding_rule_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "proxy_jump",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": 0,
+          "name": "key_select_mode",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "identity_files",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "certificate_files",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "",
+          "name": "identity_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "add_keys_to_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "pkcs11_provider",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "security_key_provider",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "pubkey_auth_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "forward_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "forward_agent_target",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "proxy_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "forwarding_rules",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[ForwardingRule, ...]"
+        },
+        {
+          "default": "",
+          "name": "pre_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "local_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "remote_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "request_tty",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "extra_ssh_config",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "identity_file_none",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "preferred_authentications",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "source",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "generation",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
     },
     "ConnectionSummary": {
       "fields": [
@@ -1963,6 +2273,74 @@
         }
       ],
       "status": "Implemented"
+    },
+    "ForwardingRule": {
+      "fields": [
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "listen_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "listen_addr",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "remote_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "remote_port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "local_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "local_port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "socks",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
     },
     "GroupReference": {
       "fields": [
@@ -3815,32 +4193,46 @@
     "UpdateConnectionRequest": {
       "fields": [
         {
-          "default": null,
+          "default": "`UNSET`",
           "name": "nickname",
           "required": false,
           "sensitive": false,
-          "type": "str | None"
+          "type": "str | None | UNSET"
         },
         {
-          "default": null,
+          "default": "`UNSET`",
           "name": "hostname",
           "required": false,
           "sensitive": false,
-          "type": "str | None"
+          "type": "str | None | UNSET"
         },
         {
-          "default": null,
+          "default": "`UNSET`",
           "name": "username",
           "required": false,
           "sensitive": false,
-          "type": "str | None"
+          "type": "str | None | UNSET"
         },
         {
-          "default": null,
+          "default": "`UNSET`",
           "name": "port",
           "required": false,
           "sensitive": false,
-          "type": "int | None"
+          "type": "int | None | UNSET"
+        },
+        {
+          "default": {},
+          "name": "config_patch",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": 0,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
         }
       ],
       "status": "Schema only"

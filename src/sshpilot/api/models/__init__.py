@@ -17,6 +17,8 @@ from .common import (
 from .connections import (
     AuthenticationMethod,
     ConnectionDetails,
+    ConnectionEditorCapabilities,
+    ConnectionEditorDetails,
     ConnectionHealth,
     ConnectionSummary,
     ConnectionValidationError,
@@ -24,8 +26,15 @@ from .connections import (
     CreateConnectionRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    EDITABLE_CONFIG_FIELDS,
+    ForwardingRule,
+    FORBIDDEN_IN_PATCH,
     GroupReference,
+    UNSET,
     UpdateConnectionRequest,
+    forwarding_rule_from_dict,
+    forwarding_rule_to_dict,
+    validate_config_patch,
 )
 from .daemon import (
     DaemonDiagnostics,
@@ -127,6 +136,9 @@ from .transfers import (
 )
 
 __all__ = [
+    "EDITABLE_CONFIG_FIELDS",
+    "FORBIDDEN_IN_PATCH",
+    "UNSET",
     "AttachSessionRequest",
     "AttachSessionResult",
     "AttachSftpRequest",
@@ -134,8 +146,8 @@ __all__ = [
     "AttachmentInfo",
     "AuthenticationMethod",
     "CancelTransferRequest",
-    "ClaimTerminalInputRequest",
     "ClaimForwardRequest",
+    "ClaimTerminalInputRequest",
     "ClientId",
     "ClientInfo",
     "CloseForwardRequest",
@@ -143,6 +155,8 @@ __all__ = [
     "CloseSftpRequest",
     "CompatibilityResult",
     "ConnectionDetails",
+    "ConnectionEditorCapabilities",
+    "ConnectionEditorDetails",
     "ConnectionHealth",
     "ConnectionId",
     "ConnectionSummary",
@@ -166,6 +180,7 @@ __all__ = [
     "ForwardState",
     "ForwardSummary",
     "ForwardType",
+    "ForwardingRule",
     "GroupReference",
     "HostKeyDecision",
     "HostKeyPrompt",
@@ -235,5 +250,8 @@ __all__ = [
     "TransferSummary",
     "UpdateConnectionRequest",
     "default_idle_shutdown_seconds",
+    "forwarding_rule_from_dict",
+    "forwarding_rule_to_dict",
     "is_valid_lifecycle_transition",
+    "validate_config_patch",
 ]

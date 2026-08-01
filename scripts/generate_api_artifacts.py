@@ -443,7 +443,10 @@ def _normalize(value: Any) -> Any:
 
 def _default(field: dataclasses.Field[Any]) -> Tuple[bool, Any]:
     if field.default is not dataclasses.MISSING:
-        return True, _normalize(field.default)
+        value = field.default
+        if hasattr(value, "__repr__") and repr(value) == "UNSET":
+            return True, "`UNSET`"
+        return True, _normalize(value)
     if field.default_factory is not dataclasses.MISSING:
         factory = field.default_factory
         name = getattr(factory, "__name__", "factory")

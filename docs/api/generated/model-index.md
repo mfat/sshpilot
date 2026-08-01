@@ -416,6 +416,137 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ConnectionEditorCapabilities -->
+## `ConnectionEditorCapabilities`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Which connection-editor features the daemon currently supports.
+
+Advertised in the handshake response. The frontend enables/disables
+controls based on this.  During incremental rollout ``writable_fields``
+grows as each category lands.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `writable_fields` | `frozenset[str]` | No | `[]` | No |
+| `supports_secrets` | `bool` | No | `false` | No |
+| `supports_metadata` | `bool` | No | `false` | No |
+| `supports_groups` | `bool` | No | `false` | No |
+| `supports_split` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "supports_groups": false,
+  "supports_metadata": false,
+  "supports_secrets": false,
+  "supports_split": false,
+  "writable_fields": []
+}
+```
+
+<!-- api-model: ConnectionEditorDetails -->
+## `ConnectionEditorDetails`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Full editor state for local authenticated clients.
+
+Contains filesystem paths and complete configuration.  Not safe for
+untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `id` | `ConnectionId` | Yes | — | No |
+| `nickname` | `str` | Yes | — | No |
+| `host` | `str` | Yes | — | No |
+| `hostname` | `str` | Yes | — | No |
+| `username` | `str` | Yes | — | No |
+| `port` | `int` | Yes | — | No |
+| `protocol` | `str` | No | `ssh` | No |
+| `health` | `ConnectionHealth` | No | `unknown` | No |
+| `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
+| `aliases` | `tuple[str, ...]` | No | `[]` | No |
+| `authentication_method` | `AuthenticationMethod` | No | `key` | No |
+| `identity_configured` | `bool` | No | `false` | No |
+| `certificate_configured` | `bool` | No | `false` | No |
+| `x11_forwarding` | `bool` | No | `false` | No |
+| `forwarding_rule_count` | `int` | No | `0` | No |
+| `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
+| `key_select_mode` | `int` | No | `0` | No |
+| `identity_files` | `tuple[str, ...]` | No | `[]` | No |
+| `certificate_files` | `tuple[str, ...]` | No | `[]` | No |
+| `identity_agent` | `str` | No | `` | No |
+| `add_keys_to_agent` | `str` | No | `` | No |
+| `pkcs11_provider` | `str` | No | `` | No |
+| `security_key_provider` | `str` | No | `` | No |
+| `pubkey_auth_no` | `bool` | No | `false` | No |
+| `forward_agent` | `bool` | No | `false` | No |
+| `forward_agent_target` | `str` | No | `` | No |
+| `proxy_command` | `str` | No | `` | No |
+| `forwarding_rules` | `tuple[ForwardingRule, ...]` | No | `[]` | No |
+| `pre_command` | `str` | No | `` | No |
+| `local_command` | `str` | No | `` | No |
+| `remote_command` | `str` | No | `` | No |
+| `request_tty` | `str` | No | `` | No |
+| `extra_ssh_config` | `str` | No | `` | No |
+| `identity_file_none` | `bool` | No | `false` | No |
+| `preferred_authentications` | `str` | No | `` | No |
+| `source` | `str` | No | `` | No |
+| `generation` | `int` | No | `0` | No |
+
+Synthetic representation:
+
+```json
+{
+  "add_keys_to_agent": "",
+  "aliases": [],
+  "authentication_method": "key",
+  "certificate_configured": false,
+  "certificate_files": [],
+  "extra_ssh_config": "",
+  "forward_agent": false,
+  "forward_agent_target": "",
+  "forwarding_rule_count": 0,
+  "forwarding_rules": [],
+  "generation": 0,
+  "groups": [],
+  "health": "unknown",
+  "host": "example",
+  "hostname": "example.invalid",
+  "id": "production",
+  "identity_agent": "",
+  "identity_configured": false,
+  "identity_file_none": false,
+  "identity_files": [],
+  "key_select_mode": 0,
+  "local_command": "",
+  "nickname": "example",
+  "pkcs11_provider": "",
+  "port": 22,
+  "pre_command": "",
+  "preferred_authentications": "",
+  "protocol": "ssh",
+  "proxy_command": "",
+  "proxy_jump": [],
+  "pubkey_auth_no": false,
+  "remote_command": "",
+  "request_tty": "",
+  "security_key_provider": "",
+  "source": "",
+  "username": "user",
+  "x11_forwarding": false
+}
+```
+
 <!-- api-model: ConnectionSummary -->
 ## `ConnectionSummary`
 
@@ -988,6 +1119,48 @@ Synthetic representation:
   "session_id": null,
   "state": {},
   "type": {}
+}
+```
+
+<!-- api-model: ForwardingRule -->
+## `ForwardingRule`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One port-forwarding rule.
+
+The field names exactly match the existing dict schema used by
+``format_ssh_config_entry`` and ``_parse_forwarding_rules_from_config``
+so that round-tripping through the daemon is lossless.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `type` | `str` | Yes | — | No |
+| `listen_port` | `int` | Yes | — | No |
+| `listen_addr` | `str` | No | `` | No |
+| `remote_host` | `str` | No | `` | No |
+| `remote_port` | `int` | No | `0` | No |
+| `local_host` | `str` | No | `` | No |
+| `local_port` | `int` | No | `0` | No |
+| `enabled` | `bool` | No | `true` | No |
+| `socks` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "enabled": true,
+  "listen_addr": "",
+  "listen_port": 0,
+  "local_host": "",
+  "local_port": 0,
+  "remote_host": "",
+  "remote_port": 0,
+  "socks": false,
+  "type": "example"
 }
 ```
 
@@ -2467,25 +2640,36 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** UpdateConnectionRequest(nickname: str | None = None, hostname: str | None = None, username: str | None = None, port: int | None = None)
+**Purpose:** Patch a connection's configuration.
+
+Core identity fields use ``None`` = preserve (backward-compatible).
+Newer fields use ``UNSET`` = preserve, ``""`` = clear, value = apply.
+
+``config_patch`` is a presence-aware dict: keys present in the dict
+are applied; absent keys are preserved.  The codec builds this from
+explicitly present keys in the incoming JSON — omission means preserve.
 
 **Related methods:** `update_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
-| `nickname` | `str | None` | No | `null` | No |
-| `hostname` | `str | None` | No | `null` | No |
-| `username` | `str | None` | No | `null` | No |
-| `port` | `int | None` | No | `null` | No |
+| `nickname` | `str | None | UNSET` | No | ``UNSET`` | No |
+| `hostname` | `str | None | UNSET` | No | ``UNSET`` | No |
+| `username` | `str | None | UNSET` | No | ``UNSET`` | No |
+| `port` | `int | None | UNSET` | No | ``UNSET`` | No |
+| `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
+| `expected_generation` | `int` | No | `0` | No |
 
 Synthetic representation:
 
 ```json
 {
-  "hostname": null,
-  "nickname": null,
-  "port": null,
-  "username": null
+  "config_patch": {},
+  "expected_generation": 0,
+  "hostname": "`UNSET`",
+  "nickname": "`UNSET`",
+  "port": "`UNSET`",
+  "username": "`UNSET`"
 }
 ```

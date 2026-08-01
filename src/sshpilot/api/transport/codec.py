@@ -37,14 +37,21 @@ from ..models.interactions import (
     SecretDecision,
 )
 from ..models.connections import (
+    EDITABLE_CONFIG_FIELDS,
     AuthenticationMethod,
     ConnectionDetails,
+    ConnectionEditorCapabilities,
+    ConnectionEditorDetails,
     ConnectionHealth,
     ConnectionSummary,
+    ConnectionValidationError,
+    ConnectionValidationResult,
     CreateConnectionRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    ForwardingRule,
     GroupReference,
+    UNSET,
     UpdateConnectionRequest,
 )
 from ..models.daemon import (
@@ -882,6 +889,352 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
     )
 
 
+def forwarding_rule_to_wire(rule: ForwardingRule) -> Dict[str, Any]:
+    d: Dict[str, Any] = {
+        "type": rule.type,
+        "listen_port": rule.listen_port,
+        "listen_addr": rule.listen_addr,
+        "enabled": rule.enabled,
+    }
+    if rule.type == "local":
+        d["remote_host"] = rule.remote_host
+        d["remote_port"] = rule.remote_port
+    elif rule.type == "remote":
+        if rule.socks:
+            d["socks"] = True
+        else:
+            d["local_host"] = rule.local_host
+            d["local_port"] = rule.local_port
+    return d
+
+
+def forwarding_rule_from_wire(value: Any) -> ForwardingRule:
+    data = _strict_fields(
+        value,
+        required={"type", "listen_port"},
+        optional={
+            "listen_addr", "enabled",
+            "remote_host", "remote_port",
+            "local_host", "local_port",
+            "socks",
+        },
+        context="forwarding rule",
+    )
+    rule_type = _identifier(data["type"], "forwarding rule type")
+    if rule_type not in ("local", "remote", "dynamic"):
+        raise ValueError(
+            f"forwarding rule type must be local/remote/dynamic, got {rule_type!r}"
+        )
+    listen_port = _integer(data["listen_port"], "forwarding rule listen_port")
+    if not 1 <= listen_port <= 65535:
+        raise ValueError("forwarding rule listen_port must be 1-65535")
+    return ForwardingRule(
+        type=rule_type,
+        listen_port=listen_port,
+        listen_addr=_text(
+            data.get("listen_addr", ""), "forwarding rule listen_addr", allow_empty=True
+        ),
+        remote_host=_text(
+            data.get("remote_host", ""), "forwarding rule remote_host", allow_empty=True
+        ),
+        remote_port=_integer(
+            data.get("remote_port", 0), "forwarding rule remote_port"
+        ),
+        local_host=_text(
+            data.get("local_host", ""), "forwarding rule local_host", allow_empty=True
+        ),
+        local_port=_integer(
+            data.get("local_port", 0), "forwarding rule local_port"
+        ),
+        enabled=_boolean(data.get("enabled", True), "forwarding rule enabled"),
+        socks=_boolean(data.get("socks", False), "forwarding rule socks"),
+    )
+
+
+def _forwarding_rules_to_wire(rules: Any) -> Any:
+    if rules is None:
+        return None
+    return [forwarding_rule_to_wire(r) for r in rules]
+
+
+def _forwarding_rules_from_wire(value: Any) -> Any:
+    if value is None:
+        return None
+    if type(value) is not list:
+        raise ValueError("forwarding rules must be an array")
+    return tuple(forwarding_rule_from_wire(item) for item in value)
+
+
+_EDITOR_DETAIL_FIELDS = frozenset({
+    "aliases",
+    "authentication_method",
+    "identity_configured",
+    "certificate_configured",
+    "x11_forwarding",
+    "forwarding_rule_count",
+    "proxy_jump",
+    # auth
+    "key_select_mode",
+    "identity_files",
+    "certificate_files",
+    "identity_agent",
+    "add_keys_to_agent",
+    "pkcs11_provider",
+    "security_key_provider",
+    "pubkey_auth_no",
+    # routing
+    "forward_agent",
+    "forward_agent_target",
+    "proxy_command",
+    # forwarding
+    "forwarding_rules",
+    # commands
+    "pre_command",
+    "local_command",
+    "remote_command",
+    "request_tty",
+    # advanced
+    "extra_ssh_config",
+    "identity_file_none",
+    "preferred_authentications",
+    # context
+    "source",
+    "generation",
+})
+
+
+def connection_editor_details_to_wire(
+    details: ConnectionEditorDetails,
+) -> Dict[str, Any]:
+    result = connection_details_to_wire(details)
+    result.update({
+        "key_select_mode": details.key_select_mode,
+        "identity_files": list(details.identity_files),
+        "certificate_files": list(details.certificate_files),
+        "identity_agent": details.identity_agent,
+        "add_keys_to_agent": details.add_keys_to_agent,
+        "pkcs11_provider": details.pkcs11_provider,
+        "security_key_provider": details.security_key_provider,
+        "pubkey_auth_no": details.pubkey_auth_no,
+        "forward_agent": details.forward_agent,
+        "forward_agent_target": details.forward_agent_target,
+        "proxy_command": details.proxy_command,
+        "forwarding_rules": [
+            forwarding_rule_to_wire(r) for r in details.forwarding_rules
+        ],
+        "pre_command": details.pre_command,
+        "local_command": details.local_command,
+        "remote_command": details.remote_command,
+        "request_tty": details.request_tty,
+        "extra_ssh_config": details.extra_ssh_config,
+        "identity_file_none": details.identity_file_none,
+        "preferred_authentications": details.preferred_authentications,
+        "source": details.source,
+        "generation": details.generation,
+    })
+    return result
+
+
+def connection_editor_details_from_wire(
+    value: Any,
+) -> ConnectionEditorDetails:
+    summary_fields = _SUMMARY_FIELDS
+    data = _strict_fields(
+        value,
+        required=summary_fields | _EDITOR_DETAIL_FIELDS,
+        context="connection editor details",
+    )
+    summary = connection_summary_from_wire({key: data[key] for key in summary_fields})
+    if type(data["aliases"]) is not list or type(data["proxy_jump"]) is not list:
+        raise ValueError("connection aliases and proxy jump must be arrays")
+    aliases = tuple(_identifier(item, "connection alias") for item in data["aliases"])
+    proxy_jump = tuple(_identifier(item, "proxy jump host") for item in data["proxy_jump"])
+    try:
+        authentication_method = AuthenticationMethod(data["authentication_method"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "connection editor details contain unknown authentication method"
+        ) from None
+    identity_files = data["identity_files"]
+    if type(identity_files) is not list:
+        raise ValueError("identity_files must be an array")
+    certificate_files = data["certificate_files"]
+    if type(certificate_files) is not list:
+        raise ValueError("certificate_files must be an array")
+    forwarding_rules = data["forwarding_rules"]
+    if type(forwarding_rules) is not list:
+        raise ValueError("forwarding_rules must be an array")
+    return ConnectionEditorDetails(
+        id=summary.id,
+        nickname=summary.nickname,
+        host=summary.host,
+        hostname=summary.hostname,
+        username=summary.username,
+        port=summary.port,
+        protocol=summary.protocol,
+        health=summary.health,
+        groups=summary.groups,
+        aliases=aliases,
+        authentication_method=authentication_method,
+        identity_configured=_boolean(
+            data["identity_configured"], "identity configured"
+        ),
+        certificate_configured=_boolean(
+            data["certificate_configured"], "certificate configured"
+        ),
+        x11_forwarding=_boolean(data["x11_forwarding"], "X11 forwarding"),
+        forwarding_rule_count=_integer(
+            data["forwarding_rule_count"], "forwarding rule count"
+        ),
+        proxy_jump=proxy_jump,
+        key_select_mode=_integer(data["key_select_mode"], "key_select_mode"),
+        identity_files=tuple(
+            _identifier(f, "identity file") for f in identity_files
+        ),
+        certificate_files=tuple(
+            _identifier(f, "certificate file") for f in certificate_files
+        ),
+        identity_agent=_text(
+            data["identity_agent"], "identity_agent", allow_empty=True
+        ),
+        add_keys_to_agent=_text(
+            data["add_keys_to_agent"], "add_keys_to_agent", allow_empty=True
+        ),
+        pkcs11_provider=_text(
+            data["pkcs11_provider"], "pkcs11_provider", allow_empty=True
+        ),
+        security_key_provider=_text(
+            data["security_key_provider"], "security_key_provider", allow_empty=True
+        ),
+        pubkey_auth_no=_boolean(data["pubkey_auth_no"], "pubkey_auth_no"),
+        forward_agent=_boolean(data["forward_agent"], "forward_agent"),
+        forward_agent_target=_text(
+            data["forward_agent_target"],
+            "forward_agent_target",
+            allow_empty=True,
+        ),
+        proxy_command=_text(
+            data["proxy_command"], "proxy_command", allow_empty=True
+        ),
+        forwarding_rules=tuple(
+            forwarding_rule_from_wire(r) for r in forwarding_rules
+        ),
+        pre_command=_text(data["pre_command"], "pre_command", allow_empty=True),
+        local_command=_text(
+            data["local_command"], "local_command", allow_empty=True
+        ),
+        remote_command=_text(
+            data["remote_command"], "remote_command", allow_empty=True
+        ),
+        request_tty=_text(data["request_tty"], "request_tty", allow_empty=True),
+        extra_ssh_config=_text(
+            data["extra_ssh_config"], "extra_ssh_config", allow_empty=True
+        ),
+        identity_file_none=_boolean(
+            data["identity_file_none"], "identity_file_none"
+        ),
+        preferred_authentications=_text(
+            data["preferred_authentications"],
+            "preferred_authentications",
+            allow_empty=True,
+        ),
+        source=_text(data["source"], "source", allow_empty=True),
+        generation=_integer(data["generation"], "generation"),
+    )
+
+
+def connection_editor_capabilities_to_wire(
+    caps: ConnectionEditorCapabilities,
+) -> Dict[str, Any]:
+    return {
+        "writable_fields": sorted(caps.writable_fields),
+        "supports_secrets": caps.supports_secrets,
+        "supports_metadata": caps.supports_metadata,
+        "supports_groups": caps.supports_groups,
+        "supports_split": caps.supports_split,
+    }
+
+
+def connection_editor_capabilities_from_wire(
+    value: Any,
+) -> ConnectionEditorCapabilities:
+    data = _strict_fields(
+        value,
+        required={
+            "writable_fields",
+            "supports_secrets",
+            "supports_metadata",
+            "supports_groups",
+            "supports_split",
+        },
+        context="connection editor capabilities",
+    )
+    fields_raw = data["writable_fields"]
+    if type(fields_raw) is not list:
+        raise ValueError("writable_fields must be an array")
+    for item in fields_raw:
+        if type(item) is not str or not item.strip():
+            raise ValueError("each writable_fields entry must be a non-empty string")
+    return ConnectionEditorCapabilities(
+        writable_fields=frozenset(str(f) for f in fields_raw),
+        supports_secrets=_boolean(data["supports_secrets"], "supports_secrets"),
+        supports_metadata=_boolean(data["supports_metadata"], "supports_metadata"),
+        supports_groups=_boolean(data["supports_groups"], "supports_groups"),
+        supports_split=_boolean(data["supports_split"], "supports_split"),
+    )
+
+
+def connection_validation_error_to_wire(error: ConnectionValidationError) -> Dict[str, Any]:
+    return {
+        "field": error.field,
+        "code": error.code,
+        "message": error.message,
+    }
+
+
+def connection_validation_error_from_wire(value: Any) -> ConnectionValidationError:
+    data = _strict_fields(
+        value,
+        required={"field", "code", "message"},
+        context="connection validation error",
+    )
+    return ConnectionValidationError(
+        field=_identifier(data["field"], "validation field"),
+        code=_identifier(data["code"], "validation code"),
+        message=_identifier(data["message"], "validation message"),
+    )
+
+
+def connection_validation_result_to_wire(
+    result: ConnectionValidationResult,
+) -> Dict[str, Any]:
+    return {
+        "valid": result.valid,
+        "errors": [
+            connection_validation_error_to_wire(e) for e in result.errors
+        ],
+    }
+
+
+def connection_validation_result_from_wire(
+    value: Any,
+) -> ConnectionValidationResult:
+    data = _strict_fields(
+        value,
+        required={"valid", "errors"},
+        context="connection validation result",
+    )
+    errors_raw = data["errors"]
+    if type(errors_raw) is not list:
+        raise ValueError("validation errors must be an array")
+    return ConnectionValidationResult(
+        valid=_boolean(data["valid"], "validation valid"),
+        errors=tuple(
+            connection_validation_error_from_wire(e) for e in errors_raw
+        ),
+    )
+
+
 def create_connection_request_to_wire(
     request: CreateConnectionRequest,
 ) -> Dict[str, Any]:
@@ -920,33 +1273,73 @@ def update_connection_request_to_wire(
 ) -> Dict[str, Any]:
     if type(request) is not UpdateConnectionRequest:
         raise TypeError("update connection request is required")
-    return {
-        "nickname": request.nickname,
-        "hostname": request.hostname,
-        "username": request.username,
-        "port": request.port,
-    }
+    result: Dict[str, Any] = {}
+    if request.nickname is not UNSET:
+        result["nickname"] = request.nickname
+    if request.hostname is not UNSET:
+        result["hostname"] = request.hostname
+    if request.username is not UNSET:
+        result["username"] = request.username
+    if request.port is not UNSET:
+        result["port"] = request.port
+    if request.config_patch:
+        result["config_patch"] = dict(request.config_patch)
+    if request.expected_generation:
+        result["expected_generation"] = request.expected_generation
+    return result
 
 
 def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     data = _strict_fields(
         value,
-        required={"nickname", "hostname", "username", "port"},
+        required=set(),
+        optional={
+            "nickname",
+            "hostname",
+            "username",
+            "port",
+            "config_patch",
+            "expected_generation",
+        },
         context="update connection request",
     )
-    nickname = data["nickname"]
-    hostname = data["hostname"]
-    username = data["username"]
-    port = data["port"]
+    if not data:
+        raise ValueError("connection update must contain at least one field")
+
+    nickname = data.get("nickname", UNSET)
+    hostname = data.get("hostname", UNSET)
+    username = data.get("username", UNSET)
+    port = data.get("port", UNSET)
+
+    if nickname is not UNSET and nickname is not None:
+        nickname = _identifier(nickname, "connection nickname")
+    if hostname is not UNSET and hostname is not None:
+        hostname = _identifier(hostname, "connection hostname")
+    if username is not UNSET and username is not None:
+        username = _text(username, "connection username", allow_empty=True)
+    if port is not UNSET and port is not None:
+        port = _integer(port, "connection port")
+
+    raw_patch = data.get("config_patch")
+    config_patch: Dict[str, Any] = {}
+    if raw_patch is not None:
+        if type(raw_patch) is not dict:
+            raise ValueError("config_patch must be an object")
+        config_patch = {
+            k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS
+        }
+
+    expected_generation = data.get("expected_generation", 0)
+    if expected_generation is not None:
+        expected_generation = _integer(expected_generation, "expected generation")
+
     return UpdateConnectionRequest(
-        nickname=(_identifier(nickname, "connection nickname") if nickname is not None else None),
-        hostname=(_identifier(hostname, "connection hostname") if hostname is not None else None),
-        username=(
-            _text(username, "connection username", allow_empty=True)
-            if username is not None
-            else None
-        ),
-        port=(_integer(port, "connection port") if port is not None else None),
+        nickname=nickname,
+        hostname=hostname,
+        username=username,
+        port=port,
+        config_patch=config_patch,
+        expected_generation=expected_generation or 0,
     )
 
 

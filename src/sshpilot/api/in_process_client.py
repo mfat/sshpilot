@@ -28,6 +28,7 @@ from .models.connections import (
     DeleteConnectionRequest,
     DeleteConnectionResult,
     GroupReference,
+    UNSET,
     UpdateConnectionRequest,
 )
 from .models.interactions import (
@@ -614,6 +615,7 @@ class InProcessClient:
         old_nickname = str(getattr(connection, "nickname", "") or "")
         if (
             request.nickname is not None
+            and request.nickname is not UNSET
             and request.nickname != old_nickname
             and self._connection_with_nickname(request.nickname) is not None
         ):
@@ -626,7 +628,7 @@ class InProcessClient:
         data = self._safe_internal_update_data(connection)
         for name in ("nickname", "hostname", "username", "port"):
             value = getattr(request, name)
-            if value is not None:
+            if value is not None and value is not UNSET:
                 data[name] = value
         updater = getattr(self._connection_manager, "update_connection", None)
         if not callable(updater):
