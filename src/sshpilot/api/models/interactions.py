@@ -155,9 +155,7 @@ class InteractionSummary:
     responder_client_id: Optional[ClientId] = None
 
     def __post_init__(self) -> None:
-        from ..interaction_identity import interaction_uuid_from_id
-
-        interaction_uuid_from_id(self.id)
+        require_identifier(self.id, "interaction id")
         require_identifier(self.session_id, "session id")
         require_identifier(self.connection_id, "connection id")
         if not isinstance(self.type, InteractionType):
@@ -198,9 +196,7 @@ class InteractionClaim:
     expires_at: datetime
 
     def __post_init__(self) -> None:
-        from ..interaction_identity import interaction_uuid_from_id
-
-        interaction_uuid_from_id(self.interaction_id)
+        require_identifier(self.interaction_id, "interaction id")
         require_identifier(self.responder_client_id, "responder client id")
         if type(self.expires_at) is not datetime or self.expires_at.utcoffset() is None:
             raise ValueError("interaction claim expiry must be timezone-aware")
@@ -220,9 +216,7 @@ class InteractionDecisionRequest:
     remember_policy: RememberPolicy = RememberPolicy.DO_NOT_STORE
 
     def __post_init__(self) -> None:
-        from ..interaction_identity import interaction_uuid_from_id
-
-        interaction_uuid_from_id(self.interaction_id)
+        require_identifier(self.interaction_id, "interaction id")
         if (self.host_key_decision is None) == (self.secret_decision is None):
             raise ValueError("exactly one typed interaction decision is required")
         if (

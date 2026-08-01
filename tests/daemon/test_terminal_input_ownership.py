@@ -1,7 +1,6 @@
 """Test terminal input ownership claim/release with multi-attachment support."""
 
 import threading
-import uuid
 
 import pytest
 
@@ -10,14 +9,14 @@ from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId
 from sshpilot.api.models.sessions import AttachSessionRequest, OpenSessionRequest, SessionExitInfo, SessionState
 from sshpilot.api.models.terminal import TerminalDimensions
-from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon.session_runtime import SessionRuntime
 
 
 class _Connection:
     def __init__(self):
         self.nickname = "test"
-        self.uuid = new_connection_uuid()
+        self.id = "test"
+        self.uuid = "test"
         self.host = "test"
         self.hostname = "test.example"
         self.username = "alice"
@@ -236,7 +235,7 @@ def test_claim_input_invalid_attachment(session_with_attachment):
     runtime = session_with_attachment['runtime']
     
     # Use non-existent attachment ID
-    invalid_attachment = AttachmentId(f"attachment:{uuid.uuid4()}")
+    invalid_attachment = AttachmentId("attachment-missing")
     
     with pytest.raises(SshPilotError) as exc_info:
         runtime.claim_input(session_id, invalid_attachment, client_id)

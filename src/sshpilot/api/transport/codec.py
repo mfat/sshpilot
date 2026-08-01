@@ -111,10 +111,6 @@ from ..models.transfers import (
     TransferState,
     TransferSummary,
 )
-from ..forward_identity import forward_id_from_uuid, forward_uuid_from_id
-from ..session_identity import session_id_from_uuid, session_uuid_from_id
-from ..sftp_identity import sftp_id_from_uuid, sftp_uuid_from_id
-from ..transfer_identity import transfer_id_from_uuid, transfer_uuid_from_id
 from .envelopes import (
     ErrorData,
     ErrorResponseEnvelope,
@@ -156,58 +152,24 @@ def _identifier(value: Any, context: str) -> str:
 
 
 def _interaction_scope_id(value: Any, context: str) -> SessionId:
-    """Parse interaction scope ids used for eligibility (session/sftp/forward).
-
-    Terminal interactions use ``session:``; SFTP and forwards reuse their public
-    service ids as the broker session_id so ownership checks stay unified.
-    """
-
-    text = _identifier(value, context)
-    try:
-        return SessionId(session_id_from_uuid(session_uuid_from_id(text)))
-    except (TypeError, ValueError):
-        pass
-    try:
-        return SessionId(str(sftp_id_from_uuid(sftp_uuid_from_id(text))))
-    except (TypeError, ValueError):
-        pass
-    try:
-        return SessionId(str(forward_id_from_uuid(forward_uuid_from_id(text))))
-    except (TypeError, ValueError):
-        pass
-    raise ValueError(f"{context} is malformed") from None
+    """Parse interaction scope ids used for eligibility (session/sftp/forward)."""
+    return SessionId(_identifier(value, context))
 
 
 def _session_id(value: Any, context: str) -> SessionId:
-    text = _identifier(value, context)
-    try:
-        return SessionId(session_id_from_uuid(session_uuid_from_id(text)))
-    except (TypeError, ValueError):
-        raise ValueError(f"{context} is malformed") from None
+    return SessionId(_identifier(value, context))
 
 
 def _sftp_service_id(value: Any, context: str) -> SftpServiceId:
-    text = _identifier(value, context)
-    try:
-        return SftpServiceId(sftp_id_from_uuid(sftp_uuid_from_id(text)))
-    except (TypeError, ValueError):
-        raise ValueError(f"{context} is malformed") from None
+    return SftpServiceId(_identifier(value, context))
 
 
 def _transfer_id(value: Any, context: str) -> TransferId:
-    text = _identifier(value, context)
-    try:
-        return TransferId(transfer_id_from_uuid(transfer_uuid_from_id(text)))
-    except (TypeError, ValueError):
-        raise ValueError(f"{context} is malformed") from None
+    return TransferId(_identifier(value, context))
 
 
 def _forward_id(value: Any, context: str) -> ForwardId:
-    text = _identifier(value, context)
-    try:
-        return ForwardId(forward_id_from_uuid(forward_uuid_from_id(text)))
-    except (TypeError, ValueError):
-        raise ValueError(f"{context} is malformed") from None
+    return ForwardId(_identifier(value, context))
 
 
 def _text(value: Any, context: str, *, allow_empty: bool = False) -> str:

@@ -143,6 +143,7 @@ class DaemonTerminalSessionController:
         on_output: Optional[Callable[[bytes], None]] = None,
         on_continuity_lost: Optional[Callable[[], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
+        on_state_changed: Optional[Callable[[], None]] = None,
     ) -> None:
         self._client = client
         self._bridge = bridge
@@ -151,6 +152,7 @@ class DaemonTerminalSessionController:
         self._on_output = on_output
         self._on_continuity_lost = on_continuity_lost
         self._on_error = on_error or self._default_error_handler
+        self._on_state_changed = on_state_changed
 
         # Validate required capabilities
         missing = daemon_terminal_capabilities_missing(client)
@@ -501,6 +503,12 @@ class DaemonTerminalSessionController:
             self._tab_state.state = TerminalSessionState.REPLAYING
         else:
             self._tab_state.state = TerminalSessionState.ACTIVE
+        self._notify_state_changed()
+
+    def _notify_state_changed(self) -> None:
+        callback = self._on_state_changed
+        if callback is not None:
+            callback()
 
     def _on_session_closed(self, _result) -> None:
         """Handle session close completion."""
@@ -518,6 +526,7 @@ class DaemonTerminalSessionController:
         if (self._tab_state.state == TerminalSessionState.REPLAYING
             and not output.replay):
             self._tab_state.state = TerminalSessionState.ACTIVE
+            self._notify_state_changed()
 
         if self._on_output:
             self._on_output(output.data)

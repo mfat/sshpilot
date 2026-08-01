@@ -1091,7 +1091,6 @@ class WindowConfigDialogsMixin:
         """Build an SFTP-manager (used only for its ``run_command``) targeting ``connection``,
         exactly as the authorized-keys editor does. Reuses the shared native-auth path."""
         from .file_manager import create_file_manager_backend
-        from .connection_identity import connection_id_from_uuid
         host_value = (getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
                       or getattr(connection, 'nickname', '') or '')
         username = getattr(connection, 'username', '') or ''
@@ -1109,13 +1108,7 @@ class WindowConfigDialogsMixin:
                 initial_password = self.connection_manager.get_connection_password(connection)
             except Exception:
                 initial_password = None
-        connection_id = None
-        try:
-            uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
-            if uuid_value:
-                connection_id = connection_id_from_uuid(str(uuid_value))
-        except Exception:
-            connection_id = None
+        connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
         return create_file_manager_backend(
             str(host_value), str(username), int(port_value),
             password=initial_password, connection=connection,

@@ -16,7 +16,7 @@ from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
 
 class _Connection:
     def __init__(self):
-        self.id = ConnectionId("connection:demo")
+        self.id = ConnectionId("demo")
         self.protocol = "ssh"
         self.hostname = "example.test"
         self.username = "alice"
@@ -78,7 +78,7 @@ def _make_runtime():
 
 
 def _open_request():
-    return OpenSftpRequest(connection_id=ConnectionId("connection:demo"))
+    return OpenSftpRequest(connection_id=ConnectionId("demo"))
 
 
 def test_prepare_open_service_returns_starting_summary():

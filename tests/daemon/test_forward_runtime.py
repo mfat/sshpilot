@@ -17,7 +17,7 @@ from sshpilot.daemon.forward_runtime import ForwardRuntime
 
 class _Connection:
     def __init__(self):
-        self.id = ConnectionId("connection:demo")
+        self.id = ConnectionId("demo")
         self.protocol = "ssh"
         self.hostname = "example.test"
         self.username = "alice"
@@ -85,7 +85,7 @@ def _make_runtime():
 
 def _open_request():
     return OpenForwardRequest(
-        connection_id=ConnectionId("connection:demo"),
+        connection_id=ConnectionId("demo"),
         type=ForwardType.REMOTE,
         bind_host="127.0.0.1",
         bind_port=2222,
@@ -156,7 +156,7 @@ def test_local_forward_not_active_without_bind():
     bind_port = int(probe.getsockname()[1])
     probe.close()
     request = OpenForwardRequest(
-        connection_id=ConnectionId("connection:demo"),
+        connection_id=ConnectionId("demo"),
         type=ForwardType.LOCAL,
         bind_host="127.0.0.1",
         bind_port=bind_port,

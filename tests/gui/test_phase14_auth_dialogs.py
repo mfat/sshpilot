@@ -64,7 +64,6 @@ def test_password_dialog_without_auth_helper(phase14_harness):
 
 def test_host_key_dialog_without_auth_helper(phase14_harness):
     from datetime import datetime, timedelta, timezone
-    import uuid
 
     from sshpilot.api.models import (
         HostKeyDecision,
@@ -113,8 +112,8 @@ def test_host_key_dialog_without_auth_helper(phase14_harness):
     now = datetime.now(timezone.utc)
     summary = InteractionSummary(
         id=new_interaction_id(),
-        session_id=SessionId(f"session:{uuid.uuid4()}"),
-        connection_id=ConnectionId(f"connection:{uuid.uuid4()}"),
+        session_id=SessionId("session-auth"),
+        connection_id=ConnectionId("demo"),
         type=InteractionType.HOST_KEY_CONFIRMATION,
         state=InteractionState.PENDING,
         created_at=now,

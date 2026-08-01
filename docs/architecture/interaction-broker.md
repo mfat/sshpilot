@@ -15,7 +15,7 @@ OpenSSH -> private askpass helper -> InteractionBroker
 ## Identity and lifecycle
 
 Every interaction has an immutable daemon-lifetime
-`interaction:<canonical UUIDv4>` ID and links to one session and stable
+`interaction-<n>` ID and links to one session and stable
 connection ID. Supported types are:
 
 - `host_key_confirmation`;

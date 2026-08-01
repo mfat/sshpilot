@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch
 
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.version import PROTOCOL_VERSION
-from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon_terminal_policy import DaemonTerminalReadinessReason
 from sshpilot.terminal_manager import TerminalManager
 from sshpilot.terminal_session_controller import (
@@ -66,7 +65,8 @@ class TestDaemonActivationOwnership:
 
     def _connection(self):
         connection = Mock()
-        connection.uuid = new_connection_uuid()
+        connection.id = "TestServer"
+        connection.uuid = "TestServer"
         connection.protocol = "ssh"
         connection.nickname = "TestServer"
         connection.ssh_cmd = None

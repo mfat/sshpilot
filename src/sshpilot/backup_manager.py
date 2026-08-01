@@ -1321,12 +1321,12 @@ class BackupManager:
             }
 
             # Import groups that don't exist by name
-            import uuid
+            from .core.connections.models import generate_group_slug
             for imported_id, imported_info in imported_group_data.items():
                 group_name = imported_info.get('name', '')
                 if group_name.lower() not in existing_names:
-                    # Create new group with new UUID to avoid conflicts
-                    new_id = str(uuid.uuid4())
+                    # Create new group with stable slug to avoid conflicts
+                    new_id = generate_group_slug(group_name, set(current_group_data.keys()))
                     new_info = imported_info.copy()
                     new_info['id'] = new_id
                     new_info['order'] = len(current_group_data)

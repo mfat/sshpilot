@@ -82,12 +82,6 @@ from .terminal_events import (
     TerminalSubscription,
 )
 from .version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
-from sshpilot.connection_identity import (
-    connection_id_from_uuid,
-    connection_uuid_from_id,
-    is_transitional_connection_id,
-    transitional_connection_id,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -946,15 +940,15 @@ class InProcessClient:
 
     @staticmethod
     def connection_id_for(connection: Any) -> ConnectionId:
-        """Return the stable opaque ID derived from persisted identity."""
+        """Return the stable opaque ID equal to the SSH Host alias."""
 
-        try:
-            return ConnectionId(connection_id_from_uuid(connection.uuid))
-        except (AttributeError, ValueError):
+        nick = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "").strip()
+        if not nick:
             raise SshPilotError(
                 ErrorCode.INTERNAL_ERROR,
                 "A stored connection has no durable identity",
-            ) from None
+            )
+        return ConnectionId(nick)
 
     def _assert_command_thread(self) -> None:
         if self._closed:
@@ -1033,29 +1027,18 @@ class InProcessClient:
             ) from None
 
     def _find_connection(self, connection_id: ConnectionId) -> Optional[Any]:
-        text = str(connection_id)
-        try:
-            connection_uuid = connection_uuid_from_id(text)
-        except ValueError:
-            connection_uuid = None
-        if connection_uuid is not None:
-            finder = getattr(self._connection_manager, "get_connection_by_uuid", None)
-            if callable(finder):
-                found = finder(connection_uuid)
-                if found is not None:
-                    return found
-            for connection in self._manager_connections():
-                if str(getattr(connection, "uuid", "")) == connection_uuid:
-                    return connection
+        text = str(connection_id).strip()
+        if not text:
             return None
-
-        if is_transitional_connection_id(text):
-            for connection in self._manager_connections():
-                if transitional_connection_id(
-                    getattr(connection, "protocol", "ssh"),
-                    getattr(connection, "nickname", ""),
-                ) == text:
-                    return connection
+        finder = getattr(self._connection_manager, "find_connection_by_nickname", None)
+        if callable(finder):
+            found = finder(text)
+            if found is not None:
+                return found
+        for connection in self._manager_connections():
+            nick = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "").strip()
+            if nick == text:
+                return connection
         return None
 
     def _connection_with_nickname(self, nickname: str) -> Optional[Any]:

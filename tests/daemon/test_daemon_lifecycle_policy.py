@@ -29,6 +29,9 @@ class _BlockingSessionRunner:
         self.started.set()
         return _BlockingHandle(on_exit)
 
+    def close(self):
+        pass
+
 
 class _BlockingHandle:
     def __init__(self, on_exit) -> None:
@@ -93,6 +96,7 @@ def test_stop_with_live_session_requires_confirmation(daemon_factory):
     connection = client.list_connections()[0]
     opened = client.open_session(OpenSessionRequest(connection_id=connection.id))
     assert opened.id
+    assert runner.started.wait(timeout=2.0)
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
         status = client.get_daemon_status()
@@ -180,6 +184,7 @@ def test_draining_rejects_new_session_open(daemon_factory):
     client = DaemonClient(socket_path=server.socket_path)
     connection = client.list_connections()[0]
     client.open_session(OpenSessionRequest(connection_id=connection.id))
+    assert runner.started.wait(timeout=2.0)
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
         if client.get_daemon_status().resources.sessions_active:

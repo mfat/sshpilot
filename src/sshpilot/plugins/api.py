@@ -1073,7 +1073,6 @@ class PluginContext:
         from ..api.capabilities import Capability as ApiCapability
         from ..api.daemon_client import DaemonClient
         from ..api.models.operations import ForwardState, ForwardType, OpenForwardRequest
-        from ..connection_identity import connection_id_from_uuid
         from ..extended_service_policy import daemon_forward_unavailable_message
         from ..port_utils import find_available_port
 
@@ -1105,21 +1104,17 @@ class PluginContext:
                     detail=f"missing capabilities: {names}"
                 )
             )
-        uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
-        if not uuid_value:
+        connection_id = str(
+            getattr(connection, "id", None)
+            or getattr(connection, "nickname", None)
+            or ""
+        )
+        if not connection_id:
             raise RuntimeError(
                 daemon_forward_unavailable_message(
-                    detail="connection has no UUID"
+                    detail="connection has no ID"
                 )
             )
-        try:
-            connection_id = connection_id_from_uuid(str(uuid_value))
-        except Exception as exc:
-            raise RuntimeError(
-                daemon_forward_unavailable_message(
-                    detail=f"invalid connection id ({type(exc).__name__})"
-                )
-            ) from exc
         local_port = find_available_port(
             remote_port if remote_port >= 1024 else 8000 + remote_port
         )

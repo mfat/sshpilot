@@ -351,18 +351,12 @@ def create_internal_file_manager_tab(
         raise RuntimeError("An application instance is required to embed the file manager")
 
     from .file_manager_window import FileManagerWindow
-    from .connection_identity import connection_id_from_uuid
 
     daemon_client = getattr(parent_window, "client", None) if parent_window else None
     bridge = getattr(parent_window, "client_bridge", None) if parent_window else None
     connection_id = None
     if connection is not None:
-        try:
-            uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
-            if uuid_value:
-                connection_id = connection_id_from_uuid(str(uuid_value))
-        except Exception:
-            connection_id = None
+        connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
 
     controller = FileManagerWindow(
         application=app,

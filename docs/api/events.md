@@ -53,7 +53,7 @@ Successful create/update/delete calls produce exactly one corresponding event
 from the manager signal path; handlers never publish a duplicate. Because the
 response and event use the same framed output deque, clients accept either
 valid response/event ordering and refresh from the resulting snapshot.
-Connection event payload IDs are UUID-backed and remain stable across rename.
+Connection event payload IDs are SSH Host aliases. Alias rename is delete + create.
 Startup identity migration is schema maintenance and emits no lifecycle event.
 
 Session start and close execute on a bounded keyed worker pool, but workers do

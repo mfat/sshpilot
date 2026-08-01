@@ -247,7 +247,8 @@ class TestEnsureLocalForwardRouting:
         cm = Mock()
         conn = Mock()
         conn.nickname = "Demo"
-        conn.uuid = "00000000-0000-4000-8000-000000000099"
+        conn.id = "id-99"
+        conn.uuid = "id-99"
         cm.find_connection_by_nickname.return_value = conn
 
         # host=None avoids Events/UI facades; attach client after construction.

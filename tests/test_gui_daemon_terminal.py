@@ -36,14 +36,14 @@ class _Connection:
     x11_forwarding = False
     forwarding_rules = []
     proxy_jump = []
-    uuid = "550e8400-e29b-41d4-a716-446655440001"
+    id = "TerminalTest"
     data = {
         "nickname": nickname,
         "hostname": hostname,
         "username": username,
         "port": port,
         "protocol": protocol,
-        "uuid": uuid,
+        "id": id,
     }
 
 

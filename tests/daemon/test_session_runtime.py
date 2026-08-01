@@ -15,12 +15,7 @@ from sshpilot.api.models.sessions import (
     SessionExitInfo,
     SessionState,
 )
-from sshpilot.api.session_identity import (
-    canonical_session_uuid,
-    session_id_from_uuid,
-    session_uuid_from_id,
-)
-from sshpilot.connection_identity import new_connection_uuid
+from sshpilot.api.session_identity import new_session_id
 from sshpilot.daemon.session_runtime import (
     SessionRuntime,
     SubprocessSessionProcessRunner,
@@ -31,7 +26,8 @@ from sshpilot.daemon.session_runtime import (
 class _Connection:
     def __init__(self):
         self.nickname = "demo"
-        self.uuid = new_connection_uuid()
+        self.id = "demo"
+        self.uuid = "demo"
         self.host = "demo"
         self.hostname = "example.test"
         self.username = "alice"
@@ -159,16 +155,9 @@ def runtime_parts():
     core.close()
 
 
-def test_session_id_is_uuidv4_shaped_and_strict():
-    identifier = session_id_from_uuid("550E8400-E29B-41D4-A716-446655440000")
-
-    assert identifier == "session:550e8400-e29b-41d4-a716-446655440000"
-    assert session_uuid_from_id(identifier) == identifier.removeprefix("session:")
-    with pytest.raises(ValueError):
-        canonical_session_uuid("00000000-0000-0000-0000-000000000000")
-    for invalid in ("", "session:test", "other:550e8400-e29b-41d4-a716-446655440000"):
-        with pytest.raises(ValueError):
-            session_uuid_from_id(invalid)
+def test_session_id_is_sequential_and_strict():
+    identifier = new_session_id()
+    assert identifier.startswith("session-")
 
 
 def test_state_machine_accepts_only_the_documented_transitions():
@@ -215,7 +204,7 @@ def test_open_list_get_and_spontaneous_exit_are_serial_and_safe(runtime_parts):
     )
 
     assert opened.state is SessionState.RUNNING
-    assert opened.id.startswith("session:")
+    assert opened.id.startswith("session-")
     assert runtime.list_sessions() == [opened]
     assert runtime.get_session(opened.id) == opened
     assert runner.specs[0].connection_id == connection_id
@@ -305,7 +294,7 @@ def test_open_rejects_missing_connection_and_unsupported_protocol():
     try:
         with pytest.raises(SshPilotError) as missing:
             runtime.open_session(
-                OpenSessionRequest(connection_id="connection:00000000-0000-0000-0000-000000000001"),
+                OpenSessionRequest(connection_id="missing"),
                 client_id=ClientId("client:a"),
             )
         assert missing.value.code is ErrorCode.CONNECTION_NOT_FOUND

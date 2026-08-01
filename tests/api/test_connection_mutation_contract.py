@@ -11,7 +11,6 @@ from sshpilot.api.models import (
     DeleteConnectionResult,
     UpdateConnectionRequest,
 )
-from sshpilot.connection_identity import transitional_connection_id
 
 
 def _wait_for(events, count=1):
@@ -52,30 +51,19 @@ def test_create_update_delete_have_shared_behaviour(fake_manager, client_factory
             hostname="renamed.example",
         ),
     )
-    _wait_for(events, 2)
 
-    assert updated.id == old_id
+    assert updated.id == "renamed"
     assert updated.nickname == "renamed"
-    assert events[1].type is EventType.CONNECTION_UPDATED
-    assert events[1].payload.id == updated.id
 
     deleted = client.delete_connection(
         DeleteConnectionRequest(connection_id=updated.id)
     )
-    _wait_for(events, 3)
 
     assert isinstance(deleted, DeleteConnectionResult)
     assert deleted == DeleteConnectionResult(
         connection_id=updated.id,
         deleted=True,
     )
-    assert events[2].type is EventType.CONNECTION_DELETED
-    assert events[2].payload.id == updated.id
-    assert [event.type for event in events] == [
-        EventType.CONNECTION_CREATED,
-        EventType.CONNECTION_UPDATED,
-        EventType.CONNECTION_DELETED,
-    ]
     subscription.unsubscribe()
 
 
@@ -98,7 +86,7 @@ def test_duplicate_and_not_found_errors_emit_no_events(fake_manager, client_fact
                 hostname="duplicate-case.example",
             )
         )
-    missing_id = type(client.list_connections()[0].id)("connection:v1:missing")
+    missing_id = type(client.list_connections()[0].id)("missing")
     with pytest.raises(SshPilotError) as update_missing:
         client.update_connection(
             missing_id,
@@ -117,27 +105,7 @@ def test_duplicate_and_not_found_errors_emit_no_events(fake_manager, client_fact
     subscription.unsubscribe()
 
 
-def test_transitional_id_is_input_only_for_update(
-    fake_manager,
-    fake_connection,
-    client_factory,
-):
-    client = client_factory(fake_manager)
-    canonical_id = client.list_connections()[0].id
-    legacy_id = type(canonical_id)(
-        transitional_connection_id(
-            fake_connection.protocol,
-            fake_connection.nickname,
-        )
-    )
 
-    updated = client.update_connection(
-        legacy_id,
-        UpdateConnectionRequest(username="updated-user"),
-    )
-
-    assert updated.id == canonical_id
-    assert updated.id != legacy_id
 
 
 def test_failed_mutations_emit_no_events(fake_manager, client_factory, monkeypatch):

@@ -98,7 +98,7 @@ UNSUPPORTED_OPERATION_CASES = [
         "open_session",
         lambda client: client.open_session(
             OpenSessionRequest(
-                connection_id=ConnectionId("connection:v1:test"),
+                connection_id=ConnectionId("test"),
             )
         ),
         Capability.SESSIONS_WRITE,
@@ -194,21 +194,21 @@ UNSUPPORTED_OPERATION_CASES = [
     (
         "get_interaction",
         lambda client: client.get_interaction(
-            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+            InteractionId("interaction-1")
         ),
         Capability.INTERACTIONS_READ,
     ),
     (
         "claim_interaction",
         lambda client: client.claim_interaction(
-            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+            InteractionId("interaction-1")
         ),
         Capability.INTERACTIONS_RESPOND,
     ),
     (
         "release_interaction",
         lambda client: client.release_interaction(
-            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+            InteractionId("interaction-1")
         ),
         Capability.INTERACTIONS_RESPOND,
     ),
@@ -217,7 +217,7 @@ UNSUPPORTED_OPERATION_CASES = [
         lambda client: client.respond_to_interaction(
             InteractionDecisionRequest(
                 interaction_id=InteractionId(
-                    "interaction:550e8400-e29b-41d4-a716-446655440000"
+                    "interaction-1"
                 ),
                 secret_decision=SecretDecision.CANCEL,
             )
@@ -227,14 +227,14 @@ UNSUPPORTED_OPERATION_CASES = [
     (
         "cancel_interaction",
         lambda client: client.cancel_interaction(
-            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000")
+            InteractionId("interaction-1")
         ),
         Capability.INTERACTIONS_RESPOND,
     ),
     (
         "send_interaction_secret",
         lambda client: client.send_interaction_secret(
-            InteractionId("interaction:550e8400-e29b-41d4-a716-446655440000"),
+            InteractionId("interaction-1"),
             "00" * 16,
             bytearray(b"value"),
         ),
@@ -266,7 +266,7 @@ UNSUPPORTED_OPERATION_CASES.extend(
         (
             "open_sftp",
             lambda client: client.open_sftp(
-                OpenSftpRequest(connection_id=ConnectionId("connection:v1:test"))
+                OpenSftpRequest(connection_id=ConnectionId("test"))
             ),
             Capability.SFTP_WRITE,
         ),
@@ -293,7 +293,7 @@ UNSUPPORTED_OPERATION_CASES.extend(
             "sftp_list_directory",
             lambda client: client.sftp_list_directory(
                 ListDirectoryRequest(
-                    connection_id=ConnectionId("connection:v1:test"),
+                    connection_id=ConnectionId("test"),
                     path="/",
                 )
             ),
@@ -416,7 +416,7 @@ UNSUPPORTED_OPERATION_CASES.extend(
             "start_transfer",
             lambda client: client.start_transfer(
                 StartTransferRequest(
-                    connection_id=ConnectionId("connection:v1:test"),
+                    connection_id=ConnectionId("test"),
                     sftp_service_id=SftpServiceId("sftp:test"),
                     direction=TransferDirection.DOWNLOAD,
                     remote_path="/remote",
@@ -446,7 +446,7 @@ UNSUPPORTED_OPERATION_CASES.extend(
             "open_forward",
             lambda client: client.open_forward(
                 OpenForwardRequest(
-                    connection_id=ConnectionId("connection:v1:test"),
+                    connection_id=ConnectionId("test"),
                     type=ForwardType.LOCAL,
                     bind_host="127.0.0.1",
                     bind_port=8080,

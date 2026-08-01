@@ -327,7 +327,7 @@ class SftpServiceRuntime:
         runner: Optional[Any] = None,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
-        uuid_factory: Callable[[], SftpServiceId] = new_sftp_id,
+        id_factory: Callable[[], SftpServiceId] = new_sftp_id,
         shutdown_timeout_seconds: float = 3.0,
         max_retained_closed_services: int = DEFAULT_MAX_RETAINED_CLOSED_SERVICES,
         list_limit: int = DEFAULT_LIST_LIMIT,
@@ -342,7 +342,7 @@ class SftpServiceRuntime:
         self._runner: Any = runner or UnsupportedSftpProcessRunner()
         self._clock = clock
         self._monotonic = monotonic
-        self._uuid_factory = uuid_factory
+        self._id_factory = id_factory
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_retained_closed_services = max_retained_closed_services
         self._list_limit = list_limit
@@ -398,7 +398,7 @@ class SftpServiceRuntime:
                 "The connection protocol cannot start an SFTP service",
                 connection_id=request.connection_id,
             )
-        service_id = self._uuid_factory()
+        service_id = self._id_factory()
         now = self._clock()
         record = _SftpRecord(
             service_id=service_id,
@@ -421,7 +421,7 @@ class SftpServiceRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             if service_id in self._records:
-                raise RuntimeError("SFTP UUID factory reused an active identifier")
+                raise RuntimeError("SFTP id factory reused an active identifier")
             self._records[service_id] = record
             self._creation_order.append(service_id)
             created_event = self._event_locked(record, EventType.SFTP_CREATED)

@@ -95,7 +95,7 @@ def test_duplicate_strips_private_keys_and_appends_copy_suffix():
     conn = _plugin_conn({
         "nickname": "orig", "command": "echo", "foo": "bar",
         "__internal": 1, "aliases": ["a"], "password_changed": True,
-        "uuid": "550e8400-e29b-41d4-a716-446655440000",
+        
     })
     dup = cm.duplicate_connection(conn, _group_mgr())
     assert dup.nickname == "orig-Copy"
@@ -104,7 +104,8 @@ def test_duplicate_strips_private_keys_and_appends_copy_suffix():
         assert k not in saved
     assert saved["foo"] == "bar"       # ordinary data carried over
     assert saved["nickname"] == "orig-Copy"
-    assert saved["uuid"] != conn.data["uuid"]
+    assert "uuid" not in saved
+    assert saved["nickname"] != conn.data["nickname"]
 
 
 def test_duplicate_raises_runtimeerror_when_save_fails():

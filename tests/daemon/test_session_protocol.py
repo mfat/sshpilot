@@ -185,7 +185,7 @@ def test_session_open_and_close_transport_failures_are_not_retried(monkeypatch):
 
     monkeypatch.setattr(client, "_request", fail_request)
     monkeypatch.setattr(client, "_require_capability", lambda _capability: None)
-    request = OpenSessionRequest(connection_id="connection:test")
+    request = OpenSessionRequest(connection_id="test")
 
     with pytest.raises(SshPilotError) as caught:
         client.open_session(request)

@@ -53,7 +53,7 @@ class _AsyncPage:
 
 def test_recent_listing_reads_dtos_from_client_not_manager():
     summary = ConnectionSummary(
-        id=ConnectionId("connection:v1:test"),
+        id=ConnectionId("test"),
         nickname="demo",
         host="demo",
         hostname="example.test",
@@ -198,7 +198,7 @@ def test_daemon_backed_recent_read_is_submitted_without_blocking(monkeypatch):
             pass
 
     summary = ConnectionSummary(
-        id=ConnectionId("connection:v1:async"),
+        id=ConnectionId("async"),
         nickname="async",
         host="async",
         hostname="async.example",

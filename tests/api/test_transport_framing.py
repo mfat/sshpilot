@@ -154,7 +154,7 @@ def test_all_envelope_types_have_distinct_shapes():
         4,
         connection_summary_to_wire(
             ConnectionSummary(
-                id="connection:v1:demo",
+                id="demo",
                 nickname="demo",
                 host="demo",
                 hostname="example.test",

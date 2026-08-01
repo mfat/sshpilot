@@ -39,7 +39,7 @@ class _FakeSocket:
 
 def _event(sequence):
     summary = ConnectionSummary(
-        id=ConnectionId("connection:v1:demo"),
+        id=ConnectionId("demo"),
         nickname="demo",
         host="demo",
         hostname="example.test",
@@ -200,7 +200,7 @@ def test_terminal_overflow_preserves_control_and_healthy_peer(tmp_path):
     slow = _handshaken_state(10)
     healthy = _handshaken_state(11)
     session_id = SessionId(
-        "session:550e8400-e29b-41d4-a716-446655440000"
+        "session-1"
     )
     frame = TerminalFrame(
         kind=TerminalFrameKind.OUTPUT,
@@ -272,7 +272,7 @@ def test_control_room_drop_reports_terminal_continuity_loss(tmp_path):
     )
     state = _handshaken_state(10)
     session_id = SessionId(
-        "session:550e8400-e29b-41d4-a716-446655440000"
+        "session-1"
     )
     state.output.append(
         _OutboundFrame(
@@ -316,7 +316,7 @@ def test_control_and_lifecycle_frames_overtake_terminal_without_reordering_event
         b"terminal",
         is_terminal=True,
         session_id=SessionId(
-            "session:550e8400-e29b-41d4-a716-446655440000"
+            "session-1"
         ),
     )
     with server._event_lock:

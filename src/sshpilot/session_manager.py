@@ -34,7 +34,6 @@ import tempfile
 from typing import Dict, List, Optional
 
 from .platform_utils import get_config_dir
-from .connection_identity import connection_id_from_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +153,7 @@ class SessionManager:
                     )
                     if connection is None:
                         continue
-                    entry["connection_id"] = connection_id_from_uuid(connection.uuid)
+                    entry["connection_id"] = connection.nickname
                     changed = True
 
         for payload in self.sessions.values():

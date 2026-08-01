@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from gi.repository import Gio, GLib, GObject
 from .platform_utils import get_config_dir
-from .connection_identity import canonical_connection_uuid, connection_uuid_from_id
 from sshpilot.core.settings import (
     CONFIG_VERSION as _CORE_CONFIG_VERSION,
     ensure_config_defaults as _ensure_config_defaults_core,
@@ -54,8 +53,6 @@ class Config(GObject.Object):
         # JSON config is used either as primary or as fallback store
         self.config_file = os.path.join(get_config_dir(), 'config.json')
         self.config_data = self.load_json_config()
-        self._connection_uuid_by_nickname: Dict[str, str] = {}
-        self._connection_nickname_by_uuid: Dict[str, str] = {}
         
         # Load built-in themes
         self.terminal_themes = self.load_builtin_themes()
@@ -611,63 +608,27 @@ class Config(GObject.Object):
 
     # --- Per-connection metadata helpers ---
     def bind_connection_identities(self, connections) -> None:
-        """Bind display nicknames to persisted UUID keys for metadata callers."""
-
-        by_nickname: Dict[str, str] = {}
-        by_uuid: Dict[str, str] = {}
-        ambiguous_nicknames = set()
-        for connection in connections or ():
-            try:
-                connection_uuid = canonical_connection_uuid(
-                    getattr(connection, 'uuid', None)
-                )
-            except ValueError:
-                continue
-            nickname = str(getattr(connection, 'nickname', '') or '')
-            if nickname:
-                by_uuid[connection_uuid] = nickname
-                if nickname in ambiguous_nicknames:
-                    continue
-                if nickname in by_nickname:
-                    by_nickname.pop(nickname, None)
-                    ambiguous_nicknames.add(nickname)
-                else:
-                    by_nickname[nickname] = connection_uuid
-        self._connection_uuid_by_nickname = by_nickname
-        self._connection_nickname_by_uuid = by_uuid
-
-    def _connection_meta_key(self, key: str) -> str:
-        text = str(key or '')
-        mapped = self._connection_uuid_by_nickname.get(text)
-        if mapped:
-            return mapped
-        try:
-            return canonical_connection_uuid(text)
-        except ValueError:
-            pass
-        try:
-            return connection_uuid_from_id(text)
-        except ValueError:
-            return text
+        """No-op retained for backwards compatibility."""
+        return None
 
     def get_connection_meta(self, key: str) -> Dict[str, Any]:
-        """Return metadata through a nickname-compatible UUID key adapter."""
+        """Return metadata for a connection by nickname / ID."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if isinstance(meta_all, dict):
-                value = meta_all.get(self._connection_meta_key(key), {})
+                value = meta_all.get(str(key or ''), {})
                 return value if isinstance(value, dict) else {}
         except Exception:
             pass
         return {}
 
     def set_connection_meta(self, key: str, meta: Dict[str, Any]):
-        """Store metadata for a connection."""
+        """Store metadata for a connection by nickname / ID."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):
                 meta_all = {}
-            meta_all[self._connection_meta_key(key)] = meta or {}
+            meta_all[str(key or '')] = meta or {}
             self.set_setting('connections_meta', meta_all)
         except Exception:
             logger.error(f"Failed to persist connection meta for {key}")
@@ -689,14 +650,13 @@ class Config(GObject.Object):
         return bool(self.get_connection_meta(nickname).get('pinned', False))
 
     def get_pinned_nicknames(self) -> list:
-        """Return pinned display nicknames for legacy GTK callers."""
+        """Return pinned display nicknames."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):
                 return []
             return [
-                self._connection_nickname_by_uuid.get(k, k)
-                for k, v in meta_all.items()
+                k for k, v in meta_all.items()
                 if isinstance(v, dict) and v.get('pinned')
             ]
         except Exception:
@@ -732,10 +692,7 @@ class Config(GObject.Object):
         if isinstance(meta_all, dict):
             for connection_key, meta in meta_all.items():
                 if isinstance(meta, dict) and isinstance(meta.get('tags'), list):
-                    nickname = self._connection_nickname_by_uuid.get(
-                        connection_key,
-                        connection_key,
-                    )
+                    nickname = connection_key
                     tag_map[nickname] = meta['tags']
         return [(tag, len(nicks)) for tag, nicks in compute_tag_groups(tag_map)]
 

@@ -17,15 +17,16 @@ class _Cfg:
 
 
 class _Conn:
-    def __init__(self, uuid, nickname):
-        self.uuid = uuid
+    def __init__(self, connection_id, nickname):
+        self.id = connection_id
+        self.uuid = connection_id
         self.nickname = nickname
         self.hostname = "h.example"
         self.username = "u"
         self.port = 22
         self.protocol = "ssh"
         self.data = {
-            "uuid": uuid,
+            "id": connection_id,
             "nickname": nickname,
             "hostname": "h.example",
             "username": "u",
@@ -50,11 +51,11 @@ class _CM:
 
 def test_move_connection_updates_domain_group_id():
     domain = ConnectionService(autosave=False)
-    conn = _Conn("11111111-1111-4111-8111-111111111111", "Demo")
+    conn = _Conn("Demo", "Demo")
     domain.create(
         {
-            "uuid": conn.uuid,
-            "nickname": conn.nickname,
+            "id": "Demo",
+            "nickname": "Demo",
             "hostname": "h.example",
             "username": "u",
             "port": 22,
@@ -66,27 +67,25 @@ def test_move_connection_updates_domain_group_id():
     assert domain.get(gid) is None or domain.list_groups()
     assert any(g.id == gid for g in domain.list_groups())
     gm.move_connection(conn.nickname, gid)
-    record = domain.get(conn.uuid)
+    record = domain.get(conn.nickname)
     assert record is not None
     assert record.group_id == gid
     gm.move_connection(conn.nickname, None)
-    assert domain.get(conn.uuid).group_id is None
+    assert domain.get(conn.nickname).group_id is None
 
 
 def test_sync_domain_from_live_includes_groups():
     from sshpilot.connection_manager import ConnectionManager
 
-    # Exercise the payload builder without full SSH init by calling the method
-    # on a minimal stand-in that shares the implementation via type.
     domain = ConnectionService(autosave=False)
-    conn = _Conn("22222222-2222-4222-8222-222222222222", "SyncMe")
+    conn = _Conn("SyncMe", "SyncMe")
     cm = ConnectionManager.__new__(ConnectionManager)
     cm._domain = domain
     cm.connections = [conn]
     gm = GroupManager(_Cfg(), connection_manager=_CM(domain, [conn]))
     gid = gm.create_group("Team")
-    gm.move_connection(conn.uuid, gid)
+    gm.move_connection(conn.nickname, gid)
     cm.group_manager = gm
     cm.sync_domain_from_live_connections(gm)
-    assert domain.get(conn.uuid).group_id == gid
+    assert domain.get(conn.nickname).group_id == gid
     assert any(g.id == gid for g in domain.list_groups())

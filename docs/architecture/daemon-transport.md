@@ -239,7 +239,7 @@ is out of scope.
 The explicit session methods are `sessions.list`, `sessions.get`,
 `sessions.open`, `sessions.attach`, `sessions.detach`, and `sessions.close`.
 The daemon advertises `sessions.read`, `sessions.write`, and `sessions.events`.
-One random `session:<uuid>` identifies a record for the daemon lifetime.
+One daemon-scoped `session-<n>` identifier identifies a record for the daemon lifetime.
 
 Logical attachment uses the handshaken peer ID. Peer disconnect detaches it
 from every session without terminating the resource. Open/close transport

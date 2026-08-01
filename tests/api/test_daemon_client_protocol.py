@@ -158,7 +158,7 @@ def test_daemon_client_accepts_event_envelopes_without_confusing_correlation(tmp
         peer, _ = listener.accept()
         request = decode_envelope(receive_frame(peer))
         summary = ConnectionSummary(
-            id=ConnectionId("connection:v1:demo"),
+            id=ConnectionId("demo"),
             nickname="demo",
             host="demo",
             hostname="example.test",
@@ -207,7 +207,7 @@ def test_daemon_client_rejects_non_monotonic_event_sequence(tmp_path):
     socket_path = tmp_path / "non-monotonic-event.sock"
     first_delivered = threading.Event()
     summary = ConnectionSummary(
-        id=ConnectionId("connection:v1:demo"),
+        id=ConnectionId("demo"),
         nickname="demo",
         host="demo",
         hostname="example.test",

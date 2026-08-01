@@ -3417,10 +3417,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             selected_rows = []
         for row in selected_rows:
             connection = getattr(row, 'connection', None)
-            connection_uuid = getattr(connection, 'uuid', None)
-            if connection_uuid:
+            connection_id = getattr(connection, 'id', None) or getattr(connection, 'nickname', None)
+            if connection_id:
                 selected_connection_rows.append(
-                    (connection_uuid, getattr(row, '_group_id', None))
+                    (connection_id, getattr(row, '_group_id', None))
                 )
 
         # Clear existing rows
@@ -3442,9 +3442,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         connections_dict = {conn.nickname: conn for conn in connections}
         connections_dict.update(
             {
-                conn.uuid: conn
+                conn.id: conn
                 for conn in connections
-                if getattr(conn, 'uuid', None)
+                if getattr(conn, 'id', None)
             }
         )
         search_text = ''
@@ -3509,16 +3509,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             indent_level=1,
                             display_group_id=group_info.get('id'),
                         )
-                        displayed_connections.add(conn.uuid)
+                        displayed_connections.add(conn.id)
 
             matches = [
                 c for c in connections
                 if connection_matches(c, search_text)
-                and c.uuid not in displayed_connections
+                and c.id not in displayed_connections
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-                displayed_connections.add(conn.uuid)
+                displayed_connections.add(conn.id)
             self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
@@ -3532,8 +3532,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Add ungrouped connections at the end. A connection is only ungrouped
         # when it does not belong to any group (it may belong to several).
         ungrouped_nicks = [
-            conn.uuid for conn in connections
-            if not self.group_manager.get_connection_groups(conn.uuid)
+            conn.id for conn in connections
+            if not self.group_manager.get_connection_groups(conn.id)
         ]
 
         if ungrouped_nicks:
@@ -5154,9 +5154,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
         self.group_manager.bind_connections(self.connection_manager.connections)
-        self.group_manager.connections.setdefault(connection.uuid, None)
-        if connection.uuid not in self.group_manager.root_connections:
-            self.group_manager.root_connections.append(connection.uuid)
+        self.group_manager.connections.setdefault(connection.id, None)
+        if connection.id not in self.group_manager.root_connections:
+            self.group_manager.root_connections.append(connection.id)
             self.group_manager._save_groups()
         self.rebuild_connection_list()
 
@@ -5178,13 +5178,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             del self.connection_rows[connection]
 
         # Remove from group manager, including any group it was copied into
-        self.group_manager.connections.pop(connection.uuid, None)
-        if connection.uuid in self.group_manager.root_connections:
-            self.group_manager.root_connections.remove(connection.uuid)
+        self.group_manager.connections.pop(connection.id, None)
+        if connection.id in self.group_manager.root_connections:
+            self.group_manager.root_connections.remove(connection.id)
         for group in self.group_manager.groups.values():
-            if connection.uuid in group.get('connections', []):
+            if connection.id in group.get('connections', []):
                 group['connections'] = [
-                    n for n in group['connections'] if n != connection.uuid
+                    n for n in group['connections'] if n != connection.id
                 ]
         if not getattr(self, '_deleting_connections_batch', False):
             self.group_manager._save_groups()
@@ -5239,9 +5239,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         }
         connections_dict.update(
             {
-                conn.uuid: conn
+                conn.id: conn
                 for conn in self.connection_manager.get_connections()
-                if getattr(conn, 'uuid', None)
+                if getattr(conn, 'id', None)
             }
         )
         row = self.connection_list.get_first_child()
@@ -5827,7 +5827,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
             from .file_manager import create_file_manager_backend
-            from .connection_identity import connection_id_from_uuid
         except Exception as exc:
             logger.error("authorized_keys editor unavailable: %s", exc)
             return
@@ -5852,13 +5851,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug("Password lookup failed for authorized_keys editor: %s", exc)
                 initial_password = None
 
-        connection_id = None
-        try:
-            uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
-            if uuid_value:
-                connection_id = connection_id_from_uuid(str(uuid_value))
-        except Exception:
-            connection_id = None
+        connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
 
         try:
             manager = create_file_manager_backend(

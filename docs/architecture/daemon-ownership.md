@@ -59,7 +59,7 @@ objects, secret-provider objects, or raw PTY file descriptors.
 
 In daemon mode, `sshpilotd` is also the single writer and reload owner for SSH
 configuration, included fragments, JSON-backed connections, and connection
-metadata. GTK deliberately disables local UUID migration. External edits are
+metadata. External edits are
 detected and transactionally reloaded by the daemon as described in
 [configuration reload](configuration-reload.md).
 

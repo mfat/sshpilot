@@ -13,7 +13,7 @@ from sshpilot.api.models import (
 
 def _connection(name):
     return ConnectionSummary(
-        id=ConnectionId(f"connection:v1:{name}"),
+        id=ConnectionId(name),
         nickname=name,
         host=name,
         hostname=f"{name}.example",

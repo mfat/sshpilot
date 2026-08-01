@@ -182,7 +182,7 @@ def test_terminal_binding_coalesces_output_and_suppresses_after_close():
         dispatcher=lambda callback, *args: dispatches.put((callback, args))
     )
     session_id = SessionId(
-        "session:550e8400-e29b-41d4-a716-446655440000"
+        "session-1"
     )
     binding = bridge.bind_terminal(
         client,

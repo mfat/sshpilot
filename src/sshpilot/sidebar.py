@@ -3200,7 +3200,7 @@ def _group_connection_key(window, reference):
     resolver = getattr(window.group_manager, "connection_key", None)
     if callable(resolver):
         return resolver(reference)
-    return getattr(reference, "uuid", None) or getattr(
+    return getattr(reference, "id", None) or getattr(
         reference,
         "nickname",
         reference,

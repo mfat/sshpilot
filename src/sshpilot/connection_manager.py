@@ -31,14 +31,7 @@ from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-from .connection_identity import (
-    SSH_UUID_MARKER,
-    canonical_connection_uuid,
-    format_ssh_uuid_marker,
-    new_connection_uuid,
-    parse_ssh_uuid_marker,
-    uuid_markers_from_lines,
-)
+
 
 from gi.repository import GObject, GLib
 from .askpass_utils import (
@@ -104,6 +97,7 @@ from .ssh_config_document import (  # noqa: F401  (re-export)
 )
 from .ssh_config_formatter import (  # noqa: F401  (re-export)
     MANAGED_HOST_OPTIONS,
+    SSH_UUID_MARKER,
     format_ssh_config_entry,
     merged_block_lines,
 )
@@ -747,10 +741,6 @@ class Connection:
 
     def update_data(self, new_data: Dict[str, Any]):
         """Update connection data while preserving object identity"""
-        supplied_uuid = new_data.get('uuid')
-        if supplied_uuid is not None and hasattr(self, '_uuid'):
-            if canonical_connection_uuid(supplied_uuid) != self._uuid:
-                raise ValueError("connection UUID is immutable")
         # When isolated mode is toggled off, the refreshed data no longer includes
         # the isolated_mode/config_root keys. Reusing the previous values would keep
         # the connection flagged as isolated and force an incorrect config override.
@@ -777,17 +767,7 @@ class Connection:
         # to the nickname); ``hostname`` is the HostName value or ''. The
         # in-place update path used to overwrite host with hostname and mirror
         # hostname from host — never reintroduce that.
-        raw_uuid = data.get('uuid')
-        if raw_uuid is not None:
-            canonical_uuid = canonical_connection_uuid(raw_uuid)
-            previous_uuid = getattr(self, '_uuid', None)
-            if previous_uuid is not None and previous_uuid != canonical_uuid:
-                raise ValueError("connection UUID is immutable")
-            self._uuid = canonical_uuid
-            data['uuid'] = canonical_uuid
-        elif not hasattr(self, '_uuid'):
-            self._uuid = new_connection_uuid()
-            data['uuid'] = self._uuid
+        data.pop('uuid', None)
 
         hostname_value = data.get('hostname')
         host_value = data.get('host', '')
@@ -870,10 +850,14 @@ class Connection:
         self.forwarding_rules = data.get('forwarding_rules', [])
 
     @property
-    def uuid(self) -> str:
-        """Immutable canonical persisted connection UUID."""
+    def id(self) -> str:
+        """Concrete SSH Host alias as saved connection ID."""
+        return self.nickname
 
-        return self._uuid
+    @property
+    def uuid(self) -> str:
+        """Backwards compatible alias for id."""
+        return self.nickname
 
     # --- Status (authoritative state + legacy compat) --------------------
     def get_status(self) -> 'ConnectionState':
@@ -963,10 +947,10 @@ class ConnectionManager(GObject.Object):
         super().__init__()
         self.config = config
         self.connections: List[Connection] = []
-        self._connections_by_uuid: Dict[str, Connection] = {}
+        self._connections_by_id: Dict[str, Connection] = {}
         self._visible_connections: List[Connection] = self.connections
-        self._visible_connections_by_uuid: Dict[str, Connection] = (
-            self._connections_by_uuid
+        self._visible_connections_by_id: Dict[str, Connection] = (
+            self._connections_by_id
         )
         self._authoritative_reload_active = False
         self._authoritative_state_lock = threading.RLock()
@@ -1027,14 +1011,15 @@ class ConnectionManager(GObject.Object):
         payloads = []
         for connection in list(self.connections):
             data = dict(getattr(connection, "data", None) or {})
-            data.setdefault("uuid", getattr(connection, "uuid", ""))
+            data.pop("uuid", None)
+            data["id"] = getattr(connection, "id", "") or getattr(connection, "nickname", "")
             data.setdefault("nickname", getattr(connection, "nickname", ""))
             data.setdefault("hostname", getattr(connection, "hostname", ""))
             data.setdefault("username", getattr(connection, "username", ""))
             data.setdefault("port", getattr(connection, "port", 22))
             data.setdefault("protocol", getattr(connection, "protocol", "ssh"))
             if gm is not None:
-                primary = gm.connections.get(getattr(connection, "uuid", ""))
+                primary = gm.connections.get(getattr(connection, "id", "") or getattr(connection, "nickname", ""))
                 if primary:
                     data["group_id"] = primary
             payloads.append(data)
@@ -1060,16 +1045,15 @@ class ConnectionManager(GObject.Object):
 
     def _register_connection(self, connection: Connection) -> None:
         """Link a connection to this manager and add it to the list."""
-        uuid_index = getattr(self, '_connections_by_uuid', None)
-        if not isinstance(uuid_index, dict):
-            uuid_index = {}
-            self._connections_by_uuid = uuid_index
-        existing = uuid_index.get(connection.uuid)
-        if existing is not None and existing is not connection:
-            raise ValueError("duplicate connection UUID")
+        id_index = getattr(self, '_connections_by_id', None)
+        if not isinstance(id_index, dict):
+            id_index = {}
+            self._connections_by_id = id_index
         connection._connection_manager = self
-        self.connections.append(connection)
-        uuid_index[connection.uuid] = connection
+        if connection not in self.connections:
+            self.connections.append(connection)
+        id_index[connection.id] = connection
+        id_index[connection.nickname] = connection
 
     # --- Non-SSH (plugin protocol) connection persistence -----------------
     #
@@ -1085,7 +1069,7 @@ class ConnectionManager(GObject.Object):
     def _serializable_connection_data(data: Dict[str, Any]) -> Dict[str, Any]:
         return {
             k: v for k, v in (data or {}).items()
-            if not k.startswith('__') and k not in ('password', 'password_changed')
+            if not k.startswith('__') and k not in ('password', 'password_changed', 'uuid')
         }
 
     @staticmethod
@@ -1107,20 +1091,12 @@ class ConnectionManager(GObject.Object):
     def _load_non_ssh_connections(
         self,
         existing_by_nickname: Dict[str, 'Connection'],
-        *,
-        existing_by_uuid: Optional[Dict[str, 'Connection']] = None,
-        seen_uuids: Optional[Dict[str, str]] = None,
     ) -> None:
-        """Append persisted plugin-protocol connections to self.connections.
-
-        Reuses prior Connection objects by nickname (object identity matters:
-        active_terminals and the sidebar are keyed by the objects)."""
+        """Append persisted plugin-protocol connections to self.connections."""
         try:
             stored = self.config.get_setting(self._NON_SSH_SETTING, []) or []
         except Exception:
             stored = []
-        existing_by_uuid = existing_by_uuid or {}
-        seen_uuids = seen_uuids if seen_uuids is not None else {}
         migrated_payload: List[Dict[str, Any]] = []
         pending_updates: List[Tuple[Connection, Dict[str, Any]]] = []
         for data in stored:
@@ -1128,22 +1104,14 @@ class ConnectionManager(GObject.Object):
                 continue
             try:
                 repaired_data = dict(data)
-                nickname = repaired_data.get('nickname') or ''
-                connection_uuid, repaired = self._canonical_or_new_uuid(
-                    repaired_data.get('uuid'),
-                    seen_uuids,
-                    str(nickname),
-                )
-                if repaired:
-                    self._non_ssh_identity_repairs = True
-                repaired_data['uuid'] = connection_uuid
+                repaired_data.pop('uuid', None)
+                nickname = repaired_data.get('nickname') or repaired_data.get('id') or ''
+                repaired_data['nickname'] = nickname
+                repaired_data['id'] = nickname
                 migrated_payload.append(
                     self._serializable_connection_data(repaired_data)
                 )
-                existing = (
-                    existing_by_uuid.get(connection_uuid)
-                    or existing_by_nickname.get(nickname)
-                )
+                existing = existing_by_nickname.get(nickname)
                 if existing is not None and getattr(existing, 'protocol', 'ssh') != 'ssh':
                     pending_updates.append((existing, repaired_data))
                     self._register_connection(existing)
@@ -1345,198 +1313,9 @@ class ConnectionManager(GObject.Object):
             finally:
                 os.close(fd)
 
-    @staticmethod
-    def _canonical_or_new_uuid(
-        raw_value: Any,
-        seen: Dict[str, str],
-        nickname: str,
-    ) -> tuple[str, bool]:
-        """Validate/repair one UUID with deterministic first-record ownership."""
-
-        repaired = False
-        try:
-            value = canonical_connection_uuid(raw_value)
-            repaired = value != raw_value
-        except ValueError:
-            value = new_connection_uuid()
-            repaired = True
-        if value in seen:
-            value = new_connection_uuid()
-            repaired = True
-        seen[value] = nickname
-        return value, repaired
-
-    def _rewrite_uuid_markers(
-        self,
-        path: str,
-        assignments: Dict[str, str],
-    ) -> bool:
-        """Atomically reconcile managed UUID markers in one SSH config file."""
-
-        if not assignments:
-            return False
-        doc = SSHConfigDocument.parse_file(path)
-        changed = False
-        for node in doc.nodes:
-            if not isinstance(node, HostBlock):
-                continue
-            desired = {
-                token: assignments[token]
-                for token in node.tokens
-                if token in assignments
-            }
-            if not desired:
-                continue
-            existing = uuid_markers_from_lines(node.lines[1:], node.tokens)
-            canonical_existing: Dict[str, str] = {}
-            for token, raw_value in existing.items():
-                try:
-                    canonical_existing[token] = canonical_connection_uuid(raw_value)
-                except ValueError:
-                    pass
-            marker_lines = [
-                format_ssh_uuid_marker(token, desired[token]) + '\n'
-                for token in node.tokens
-                if token in desired
-            ]
-            body = [
-                line for line in node.lines[1:]
-                if not line.strip().startswith(SSH_UUID_MARKER)
-            ]
-            rendered_markers = doc.render_lines(marker_lines)
-            new_lines = [node.lines[0], *rendered_markers, *body]
-            if canonical_existing != desired or node.lines != new_lines:
-                node.lines = new_lines
-                changed = True
-        if changed:
-            self._safe_write_config(path, doc.text())
-        return changed
-
-    @staticmethod
-    def _set_nested_setting(data: Dict[str, Any], key: str, value: Any) -> None:
-        current = data
-        parts = key.split('.')
-        for part in parts[:-1]:
-            child = current.get(part)
-            if not isinstance(child, dict):
-                child = {}
-                current[part] = child
-            current = child
-        current[parts[-1]] = value
-
     def _commit_identity_metadata(self) -> None:
-        """Persist non-SSH UUIDs and migrate UUID-keyed app references."""
-
-        if not hasattr(self, 'config'):
-            return
-        nickname_to_uuid: Dict[str, str] = {}
-        ambiguous_nicknames = set()
-        for connection in self.connections:
-            nickname = str(getattr(connection, 'nickname', '') or '')
-            if not nickname or nickname in ambiguous_nicknames:
-                continue
-            if nickname in nickname_to_uuid:
-                nickname_to_uuid.pop(nickname, None)
-                ambiguous_nicknames.add(nickname)
-            else:
-                nickname_to_uuid[nickname] = connection.uuid
-
-        meta_raw = self.config.get_setting('connections_meta', {}) or {}
-        migrated_meta: Dict[str, Any] = {}
-        if isinstance(meta_raw, dict):
-            for old_key, value in meta_raw.items():
-                target = nickname_to_uuid.get(str(old_key))
-                if target is None:
-                    try:
-                        target = canonical_connection_uuid(old_key)
-                    except ValueError:
-                        # Preserve orphaned metadata for possible later imports;
-                        # active identity lookup never depends on this text key.
-                        target = str(old_key)
-                if (
-                    target in migrated_meta
-                    and isinstance(migrated_meta[target], dict)
-                    and isinstance(value, dict)
-                ):
-                    migrated_meta[target] = {**migrated_meta[target], **value}
-                else:
-                    migrated_meta[target] = copy.deepcopy(value)
-
-        groups_raw = self.config.get_setting('connection_groups', {}) or {}
-        migrated_groups = copy.deepcopy(groups_raw) if isinstance(groups_raw, dict) else {}
-
-        def _reference_uuid(value: Any) -> Optional[str]:
-            try:
-                return canonical_connection_uuid(value)
-            except ValueError:
-                return nickname_to_uuid.get(str(value))
-
-        raw_groups = migrated_groups.get('groups', {})
-        if isinstance(raw_groups, dict):
-            for group in raw_groups.values():
-                if not isinstance(group, dict):
-                    continue
-                migrated = []
-                seen = set()
-                for reference in group.get('connections', []) or []:
-                    connection_uuid = _reference_uuid(reference)
-                    if connection_uuid and connection_uuid not in seen:
-                        migrated.append(connection_uuid)
-                        seen.add(connection_uuid)
-                group['connections'] = migrated
-
-        raw_primary = migrated_groups.get('connections', {})
-        migrated_primary: Dict[str, Any] = {}
-        if isinstance(raw_primary, dict):
-            for reference, group_id in raw_primary.items():
-                connection_uuid = _reference_uuid(reference)
-                if connection_uuid and connection_uuid not in migrated_primary:
-                    migrated_primary[connection_uuid] = group_id
-        migrated_groups['connections'] = migrated_primary
-
-        migrated_root = []
-        seen_root = set()
-        for reference in migrated_groups.get('root_connections', []) or []:
-            connection_uuid = _reference_uuid(reference)
-            if connection_uuid and connection_uuid not in seen_root:
-                migrated_root.append(connection_uuid)
-                seen_root.add(connection_uuid)
-        migrated_groups['root_connections'] = migrated_root
-        migrated_groups['identity_schema_version'] = 1
-
-        non_ssh_payload = getattr(
-            self,
-            '_pending_non_ssh_identity_payload',
-            [],
-        )
-        current_data = getattr(self.config, 'config_data', None)
-        saver = getattr(self.config, 'save_json_config', None)
-        if isinstance(current_data, dict) and callable(saver):
-            migrated_config = copy.deepcopy(current_data)
-            self._set_nested_setting(
-                migrated_config,
-                self._NON_SSH_SETTING,
-                non_ssh_payload,
-            )
-            migrated_config['connections_meta'] = migrated_meta
-            migrated_config['connection_groups'] = migrated_groups
-            migrated_config['connection_identity_version'] = 1
-            if migrated_config != current_data:
-                saver(migrated_config, raise_on_error=True)
-                self.config.config_data = migrated_config
-        else:
-            # Lightweight test/config adapters do not own a JSON file.  Keep
-            # their observable settings coherent while production uses the
-            # atomic branch above.
-            setter = getattr(self.config, 'set_setting', None)
-            if callable(setter):
-                setter(self._NON_SSH_SETTING, non_ssh_payload)
-                setter('connections_meta', migrated_meta)
-                setter('connection_groups', migrated_groups)
-
-        binder = getattr(self.config, 'bind_connection_identities', None)
-        if callable(binder):
-            binder(self.connections)
+        """No-op retained for backwards compatibility."""
+        return None
 
     # -- managed global identity defaults (Host *) -----------------------
     _MANAGED_BEGIN = "# >>> sshpilot: identity defaults (managed) >>>"
@@ -1779,27 +1558,18 @@ class ConnectionManager(GObject.Object):
             else getattr(self, 'connections', [])
         )
         prev_rules = getattr(self, 'rules', [])
-        prev_uuid_index = (
+        prev_id_index = (
             getattr(
                 self,
-                '_visible_connections_by_uuid',
-                getattr(self, '_connections_by_uuid', {}),
+                '_visible_connections_by_id',
+                getattr(self, '_connections_by_id', {}),
             )
             if not reuse_existing
-            else getattr(self, '_connections_by_uuid', {})
+            else getattr(self, '_connections_by_id', {})
         )
         existing_by_nickname = {conn.nickname: conn for conn in prev_connections}
-        existing_by_uuid = {
-            connection.uuid: connection
-            for connection in prev_connections
-            if getattr(connection, 'uuid', None)
-        }
         if not reuse_existing:
             existing_by_nickname = {}
-            existing_by_uuid = {}
-        seen_uuids: Dict[str, str] = {}
-        ssh_uuid_assignments: Dict[str, Dict[str, str]] = {}
-        identity_repairs: List[str] = []
         self._non_ssh_identity_repairs = False
         try:
             self.ssh_config_path = self._ensure_config_parent_dir(self.ssh_config_path)
@@ -1808,7 +1578,7 @@ class ConnectionManager(GObject.Object):
             self.identity_migration_error = exc
             return
         self.connections = []
-        self._connections_by_uuid = {}
+        self._connections_by_id = {}
         self.rules = []
         try:
             if not os.path.exists(self.ssh_config_path):
@@ -1821,19 +1591,10 @@ class ConnectionManager(GObject.Object):
                         self.ssh_config_path, 0o600)
                 else:
                     logger.info("SSH config file was removed")
-                self._load_non_ssh_connections(
-                    existing_by_nickname,
-                    existing_by_uuid=existing_by_uuid,
-                    seen_uuids=seen_uuids,
-                )
-                if (
-                    not getattr(self, 'identity_migration_enabled', True)
-                    and self._non_ssh_identity_repairs
-                ):
-                    raise RuntimeError("connection identity migration is disabled")
+                self._load_non_ssh_connections(existing_by_nickname)
                 self._commit_identity_metadata()
                 self._visible_connections = self.connections
-                self._visible_connections_by_uuid = self._connections_by_uuid
+                self._visible_connections_by_id = self._connections_by_id
                 self.connection_config_generation = (
                     getattr(self, 'connection_config_generation', 0) + 1
                 )
@@ -1875,7 +1636,7 @@ class ConnectionManager(GObject.Object):
             def _merge_raw(into: Dict[str, Any], new: Dict[str, Any]) -> None:
                 """Merge authored directives (first-value-wins; lists accumulate)."""
                 for k, v in new.items():
-                    if k in ('host', '__host_tokens', '__connection_uuids'):
+                    if k in ('host', '__host_tokens'):
                         continue
                     if k in into:
                         if k in ACCUMULATE_KEYS or k not in MANAGED_HOST_OPTIONS:
@@ -1894,7 +1655,6 @@ class ConnectionManager(GObject.Object):
                     host_cfg = dict(prior['raw'])
                     host_cfg['host'] = token
                     host_cfg['__host_tokens'] = [token]
-                    host_cfg['uuid'] = prior['uuid']
                     connection_data = self.parse_host_config(host_cfg, source=prior['source'])
                     if connection_data:
                         connection_data['source'] = prior['source']
@@ -1902,49 +1662,15 @@ class ConnectionManager(GObject.Object):
                     return
 
                 raw_copy = dict(raw_cfg)
-                raw_uuid_map = raw_copy.pop('__connection_uuids', {})
-                single_marker_uuid = None
-                if (
-                    isinstance(raw_uuid_map, dict)
-                    and len(tokens) == 1
-                    and len(raw_uuid_map) == 1
-                ):
-                    # An external rename commonly changes only ``Host old`` to
-                    # ``Host new`` and leaves sshPilot's adjacent UUID marker
-                    # keyed by the old token. The block still supplies strong
-                    # identity evidence, so retain it and rewrite the marker.
-                    single_marker_uuid = next(iter(raw_uuid_map.values()))
-                raw_uuid = (
-                    raw_uuid_map.get(
-                        token,
-                        raw_uuid_map.get(None, single_marker_uuid)
-                        if len(tokens) == 1
-                        else None,
-                    )
-                    if isinstance(raw_uuid_map, dict)
-                    else None
-                )
-                connection_uuid, repaired = self._canonical_or_new_uuid(
-                    raw_uuid,
-                    seen_uuids,
-                    token,
-                )
-                if repaired:
-                    identity_repairs.append(token)
-                    logger.info(
-                        "Repairing persisted connection identity for %s",
-                        token,
-                    )
-                ssh_uuid_assignments.setdefault(cfg_file, {})[token] = connection_uuid
+                raw_copy.pop('uuid', None)
                 host_cfg = dict(raw_copy)
                 host_cfg['host'] = token
                 host_cfg['__host_tokens'] = list(tokens)
-                host_cfg['uuid'] = connection_uuid
                 connection_data = self.parse_host_config(host_cfg, source=cfg_file)
                 if not connection_data:
                     return
                 connection_data['source'] = cfg_file
-                existing = existing_by_uuid.get(connection_uuid)
+                existing = existing_by_nickname.get(token)
                 if existing:
                     pending_updates.append((existing, connection_data))
                     self._register_connection(existing)
@@ -1959,7 +1685,7 @@ class ConnectionManager(GObject.Object):
                     self._register_connection(conn)
                 loaded_this_load[token] = {
                     'raw': raw_copy, 'tokens': list(tokens),
-                    'conn': conn, 'source': cfg_file, 'uuid': connection_uuid,
+                    'conn': conn, 'source': cfg_file,
                 }
 
             def flush_block(tokens: List[str], config: Dict[str, Any], cfg_file: str):
@@ -1987,12 +1713,7 @@ class ConnectionManager(GObject.Object):
                     if line.startswith('#'):
                         if line.startswith('# sshpilot:PreCommand '):
                             config['__pre_command'] = line[len('# sshpilot:PreCommand '):].strip()
-                        marker = parse_ssh_uuid_marker(line)
-                        if marker is not None:
-                            token, raw_uuid = marker
-                            markers = config.setdefault('__connection_uuids', {})
-                            if isinstance(markers, dict):
-                                markers[token] = raw_uuid
+                        # Ignore legacy ConnectionUUID comments and other comments.
                         continue
                     if _split_keyword(line)[0] == 'include':
                         continue  # resolve_ssh_config_files handles Includes
@@ -2063,21 +1784,7 @@ class ConnectionManager(GObject.Object):
 
                 if pending_tokens and pending_config:
                     flush_block(pending_tokens, pending_config, cfg_file)
-            if getattr(self, 'identity_migration_enabled', True):
-                for cfg_file, assignments in ssh_uuid_assignments.items():
-                    self._rewrite_uuid_markers(cfg_file, assignments)
-            elif identity_repairs:
-                raise RuntimeError("connection identity migration is disabled")
-            self._load_non_ssh_connections(
-                existing_by_nickname,
-                existing_by_uuid=existing_by_uuid,
-                seen_uuids=seen_uuids,
-            )
-            if (
-                not getattr(self, 'identity_migration_enabled', True)
-                and self._non_ssh_identity_repairs
-            ):
-                raise RuntimeError("connection identity migration is disabled")
+            self._load_non_ssh_connections(existing_by_nickname)
             self._commit_identity_metadata()
             # Publish updates to reused objects only after every required
             # migration write has committed. A failure above therefore cannot
@@ -2097,7 +1804,7 @@ class ConnectionManager(GObject.Object):
                 binder(self.connections)
             self.identity_migration_error = None
             self._visible_connections = self.connections
-            self._visible_connections_by_uuid = self._connections_by_uuid
+            self._visible_connections_by_id = self._connections_by_id
             self.connection_config_generation = (
                 getattr(self, 'connection_config_generation', 0) + 1
             )
@@ -2112,9 +1819,9 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
             # Keep the last known-good state rather than a partial/empty list.
             self.connections, self.rules = prev_connections, prev_rules
-            self._connections_by_uuid = prev_uuid_index
+            self._connections_by_id = prev_id_index
             self._visible_connections = prev_connections
-            self._visible_connections_by_uuid = prev_uuid_index
+            self._visible_connections_by_id = prev_id_index
             self.identity_migration_error = e
 
     def parse_host_config(self, config: Dict[str, Any], source: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -2129,7 +1836,6 @@ class ConnectionManager(GObject.Object):
 
             config = dict(config)
             config.pop('__host_tokens', None)
-            config.pop('__connection_uuids', None)
             config.pop('aliases', None)
 
             # Detect wildcard or negated host tokens (e.g., '*', '?', '!pattern')
@@ -2179,9 +1885,7 @@ class ConnectionManager(GObject.Object):
             ]
 
             parsed = {
-                'uuid': canonical_connection_uuid(
-                    config.pop('uuid', None) or new_connection_uuid()
-                ),
+                'id': host,
                 'nickname': host,
                 # Keep HostName empty when omitted; ``host`` holds the alias.
                 'hostname': parsed_host,
@@ -2603,10 +2307,7 @@ class ConnectionManager(GObject.Object):
                         node.lines = [
                             line
                             for line in node.lines
-                            if not (
-                                (marker := parse_ssh_uuid_marker(line)) is not None
-                                and marker[0] == original_host
-                            )
+                            if not line.strip().startswith(SSH_UUID_MARKER)
                         ]
                     else:
                         del doc.nodes[idx]
@@ -2647,11 +2348,14 @@ class ConnectionManager(GObject.Object):
         Read/write failures propagate; update_connection() is the recovery
         boundary that logs (with traceback) and returns False.
         """
-        if 'uuid' not in new_data:
-            connection_uuid = getattr(connection, 'uuid', None)
-            if connection_uuid:
+        if 'id' not in new_data:
+            connection_id = getattr(connection, 'id', None) or getattr(connection, 'nickname', None)
+            if connection_id:
                 new_data = dict(new_data)
-                new_data['uuid'] = connection_uuid
+                new_data['id'] = connection_id
+                new_data['nickname'] = new_data.get('nickname') or connection_id
+        new_data = dict(new_data)
+        new_data.pop('uuid', None)
         target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
         target_path = self._ensure_config_parent_dir(target_path)
         if not os.path.exists(target_path):
@@ -2730,10 +2434,7 @@ class ConnectionManager(GObject.Object):
                 node.lines = [
                     line
                     for line in node.lines
-                    if not (
-                        (marker := parse_ssh_uuid_marker(line)) is not None
-                        and marker[0] == host_nickname
-                    )
+                    if not line.strip().startswith(SSH_UUID_MARKER)
                 ]
                 new_nodes.append(node)
                 logger.info(f"Updated Host line: removed '{host_nickname}', remaining: {remaining}")
@@ -2823,12 +2524,14 @@ class ConnectionManager(GObject.Object):
             raise ValueError('; '.join(errors))
         data['nickname'] = nickname
 
-        # Canonical domain create (UUID + field validation).
+        # Canonical domain create (alias + field validation).
         try:
             record = self.domain.create(data)
         except CoreError as exc:
             raise ValueError(str(exc)) from exc
-        data['uuid'] = record.id
+        data['id'] = record.id
+        data['nickname'] = record.nickname
+        data.pop('uuid', None)
 
         connection = Connection(dict(data))
         if self.isolated_mode:
@@ -2862,13 +2565,8 @@ class ConnectionManager(GObject.Object):
         """Update an existing connection"""
         try:
             flags = _UpdateFlags.pop_from(new_data)
-            supplied_uuid = new_data.get('uuid')
-            if (
-                supplied_uuid is not None
-                and canonical_connection_uuid(supplied_uuid) != connection.uuid
-            ):
-                raise ValueError("connection UUID is immutable")
-            new_data['uuid'] = connection.uuid
+            new_data['id'] = new_data.get('nickname') or connection.nickname
+            new_data['nickname'] = new_data.get('nickname') or connection.nickname
             if isinstance(getattr(connection, 'data', None), dict):
                 connection.data.pop('__secret_storage_done', None)
             protocol = (new_data.get('protocol')
@@ -2971,7 +2669,9 @@ class ConnectionManager(GObject.Object):
             # Domain is the reusable state owner — upsert after successful persist.
             try:
                 payload = dict(getattr(connection, 'data', None) or new_data)
-                payload['uuid'] = connection.uuid
+                payload.pop('uuid', None)
+                payload['id'] = connection.id
+                payload['nickname'] = connection.nickname
                 self.domain.upsert(payload)
             except Exception:
                 logger.debug("Domain upsert after update failed", exc_info=True)
@@ -2999,8 +2699,8 @@ class ConnectionManager(GObject.Object):
                 logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
                 if connection in self.connections:
                     self.connections.remove(connection)
-                    getattr(self, '_connections_by_uuid', {}).pop(
-                        connection.uuid,
+                    getattr(self, '_connections_by_id', {}).pop(
+                        connection.id,
                         None,
                     )
             else:
@@ -3009,19 +2709,19 @@ class ConnectionManager(GObject.Object):
                 idx = self.connections.index(connection) if connection in self.connections else -1
                 if idx >= 0:
                     self.connections.remove(connection)
-                    getattr(self, '_connections_by_uuid', {}).pop(
-                        connection.uuid,
+                    getattr(self, '_connections_by_id', {}).pop(
+                        connection.id,
                         None,
                     )
                 if not self._persist_non_ssh_connections():
                     if idx >= 0:
                         self.connections.insert(idx, connection)
-                        self._connections_by_uuid = getattr(
+                        self._connections_by_id = getattr(
                             self,
-                            '_connections_by_uuid',
+                            '_connections_by_id',
                             {},
                         )
-                        self._connections_by_uuid[connection.uuid] = connection
+                        self._connections_by_id[connection.id] = connection
                     return False
 
             # Remove password from secure storage (all host aliases)
@@ -3034,8 +2734,8 @@ class ConnectionManager(GObject.Object):
             try:
                 cfg = self.config
                 meta_all = cfg.get_setting('connections_meta', {}) or {}
-                if isinstance(meta_all, dict) and connection.uuid in meta_all:
-                    del meta_all[connection.uuid]
+                if isinstance(meta_all, dict) and connection.id in meta_all:
+                    del meta_all[connection.id]
                     cfg.set_setting('connections_meta', meta_all)
                     logger.debug("Removed connection metadata")
             except Exception as e:
@@ -3045,7 +2745,7 @@ class ConnectionManager(GObject.Object):
             self.emit('connection-removed', connection)
 
             try:
-                self.domain.delete_if_present(connection.uuid)
+                self.domain.delete_if_present(connection.id)
             except Exception:
                 logger.debug("Domain delete after remove failed", exc_info=True)
 
@@ -3111,34 +2811,25 @@ class ConnectionManager(GObject.Object):
         return self.connections.copy()
 
     def find_connection_by_nickname(self, nickname: str) -> Optional[Connection]:
-        """Find by display nickname, accepting a UUID reference for migration."""
+        """Find connection by Host alias / nickname / ID."""
         connections = (
             getattr(self, '_visible_connections', self.connections)
             if getattr(self, '_authoritative_reload_active', False)
             else self.connections
         )
         for connection in connections:
-            if connection.nickname == nickname:
+            if connection.nickname == nickname or connection.id == nickname:
                 return connection
-        return self.get_connection_by_uuid(nickname)
+        index = getattr(self, '_connections_by_id', {})
+        return index.get(nickname)
+
+    def get_connection_by_id(self, connection_id: str) -> Optional[Connection]:
+        """Look up a connection by SSH Host alias / id."""
+        return self.find_connection_by_nickname(connection_id)
 
     def get_connection_by_uuid(self, connection_uuid: str) -> Optional[Connection]:
-        """Return the connection with the canonical persisted UUID."""
-
-        try:
-            canonical = canonical_connection_uuid(connection_uuid)
-        except ValueError:
-            return None
-        index = (
-            getattr(
-                self,
-                '_visible_connections_by_uuid',
-                self._connections_by_uuid,
-            )
-            if getattr(self, '_authoritative_reload_active', False)
-            else self._connections_by_uuid
-        )
-        return index.get(canonical)
+        """Deprecated alias for :meth:`get_connection_by_id`."""
+        return self.get_connection_by_id(connection_uuid)
 
     def generate_duplicate_nickname(self, base_nickname: str) -> str:
         """Generate a unique nickname for a duplicated connection."""

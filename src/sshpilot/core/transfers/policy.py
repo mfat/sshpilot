@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import re
-import uuid
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Optional
@@ -177,7 +176,7 @@ def atomic_temp_name(destination: str) -> str:
     """Generate a sibling temporary name for atomic replacement."""
     base = os.path.basename(destination) or "transfer"
     parent = os.path.dirname(destination) or "."
-    return os.path.join(parent, f".{base}.sshpilot-tmp-{uuid.uuid4().hex[:8]}")
+    return os.path.join(parent, f".{base}.sshpilot-tmp-{os.urandom(4).hex()}")
 
 
 class ConflictDecision(str, Enum):

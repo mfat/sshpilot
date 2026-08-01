@@ -51,8 +51,7 @@ def test_dispatcher_includes_dev_revision(monkeypatch):
     from sshpilot.daemon.dispatch import RequestDispatcher
     from sshpilot.api.transport.envelopes import RequestEnvelope
     from sshpilot.daemon.dispatch import ClientProtocolState
-    import uuid
-
+    
     monkeypatch.setenv("SSHPILOT_DEV_REVISION", "phase93-test")
 
     class _Manager:
@@ -70,7 +69,7 @@ def test_dispatcher_includes_dev_revision(monkeypatch):
     state = ClientProtocolState()
     request = RequestEnvelope(
         protocol_version="1.0",
-        request_id=uuid.uuid4().hex,
+        request_id="request-1",
         method="system.handshake",
         params={
             "client_name": "pytest",

@@ -212,7 +212,7 @@ def test_session_diagnostic_open_uses_application_bridge_asynchronously():
     bridge = _RecordingBridge()
     summary = SessionSummary(
         id="session:test",
-        connection_id="connection:test",
+        connection_id="test",
         state=SessionState.FAILED,
     )
     client = SimpleNamespace(open_session=lambda request: summary)
@@ -222,7 +222,7 @@ def test_session_diagnostic_open_uses_application_bridge_asynchronously():
     completed = []
 
     request = app.open_daemon_session_for_diagnostics(
-        "connection:test",
+        "test",
         on_success=completed.append,
     )
 
@@ -237,7 +237,7 @@ def test_session_diagnostic_suppresses_late_result_during_window_shutdown():
     bridge = _RecordingBridge()
     summary = SessionSummary(
         id="session:test",
-        connection_id="connection:test",
+        connection_id="test",
         state=SessionState.FAILED,
     )
     app = _EventApplication()
@@ -249,7 +249,7 @@ def test_session_diagnostic_suppresses_late_result_during_window_shutdown():
     completed = []
 
     app.open_daemon_session_for_diagnostics(
-        "connection:test",
+        "test",
         on_success=completed.append,
     )
     bridge.run()

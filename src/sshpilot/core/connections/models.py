@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Mapping, Optional
 import copy
+import re
 
 
 class MutationKind(str, Enum):
@@ -48,9 +49,10 @@ class ConnectionRecord:
 
     def to_dict(self) -> Dict[str, Any]:
         payload = copy.deepcopy(self.data) if self.data else {}
+        payload.pop("uuid", None)
         payload.update(
             {
-                "uuid": self.id,
+                "id": self.nickname,
                 "nickname": self.nickname,
                 "hostname": self.hostname,
                 "username": self.username,
@@ -66,15 +68,18 @@ class ConnectionRecord:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any], *, connection_id: Optional[str] = None) -> "ConnectionRecord":
         raw = dict(data or {})
-        cid = connection_id or str(raw.get("uuid") or "").strip()
-        nick = str(raw.get("nickname") or raw.get("host") or "").strip()
+        raw.pop("uuid", None)
+        nick = str(raw.get("nickname") or raw.get("id") or raw.get("host") or "").strip()
+        cid = connection_id or str(raw.get("id") or nick).strip()
+        if not cid:
+            cid = nick
         try:
             port = int(raw.get("port") or 22)
         except (TypeError, ValueError):
             port = 22
         return cls(
             id=cid,
-            nickname=nick,
+            nickname=nick or cid,
             hostname=str(raw.get("hostname") or raw.get("host") or "").strip(),
             username=str(raw.get("username") or "").strip(),
             port=port,
@@ -87,10 +92,11 @@ class ConnectionRecord:
     def with_updates(self, updates: Mapping[str, Any]) -> "ConnectionRecord":
         merged = copy.deepcopy(self.data)
         merged.update(dict(updates))
-        merged["uuid"] = self.id  # UUID is immutable
-        if "nickname" in updates:
-            merged["nickname"] = str(updates["nickname"]).strip()
-        return ConnectionRecord.from_dict(merged, connection_id=self.id)
+        merged.pop("uuid", None)
+        new_nick = str(updates.get("nickname", self.nickname)).strip() or self.nickname
+        merged["id"] = new_nick
+        merged["nickname"] = new_nick
+        return ConnectionRecord.from_dict(merged, connection_id=new_nick)
 
 
 @dataclass
@@ -137,7 +143,6 @@ def generate_duplicate_nickname(base_nickname: str, existing: set[str], *, copy_
     existing_lower = {n.lower() for n in existing if n}
     base = (base_nickname or "").strip() or "Connection"
     token = (copy_token or "Copy").strip().replace(" ", "-") or "Copy"
-    import re
 
     pattern = re.compile(
         rf"(?:\s*\(\s*{re.escape(copy_token)}(?:\s+\d+)?\s*\)|[-_]+{re.escape(token)}(?:[-_]+\d+)?)\s*$",
@@ -155,5 +160,22 @@ def generate_duplicate_nickname(base_nickname: str, existing: set[str], *, copy_
     while True:
         candidate = f"{base_clean}-{token}-{index}"
         if unique(candidate):
+            return candidate
+        index += 1
+
+
+def generate_group_slug(name: str, existing_ids: set[str]) -> str:
+    """Generate a stable, unique group ID slug from a display name."""
+    clean = (name or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9_-]", "-", clean)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    if not slug:
+        slug = "group"
+    if slug not in existing_ids:
+        return slug
+    index = 2
+    while True:
+        candidate = f"{slug}-{index}"
+        if candidate not in existing_ids:
             return candidate
         index += 1

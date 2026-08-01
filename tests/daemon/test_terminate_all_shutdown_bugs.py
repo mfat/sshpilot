@@ -43,7 +43,7 @@ from sshpilot.sftp_service_controller import (
 
 class _Connection:
     def __init__(self):
-        self.id = ConnectionId("connection:demo")
+        self.id = ConnectionId("demo")
         self.protocol = "ssh"
         self.hostname = "example.test"
         self.username = "alice"
@@ -90,7 +90,7 @@ def _ready_orphaned_service():
     runtime = SftpServiceRuntime(_CoreClient(), runner=_FakeSftpRunner())
     owner_a = ClientId("app-a")
     summary = runtime.prepare_open_service(
-        OpenSftpRequest(connection_id=ConnectionId("connection:demo")),
+        OpenSftpRequest(connection_id=ConnectionId("demo")),
         client_id=owner_a,
     )
     runtime.start_service(summary.id)
@@ -496,10 +496,10 @@ def test_terminate_refuses_daemon_control_without_stop_daemon():
     client = types.SimpleNamespace(
         get_capabilities=lambda: caps,
         # no stop_daemon
-        list_sessions=lambda: [],
-        list_sftp_services=lambda: [],
-        list_transfers=lambda: [],
-        list_forwards=lambda: [],
+        list_sessions=list,
+        list_sftp_services=list,
+        list_transfers=list,
+        list_forwards=list,
     )
     errors = terminate_all_daemon_work(client)
     assert errors and "DAEMON_CONTROL" in errors[0]

@@ -3,7 +3,6 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon_terminal_policy import (
     SshTerminalRoute,
     DaemonTerminalReadinessReason,
@@ -78,7 +77,8 @@ class TestDaemonTerminalActivation:
 
     def _connection(self):
         connection = Mock()
-        connection.uuid = new_connection_uuid()
+        connection.id = "TestServer"
+        connection.uuid = "TestServer"
         connection.protocol = "ssh"
         connection.nickname = "TestServer"
         connection.native_connect = Mock()
@@ -123,7 +123,7 @@ class TestDaemonTerminalActivation:
             args = terminal.start_daemon_session.call_args[0]
             assert args[0] is window.client
             assert args[1] is window.client_bridge
-            assert str(args[2]).startswith("connection:")
+            assert str(args[2]) == "TestServer"
             connection.native_connect.assert_not_called()
 
     def test_local_mode_when_daemon_disabled(self):

@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from sshpilot.api import InProcessClient
-from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.session_runtime import SessionRuntime
 
@@ -35,7 +34,8 @@ def _isolate_daemon_xdg(tmp_path_factory, monkeypatch):
 class TestConnection:
     def __init__(self, nickname="demo", hostname="example.test", username="alice"):
         self.nickname = nickname
-        self.uuid = new_connection_uuid()
+        self.id = nickname
+        self.uuid = nickname
         self.host = nickname
         self.hostname = hostname
         self.username = username
@@ -56,7 +56,7 @@ class TestConnection:
             "username": username,
             "port": 22,
             "protocol": "ssh",
-            "uuid": self.uuid,
+            
         }
         self.password = "must-not-cross-wire"
 

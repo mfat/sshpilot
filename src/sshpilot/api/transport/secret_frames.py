@@ -5,16 +5,12 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
-from uuid import UUID
 
 from sshpilot.api.errors import ErrorCode
-from sshpilot.api.interaction_identity import (
-    interaction_id_from_uuid,
-    interaction_uuid_from_id,
-)
-from sshpilot.api.models.common import InteractionId
+from sshpilot.api.models.common import InteractionId, require_identifier
 
 from .framing import FramingError, MAX_FRAME_SIZE
+from .wire_ids import id_to_wire_bytes, wire_bytes_to_id
 
 SECRET_STREAM_VERSION = 1
 MAX_SECRET_PAYLOAD_SIZE = 16 * 1024
@@ -36,7 +32,7 @@ class SecretFrame:
     def __post_init__(self) -> None:
         if self.kind is not SecretFrameKind.RESPONSE:
             raise ValueError("secret frame kind is unsupported")
-        interaction_uuid_from_id(self.interaction_id)
+        require_identifier(self.interaction_id, "interaction id")
         if type(self.nonce) is not bytes or len(self.nonce) != 16:
             raise ValueError("secret response nonce is malformed")
         if type(self.secret) is not bytearray:
@@ -58,13 +54,13 @@ def is_secret_payload(payload: bytes) -> bool:
 def encode_secret_payload(frame: SecretFrame) -> bytes:
     if type(frame) is not SecretFrame:
         raise TypeError("a SecretFrame is required")
-    interaction_uuid = interaction_uuid_from_id(frame.interaction_id).bytes
+    interaction_bytes = id_to_wire_bytes(frame.interaction_id)
     payload = _HEADER.pack(
         _MAGIC,
         SECRET_STREAM_VERSION,
         int(frame.kind),
         0,
-        interaction_uuid,
+        interaction_bytes,
         frame.nonce,
     ) + bytes(frame.secret)
     if len(payload) > MAX_FRAME_SIZE:
@@ -90,9 +86,7 @@ def decode_secret_payload(payload: bytes) -> SecretFrame:
         secret = bytearray(payload[_HEADER.size :])
         return SecretFrame(
             kind=SecretFrameKind(kind_value),
-            interaction_id=interaction_id_from_uuid(
-                UUID(bytes=interaction_bytes)
-            ),
+            interaction_id=InteractionId(wire_bytes_to_id(interaction_bytes)),
             nonce=nonce,
             secret=secret,
         )

@@ -389,7 +389,7 @@ to the handshaken client. Secret values and raw OpenSSH prompts are absent.
 <!-- api-method: get_interaction -->
 ## `get_interaction`
 
-Daemon-only lookup by strict `interaction:<uuid>` identifier, scoped to the
+Daemon-only lookup by opaque `interaction-<n>` identifier, scoped to the
 requesting client's eligible sessions.
 
 <!-- api-method: claim_interaction -->
@@ -432,7 +432,7 @@ handshaken client.
 <!-- api-method: get_sftp_service -->
 ## `get_sftp_service`
 
-Daemon-only lookup by strict `sftp:<uuid>` identifier.
+Daemon-only lookup by opaque `sftp-<n>` identifier.
 
 <!-- api-method: open_sftp -->
 ## `open_sftp`
@@ -520,7 +520,7 @@ Daemon-only `transfers.read` snapshot of transfer records.
 <!-- api-method: get_transfer -->
 ## `get_transfer`
 
-Daemon-only lookup by strict `transfer:<uuid>` identifier.
+Daemon-only lookup by opaque `transfer-<n>` identifier.
 
 <!-- api-method: start_transfer -->
 ## `start_transfer`
@@ -542,7 +542,7 @@ Daemon-only `forwards.read` snapshot of runtime forwards.
 <!-- api-method: get_forward -->
 ## `get_forward`
 
-Daemon-only lookup by strict `forward:<uuid>` identifier.
+Daemon-only lookup by opaque `forward-<n>` identifier.
 
 <!-- api-method: open_forward -->
 ## `open_forward`

@@ -142,7 +142,6 @@ def run_smoke() -> int:
         ForwardState,
         ForwardType,
     )
-    from sshpilot.connection_identity import connection_id_from_uuid
     from sshpilot.daemon import DaemonServer
     from sshpilot.daemon.transfer_runtime import _TEMP_PREFIX
     from sshpilot.gtk_client_bridge import GtkClientBridge
@@ -438,7 +437,7 @@ def run_smoke() -> int:
 
         _stop_auth_helper()
         _start_auth_helper(**auth_kw)
-        cid = connection_id_from_uuid(conn.uuid)
+        cid = conn.nickname
         session_state = None
         session_ok = False
         gtk_connected = False
@@ -560,20 +559,20 @@ def run_smoke() -> int:
         )
 
         gid = gm.create_group("P13Group")
-        gm.move_connection(c1.uuid, gid)
+        gm.move_connection(c1.id, gid)
         ctx.gui.pump(200)
         ctx.record(
             5,
             "Group move via GroupManager.move_connection",
             "Connection primary group is P13Group",
-            str(gm.connections.get(c1.uuid)),
-            gm.connections.get(c1.uuid) == gid,
+            str(gm.connections.get(c1.id)),
+            gm.connections.get(c1.id) == gid,
         )
 
         c2 = add_conn("P13ReorderB", password=openssh.password)
-        gm.move_connection(c2.uuid, gid)
+        gm.move_connection(c2.id, gid)
         before = list(gm.groups[gid]["connections"])
-        gm.reorder_connection_in_group(c2.uuid, c1.uuid, "above")
+        gm.reorder_connection_in_group(c2.id, c1.id, "above")
         after = list(gm.groups[gid]["connections"])
         ctx.record(
             6,
@@ -589,7 +588,7 @@ def run_smoke() -> int:
             "Duplicate via ConnectionManager.duplicate_connection",
             "Duplicate created with new nickname",
             dup.nickname,
-            dup.uuid != c1.uuid,
+            dup.id != c1.id,
         )
 
         doomed = add_conn("P13DeleteMe", password=openssh.password)
@@ -733,7 +732,7 @@ def run_smoke() -> int:
         _stop_auth_helper()
         _start_auth_helper(submit_password=openssh.password)
         try:
-            cid = connection_id_from_uuid(live_session_conn.uuid)
+            cid = live_session_conn.nickname
             opened = client.open_session(OpenSessionRequest(connection_id=cid))
             _wait(
                 lambda: client.get_session(opened.id).state is SessionState.RUNNING,
@@ -749,7 +748,7 @@ def run_smoke() -> int:
         target = next((c for c in cm.connections if c.nickname == "P13PlainKey"), None)
         if target is None:
             target = live_session_conn
-        cid = connection_id_from_uuid(target.uuid)
+        cid = target.nickname
 
         _stop_auth_helper()
         _start_auth_helper(submit_password=openssh.password, submit_passphrase=openssh.encrypted_key_passphrase)
@@ -948,7 +947,7 @@ def run_smoke() -> int:
     live_forward_id = None
     try:
         target = next((c for c in cm.connections if c.nickname == "P13Create"), None)
-        cid = connection_id_from_uuid(target.uuid)
+        cid = target.nickname
         _stop_auth_helper()
         _start_auth_helper(submit_password=openssh.password)
 

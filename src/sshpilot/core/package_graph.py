@@ -28,19 +28,19 @@ FORBIDDEN_UI_PREFIXES = (
 ALLOWED_EDGES = {
     "core": (
         "sshpilot.core",
-        "sshpilot.connection_identity",  # pure identity helpers
+        "sshpilot.runtime_identity",
         "sshpilot.platform.paths",  # path helpers used by CLI
     ),
     "api": (
         "sshpilot.api",
         "sshpilot.core",
-        "sshpilot.connection_identity",
+        "sshpilot.runtime_identity",
     ),
     "daemon": (
         "sshpilot.daemon",
         "sshpilot.api",
         "sshpilot.core",
-        "sshpilot.connection_identity",
+        "sshpilot.runtime_identity",
         # Daemon may import selected top-level pure helpers; GTK is forbidden.
     ),
 }

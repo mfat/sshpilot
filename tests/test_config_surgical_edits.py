@@ -116,7 +116,6 @@ def test_split_keeps_sibling_alias_block_body(tmp_path):
     text = (tmp_path / "config").read_text()
     assert "Host jump\n" in text
     jump_block = text[text.index("Host jump\n"):text.index("\nMatch host")]
-    assert "# sshpilot:ConnectionUUID jump " in jump_block
     assert "\tHostName db.internal\n    UnknownCamelCase FooBar\n" in jump_block
     assert text.rstrip().endswith("    User carol")  # new block appended last
     assert "# Global header - do not touch\n" in text
@@ -182,7 +181,6 @@ def test_edit_last_block_without_trailing_newline_does_not_glue(tmp_path):
     cm.update_ssh_config_file(conn, payload, "web")
     once = (tmp_path / "config").read_text()
     assert once.startswith("Host web\n")
-    assert "# sshpilot:ConnectionUUID web " in once
     assert "    UnknownCamelCase foo   # why\n" in once
     assert "    HostName new.example.com\n" in once
     assert "    User bob\n" in once

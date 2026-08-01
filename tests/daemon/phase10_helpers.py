@@ -32,7 +32,6 @@ from sshpilot.api.models import (
 )
 from sshpilot.api.models.operations import ForwardState
 from sshpilot.api.models.transfers import TransferState
-from sshpilot.connection_identity import connection_id_from_uuid, new_connection_uuid
 from sshpilot.daemon import DaemonServer
 
 from tests.daemon.conftest import TestConnection, TestConnectionManager
@@ -98,8 +97,12 @@ class Phase10Connection(TestConnection):
         config_path: Path,
         keyfile: str = "",
     ):
-        super().__init__(nickname=nickname, hostname=hostname, username=username)
-        self.uuid = new_connection_uuid()
+        self.id = nickname
+        self.nickname = nickname
+        self.hostname = hostname
+        self.username = username
+        self.uuid = nickname
+        self.protocol = "ssh"
         self.port = port
         self.auth_method = auth_method
         self.keyfile = keyfile
@@ -107,6 +110,7 @@ class Phase10Connection(TestConnection):
         self.password = None  # never leak the TestConnection sentinel
         self.config_root = str(config_path)
         self.source = str(config_path)
+        self.data = {}
         self.data.update(
             {
                 "nickname": nickname,
@@ -114,7 +118,7 @@ class Phase10Connection(TestConnection):
                 "username": username,
                 "port": port,
                 "protocol": "ssh",
-                "uuid": self.uuid,
+                
                 "auth_method": auth_method,
                 "keyfile": keyfile,
             }
@@ -142,10 +146,10 @@ class Phase10ConnectionManager(TestConnectionManager):
     def get_connection_password(self, connection) -> Optional[str]:
         if connection is None:
             return None
-        return self._passwords.get(str(getattr(connection, "uuid", "")))
+        return self._passwords.get(str(getattr(connection, "id", getattr(connection, "uuid", ""))))
 
     def store_connection_password(self, connection, password: str) -> bool:
-        self._passwords[str(connection.uuid)] = password
+        self._passwords[str(getattr(connection, "id", connection.uuid))] = password
         return True
 
     def get_password(self, host: str, username: str) -> Optional[str]:
@@ -187,7 +191,7 @@ class Phase10Stack:
     def connection_id(self):
         from sshpilot.api.models.common import ConnectionId
 
-        return ConnectionId(connection_id_from_uuid(self.connection.uuid))
+        return ConnectionId(self.connection.id)
 
     def connect_client(self, *, client_id: str = "client:phase10") -> DaemonClient:
         client = DaemonClient(

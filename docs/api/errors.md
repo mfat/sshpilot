@@ -102,7 +102,7 @@ identify public field names and validation codes, never submitted values.
 <!-- api-error: connection_already_exists -->
 ## `connection_already_exists`
 
-A create or rename would collide with an existing saved nickname. Stable UUID
+A create or rename would collide with an existing saved nickname. Alias
 identity does not remove the persistence rule that nicknames are unique. The
 error never includes the submitted nickname.
 

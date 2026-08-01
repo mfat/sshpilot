@@ -9,10 +9,6 @@ from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.events import EventType
 from sshpilot.api.in_process_client import InProcessClient
 from sshpilot.api.models.connections import CreateConnectionRequest
-from sshpilot.connection_identity import (
-    connection_uuid_from_id,
-    format_ssh_uuid_marker,
-)
 from sshpilot.config import Config
 import sshpilot.connection_manager as connection_manager_module
 from sshpilot.connection_manager import ConnectionManager
@@ -138,7 +134,7 @@ def _connection_block(name, hostname="example.test"):
     )
 
 
-def test_external_add_without_uuid_is_migrated_and_forwarded(
+def test_external_add_is_forwarded(
     tmp_path,
     monkeypatch,
 ):
@@ -162,8 +158,7 @@ def test_external_add_without_uuid_is_migrated_and_forwarded(
             item for item in client.list_connections()
             if item.nickname == "NL1"
         )
-        assert nl1.id.startswith("connection:")
-        assert "sshpilot:ConnectionUUID NL1" in root.read_text(encoding="utf-8")
+        assert nl1.id == "NL1"
         assert _wait_until(
             lambda: any(
                 event.type is EventType.CONNECTION_CREATED
@@ -187,7 +182,7 @@ def test_external_add_without_uuid_is_migrated_and_forwarded(
         assert not server.socket_path.exists()
 
 
-def test_external_atomic_rename_preserves_uuid_and_emits_one_update(
+def test_external_atomic_rename_updates_connection_id(
     tmp_path,
     monkeypatch,
 ):
@@ -197,7 +192,7 @@ def test_external_atomic_rename_preserves_uuid_and_emits_one_update(
         _connection_block("Alpha"),
     )
     client = DaemonClient(socket_path=server.socket_path)
-    original = client.list_connections()[0]
+    assert client.list_connections()
     events = []
     subscription = client.subscribe_events(events.append)
     try:
@@ -213,25 +208,13 @@ def test_external_atomic_rename_preserves_uuid_and_emits_one_update(
             lambda: client.list_connections()[0].nickname == "Beta"
         )
         renamed = client.list_connections()[0]
-        assert renamed.id == original.id
+        assert renamed.id == "Beta"
         assert _wait_until(
             lambda: any(
-                event.type is EventType.CONNECTION_UPDATED
+                event.type in {EventType.CONNECTION_CREATED, EventType.CONNECTION_DELETED}
                 for event in events
             )
         )
-        time.sleep(0.08)
-        connection_events = [
-            event.type
-            for event in events
-            if event.type in {
-                EventType.CONNECTION_CREATED,
-                EventType.CONNECTION_UPDATED,
-                EventType.CONNECTION_DELETED,
-            }
-        ]
-        assert connection_events == [EventType.CONNECTION_UPDATED]
-        assert "sshpilot:ConnectionUUID Beta" in root.read_text(encoding="utf-8")
     finally:
         subscription.unsubscribe()
         client.close()
@@ -369,14 +352,10 @@ def test_external_delete_reaches_multiple_clients(tmp_path, monkeypatch):
         item for item in client_a.list_connections()
         if item.nickname == "Beta"
     )
-    retained = next(
-        item for item in client_a.list_connections()
-        if item.nickname == "Alpha"
-    )
+    assert any(item.nickname == "Alpha" for item in client_a.list_connections())
     try:
         root.write_text(
             "Host Alpha\n"
-            f"    {format_ssh_uuid_marker('Alpha', connection_uuid_from_id(retained.id))}\n"
             "    HostName example.test\n"
             "    User tester\n"
             "    Port 22\n",

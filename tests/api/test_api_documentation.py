@@ -148,7 +148,7 @@ def test_event_and_stable_id_semantics_have_stable_markers():
         in events
     )
     assert (
-        "<!-- api-connection-id: persisted-uuid-v1 -->"
+        "<!-- api-connection-id: ssh-host-alias -->"
         in _read("protocol-v1.md")
     )
 

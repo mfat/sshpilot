@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-import uuid
+from .runtime_identity import new_command_block_id
 import logging
 from datetime import datetime, timezone
 
@@ -182,7 +182,7 @@ class CommandBlockStore:
             logger.error("Failed to save command blocks: %s", exc)
 
     def _new_id(self) -> str:
-        return str(uuid.uuid4())
+        return new_command_block_id()
 
     def _ensure_defaults(self) -> None:
         data = self._data()

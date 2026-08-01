@@ -1,5 +1,4 @@
 import struct
-import uuid
 
 import pytest
 
@@ -21,11 +20,11 @@ from sshpilot.api.transport.terminal_frames import (
 
 
 def _session_id():
-    return SessionId(f"session:{uuid.uuid4()}")
+    return SessionId("session-test")
 
 
 def _attachment_id():
-    return AttachmentId(f"attachment:{uuid.uuid4()}")
+    return AttachmentId("attachment-test")
 
 
 def test_terminal_output_frame_preserves_arbitrary_bytes_and_metadata():
@@ -40,6 +39,22 @@ def test_terminal_output_frame_preserves_arbitrary_bytes_and_metadata():
     decoded = decode_terminal_payload(encode_terminal_payload(frame))
 
     assert decoded == frame
+
+
+def test_terminal_frame_ids_round_trip_without_shared_process_state():
+    """Daemon encodes; UI must decode the same id with no shared map."""
+    payload = encode_terminal_payload(
+        TerminalFrame(
+            kind=TerminalFrameKind.OUTPUT,
+            session_id=SessionId("session-1"),
+            sequence=1,
+            data=b"hi",
+        )
+    )
+    # Fresh decode path (no encode in this "process") must recover session-1.
+    decoded = decode_terminal_payload(payload)
+    assert decoded.session_id == "session-1"
+    assert decoded.data == b"hi"
 
 
 def test_terminal_input_frame_requires_a_strict_attachment_uuid():

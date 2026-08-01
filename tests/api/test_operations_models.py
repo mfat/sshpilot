@@ -16,7 +16,7 @@ from sshpilot.api.models.operations import (
 
 def test_sftp_models_are_transport_neutral():
     request = ListDirectoryRequest(
-        connection_id=ConnectionId("connection:v1:test"),
+        connection_id=ConnectionId("test"),
         path="/var/log",
     )
     entry = SftpEntry(

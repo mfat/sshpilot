@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Hashable, Optional, Set, Union
+
+from sshpilot.runtime_identity import new_client_id
 
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.api.capabilities import Capabilities, Capability
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.api.interaction_identity import interaction_uuid_from_id
 from sshpilot.api.models.common import (
     ClientId,
     ClientInfo,
@@ -25,6 +25,7 @@ from sshpilot.api.models.common import (
     SftpServiceId,
     TransferId,
     InteractionId,
+    require_identifier,
 )
 from sshpilot.api.transport.codec import (
     attach_session_request_from_wire,
@@ -256,7 +257,7 @@ class RequestDispatcher:
             lifecycle_controller.server_instance_id
             if lifecycle_controller is not None
             and hasattr(lifecycle_controller, "server_instance_id")
-            else uuid.uuid4().hex
+            else new_client_id()
         )
         if lifecycle_controller is not None and hasattr(
             lifecycle_controller, "_server_instance_id"
@@ -1477,7 +1478,7 @@ class RequestDispatcher:
         if type(value) is not str:
             raise ValueError("interaction ID must be a string")
         interaction_id = InteractionId(value)
-        interaction_uuid_from_id(interaction_id)
+        require_identifier(interaction_id, "interaction id")
         return interaction_id
 
     @staticmethod

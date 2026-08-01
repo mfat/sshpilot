@@ -68,9 +68,9 @@ def test_password_auth_wrong_then_correct_with_isolated_sshd(
         ),
     )
     runner = None
-    session_id = SessionId("session:550e8400-e29b-41d4-a716-446655440090")
+    session_id = SessionId("session-90")
     connection_id = ConnectionId(
-        "connection:550e8400-e29b-41d4-a716-446655440091"
+        "conn-91"
     )
     client_id = ClientId("client:phase9-password")
     password_prompts = []
@@ -199,14 +199,14 @@ def test_password_auth_reconnect_uses_stored_secret_only_after_success(
     )
     runner = None
     connection_id = ConnectionId(
-        "connection:550e8400-e29b-41d4-a716-446655440092"
+        "conn-92"
     )
     client_id = ClientId("client:phase9-password-store")
 
     def _run_once(session_suffix: str, expect_prompt: bool) -> bytes:
         nonlocal runner
         session_id = SessionId(
-            f"session:550e8400-e29b-41d4-a716-4466554400{session_suffix}"
+            f"session-{session_suffix}"
         )
         output = bytearray()
         exited = threading.Event()

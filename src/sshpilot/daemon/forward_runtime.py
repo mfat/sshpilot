@@ -292,7 +292,7 @@ class ForwardRuntime:
         runner: Optional[Any] = None,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
-        uuid_factory: Callable[[], ForwardId] = new_forward_id,
+        id_factory: Callable[[], ForwardId] = new_forward_id,
         shutdown_timeout_seconds: float = 3.0,
         max_retained_closed_forwards: int = DEFAULT_MAX_RETAINED_CLOSED_FORWARDS,
         active_timeout_seconds: float = DEFAULT_FORWARD_ACTIVE_TIMEOUT_SECONDS,
@@ -310,7 +310,7 @@ class ForwardRuntime:
         self._runner: Any = runner or UnsupportedForwardProcessRunner()
         self._clock = clock
         self._monotonic = monotonic
-        self._uuid_factory = uuid_factory
+        self._id_factory = id_factory
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_retained_closed_forwards = max_retained_closed_forwards
         self._active_timeout_seconds = float(active_timeout_seconds)
@@ -365,7 +365,7 @@ class ForwardRuntime:
                 "The connection protocol cannot start a forward",
                 connection_id=request.connection_id,
             )
-        forward_id = self._uuid_factory()
+        forward_id = self._id_factory()
         now = self._clock()
         record = _ForwardRecord(
             forward_id=forward_id,
@@ -392,7 +392,7 @@ class ForwardRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             if forward_id in self._records:
-                raise RuntimeError("forward UUID factory reused an active identifier")
+                raise RuntimeError("forward id factory reused an active identifier")
             self._records[forward_id] = record
             self._creation_order.append(forward_id)
             created_event = self._event_locked(record, EventType.FORWARD_CREATED)

@@ -8,8 +8,6 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
-from sshpilot.connection_identity import new_connection_uuid
-
 from ..errors import CoreError, ErrorCode
 from ..validation import SSHConnectionValidator
 from .models import (
@@ -18,6 +16,7 @@ from .models import (
     MutationEvent,
     MutationKind,
     generate_duplicate_nickname,
+    generate_group_slug,
 )
 
 Listener = Callable[[MutationEvent], None]
@@ -109,9 +108,7 @@ class ConnectionService:
 
     def create(self, data: Mapping[str, Any]) -> ConnectionRecord:
         payload = dict(data or {})
-        # Allow adapters to supply a pre-allocated UUID; otherwise mint one.
-        preset_uuid = str(payload.get("uuid") or "").strip() or None
-        nickname = str(payload.get("nickname") or payload.get("host") or "").strip()
+        nickname = str(payload.get("nickname") or payload.get("id") or payload.get("host") or "").strip()
         hostname = str(payload.get("hostname") or payload.get("host") or "").strip()
         username = str(payload.get("username") or "").strip()
         try:
@@ -125,9 +122,6 @@ class ConnectionService:
             errors.append("Connection name is required")
         elif nickname.lower() in {n.lower() for n in self.existing_nicknames()}:
             errors.append("Nickname already exists")
-        # Nickname whitespace is enforced by the connection dialog UI; plugins
-        # (e.g. EasyEnv) historically create spaced Host aliases — domain create
-        # must not reject those.
         for result in (
             self._validator.validate_hostname(hostname) if hostname else None,
             self._validator.validate_port(str(port)),
@@ -138,13 +132,9 @@ class ConnectionService:
         if errors:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "; ".join(errors))
 
-        connection_id = preset_uuid or new_connection_uuid()
-        if connection_id in self._connections:
-            raise CoreError(
-                ErrorCode.VALIDATION_ERROR,
-                f"Duplicate connection id {connection_id!r}",
-            )
-        payload["uuid"] = connection_id
+        connection_id = nickname
+        payload.pop("uuid", None)
+        payload["id"] = connection_id
         payload["nickname"] = nickname
         payload.setdefault("hostname", hostname)
         payload.setdefault("username", username)
@@ -157,7 +147,6 @@ class ConnectionService:
             if group_id:
                 group_id = str(group_id)
                 if group_id not in self._groups:
-                    # Adapter sync may assign before GroupManager mirrored the group.
                     self._groups[group_id] = GroupRecord(id=group_id, name=group_id)
             record = ConnectionRecord.from_dict(payload, connection_id=connection_id)
             record.order = order
@@ -175,9 +164,9 @@ class ConnectionService:
         return saved
 
     def upsert(self, data: Mapping[str, Any]) -> ConnectionRecord:
-        """Create or update by UUID — used by GTK adapters after SSH-config I/O."""
+        """Create or update by nickname / alias."""
         payload = dict(data or {})
-        connection_id = str(payload.get("uuid") or "").strip()
+        connection_id = str(payload.get("nickname") or payload.get("id") or payload.get("host") or "").strip()
         if not connection_id:
             return self.create(payload)
         with self._lock:
@@ -201,9 +190,8 @@ class ConnectionService:
             if existing is None:
                 raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown connection {connection_id!r}")
             payload = dict(updates or {})
-            if "uuid" in payload and str(payload["uuid"]) != connection_id:
-                raise CoreError(ErrorCode.VALIDATION_ERROR, "connection UUID is immutable")
             payload.pop("uuid", None)
+            new_nick = None
             if "nickname" in payload:
                 nick = str(payload["nickname"]).strip()
                 if not nick:
@@ -212,10 +200,19 @@ class ConnectionService:
                 for other_id, other in self._connections.items():
                     if other_id != connection_id and other.nickname.lower() == lowered:
                         raise CoreError(ErrorCode.VALIDATION_ERROR, "Nickname already exists")
-                # Whitespace allowed — same policy as create() (dialog enforces Host-safe).
                 payload = dict(payload)
                 payload["nickname"] = nick
+                if nick != connection_id:
+                    new_nick = nick
+
+            target_id = new_nick if new_nick else connection_id
             updated = existing.with_updates(payload)
+            updated.id = target_id
+            updated.nickname = target_id
+
+            if new_nick:
+                self._connections.pop(connection_id, None)
+
             # Preserve group/order unless explicitly changed
             if "group_id" in payload:
                 new_gid = payload.get("group_id")
@@ -225,21 +222,33 @@ class ConnectionService:
                 old_gid = existing.group_id
                 if old_gid and old_gid in self._groups:
                     ids = self._groups[old_gid].connection_ids
-                    self._groups[old_gid].connection_ids = [i for i in ids if i != connection_id]
+                    self._groups[old_gid].connection_ids = [i for i in ids if i != connection_id and i != target_id]
                 if existing.id in self._root_order and new_gid:
-                    self._root_order = [i for i in self._root_order if i != connection_id]
+                    self._root_order = [i for i in self._root_order if i != connection_id and i != target_id]
                 if new_gid:
                     grp = self._groups[new_gid]
-                    if connection_id not in grp.connection_ids:
-                        grp.connection_ids.append(connection_id)
-                elif connection_id not in self._root_order:
-                    self._root_order.append(connection_id)
+                    if target_id not in grp.connection_ids:
+                        grp.connection_ids.append(target_id)
+                elif target_id not in self._root_order:
+                    self._root_order.append(target_id)
                 updated.group_id = new_gid
+            elif new_nick:
+                if existing.group_id and existing.group_id in self._groups:
+                    grp = self._groups[existing.group_id]
+                    grp.connection_ids = [target_id if i == connection_id else i for i in grp.connection_ids]
+                if connection_id in self._root_order:
+                    self._root_order = [target_id if i == connection_id else i for i in self._root_order]
+
             updated.order = existing.order
-            self._connections[connection_id] = updated
+            self._connections[target_id] = updated
             saved = copy.deepcopy(updated)
+
         self._persist()
-        self._emit(MutationEvent(MutationKind.UPDATED, connection_id=connection_id))
+        if new_nick:
+            self._emit(MutationEvent(MutationKind.DELETED, connection_id=connection_id))
+            self._emit(MutationEvent(MutationKind.CREATED, connection_id=target_id))
+        else:
+            self._emit(MutationEvent(MutationKind.UPDATED, connection_id=connection_id))
         return saved
 
     def delete(self, connection_id: str) -> None:
@@ -266,6 +275,7 @@ class ConnectionService:
         new_nick = generate_duplicate_nickname(source.nickname, nicknames)
         payload = source.to_dict()
         payload.pop("uuid", None)
+        payload["id"] = new_nick
         payload["nickname"] = new_nick
         if source.group_id:
             payload["group_id"] = source.group_id
@@ -317,8 +327,8 @@ class ConnectionService:
         name = (name or "").strip()
         if not name:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "Group name is required")
-        gid = str(group_id or new_connection_uuid()).strip()
         with self._lock:
+            gid = str(group_id or generate_group_slug(name, set(self._groups.keys()))).strip()
             if parent_id and parent_id not in self._groups:
                 raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown parent group {parent_id!r}")
             if gid in self._groups:
@@ -439,7 +449,7 @@ class ConnectionService:
                     continue
                 rec = ConnectionRecord.from_dict(item)
                 if not rec.id:
-                    rec.id = new_connection_uuid()
+                    continue
                 if not replace and rec.id in self._connections:
                     continue
                 if not replace and self.find_by_nickname(rec.nickname):
@@ -478,4 +488,3 @@ class ConnectionService:
         """Replace domain state from external authoritative sources (e.g. SSH config load)."""
         payload: Dict[str, Any] = {"connections": list(connections), "groups": groups or {}}
         self.load_export_dict(payload, replace=True)
-

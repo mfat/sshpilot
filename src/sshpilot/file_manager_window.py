@@ -445,16 +445,7 @@ class FileManagerWindow(Adw.Window):
         bridge = self._bridge
         connection_id = self._connection_id
         if connection_id is None and connection is not None:
-            try:
-                from .connection_identity import connection_id_from_uuid
-
-                uuid_value = getattr(connection, "uuid", None) or getattr(
-                    connection, "_uuid", None
-                )
-                if uuid_value:
-                    connection_id = connection_id_from_uuid(str(uuid_value))
-            except Exception:
-                connection_id = None
+            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
         self._manager = create_file_manager_backend(
             host,
             username,
@@ -3095,17 +3086,13 @@ def launch_file_manager_window(
     if app is None:
         raise RuntimeError("An application instance is required to show the window")
 
-    from .connection_identity import connection_id_from_uuid
-
     daemon_client = getattr(parent, "client", None) if parent is not None else None
     bridge = getattr(parent, "client_bridge", None) if parent is not None else None
     parent_config = getattr(parent, "config", None) if parent is not None else None
     connection_id = None
     if connection is not None:
         try:
-            uuid_value = getattr(connection, "uuid", None) or getattr(connection, "_uuid", None)
-            if uuid_value:
-                connection_id = connection_id_from_uuid(str(uuid_value))
+            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
         except Exception:
             connection_id = None
 

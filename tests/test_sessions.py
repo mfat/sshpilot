@@ -181,13 +181,18 @@ def test_capture_session_schema(monkeypatch):
 
     assert session == {
         'tabs': [
-            {'type': 'ssh', 'nickname': 'server1', 'custom_title': 'prod'},
+            {
+                'type': 'ssh',
+                'nickname': 'server1',
+                'connection_id': 'server1',
+                'custom_title': 'prod',
+            },
             {'type': 'local'},
             {
                 'type': 'split',
                 'layout': 'horizontal',
                 'custom_title': None,
-                'panes': [[{'nickname': 'server2'}]],
+                'panes': [[{'nickname': 'server2', 'connection_id': 'server2'}]],
             },
         ]
     }

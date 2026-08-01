@@ -1102,6 +1102,7 @@ class TerminalWidget(Gtk.Box):
                 on_output=self._on_daemon_output,
                 on_continuity_lost=self._on_daemon_continuity_lost,
                 on_error=self._on_daemon_error,
+                on_state_changed=self._update_daemon_connection_state,
             )
 
             self._daemon_tab_state = self._daemon_controller.tab_state
@@ -1174,6 +1175,7 @@ class TerminalWidget(Gtk.Box):
                 on_output=self._on_daemon_output,
                 on_continuity_lost=self._on_daemon_continuity_lost,
                 on_error=self._on_daemon_error,
+                on_state_changed=self._update_daemon_connection_state,
             )
             self._daemon_tab_state = self._daemon_controller.tab_state
             self._daemon_tab_state.session_id = session_id

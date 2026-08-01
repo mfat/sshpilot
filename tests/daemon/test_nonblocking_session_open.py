@@ -403,7 +403,7 @@ def test_gtk_controller_attaches_while_session_starting():
     session_id = SessionId("session:00000000-0000-4000-8000-000000000001")
     summary = SessionSummary(
         id=session_id,
-        connection_id=ConnectionId("connection:test"),
+        connection_id=ConnectionId("test"),
         state=SessionState.STARTING,
     )
     attach_result = Mock()
@@ -440,11 +440,11 @@ def test_gtk_controller_attaches_while_session_starting():
     controller = DaemonTerminalSessionController(
         client=client,
         bridge=bridge,
-        connection_id=ConnectionId("connection:test"),
+        connection_id=ConnectionId("test"),
         view_id="view-1",
         on_error=errors.append,
     )
-    controller.open(ConnectionId("connection:test"), TerminalDimensions(24, 80))
+    controller.open(ConnectionId("test"), TerminalDimensions(24, 80))
     assert controller.tab_state.session_id == session_id
     assert controller.state is TerminalSessionState.ACTIVE
     assert errors == []
@@ -458,7 +458,7 @@ def test_gtk_controller_closes_tab_during_startup():
     session_id = SessionId("session:00000000-0000-4000-8000-000000000003")
     summary = SessionSummary(
         id=session_id,
-        connection_id=ConnectionId("connection:test"),
+        connection_id=ConnectionId("test"),
         state=SessionState.STARTING,
     )
     attach_result = Mock()
@@ -492,10 +492,10 @@ def test_gtk_controller_closes_tab_during_startup():
     controller = DaemonTerminalSessionController(
         client=client,
         bridge=_Bridge(),
-        connection_id=ConnectionId("connection:test"),
+        connection_id=ConnectionId("test"),
         view_id="view-1",
     )
-    controller.open(ConnectionId("connection:test"))
+    controller.open(ConnectionId("test"))
     assert controller.tab_state.session_id == session_id
     controller.close()
     assert controller.state in {
@@ -509,7 +509,7 @@ def test_gtk_controller_updates_tab_on_async_startup_failure():
     session_id = SessionId("session:00000000-0000-4000-8000-000000000002")
     summary = SessionSummary(
         id=session_id,
-        connection_id=ConnectionId("connection:test"),
+        connection_id=ConnectionId("test"),
         state=SessionState.STARTING,
     )
     attach_result = Mock()
@@ -549,16 +549,16 @@ def test_gtk_controller_updates_tab_on_async_startup_failure():
     controller = DaemonTerminalSessionController(
         client=client,
         bridge=_Bridge(),
-        connection_id=ConnectionId("connection:test"),
+        connection_id=ConnectionId("test"),
         view_id="view-1",
         on_error=errors.append,
     )
-    controller.open(ConnectionId("connection:test"))
+    controller.open(ConnectionId("test"))
     assert controller.state is TerminalSessionState.ACTIVE
 
     failed = SessionSummary(
         id=session_id,
-        connection_id=ConnectionId("connection:test"),
+        connection_id=ConnectionId("test"),
         state=SessionState.FAILED,
         failure=SessionFailure(
             code=ErrorCode.SESSION_STARTUP_FAILED.value,

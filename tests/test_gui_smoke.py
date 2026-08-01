@@ -2,7 +2,6 @@
 
 import threading
 import time
-from uuid import uuid4
 
 import pytest
 
@@ -66,7 +65,7 @@ def test_connection_selection_survives_rename_rebuild(gui):
     window = gui.window
     manager = window.connection_manager
     previous_connections = manager.connections
-    previous_index = manager._connections_by_uuid
+    previous_index = manager._connections_by_id
     connection = Connection(
         {
             "nickname": "BeforeRename",
@@ -75,7 +74,7 @@ def test_connection_selection_survives_rename_rebuild(gui):
         }
     )
     manager.connections = [connection]
-    manager._connections_by_uuid = {connection.uuid: connection}
+    manager._connections_by_id = {connection.id: connection}
     window.group_manager.bind_connections(manager.connections)
     try:
         window.rebuild_connection_list()
@@ -93,11 +92,11 @@ def test_connection_selection_survives_rename_rebuild(gui):
         selected = list(window.connection_list.get_selected_rows())
         assert len(selected) == 1
         assert selected[0].connection is connection
-        assert selected[0].connection.uuid == connection.uuid
+        assert selected[0].connection.id == connection.id
         assert selected[0].connection.nickname == "AfterRename"
     finally:
         manager.connections = previous_connections
-        manager._connections_by_uuid = previous_index
+        manager._connections_by_id = previous_index
         window.group_manager.bind_connections(previous_connections)
         window.rebuild_connection_list()
 
@@ -294,7 +293,7 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
         assert _wait_until(lambda: len(calls) >= 1)
 
         connection = SimpleNamespace(
-            uuid=str(uuid4()),
+            id=f"EventDemo{_repeat}",
             nickname=f"EventDemo{_repeat}",
             host=f"EventDemo{_repeat}",
             hostname="event.example.test",
@@ -368,8 +367,8 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
         def __init__(self, path):
             self.config_file = str(path)
             self.config_data = {"config_version": 3}
-            self._connection_uuid_by_nickname = {}
-            self._connection_nickname_by_uuid = {}
+            
+            
             self.save_json_config()
 
         def get_setting(self, key, default=None):
@@ -481,9 +480,6 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
         assert _wait_until(
             lambda: "NL1" in _label_texts(welcome._recent_box)
         )
-        assert "sshpilot:ConnectionUUID NL1" in root.read_text(
-            encoding="utf-8"
-        )
         assert window.connection_manager.identity_migration_enabled is False
     finally:
         app.clear_api_event_subscription()
@@ -519,7 +515,6 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
     from sshpilot.api import DaemonClient, InProcessClient
     from sshpilot.api.client_factory import ClientMode, ClientSelection
     from sshpilot.api.models.sessions import SessionExitInfo, SessionState
-    from sshpilot.connection_identity import connection_id_from_uuid
     from sshpilot.daemon import DaemonServer
     from sshpilot.daemon.session_runtime import SessionRuntime
     from sshpilot.gtk_client_bridge import GtkClientBridge
@@ -555,7 +550,7 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
     class _Manager:
         def __init__(self):
             self.connection = SimpleNamespace(
-                uuid=str(uuid4()),
+                id=f"SessionDemo{_repeat}",
                 nickname=f"SessionDemo{_repeat}",
                 host=f"SessionDemo{_repeat}",
                 hostname="session.example.test",
@@ -625,7 +620,7 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
         window._apply_client_selection(
             ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
         )
-        connection_id = connection_id_from_uuid(manager.connection.uuid)
+        connection_id = manager.connection.nickname
         if _repeat == 4:
             window._is_quitting = True
         app.open_daemon_session_for_diagnostics(

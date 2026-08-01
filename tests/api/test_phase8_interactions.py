@@ -2,11 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sshpilot.api.interaction_identity import (
-    interaction_id_from_uuid,
-    interaction_uuid_from_id,
-    new_interaction_id,
-)
+from sshpilot.api.interaction_identity import new_interaction_id
 from sshpilot.api.models import (
     ClientId,
     ConnectionId,
@@ -42,28 +38,17 @@ def _interaction_id() -> InteractionId:
     return new_interaction_id()
 
 
-def test_interaction_id_is_strict_canonical_uuid() -> None:
+def test_interaction_id_is_sequential() -> None:
     identifier = _interaction_id()
-    parsed = interaction_uuid_from_id(identifier)
-    assert interaction_id_from_uuid(parsed) == identifier
-    for malformed in (
-        "interaction:00000000-0000-0000-0000-000000000000",
-        "interaction:550E8400-E29B-41D4-A716-446655440000",
-        "wrong:550e8400-e29b-41d4-a716-446655440000",
-        "interaction:not-a-uuid",
-    ):
-        with pytest.raises(ValueError):
-            interaction_uuid_from_id(InteractionId(malformed))
+    assert identifier.startswith("interaction-")
 
 
 def test_typed_interaction_codec_round_trip_and_payload_match() -> None:
     now = datetime.now(timezone.utc)
     summary = InteractionSummary(
         id=_interaction_id(),
-        session_id=SessionId("session:550e8400-e29b-41d4-a716-446655440000"),
-        connection_id=ConnectionId(
-            "connection:550e8400-e29b-41d4-a716-446655440001"
-        ),
+        session_id=SessionId("session-1"),
+        connection_id=ConnectionId("production"),
         type=InteractionType.PASSWORD,
         state=InteractionState.CLAIMED,
         created_at=now,
@@ -142,14 +127,14 @@ def test_secret_frame_rejects_empty_nul_and_oversized_values() -> None:
 
 def test_terminal_frame_flags_are_strict_per_kind() -> None:
     session_id = SessionId(
-        "session:550e8400-e29b-41d4-a716-446655440000"
+        "session-1"
     )
     with pytest.raises(ValueError):
         TerminalFrame(
             kind=TerminalFrameKind.INPUT,
             session_id=session_id,
             sequence=0,
-            attachment_id="attachment:550e8400-e29b-41d4-a716-446655440002",
+            attachment_id="attachment-3",
             flags=TerminalFrameFlags.REPLAY,
         )
     with pytest.raises(ValueError):

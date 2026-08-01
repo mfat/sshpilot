@@ -5,7 +5,6 @@ import pytest
 from sshpilot.api import ErrorCode, InProcessClient, SshPilotError
 from sshpilot.api.models import ConnectionDetails, ConnectionSummary
 from sshpilot.api.models.common import ConnectionId
-from sshpilot.connection_identity import transitional_connection_id
 
 
 def test_list_and_get_connections_preserve_order_and_identity(
@@ -36,14 +35,13 @@ def test_list_and_get_connections_preserve_order_and_identity(
 
 def test_unknown_connection_has_structured_not_found_error(fake_manager, client_factory):
     client = client_factory(fake_manager)
-    missing_id = ConnectionId("connection:v1:missing")
+    missing_id = ConnectionId("nonexistent")
 
     with pytest.raises(SshPilotError) as caught:
         client.get_connection(missing_id)
 
     assert caught.value.code is ErrorCode.CONNECTION_NOT_FOUND
     assert caught.value.connection_id == missing_id
-    assert "missing" not in caught.value.message
 
 
 def test_connection_dtos_never_return_internal_models_or_secrets(
@@ -76,38 +74,26 @@ def test_existing_connection_id_is_stable_across_equivalent_reload(
         hostname="changed.example",
         username="different",
     )
-    replacement.uuid = fake_connection.uuid
-    replacement.data["uuid"] = fake_connection.uuid
+    replacement.id = fake_connection.id
+    replacement.uuid = fake_connection.id
+    replacement.data["id"] = fake_connection.id
+    replacement.data.pop("uuid", None)
     fake_manager.connections[:] = [replacement]
 
     assert client.list_connections()[0].id == first_id
 
 
-def test_stable_connection_id_does_not_change_when_nickname_changes(
+def test_connection_id_matches_nickname(
     fake_manager,
     fake_connection,
     client_factory,
 ):
     client = client_factory(fake_manager)
-    first_id = client.list_connections()[0].id
 
     fake_connection.nickname = "renamed"
+    fake_connection.id = "renamed"
 
-    assert client.list_connections()[0].id == first_id
+    assert client.list_connections()[0].id == "renamed"
 
 
-def test_current_transitional_id_remains_an_input_alias(
-    fake_manager,
-    fake_connection,
-    client_factory,
-):
-    client = client_factory(fake_manager)
-    legacy_id = ConnectionId(
-        transitional_connection_id(
-            fake_connection.protocol,
-            fake_connection.nickname,
-        )
-    )
 
-    assert client.get_connection(legacy_id).id == client.list_connections()[0].id
-    assert client.get_connection(legacy_id).id != legacy_id

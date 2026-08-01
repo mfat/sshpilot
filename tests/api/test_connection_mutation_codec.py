@@ -28,7 +28,7 @@ def test_mutation_codec_round_trips_all_public_models():
     )
     update = UpdateConnectionRequest(username="", port=22)
     delete = DeleteConnectionRequest(
-        connection_id=ConnectionId("connection:v1:demo")
+        connection_id=ConnectionId("demo")
     )
     result = DeleteConnectionResult(
         connection_id=delete.connection_id,
@@ -106,7 +106,7 @@ def test_mutation_codec_round_trips_all_public_models():
         ),
         (
             delete_connection_result_from_wire,
-            {"connection_id": "connection:v1:demo", "deleted": 1},
+            {"connection_id": "demo", "deleted": 1},
         ),
     ],
 )

@@ -19,7 +19,6 @@ import logging
 import os
 import threading
 import time
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
@@ -148,7 +147,7 @@ class TransferRuntime:
         *,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
-        uuid_factory: Callable[[], TransferId] = new_transfer_id,
+        id_factory: Callable[[], TransferId] = new_transfer_id,
         shutdown_timeout_seconds: float = 5.0,
         max_concurrent_transfers: int = DEFAULT_MAX_CONCURRENT_TRANSFERS,
         max_queued_transfers: int = DEFAULT_MAX_QUEUED_TRANSFERS,
@@ -173,7 +172,7 @@ class TransferRuntime:
         self._sftp_runtime = sftp_runtime
         self._clock = clock
         self._monotonic = monotonic
-        self._uuid_factory = uuid_factory
+        self._id_factory = id_factory
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_concurrent_transfers = max_concurrent_transfers
         self._max_queued_transfers = max_queued_transfers
@@ -282,7 +281,7 @@ class TransferRuntime:
         _client, connection_id = self._sftp_runtime.acquire_active_client(
             request.sftp_service_id, client_id
         )
-        transfer_id = self._uuid_factory()
+        transfer_id = self._id_factory()
         now = self._clock()
         local_display = os.path.basename(request.local_path.rstrip("/\\")) or "file"
         if request.direction is TransferDirection.UPLOAD:
@@ -319,7 +318,7 @@ class TransferRuntime:
                     retryable=True,
                 )
             if transfer_id in self._records:
-                raise RuntimeError("transfer UUID factory reused an active identifier")
+                raise RuntimeError("transfer id factory reused an active identifier")
             self._records[transfer_id] = record
             self._creation_order.append(transfer_id)
             created_event = self._event_locked(record, EventType.TRANSFER_CREATED)
@@ -483,7 +482,7 @@ class TransferRuntime:
             record.bytes_total = os.path.getsize(local_path)
         destination = self._resolve_remote_destination(record, client)
         remote_dir = remote_path_dirname(destination)
-        temp_name = f"{_TEMP_PREFIX}{uuid.uuid4().hex}"
+        temp_name = f"{_TEMP_PREFIX}{new_transfer_id()}"
         remote_temp = (
             temp_name if remote_dir in (".", "") else remote_path_join(remote_dir, temp_name)
         )

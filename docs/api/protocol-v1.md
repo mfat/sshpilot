@@ -62,7 +62,7 @@ payload bytes. Control payloads are UTF-8 JSON and remain limited to 1,048,576
 bytes. Negotiated terminal payloads begin with binary magic `SPTB`, use stream
 version 1, and are limited to a 48-byte header plus 65,536 raw bytes.
 Negotiated one-use secret responses begin with `SPSB`, use version 1, and carry
-an interaction UUID, a 16-byte responder nonce, and at most 16,384 raw secret
+an interaction ID, a 16-byte responder nonce, and at most 16,384 raw secret
 bytes. Frames may be fragmented or coalesced by the socket. Empty, oversized,
 incomplete, invalid JSON, malformed binary frames, unsupported flags, and
 non-canonical identifiers are rejected. Pickle, marshal, arbitrary class
@@ -96,7 +96,7 @@ compatibility status, and a random per-process server instance ID.
 
 Ordinary requests before handshake and a second handshake are errors. Client
 capability claims are diagnostic and are not authorization. Request IDs are
-random UUID hex strings, unique for the connection and never derived from
+opaque counter strings such as `request-1`, unique for the connection and never derived from
 request data. Duplicate requests, unknown response IDs, and response protocol
 mismatches are protocol errors. A timed-out `DaemonClient` closes its socket so
 a late response cannot be correlated with later work.
@@ -116,29 +116,23 @@ current snapshot but must not parse them.
 
 | Type | Intended identity | Current stability |
 | --- | --- | --- |
-| `ConnectionId` | Saved connection | Stable opaque `connection:<uuid>` backed by an immutable persisted UUID |
-| `SessionId` | Daemon-lifetime runtime session | Stable `session:<uuid>` for one daemon process; not persisted across restart |
-| `RequestId` | Operation/request correlation | Random UUID hex per daemon request; never reused on a connection |
-| `InteractionId` | One daemon interaction | Stable `interaction:<uuid>` for one daemon process; not persisted across restart |
-| `TransferId` | One transfer | Schema only; no allocator |
-| `ClientId` | One frontend client | Random per `DaemonClient`; enforced after handshake |
-| `AttachmentId` | One logical client/session attachment | Random UUID-backed value; removed on detach/socket close |
+| `ConnectionId` | Saved connection | SSH Host alias (opaque string) |
+| `SessionId` | Daemon-lifetime runtime session | `session-<n>` for one daemon process; not persisted across restart |
+| `RequestId` | Operation/request correlation | Client-scoped `request-<n>`; never reused among outstanding requests |
+| `InteractionId` | One daemon interaction | `interaction-<n>` for one daemon process; not persisted across restart |
+| `TransferId` | One transfer | `transfer-<n>` for one daemon process |
+| `ClientId` | One frontend client | `client-<n>` per process / handshake |
+| `AttachmentId` | One logical client/session attachment | Daemon-scoped `attachment-<n>` counter |
 
-All new responses and events emit UUID-backed IDs. Rename and mutable metadata
-changes retain identity; reload and daemon restart reproduce the same ID.
-Parsing is strict and centralized, although consumers must treat the value as
-opaque.
+Saved connection IDs are SSH Host aliases. Runtime IDs are daemon-scoped
+counters (for example `session-12`). Request IDs are client-scoped counters.
+Consumers must treat all identifiers as opaque strings.
 
-<!-- api-connection-id: persisted-uuid-v1 -->
-<!-- api-session-id: daemon-uuid-v1 -->
-<!-- api-interaction-id: daemon-uuid-v1 -->
+<!-- api-connection-id: ssh-host-alias -->
+<!-- api-session-id: daemon-counter-v1 -->
+<!-- api-interaction-id: daemon-counter-v1 -->
 
-Former `connection:v1:<hash>` IDs are deprecated input-only lookup aliases
-during Protocol v1. They resolve only when the hash matches the connection's
-current protocol and nickname, may stop resolving after rename, and are never
-emitted. Transitional lookup is removed in Protocol v2 after one complete v1
-release window. See
-[stable connection identity](../architecture/connection-identity.md).
+See [stable connection identity](../architecture/connection-identity.md).
 
 ## Data conventions
 

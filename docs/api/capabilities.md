@@ -136,7 +136,7 @@ requires this capability together with `connections.read` and
 ## `sessions.read`
 
 Daemon-only and contract-tested. Records are in-memory, creation-ordered, and
-use `session:<uuid>` identifiers unique for one daemon lifetime. Closed records
+use `session-<n>` identifiers unique for one daemon lifetime. Closed records
 are capped at 100 and are not persisted across restart.
 
 <!-- api-capability: sessions.write -->
@@ -251,7 +251,7 @@ runtime is present. `InProcessClient` returns `unsupported_capability`.
 ## `sftp.write`
 
 Daemon-only open/attach/detach/close of SFTP services. Service identity is
-daemon-lifetime opaque (`sftp:<uuid>`).
+daemon-lifetime opaque (`sftp-<n>`).
 
 <!-- api-capability: sftp.events -->
 ## `sftp.events`
@@ -280,7 +280,7 @@ Daemon-only list/get of transfer records when the transfer runtime is present.
 ## `transfers.write`
 
 Daemon-only start/cancel of uploads and downloads. Transfer identity is
-daemon-lifetime opaque (`transfer:<uuid>`).
+daemon-lifetime opaque (`transfer-<n>`).
 
 <!-- api-capability: transfers.events -->
 ## `transfers.events`
@@ -315,7 +315,7 @@ Daemon-only list/get of runtime forwards when the forward runtime is present.
 ## `forwards.write`
 
 Daemon-only open/close of runtime forwards. Forward identity is daemon-lifetime
-opaque (`forward:<uuid>`).
+opaque (`forward-<n>`).
 
 <!-- api-capability: forwards.events -->
 ## `forwards.events`

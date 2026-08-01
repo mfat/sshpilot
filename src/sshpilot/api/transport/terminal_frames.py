@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import struct
-import uuid
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 
 from sshpilot.api.errors import ErrorCode
-from sshpilot.api.models.common import AttachmentId, SessionId
-from sshpilot.api.session_identity import session_id_from_uuid, session_uuid_from_id
+from sshpilot.api.models.common import AttachmentId, SessionId, require_identifier
 
 from .framing import FramingError, MAX_FRAME_SIZE
+from .wire_ids import id_to_wire_bytes, wire_bytes_to_id
 
 TERMINAL_STREAM_VERSION = 1
 MAX_TERMINAL_PAYLOAD_SIZE = 64 * 1024
 _MAGIC = b"SPTB"
 _HEADER = struct.Struct(">4sBBH16sQ16s")
-_ZERO_UUID = b"\0" * 16
+_ZERO_BYTES = b"\0" * 16
 
 
 class TerminalFrameKind(IntEnum):
@@ -56,7 +55,7 @@ class TerminalFrame:
     flags: TerminalFrameFlags = TerminalFrameFlags.NONE
 
     def __post_init__(self) -> None:
-        session_uuid_from_id(self.session_id)
+        require_identifier(self.session_id, "session id")
         if type(self.sequence) is not int or self.sequence < 0:
             raise ValueError("terminal sequence must be a non-negative integer")
         if not isinstance(self.data, bytes):
@@ -67,7 +66,7 @@ class TerminalFrame:
             TerminalFrameKind.INPUT,
             TerminalFrameKind.INPUT_ERROR,
         }:
-            _attachment_uuid(self.attachment_id)
+            _validate_attachment_id(self.attachment_id)
         elif self.attachment_id is not None:
             raise ValueError("only terminal input/status frames carry an attachment")
         if not isinstance(self.kind, TerminalFrameKind):
@@ -85,20 +84,20 @@ def is_terminal_payload(payload: bytes) -> bool:
 def encode_terminal_payload(frame: TerminalFrame) -> bytes:
     if type(frame) is not TerminalFrame:
         raise TypeError("a TerminalFrame is required")
-    session_uuid = uuid.UUID(session_uuid_from_id(frame.session_id)).bytes
-    attachment_uuid = (
-        _attachment_uuid(frame.attachment_id).bytes
+    session_bytes = id_to_wire_bytes(frame.session_id)
+    attachment_bytes = (
+        id_to_wire_bytes(frame.attachment_id)
         if frame.attachment_id is not None
-        else _ZERO_UUID
+        else _ZERO_BYTES
     )
     payload = _HEADER.pack(
         _MAGIC,
         TERMINAL_STREAM_VERSION,
         int(frame.kind),
         int(frame.flags),
-        session_uuid,
+        session_bytes,
         frame.sequence,
-        attachment_uuid,
+        attachment_bytes,
     ) + frame.data
     if len(payload) > MAX_FRAME_SIZE:
         raise FramingError(
@@ -132,12 +131,10 @@ def decode_terminal_payload(payload: bytes) -> TerminalFrame:
         )
         if int(flags) & ~known_flags:
             raise ValueError
-        session_id = SessionId(session_id_from_uuid(str(uuid.UUID(bytes=session_bytes))))
+        session_id = SessionId(wire_bytes_to_id(session_bytes))
         attachment_id = None
-        if attachment_bytes != _ZERO_UUID:
-            attachment_id = AttachmentId(
-                f"attachment:{uuid.UUID(bytes=attachment_bytes)!s}"
-            )
+        if attachment_bytes != _ZERO_BYTES:
+            attachment_id = AttachmentId(wire_bytes_to_id(attachment_bytes))
         return TerminalFrame(
             kind=kind,
             session_id=session_id,
@@ -153,13 +150,6 @@ def decode_terminal_payload(payload: bytes) -> TerminalFrame:
         ) from None
 
 
-def _attachment_uuid(attachment_id: AttachmentId | None) -> uuid.UUID:
-    if not isinstance(attachment_id, str):
+def _validate_attachment_id(attachment_id: AttachmentId | None) -> None:
+    if not isinstance(attachment_id, str) or not attachment_id.strip():
         raise ValueError("terminal input requires an attachment identifier")
-    prefix = "attachment:"
-    if not attachment_id.startswith(prefix) or len(attachment_id) > 64:
-        raise ValueError("attachment identifier is malformed")
-    parsed = uuid.UUID(attachment_id[len(prefix) :])
-    if parsed.int == 0:
-        raise ValueError("attachment identifier must not be nil")
-    return parsed

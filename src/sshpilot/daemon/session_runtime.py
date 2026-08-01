@@ -5,13 +5,13 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
 from sshpilot.api.client import SshPilotClient
+from sshpilot.runtime_identity import new_attachment_id
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
     CoreEvent,
@@ -25,6 +25,7 @@ from sshpilot.api.models.common import (
     ClientId,
     ConnectionId,
     SessionId,
+    require_identifier,
     utc_now,
 )
 from sshpilot.api.models.connections import ConnectionDetails
@@ -50,11 +51,7 @@ from sshpilot.api.models.terminal import (
     TerminalInput,
     TerminalOutput,
 )
-from sshpilot.api.session_identity import (
-    new_session_uuid,
-    session_id_from_uuid,
-    session_uuid_from_id,
-)
+from sshpilot.api.session_identity import new_session_id
 
 from .terminal_stream import (
     DEFAULT_GLOBAL_REPLAY_BYTES,
@@ -375,7 +372,7 @@ class SessionRuntime:
         runner: Optional[Any] = None,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
-        uuid_factory: Callable[[], str] = new_session_uuid,
+        id_factory: Callable[[], str] = new_session_id,
         close_grace_seconds: float = DEFAULT_CLOSE_GRACE_SECONDS,
         shutdown_timeout_seconds: float = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
         max_retained_closed_sessions: int = DEFAULT_MAX_RETAINED_CLOSED_SESSIONS,
@@ -390,7 +387,7 @@ class SessionRuntime:
         self._runner: Any = runner or UnsupportedSessionProcessRunner()
         self._clock = clock
         self._monotonic = monotonic
-        self._uuid_factory = uuid_factory
+        self._id_factory = id_factory
         self._close_grace_seconds = float(close_grace_seconds)
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_retained_closed_sessions = max_retained_closed_sessions
@@ -458,7 +455,7 @@ class SessionRuntime:
             ]
 
     def get_session(self, session_id: SessionId) -> SessionSummary:
-        session_uuid_from_id(session_id)
+        require_identifier(session_id, "session id")
         with self._lock:
             self._require_accepting_reads_locked()
             return self._summary_locked(self._record_locked(session_id))
@@ -496,7 +493,7 @@ class SessionRuntime:
                 "The connection protocol cannot start a daemon session",
                 connection_id=request.connection_id,
             )
-        session_id = SessionId(session_id_from_uuid(self._uuid_factory()))
+        session_id = SessionId(self._id_factory())
         now = self._clock()
         record = _SessionRecord(
             session_id=session_id,
@@ -516,7 +513,7 @@ class SessionRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             if session_id in self._records:
-                raise RuntimeError("session UUID factory reused an active identifier")
+                raise RuntimeError("session id factory reused an active identifier")
             self._records[session_id] = record
             self._creation_order.append(session_id)
             created_event = self._event_locked(record, EventType.SESSION_CREATED)
@@ -541,7 +538,7 @@ class SessionRuntime:
     def start_session(self, session_id: SessionId) -> None:
         """Run the potentially blocking startup step on a command worker."""
 
-        session_uuid_from_id(session_id)
+        require_identifier(session_id, "session id")
         with self._lock:
             record = self._record_locked(session_id)
             if not record.startup_scheduled or record.startup_started:
@@ -719,7 +716,7 @@ class SessionRuntime:
                 ErrorCode.INVALID_REQUEST,
                 "An attach session request is required",
             )
-        session_uuid_from_id(request.session_id)
+        require_identifier(request.session_id, "session id")
         with self._lock:
             self._require_accepting_commands_locked()
             record = self._record_locked(request.session_id)
@@ -734,7 +731,7 @@ class SessionRuntime:
                     session_id=request.session_id,
                 )
             # Always create a new attachment (Phase 9: each pane has its own attachment)
-            attachment_id = AttachmentId(f"attachment:{uuid.uuid4()}")
+            attachment_id = AttachmentId(new_attachment_id())
 
             # Create attachment record
             attachment_record = _AttachmentRecord(
@@ -810,7 +807,7 @@ class SessionRuntime:
                 ErrorCode.INVALID_REQUEST,
                 "A detach session request is required",
             )
-        session_uuid_from_id(request.session_id)
+        require_identifier(request.session_id, "session id")
         with self._lock:
             self._require_accepting_commands_locked()
             record = self._record_locked(request.session_id)
@@ -1114,7 +1111,7 @@ class SessionRuntime:
                 ErrorCode.INVALID_REQUEST,
                 "A close session request is required",
             )
-        session_uuid_from_id(request.session_id)
+        require_identifier(request.session_id, "session id")
         events: List[CoreEvent] = []
         with self._lock:
             self._require_accepting_commands_locked()
@@ -1137,7 +1134,7 @@ class SessionRuntime:
     def finish_close_session(self, session_id: SessionId) -> None:
         """Perform accepted blocking termination on a command worker."""
 
-        session_uuid_from_id(session_id)
+        require_identifier(session_id, "session id")
         self._close_session_id(
             session_id,
             deadline=self._monotonic() + self._close_grace_seconds,

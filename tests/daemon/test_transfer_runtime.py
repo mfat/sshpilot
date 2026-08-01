@@ -26,7 +26,7 @@ _TERMINAL_STATES = frozenset(
 
 class _Connection:
     def __init__(self):
-        self.id = ConnectionId("connection:demo")
+        self.id = ConnectionId("demo")
         self.protocol = "ssh"
         self.hostname = "example.test"
         self.username = "alice"
@@ -124,7 +124,7 @@ def _make_ready_sftp_service(owner, client=None):
     client = client if client is not None else _FakeSftpClient()
     sftp_runtime = SftpServiceRuntime(_CoreClient(), runner=_FakeSftpRunner(client))
     summary = sftp_runtime.prepare_open_service(
-        OpenSftpRequest(connection_id=ConnectionId("connection:demo")),
+        OpenSftpRequest(connection_id=ConnectionId("demo")),
         client_id=owner,
     )
     sftp_runtime.start_service(summary.id)
@@ -133,7 +133,7 @@ def _make_ready_sftp_service(owner, client=None):
 
 def _upload_request(service_id, local_path, remote_path="/remote/file.txt"):
     return StartTransferRequest(
-        connection_id=ConnectionId("connection:demo"),
+        connection_id=ConnectionId("demo"),
         sftp_service_id=service_id,
         direction=TransferDirection.UPLOAD,
         remote_path=remote_path,

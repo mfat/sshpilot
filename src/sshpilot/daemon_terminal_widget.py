@@ -8,8 +8,7 @@ harness and shares that controller rather than a second open/attach path.
 from __future__ import annotations
 
 import logging
-import uuid
-
+from .runtime_identity import new_terminal_id
 from gi.repository import Gtk, Vte
 
 from .daemon_interaction_dialogs import DaemonInteractionDialogs
@@ -46,7 +45,7 @@ class DaemonTerminalWidget(Gtk.Box):
             client=client,
             bridge=bridge,
             connection_id=connection_id,
-            view_id=f"experimental-{uuid.uuid4().hex}",
+            view_id=f"experimental-{new_terminal_id()}",
             on_output=self._on_output,
             on_continuity_lost=self._on_continuity_lost,
             on_error=self._on_error,

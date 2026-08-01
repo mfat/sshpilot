@@ -20,22 +20,21 @@ documented model surface.
 
 | Type | Purpose | Required form | Runtime status |
 | --- | --- | --- | --- |
-| `ConnectionId` | Saved connection identity | Non-empty opaque string | Implemented; stable UUID-backed ID |
-| `SessionId` | Daemon-lifetime runtime session identity | `session:<canonical UUID>` | Daemon implemented |
-| `RequestId` | Request correlation | Non-empty opaque string | Schema only |
-| `InteractionId` | Daemon-lifetime interaction identity | `interaction:<canonical UUID>` | Daemon implemented |
-| `TransferId` | Transfer identity | `transfer:<canonical UUID>` | Daemon implemented |
-| `SftpServiceId` | SFTP service identity | `sftp:<canonical UUID>` | Daemon implemented |
-| `ForwardId` | Forward identity | `forward:<canonical UUID>` | Daemon implemented |
-| `ClientId` | Handshaken frontend identity | Non-empty opaque string | Daemon implemented |
-| `AttachmentId` | Logical session attachment identity | Non-empty opaque string | Daemon implemented |
+| `ConnectionId` | Saved connection identity | SSH Host alias (opaque string) | Implemented; alias-backed ID |
+| `SessionId` | Daemon-lifetime runtime session identity | `session-<n>` | Daemon implemented |
+| `RequestId` | Request correlation | `request-<n>` or opaque string | Implemented |
+| `InteractionId` | Daemon-lifetime interaction identity | `interaction-<n>` | Daemon implemented |
+| `TransferId` | Transfer identity | `transfer-<n>` | Daemon implemented |
+| `SftpServiceId` | SFTP service identity | `sftp-<n>` | Daemon implemented |
+| `ForwardId` | Forward identity | `forward-<n>` | Daemon implemented |
+| `ClientId` | Handshaken frontend identity | `client-<n>` or opaque string | Daemon implemented |
+| `AttachmentId` | Logical session attachment identity | `attachment-<n>` | Daemon implemented |
 
 The aliases are `typing.NewType` wrappers over `str`; they add static intent,
 not runtime serialization. Consumers must not parse their contents.
-`ConnectionId` is rendered as `connection:<canonical UUID>`, remains stable
-across rename and reload, and is validated by centralized internal helpers.
-`SessionId` is rendered as `session:<canonical UUID>` and is unique only for
-one daemon lifetime; consumers must not infer cross-restart persistence.
+`ConnectionId` equals the concrete SSH Host alias and changes only when that
+alias is renamed (delete + create semantics). Runtime IDs are unique for one
+daemon lifetime; consumers must not infer cross-restart persistence.
 `InteractionId` follows the same daemon-lifetime rule and is never derived from
 prompt text, session IDs, connection IDs, or timestamps.
 

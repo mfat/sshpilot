@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import threading
 
-import pytest
 
-from sshpilot.api import ErrorCode, InProcessClient, SshPilotError
+from sshpilot.api import InProcessClient
 from sshpilot.api.models.common import ClientId
 from sshpilot.api.models.sessions import (
     AttachSessionRequest,
@@ -15,14 +14,14 @@ from sshpilot.api.models.sessions import (
     SessionState,
 )
 from sshpilot.api.models.terminal import TerminalDimensions, TerminalInput
-from sshpilot.connection_identity import new_connection_uuid
 from sshpilot.daemon.session_runtime import SessionRuntime
 
 
 class _Connection:
     def __init__(self):
         self.nickname = "demo"
-        self.uuid = new_connection_uuid()
+        self.id = "demo"
+        self.uuid = "demo"
         self.host = "demo"
         self.hostname = "example.test"
         self.username = "alice"

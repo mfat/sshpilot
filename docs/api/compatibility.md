@@ -58,7 +58,7 @@ Subject to review, these can remain Protocol v1:
   unknown values safely.
 - Tighten documentation without changing tested behaviour.
 
-The UUID-backed connection-ID migration remains Protocol v1 compatible because
+The Host-alias connection-ID model remains Protocol v1 compatible because
 `ConnectionId` was documented and modeled as opaque. Existing wire fields and
 method shapes are unchanged. New responses always contain the stable form;
 deprecated nickname-hash IDs remain accepted as lookup aliases during the
@@ -137,7 +137,7 @@ The reusable connection contract suite runs against both `DaemonClient` and
 `InProcessClient`. It compares:
 
 - connection reads and writes, capabilities, mutation/not-found errors, and DTO values;
-- secret exclusion, stable UUID identity, and deprecated transitional lookup;
+- secret exclusion and Host-alias connection identity;
 - unsupported schema-only method errors;
 - close/disconnect behavior.
 
@@ -183,6 +183,6 @@ When the snapshot changes:
    Protocol v2 for an incompatible contract.
 
 Daemon-owned external reload does not change Protocol v1. It uses the existing
-connection DTOs, UUID-backed opaque IDs, connection event names, and
+connection DTOs, opaque IDs, connection event names, and
 `connections.read`/`connections.events` capabilities. Existing clients already
 reconcile correctly by refreshing their snapshot after an event.

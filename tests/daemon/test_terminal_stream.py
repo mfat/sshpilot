@@ -88,10 +88,10 @@ def test_owned_pty_reports_tty_output_input_resize_and_exit():
 
     spec = SessionLaunchSpec(
         session_id=SessionId(
-            "session:550e8400-e29b-41d4-a716-446655440000"
+            "session-1"
         ),
         connection_id=ConnectionId(
-            "connection:550e8400-e29b-41d4-a716-446655440001"
+            "conn-2"
         ),
         protocol="ssh",
         hostname="example.test",
@@ -131,10 +131,10 @@ def test_pty_launch_failure_releases_owned_resources():
 
     spec = SessionLaunchSpec(
         session_id=SessionId(
-            "session:550e8400-e29b-41d4-a716-446655440000"
+            "session-1"
         ),
         connection_id=ConnectionId(
-            "connection:550e8400-e29b-41d4-a716-446655440001"
+            "conn-2"
         ),
         protocol="ssh",
         hostname="example.test",
@@ -280,10 +280,10 @@ def test_owned_pty_streams_from_isolated_local_openssh(tmp_path):
         runner.start(
             SessionLaunchSpec(
                 session_id=SessionId(
-                    "session:550e8400-e29b-41d4-a716-446655440010"
+                    "session-10"
                 ),
                 connection_id=ConnectionId(
-                    "connection:550e8400-e29b-41d4-a716-446655440011"
+                    "conn-11"
                 ),
                 protocol="ssh",
                 hostname="127.0.0.1",

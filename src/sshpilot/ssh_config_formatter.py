@@ -15,10 +15,8 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .ssh_config_document import HostBlock, _split_config_option, _split_keyword
-from .connection_identity import (
-    SSH_UUID_MARKER,
-    format_ssh_uuid_marker,
-)
+
+SSH_UUID_MARKER = "# sshpilot:ConnectionUUID"
 
 # Directives the app owns end-to-end: parsed into typed Connection fields and
 # re-emitted from data by format_ssh_config_entry. Anything else in a Host
@@ -57,9 +55,6 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     nickname = data.get('nickname') or host
     primary_token = _quote_token(nickname)
     lines = [f"Host {primary_token}"]
-    connection_uuid = data.get('uuid')
-    if connection_uuid:
-        lines.append(format_ssh_uuid_marker(nickname, connection_uuid))
 
     # Add basic connection info
     if host and host != nickname:
@@ -294,8 +289,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
     header, managed_body = formatted[0] + '\n', [ln + '\n' for ln in formatted[1:]]
 
     has_extra_key = 'extra_ssh_config' in new_data
-    # (normalized (key, value), authored line) — match on the former, emit
-    # the latter so casing/spelling is never rewritten.
     remaining_extras: List[Tuple[Tuple[str, str], str]] = []
     for line in str(new_data.get('extra_ssh_config') or '').splitlines():
         stripped_extra = line.strip()
@@ -313,9 +306,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
             managed_inserted = True
 
     for raw in old_block.lines[1:]:
-        # A block that was the file's last, with no trailing newline, has a
-        # final raw line missing its '\n'. Managed/extra lines get appended
-        # after it, so without this it glues onto (and corrupts) that line.
         if raw and not raw.endswith('\n'):
             raw += '\n'
         stripped = raw.strip()
@@ -326,10 +316,8 @@ def merged_block_lines(old_block: Optional[HostBlock],
             if stripped.startswith('# sshpilot:PreCommand '):
                 _insert_managed()  # re-emitted from data
             elif stripped.startswith(SSH_UUID_MARKER):
-                if new_data.get('uuid'):
-                    _insert_managed()  # re-emitted from durable identity
-                else:
-                    out_body.append(raw)  # legacy direct caller: never drop it
+                # Ignore legacy ConnectionUUID comments safely on edit (do not re-emit)
+                continue
             else:
                 out_body.append(raw)
             continue
@@ -337,8 +325,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
         if key in MANAGED_HOST_OPTIONS:
             _insert_managed()
             continue
-        # Unknown directive: keep the authored line when the payload still
-        # carries it (or carries no extras at all).
         if not has_extra_key:
             out_body.append(raw)
             continue
@@ -348,7 +334,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
         if match is not None:
             remaining_extras.remove(match)
             out_body.append(raw)
-        # else: removed in the editor — drop it
 
     _insert_managed()
     out_body.extend(f"    {authored}\n" for _entry, authored in remaining_extras)

@@ -129,9 +129,9 @@ def test_encrypted_key_and_unknown_host_use_typed_interactions(tmp_path) -> None
         )
     )
     runner = None
-    session_id = SessionId("session:550e8400-e29b-41d4-a716-446655440020")
+    session_id = SessionId("session-20")
     connection_id = ConnectionId(
-        "connection:550e8400-e29b-41d4-a716-446655440021"
+        "conn-21"
     )
     client_id = ClientId("client:phase8")
     seen = []
@@ -350,9 +350,9 @@ def test_stored_passphrase_autofills_without_pythonpath(tmp_path) -> None:
     assert "from sshpilot" not in helper_source
     assert "def main(" in helper_source
     runner = None
-    session_id = SessionId("session:550e8400-e29b-41d4-a716-446655440050")
+    session_id = SessionId("session-50")
     connection_id = ConnectionId(
-        "connection:550e8400-e29b-41d4-a716-446655440051"
+        "conn-51"
     )
     client_id = ClientId("client:autofill")
 
@@ -506,9 +506,9 @@ def test_accept_and_store_persists_known_hosts(tmp_path) -> None:
     )
     broker = InteractionBroker()
     runner = None
-    session_id = SessionId("session:550e8400-e29b-41d4-a716-446655440030")
+    session_id = SessionId("session-30")
     connection_id = ConnectionId(
-        "connection:550e8400-e29b-41d4-a716-446655440031"
+        "conn-31"
     )
     client_id = ClientId("client:phase8-store")
 
@@ -658,9 +658,9 @@ def test_accept_once_does_not_persist_user_known_hosts(tmp_path) -> None:
     )
     broker = InteractionBroker()
     runner = None
-    session_id = SessionId("session:550e8400-e29b-41d4-a716-446655440040")
+    session_id = SessionId("session-40")
     connection_id = ConnectionId(
-        "connection:550e8400-e29b-41d4-a716-446655440041"
+        "conn-41"
     )
     client_id = ClientId("client:phase8-once")
 

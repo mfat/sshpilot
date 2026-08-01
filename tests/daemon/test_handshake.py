@@ -1,5 +1,4 @@
 import socket
-import uuid
 
 import pytest
 
@@ -22,10 +21,19 @@ def _send(peer, request):
     return decode_envelope(receive_frame(peer))
 
 
+_REQUEST_COUNTER = 0
+
+
+def _next_request_id() -> str:
+    global _REQUEST_COUNTER
+    _REQUEST_COUNTER += 1
+    return f"request-{_REQUEST_COUNTER}"
+
+
 def _request(method, params=None, *, request_id=None, version="1.0", client_id="client-1"):
     return RequestEnvelope(
         protocol_version=version,
-        request_id=request_id or uuid.uuid4().hex,
+        request_id=request_id or _next_request_id(),
         method=method,
         params=params or {},
         client_id=client_id,

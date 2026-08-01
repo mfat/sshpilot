@@ -5,7 +5,6 @@ import struct
 import subprocess
 import threading
 import time
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator
 
@@ -30,9 +29,9 @@ from sshpilot.api.transport.secret_frames import SecretFrame, SecretFrameKind
 from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
-SESSION_ID = SessionId("session:550e8400-e29b-41d4-a716-446655440000")
+SESSION_ID = SessionId("session-1")
 CONNECTION_ID = ConnectionId(
-    "connection:550e8400-e29b-41d4-a716-446655440001"
+    "conn-2"
 )
 CLIENT_A = ClientId("client-a")
 CLIENT_B = ClientId("client-b")
@@ -447,7 +446,6 @@ def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
 def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     """Daemon launch must preload keys like the classic VTE path."""
     from sshpilot.api.in_process_client import InProcessClient
-    from sshpilot.connection_identity import new_connection_uuid
     from tests.daemon.conftest import TestConnection, TestConnectionManager
 
     preloads = []
@@ -455,8 +453,9 @@ def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     class PreloadConnection(TestConnection):
         def __init__(self):
             super().__init__(nickname="preload", hostname="h", username="u")
-            self.uuid = new_connection_uuid()
-            self.data["uuid"] = self.uuid
+            self.id = "preload"
+            self.uuid = "preload"
+            self.data["id"] = "preload"
 
         async def native_connect(self, **kwargs):
             from types import SimpleNamespace
@@ -475,7 +474,7 @@ def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     connection = PreloadConnection()
     manager.connections = [connection]
     client = InProcessClient(manager, allow_cross_thread_commands=True)
-    cid = InProcessClient.connection_id_for(connection)
+    cid = ConnectionId("preload")
     monkeypatch.setattr(
         "shutil.which",
         lambda name, path=None: "/usr/bin/ssh" if name == "ssh" else None,

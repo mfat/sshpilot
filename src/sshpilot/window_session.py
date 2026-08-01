@@ -16,8 +16,6 @@ import logging
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
-from .connection_identity import connection_id_from_uuid, connection_uuid_from_id
-
 logger = logging.getLogger(__name__)
 
 
@@ -26,34 +24,15 @@ class WindowSessionMixin:
 
     @staticmethod
     def _connection_session_reference(connection) -> dict:
-        reference = {'nickname': getattr(connection, 'nickname', '')}
-        try:
-            reference['connection_id'] = connection_id_from_uuid(connection.uuid)
-        except (AttributeError, ValueError):
-            pass
-        return reference
+        nickname = getattr(connection, 'nickname', '')
+        return {'nickname': nickname, 'connection_id': nickname}
 
     def _connection_from_session_reference(self, entry):
         if not isinstance(entry, dict):
             return None
-        connection_id = entry.get('connection_id')
+        connection_id = entry.get('connection_id') or entry.get('nickname')
         if connection_id:
-            try:
-                connection_uuid = connection_uuid_from_id(connection_id)
-            except ValueError:
-                connection_uuid = None
-            if connection_uuid:
-                finder = getattr(
-                    self.connection_manager,
-                    'get_connection_by_uuid',
-                    None,
-                )
-                found = finder(connection_uuid) if callable(finder) else None
-                if found is not None:
-                    return found
-        nickname = entry.get('nickname')
-        if nickname:
-            return self.connection_manager.find_connection_by_nickname(nickname)
+            return self.connection_manager.find_connection_by_nickname(connection_id)
         return None
 
     def capture_session(self) -> dict:

@@ -31,20 +31,20 @@ def test_session_model_requires_opaque_identifiers():
     with pytest.raises(ValueError):
         SessionSummary(
             id=SessionId(""),
-            connection_id=ConnectionId("connection:v1:test"),
+            connection_id=ConnectionId("test"),
             state=SessionState.CREATED,
         )
 
     request = OpenSessionRequest(
-        connection_id=ConnectionId("connection:v1:test"),
+        connection_id=ConnectionId("test"),
     )
-    assert request.connection_id == "connection:v1:test"
+    assert request.connection_id == "test"
 
 
 def test_session_model_rejects_invalid_nested_values():
     summary = SessionSummary(
-        id=SessionId("session:550e8400-e29b-41d4-a716-446655440000"),
-        connection_id=ConnectionId("connection:550e8400-e29b-41d4-a716-446655440001"),
+        id=SessionId("session-1"),
+        connection_id=ConnectionId("conn-2"),
         state=SessionState.CREATED,
     )
 
@@ -62,13 +62,13 @@ def test_session_model_rejects_invalid_nested_values():
 
 def test_attach_result_must_reference_the_same_session():
     summary = SessionSummary(
-        id=SessionId("session:550e8400-e29b-41d4-a716-446655440000"),
-        connection_id=ConnectionId("connection:550e8400-e29b-41d4-a716-446655440001"),
+        id=SessionId("session-1"),
+        connection_id=ConnectionId("conn-2"),
         state=SessionState.RUNNING,
     )
     attachment = AttachmentInfo(
         id=AttachmentId("attachment:test"),
-        session_id=SessionId("session:550e8400-e29b-41d4-a716-446655440002"),
+        session_id=SessionId("session-3"),
         client_id=ClientId("client:test"),
         input_owner=False,
     )

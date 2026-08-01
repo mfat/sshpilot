@@ -11,7 +11,7 @@ def test_error_envelope_is_stable_and_safe():
         details={"field": "hostname"},
         retryable=False,
         request_id=RequestId("request-1"),
-        connection_id=ConnectionId("connection:v1:test"),
+        connection_id=ConnectionId("test"),
     )
 
     assert error.to_dict() == {
@@ -20,7 +20,7 @@ def test_error_envelope_is_stable_and_safe():
         "details": {"field": "hostname"},
         "retryable": False,
         "request_id": "request-1",
-        "connection_id": "connection:v1:test",
+        "connection_id": "test",
         "session_id": None,
     }
 

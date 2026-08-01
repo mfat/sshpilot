@@ -14,7 +14,7 @@ from sshpilot.api.transport.codec import (
 )
 def _connection(name="demo"):
     return ConnectionSummary(
-        id=ConnectionId(f"connection:v1:{name}"),
+        id=ConnectionId(name),
         nickname=name,
         host=name,
         hostname=f"{name}.example",
@@ -36,7 +36,7 @@ def test_connection_event_codec_round_trip_is_typed(event_type):
         type=event_type,
         payload=_connection(),
         sequence=2,
-        connection_id="connection:v1:demo",
+        connection_id="demo",
     )
 
     envelope = connection_event_to_envelope(

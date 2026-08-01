@@ -22,7 +22,7 @@ name/field/value surface is protected by
 | `update_connection` | same | Yes | `connections.write` | Shared mutation contract | Yes | Partial basic update; preserves advanced data internally |
 | `delete_connection` | same | Yes | `connections.write` | Shared mutation contract | Yes | Takes `DeleteConnectionRequest` |
 | `list_sessions` | same | Daemon only | `sessions.read` | Daemon integration | Yes | Creation-ordered daemon-lifetime snapshot |
-| `get_session` | same | Daemon only | `sessions.read` | Daemon integration | Yes | Strict `session:<uuid>` lookup |
+| `get_session` | same | Daemon only | `sessions.read` | Daemon integration | Yes | Strict `session-<n>` lookup |
 | `open_session` | same | Daemon only | `sessions.write` | Lifecycle + IPC | Yes | Creates a real record; production runner fails safely until PTY phase |
 | `attach_session` | same | Daemon only | `sessions.write` | Multi-client + IPC | Yes | Logical attachment; no stream |
 | `detach_session` | same | Daemon only | `sessions.write` | Multi-client + IPC | Yes | Idempotent caller-owned detach |
@@ -211,7 +211,7 @@ API, but terminal execution and most of the core remain GTK/GObject-coupled.
    but no client methods; some have models and none has API events.
 2. Daemon connection events are live but reconnect/resume semantics remain
    undefined.
-3. Connection IDs are stable persisted UUID-backed values. Deprecated
+3. Connection IDs are SSH Host aliases. Deprecated
    nickname-hash lookup aliases remain for the bounded Protocol v1 window.
 4. Some schema records do not validate their opaque IDs consistently.
 5. Behavioural contract coverage is intentionally thin for schema-only models,
