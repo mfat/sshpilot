@@ -133,6 +133,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
 <!-- api-method-contract: update_connection status=implemented capability=connections.write -->
+<!-- api-method-contract: update_connection_metadata status=implemented capability=connections.metadata.write -->
 
 ## Daemon wire methods
 
@@ -152,6 +153,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.delete_password` | `connections.secrets.write` | Implemented |
 | `connections.store_passphrase` | `connections.secrets.write` | Implemented |
 | `connections.lookup_passphrase` | `connections.secrets.write` | Implemented |
+| `connections.update_metadata` | `connections.metadata.write` | Implemented |
 | `interactions.list` | `interactions.read` | Implemented |
 | `interactions.get` | `interactions.read` | Implemented |
 | `interactions.claim` | `interactions.respond` | Implemented |
@@ -208,6 +210,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.store_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
+<!-- api-daemon-method: connections.update_metadata capability=connections.metadata.write -->
 <!-- api-daemon-method: daemon.diagnostics capability=daemon.status -->
 <!-- api-daemon-method: daemon.restart capability=daemon.control -->
 <!-- api-daemon-method: daemon.status capability=daemon.status -->
@@ -401,6 +404,25 @@ created = client.create_connection(
 client.update_connection(
     connection_id,
     UpdateConnectionRequest(username="user"),
+)
+```
+
+<!-- api-method: update_connection_metadata -->
+## `update_connection_metadata`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.metadata.write`; update non-SSH
+  metadata (tags, Wake-on-LAN settings) for a saved connection.
+- **Parameters / return:** `connection_id` and a metadata dict;
+  returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `Config.set_connection_meta`;
+  metadata is persisted to the local config store.
+
+```python
+client.update_connection_metadata(
+    connection_id,
+    {"tags": ["production", "us-east"], "wol_mac": "AA:BB:CC:DD:EE:FF"},
 )
 ```
 

@@ -1,6 +1,6 @@
 """Typed frontend-independent sshPilot client contract."""
 
-from typing import List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 from .capabilities import Capabilities
 from .events import CoreEventCallback, Subscription
@@ -123,6 +123,11 @@ class SshPilotClient(Protocol):
         ...
 
     def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
+        ...
+
+    def update_connection_metadata(
+        self, connection_id: ConnectionId, meta: 'Dict[str, Any]'
+    ) -> bool:
         ...
 
     def get_daemon_status(self) -> DaemonStatus:

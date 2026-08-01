@@ -11,7 +11,7 @@ import time
 from sshpilot.runtime_identity import new_unique_client_id, new_request_id
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, NoReturn, Optional, Union
+from typing import Any, Callable, Dict, List, NoReturn, Optional, Union
 
 from sshpilot import __version__ as sshpilot_version
 
@@ -158,6 +158,7 @@ from .transport.codec import (
     store_connection_password_request_to_wire,
     store_key_passphrase_request_to_wire,
     transfer_summary_from_wire,
+    update_connection_metadata_request_to_wire,
     update_connection_request_to_wire,
 )
 from .transport.envelopes import (
@@ -565,6 +566,21 @@ class DaemonClient:
         )
         if result is not None and type(result) is not str:
             self._fail_protocol("The daemon returned an invalid passphrase lookup result")
+        return result
+
+    def update_connection_metadata(
+        self, connection_id: ConnectionId, meta: Dict[str, Any]
+    ) -> bool:
+        self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
+        from .models.connections import UpdateConnectionMetadataRequest
+        request = UpdateConnectionMetadataRequest(connection_id=connection_id, meta=meta)
+        result = self._request(
+            "connections.update_metadata",
+            update_connection_metadata_request_to_wire(request),
+            mutation_connection_id=connection_id,
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid metadata update result")
         return result
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:

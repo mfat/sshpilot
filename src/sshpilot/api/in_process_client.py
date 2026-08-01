@@ -2,7 +2,7 @@
 
 import logging
 import threading
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sshpilot import __version__ as sshpilot_version
 
@@ -105,6 +105,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "lookup_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "update_connection_metadata": Capability.CONNECTIONS_METADATA_WRITE,
     "subscribe_events": Capability.CONNECTIONS_EVENTS,
     "update_connection": Capability.CONNECTIONS_WRITE,
 }
@@ -195,6 +196,7 @@ class InProcessClient:
             Capability.CONNECTIONS_EVENTS,
             Capability.CONNECTIONS_CONFIG_READ,
             Capability.CONNECTIONS_SECRETS_WRITE,
+            Capability.CONNECTIONS_METADATA_WRITE,
         }
         if all(
             callable(getattr(connection_manager, method_name, None))
@@ -610,6 +612,26 @@ class InProcessClient:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         return self.lookup_daemon_passphrase(request.key_path)
+
+    def update_connection_metadata(
+        self, connection_id: ConnectionId, meta: Dict[str, Any]
+    ) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            return False
+        nickname = getattr(connection, "nickname", "")
+        if not nickname:
+            return False
+        try:
+            existing = self._connection_manager.config.get_connection_meta(nickname)
+            existing.update(meta)
+            self._connection_manager.config.set_connection_meta(nickname, existing)
+            return True
+        except Exception:
+            logger.exception("Failed to update connection metadata via daemon RPC")
+            return False
 
     def enable_serialized_command_threads(self) -> None:
         """Allow daemon-owned serialized workers to invoke this adapter."""

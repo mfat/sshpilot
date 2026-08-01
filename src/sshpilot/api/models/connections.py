@@ -337,6 +337,19 @@ class LookupKeyPassphraseRequest:
             raise ValueError("key_path must not be empty")
 
 
+@dataclass(frozen=True)
+class UpdateConnectionMetadataRequest:
+    """Update non-SSH metadata (tags, WoL settings) for a connection."""
+
+    connection_id: ConnectionId
+    meta: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        if not isinstance(self.meta, Mapping):
+            raise TypeError("meta must be a mapping")
+
+
 # -- Request / Response models ----------------------------------------------
 
 @dataclass(frozen=True)

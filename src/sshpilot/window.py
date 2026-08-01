@@ -6418,34 +6418,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 "experimental service mode yet."
             )
 
-        pending_meta = connection_data.get('__meta') or {}
-        empty_meta = {
-            'wol_mac': '',
-            'wol_broadcast_ip': '',
-            'wol_port': 9,
-            'tags': [],
-        }
-        connection = getattr(dialog, 'connection', None)
-        if connection is None:
-            current_meta = empty_meta
-        else:
-            try:
-                current_meta = self.config.get_connection_meta(
-                    connection.nickname
-                ) or {}
-            except Exception:
-                current_meta = {}
-        for key, default in empty_meta.items():
-            if self._normalise_daemon_editor_value(
-                pending_meta.get(key, default)
-            ) != self._normalise_daemon_editor_value(
-                current_meta.get(key, default)
-            ):
-                return _(
-                    "Groups, tags, and Wake-on-LAN metadata cannot be changed "
-                    "in experimental service mode yet."
-                )
-
         return None
 
     def _save_connection_via_client(
@@ -6522,6 +6494,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if self._is_quitting:
                 complete_save(False)
                 return
+            pending_meta = connection_data.get('__meta') or {}
+            if dialog.is_editing and pending_meta:
+                try:
+                    self.client.update_connection_metadata(connection_id, pending_meta)
+                except Exception as exc:
+                    logger.debug("Metadata update via daemon RPC failed: %s", exc)
             complete_save(True)
             try:
                 self.connection_manager.load_ssh_config()

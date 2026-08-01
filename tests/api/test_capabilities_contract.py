@@ -509,6 +509,7 @@ def test_capabilities_advertise_only_contract_tested_runtime(
         Capability.CONNECTIONS_WRITE,
         Capability.CONNECTIONS_CONFIG_READ,
         Capability.CONNECTIONS_SECRETS_WRITE,
+        Capability.CONNECTIONS_METADATA_WRITE,
     }
     if client_backend == "daemon":
         expected.update(DAEMON_RUNTIME_CAPABILITIES)

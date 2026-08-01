@@ -73,6 +73,7 @@ from sshpilot.api.transport.codec import (
     store_connection_password_request_from_wire,
     store_key_passphrase_request_from_wire,
     transfer_summary_to_wire,
+    update_connection_metadata_request_from_wire,
     update_connection_request_from_wire,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, RequestEnvelope
@@ -98,6 +99,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.delete_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.store_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.lookup_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.update_metadata": Capability.CONNECTIONS_METADATA_WRITE,
     "daemon.status": Capability.DAEMON_STATUS,
     "daemon.diagnostics": Capability.DAEMON_STATUS,
     "daemon.stop": Capability.DAEMON_CONTROL,
@@ -306,6 +308,7 @@ class RequestDispatcher:
             "connections.delete_password": self._handle_delete_connection_password,
             "connections.store_passphrase": self._handle_store_key_passphrase,
             "connections.lookup_passphrase": self._handle_lookup_key_passphrase,
+            "connections.update_metadata": self._handle_update_connection_metadata,
             "interactions.list": self._handle_list_interactions,
             "interactions.get": self._handle_get_interaction,
             "interactions.claim": self._handle_claim_interaction,
@@ -728,6 +731,22 @@ class RequestDispatcher:
     ) -> Optional[str]:
         typed_request = lookup_key_passphrase_request_from_wire(request.params)
         return self._core_client.lookup_daemon_passphrase(typed_request.key_path)
+
+    def _handle_update_connection_metadata(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = update_connection_metadata_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._core_client.update_connection_metadata(
+                typed_request.connection_id,
+                dict(typed_request.meta),
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
 
     def _handle_list_sessions(
         self,
@@ -1476,6 +1495,7 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_WRITE,
                 Capability.CONNECTIONS_CONFIG_READ,
                 Capability.CONNECTIONS_SECRETS_WRITE,
+                Capability.CONNECTIONS_METADATA_WRITE,
             }
         )
         daemon_capabilities = connection_capabilities | frozenset(

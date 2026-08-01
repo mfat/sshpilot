@@ -2739,6 +2739,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: UpdateConnectionMetadataRequest -->
+## `UpdateConnectionMetadataRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Update non-SSH metadata (tags, WoL settings) for a connection.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `meta` | `Mapping[str, Any]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "meta": {}
+}
+```
+
 <!-- api-model: UpdateConnectionRequest -->
 ## `UpdateConnectionRequest`
 

@@ -248,6 +248,10 @@
     "update_connection": {
       "capability": "connections.write",
       "status": "implemented"
+    },
+    "update_connection_metadata": {
+      "capability": "connections.metadata.write",
+      "status": "implemented"
     }
   },
   "daemon_method_contract": {
@@ -280,6 +284,9 @@
     },
     "connections.update": {
       "capability": "connections.write"
+    },
+    "connections.update_metadata": {
+      "capability": "connections.metadata.write"
     },
     "daemon.diagnostics": {
       "capability": "daemon.status"
@@ -4328,6 +4335,25 @@
         }
       ],
       "status": "Implemented"
+    },
+    "UpdateConnectionMetadataRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "meta",
+          "required": true,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Schema only"
     },
     "UpdateConnectionRequest": {
       "fields": [

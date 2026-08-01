@@ -56,6 +56,7 @@ from ..models.connections import (
     StoreConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
     UNSET,
+    UpdateConnectionMetadataRequest,
     UpdateConnectionRequest,
 )
 from ..models.daemon import (
@@ -1527,6 +1528,35 @@ def lookup_key_passphrase_request_from_wire(
     )
     return LookupKeyPassphraseRequest(
         key_path=_text(data["key_path"], "key path"),
+    )
+
+
+def update_connection_metadata_request_to_wire(
+    request: UpdateConnectionMetadataRequest,
+) -> Dict[str, Any]:
+    if type(request) is not UpdateConnectionMetadataRequest:
+        raise TypeError("update connection metadata request is required")
+    return {
+        "connection_id": request.connection_id,
+        "meta": dict(request.meta),
+    }
+
+
+def update_connection_metadata_request_from_wire(
+    value: Any,
+) -> UpdateConnectionMetadataRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "meta"},
+        context="update connection metadata request",
+    )
+    if type(data.get("meta")) is not dict:
+        raise ValueError("meta must be an object")
+    return UpdateConnectionMetadataRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        meta=data["meta"],
     )
 
 

@@ -313,6 +313,10 @@
     "update_connection": {
       "capability": "connections.write",
       "status": "implemented"
+    },
+    "update_connection_metadata": {
+      "capability": "connections.metadata.write",
+      "status": "implemented"
     }
   },
   "client_methods": [
@@ -377,7 +381,8 @@
     "store_key_passphrase",
     "subscribe_events",
     "subscribe_terminal",
-    "update_connection"
+    "update_connection",
+    "update_connection_metadata"
   ],
   "client_signatures": {
     "attach_session": {
@@ -974,6 +979,21 @@
         }
       ],
       "return": "ConnectionDetails"
+    },
+    "update_connection_metadata": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "connection_id",
+          "type": "ConnectionId"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "meta",
+          "type": "Dict[str, Any]"
+        }
+      ],
+      "return": "bool"
     }
   },
   "daemon_method_contract": {
@@ -1006,6 +1026,9 @@
     },
     "connections.update": {
       "capability": "connections.write"
+    },
+    "connections.update_metadata": {
+      "capability": "connections.metadata.write"
     },
     "daemon.diagnostics": {
       "capability": "daemon.status"
@@ -1393,6 +1416,7 @@
     "TransferState",
     "TransferSummary",
     "UNSET",
+    "UpdateConnectionMetadataRequest",
     "UpdateConnectionRequest",
     "default_idle_shutdown_seconds",
     "forwarding_rule_from_dict",
@@ -2025,6 +2049,10 @@
       "failure",
       "bytes_transferred",
       "total_bytes"
+    ],
+    "UpdateConnectionMetadataRequest": [
+      "connection_id",
+      "meta"
     ],
     "UpdateConnectionRequest": [
       "nickname",
