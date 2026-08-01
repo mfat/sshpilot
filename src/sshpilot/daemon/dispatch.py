@@ -606,12 +606,26 @@ class RequestDispatcher:
             self._core_client.get_connection(ConnectionId(connection_id))
         )
 
+    def _require_capability(
+        self,
+        state: ClientProtocolState,
+        capability: Capability,
+    ) -> None:
+        capabilities = self._capabilities_for(state)
+        if not capabilities.supports(capability):
+            raise SshPilotError(
+                ErrorCode.CAPABILITY_NOT_SUPPORTED,
+                f"Capability {capability.value} is required for this operation",
+            )
+
     def _handle_create_connection(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         mutation = create_connection_request_from_wire(request.params)
+        if mutation.config_patch:
+            self._require_capability(state, Capability.CONNECTIONS_CONFIG_WRITE)
         return DeferredResult(
             operation=lambda: connection_details_to_wire(
                 self._core_client.create_connection(mutation)
@@ -623,7 +637,7 @@ class RequestDispatcher:
     def _handle_update_connection(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         if set(request.params) != {"connection_id", "update"}:
             raise ValueError(
@@ -633,6 +647,8 @@ class RequestDispatcher:
         if type(connection_id) is not str or not connection_id.strip():
             raise ValueError("connection_id must be a non-empty string")
         mutation = update_connection_request_from_wire(request.params["update"])
+        if mutation.config_patch:
+            self._require_capability(state, Capability.CONNECTIONS_CONFIG_WRITE)
         typed_id = ConnectionId(connection_id)
         return DeferredResult(
             operation=lambda: connection_details_to_wire(
@@ -1552,6 +1568,7 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_EVENTS,
                 Capability.CONNECTIONS_WRITE,
                 Capability.CONNECTIONS_CONFIG_READ,
+                Capability.CONNECTIONS_CONFIG_WRITE,
                 Capability.CONNECTIONS_SECRETS_WRITE,
                 Capability.CONNECTIONS_METADATA_WRITE,
                 Capability.CONNECTIONS_GROUPS,

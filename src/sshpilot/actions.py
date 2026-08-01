@@ -412,19 +412,35 @@ class WindowActions:
                 def on_response_with_connections(dialog, response):
                     if response == 'move':
                         # Just delete the group, connections will be moved
-                        self.group_manager.delete_group(group_id)
+                        if self._daemon_mode_active():
+                            try:
+                                self.client.delete_group(group_id)
+                            except Exception as exc:
+                                logger.error("Delete group via daemon RPC failed: %s", exc)
+                                self._simple_dialog(_("Error"), _("Failed to delete group via daemon: ") + str(exc))
+                        else:
+                            self.group_manager.delete_group(group_id)
                         self.rebuild_connection_list()
                     elif response == 'delete_all':
                         # Delete all connections in the group first
                         connections_to_delete = list(actual_connections)  # Use filtered list
-                        for conn_nickname in connections_to_delete:
-                            # Find the connection object and delete it
-                            connection = connections_dict.get(conn_nickname)
-                            if connection:
-                                self.connection_manager.remove_connection(connection)
-                        
-                        # Then delete the group
-                        self.group_manager.delete_group(group_id)
+                        if self._daemon_mode_active():
+                            try:
+                                from sshpilot.api.models import DeleteConnectionRequest
+                                for conn_nickname in connections_to_delete:
+                                    conn_id = self._find_connection_id_for_nickname(conn_nickname)
+                                    if conn_id:
+                                        self.client.delete_connection(DeleteConnectionRequest(connection_id=conn_id))
+                                self.client.delete_group(group_id)
+                            except Exception as exc:
+                                logger.error("Delete group and connections via daemon RPC failed: %s", exc)
+                                self._simple_dialog(_("Error"), _("Failed to delete group via daemon: ") + str(exc))
+                        else:
+                            for conn_nickname in connections_to_delete:
+                                connection = connections_dict.get(conn_nickname)
+                                if connection:
+                                    self.connection_manager.remove_connection(connection)
+                            self.group_manager.delete_group(group_id)
                         self.rebuild_connection_list()
                     dialog.destroy()
                 
@@ -446,7 +462,14 @@ class WindowActions:
                 
                 def on_response_empty_group(dialog, response):
                     if response == 'delete':
-                        self.group_manager.delete_group(group_id)
+                        if self._daemon_mode_active():
+                            try:
+                                self.client.delete_group(group_id)
+                            except Exception as exc:
+                                logger.error("Delete group via daemon RPC failed: %s", exc)
+                                self._simple_dialog(_("Error"), _("Failed to delete group via daemon: ") + str(exc))
+                        else:
+                            self.group_manager.delete_group(group_id)
                         self.rebuild_connection_list()
                     dialog.destroy()
                 

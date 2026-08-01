@@ -1,10 +1,12 @@
 """Frontend-neutral connection request and response models."""
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, FrozenSet, Mapping, Tuple, Union
 
 from .common import ConnectionId, require_identifier
+
 
 
 # -- Patch sentinels --------------------------------------------------------
@@ -410,6 +412,7 @@ class CreateConnectionRequest:
     username: str = ""
     port: int = 22
     protocol: str = "ssh"
+    config_patch: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if type(self.nickname) is not str or not self.nickname.strip():
@@ -422,6 +425,11 @@ class CreateConnectionRequest:
             raise ValueError("connection port must be between 1 and 65535")
         if type(self.protocol) is not str or not self.protocol.strip():
             raise ValueError("connection protocol must not be empty")
+        if self.config_patch:
+            normalized_patch = dict(self.config_patch)
+            object.__setattr__(self, "config_patch", normalized_patch)
+            validate_config_patch(self.config_patch)
+
 
 
 @dataclass(frozen=True)
@@ -466,7 +474,15 @@ class UpdateConnectionRequest:
         ):
             raise ValueError("connection port must be between 1 and 65535")
         if has_patch:
+            normalized_patch = dict(self.config_patch)
+            for k, v in list(normalized_patch.items()):
+                if k in ("proxy_jump", "aliases") and isinstance(v, str):
+                    normalized_patch[k] = [h.strip() for h in re.split(r'[\s,]+', v) if h.strip()]
+                elif k in ("identity_files", "certificate_files") and isinstance(v, str):
+                    normalized_patch[k] = [f.strip() for f in re.split(r'[\r\n,]+', v) if f.strip()]
+            object.__setattr__(self, "config_patch", normalized_patch)
             validate_config_patch(self.config_patch)
+
 
 
 @dataclass(frozen=True)

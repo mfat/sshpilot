@@ -2324,8 +2324,10 @@ class WindowConfigDialogsMixin:
                 if self._daemon_mode_active():
                     try:
                         self.client.create_group(name, color=color or "")
-                    except Exception:
-                        self.group_manager.create_group(name, color=color)
+                    except Exception as exc:
+                        logger.error("Create group via daemon RPC failed: %s", exc)
+                        self._simple_dialog(_("Error"), _("Failed to create group via daemon: ") + str(exc))
+                        return False
                 else:
                     self.group_manager.create_group(name, color=color)
                 self.rebuild_connection_list()
@@ -2369,10 +2371,12 @@ class WindowConfigDialogsMixin:
                 if self._daemon_mode_active():
                     try:
                         self.client.rename_group(group_id, name)
-                        self.group_manager.set_group_color(group_id, color)
-                    except Exception:
-                        self.group_manager.rename_group(group_id, name)
-                        self.group_manager.set_group_color(group_id, color)
+                        if color is not None:
+                            self.group_manager.set_group_color(group_id, color)
+                    except Exception as exc:
+                        logger.error("Rename group via daemon RPC failed: %s", exc)
+                        self._simple_dialog(_("Error"), _("Failed to edit group via daemon: ") + str(exc))
+                        return False
                 else:
                     self.group_manager.rename_group(group_id, name)
                     self.group_manager.set_group_color(group_id, color)
@@ -2472,19 +2476,23 @@ class WindowConfigDialogsMixin:
                             if connection_id:
                                 try:
                                     self.client.assign_connection_to_group(connection_id, target_group_id)
-                                    return
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    logger.error("Copy connection to group via daemon RPC failed: %s", exc)
+                            else:
+                                logger.error("Could not find daemon connection_id for %s", nickname)
+                            return
                         self.group_manager.copy_connection_to_group(nickname, target_group_id)
                 else:
                     if self._daemon_mode_active():
                         connection_id = self._find_connection_id_for_nickname(nickname)
                         if connection_id:
                             try:
-                                self.client.assign_connection_to_group(connection_id, target_group_id)
-                                return
-                            except Exception:
-                                pass
+                                self.client.assign_connection_to_group(connection_id, target_group_id or "")
+                            except Exception as exc:
+                                logger.error("Move connection to group via daemon RPC failed: %s", exc)
+                        else:
+                            logger.error("Could not find daemon connection_id for %s", nickname)
+                        return
                     self.group_manager.move_connection(nickname, target_group_id)
 
             available_groups = self.get_available_groups()

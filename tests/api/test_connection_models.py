@@ -41,3 +41,22 @@ def test_validation_result_cannot_be_valid_with_errors():
 
     result = ConnectionValidationResult(valid=False, errors=(error,))
     assert result.errors == (error,)
+
+
+def test_update_connection_request_normalizes_string_proxy_jump():
+    req = UpdateConnectionRequest(
+        nickname="Oracle",
+        config_patch={"proxy_jump": "ubuntu@150.230.27.23"},
+    )
+    assert req.config_patch["proxy_jump"] == ["ubuntu@150.230.27.23"]
+
+
+def test_create_connection_request_accepts_and_validates_config_patch():
+    req = CreateConnectionRequest(
+        nickname="ProxyHost",
+        hostname="target.internal",
+        config_patch={"proxy_jump": ["jump.example.com"]},
+    )
+    assert req.config_patch["proxy_jump"] == ["jump.example.com"]
+
+

@@ -94,6 +94,7 @@ class FakeConnectionManager:
             port=data["port"],
             protocol=data["protocol"],
         )
+        connection.update_data(data)
         self.connections.append(connection)
         self.emit("connection-added", connection)
         return connection

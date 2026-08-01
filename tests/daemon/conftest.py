@@ -108,7 +108,7 @@ class TestConnectionManager:
             username=data["username"],
         )
         connection.port = data["port"]
-        connection.data["port"] = data["port"]
+        connection.update_data(data)
         self.connections.append(connection)
         self.emit("connection-added", connection)
         return connection

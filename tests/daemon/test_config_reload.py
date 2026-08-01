@@ -531,3 +531,30 @@ def test_change_after_reload_read_schedules_follow_up(tmp_path, monkeypatch):
         client.close()
         server.shutdown()
         assert server.wait_stopped(timeout=2)
+
+
+def test_create_connection_with_proxy_jump_persists_to_ssh_config(
+    daemon_factory,
+):
+    server, manager = daemon_factory(start=True)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        created = client.create_connection(
+            CreateConnectionRequest(
+                nickname="JumpTestHost",
+                hostname="target.example.test",
+                username="tester",
+                port=22,
+                config_patch={"proxy_jump": ["jump.example.test"]},
+            )
+        )
+        assert created.nickname == "JumpTestHost"
+        assert created.proxy_jump == ("jump.example.test",)
+
+        details = client.get_connection(created.id)
+        assert details.proxy_jump == ("jump.example.test",)
+    finally:
+        client.close()
+        server.shutdown()
+        assert server.wait_stopped(timeout=2)
+

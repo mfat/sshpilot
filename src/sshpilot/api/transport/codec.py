@@ -1249,21 +1249,33 @@ def create_connection_request_to_wire(
 ) -> Dict[str, Any]:
     if type(request) is not CreateConnectionRequest:
         raise TypeError("create connection request is required")
-    return {
+    result: Dict[str, Any] = {
         "nickname": request.nickname,
         "hostname": request.hostname,
         "username": request.username,
         "port": request.port,
         "protocol": request.protocol,
     }
+    if request.config_patch:
+        result["config_patch"] = dict(request.config_patch)
+    return result
 
 
 def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
     data = _strict_fields(
         value,
         required={"nickname", "hostname", "username", "port", "protocol"},
+        optional={"config_patch"},
         context="create connection request",
     )
+    raw_patch = data.get("config_patch")
+    config_patch: Dict[str, Any] = {}
+    if raw_patch is not None:
+        if type(raw_patch) is not dict:
+            raise ValueError("config_patch must be an object")
+        config_patch = {
+            k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS
+        }
     return CreateConnectionRequest(
         nickname=_identifier(data["nickname"], "connection nickname"),
         hostname=_identifier(data["hostname"], "connection hostname"),
@@ -1274,6 +1286,7 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
         ),
         port=_integer(data["port"], "connection port"),
         protocol=_identifier(data["protocol"], "connection protocol"),
+        config_patch=config_patch,
     )
 
 

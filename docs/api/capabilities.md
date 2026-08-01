@@ -23,6 +23,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-runtime-capability: connections.events -->
 <!-- api-runtime-capability: connections.write -->
 <!-- api-runtime-capability: connections.config.read -->
+<!-- api-runtime-capability: connections.config.write -->
 <!-- api-runtime-capability: connections.secrets.write -->
 <!-- api-runtime-capability: connections.metadata.write -->
 <!-- api-runtime-capability: connections.groups -->
@@ -30,6 +31,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: connections.events -->
 <!-- api-daemon-runtime-capability: connections.write -->
 <!-- api-daemon-runtime-capability: connections.config.read -->
+<!-- api-daemon-runtime-capability: connections.config.write -->
 <!-- api-daemon-runtime-capability: connections.secrets.write -->
 <!-- api-daemon-runtime-capability: connections.metadata.write -->
 <!-- api-daemon-runtime-capability: connections.groups -->

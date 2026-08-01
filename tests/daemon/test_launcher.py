@@ -125,6 +125,7 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.CONNECTIONS_EVENTS,
                 Capability.CONNECTIONS_WRITE,
                 Capability.CONNECTIONS_CONFIG_READ,
+                Capability.CONNECTIONS_CONFIG_WRITE,
                 Capability.CONNECTIONS_SECRETS_WRITE,
                 Capability.CONNECTIONS_METADATA_WRITE,
                 Capability.CONNECTIONS_GROUPS,

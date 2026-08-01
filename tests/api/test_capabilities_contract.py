@@ -12,6 +12,7 @@ from sshpilot.api.in_process_client import (
 from sshpilot.api.models import (
     ClaimTerminalInputRequest,
     CreateConnectionRequest,
+    UpdateConnectionRequest,
     InteractionDecisionRequest,
     ReleaseTerminalInputRequest,
     SecretDecision,
@@ -508,6 +509,7 @@ def test_capabilities_advertise_only_contract_tested_runtime(
         Capability.CONNECTIONS_EVENTS,
         Capability.CONNECTIONS_WRITE,
         Capability.CONNECTIONS_CONFIG_READ,
+        Capability.CONNECTIONS_CONFIG_WRITE,
         Capability.CONNECTIONS_SECRETS_WRITE,
         Capability.CONNECTIONS_METADATA_WRITE,
         Capability.CONNECTIONS_GROUPS,
@@ -560,6 +562,7 @@ def test_advertised_capabilities_have_implemented_operations(
         for capability in IMPLEMENTED_CLIENT_METHOD_CAPABILITIES.values()
         if capability is not None
     }
+    implemented_capabilities.add(Capability.CONNECTIONS_CONFIG_WRITE)
     if client_backend == "daemon":
         implemented_capabilities.update(DAEMON_RUNTIME_CAPABILITIES)
     assert client.get_capabilities().supported <= implemented_capabilities
@@ -610,3 +613,75 @@ def test_unavailable_methods_fail_with_their_stable_capability(
 
     assert caught.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
     assert caught.value.details == {"capability": capability.value}
+    client.close()
+
+
+def test_basic_update_succeeds_with_only_connections_write(fake_manager):
+    class RestrictedClient(InProcessClient):
+        def _require_capability(self, capability):
+            if capability == Capability.CONNECTIONS_CONFIG_WRITE:
+                raise SshPilotError(
+                    ErrorCode.UNSUPPORTED_CAPABILITY,
+                    "CONNECTIONS_CONFIG_WRITE is not available",
+                )
+            super()._require_capability(capability)
+
+    client = RestrictedClient(fake_manager)
+    conn_id = InProcessClient.connection_id_for(fake_manager.connections[0])
+    updated = client.update_connection(
+        conn_id,
+        UpdateConnectionRequest(nickname="renamed_basic"),
+    )
+    assert updated.nickname == "renamed_basic"
+    client.close()
+
+
+def test_advanced_update_fails_without_connections_config_write(fake_manager):
+    class RestrictedClient(InProcessClient):
+        def _require_capability(self, capability):
+            if capability == Capability.CONNECTIONS_CONFIG_WRITE:
+                raise SshPilotError(
+                    ErrorCode.UNSUPPORTED_CAPABILITY,
+                    "CONNECTIONS_CONFIG_WRITE is not available",
+                )
+            super()._require_capability(capability)
+
+    client = RestrictedClient(fake_manager)
+    conn_id = InProcessClient.connection_id_for(fake_manager.connections[0])
+    with pytest.raises(SshPilotError) as caught:
+        client.update_connection(
+            conn_id,
+            UpdateConnectionRequest(config_patch={"proxy_jump": ["jump.example.test"]}),
+        )
+    assert caught.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+
+    with pytest.raises(SshPilotError) as caught_create:
+        client.create_connection(
+            CreateConnectionRequest(
+                nickname="new_adv",
+                hostname="adv.example",
+                config_patch={"proxy_jump": ["jump.example.test"]},
+            )
+        )
+    assert caught_create.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+    client.close()
+
+
+def test_advanced_update_succeeds_when_both_capabilities_present(fake_manager, client_factory):
+    client = client_factory(fake_manager)
+    conn_id = InProcessClient.connection_id_for(fake_manager.connections[0])
+    updated = client.update_connection(
+        conn_id,
+        UpdateConnectionRequest(config_patch={"proxy_jump": ["jump.example.test"]}),
+    )
+    assert updated.proxy_jump == ("jump.example.test",)
+
+    created = client.create_connection(
+        CreateConnectionRequest(
+            nickname="new_adv_ok",
+            hostname="advok.example",
+            config_patch={"proxy_jump": ["jump2.example.test"]},
+        )
+    )
+    assert created.proxy_jump == ("jump2.example.test",)
+    client.close()

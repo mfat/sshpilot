@@ -1760,6 +1760,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": {},
+          "name": "config_patch",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
         }
       ],
       "status": "Schema only"

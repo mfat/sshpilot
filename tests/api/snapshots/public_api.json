@@ -1688,7 +1688,8 @@
       "hostname",
       "username",
       "port",
-      "protocol"
+      "protocol",
+      "config_patch"
     ],
     "CreateGroupRequest": [
       "name",

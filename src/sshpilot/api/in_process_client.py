@@ -1,8 +1,10 @@
 """In-process adapter from the public client contract to existing managers."""
 
 import logging
+import re
 import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
 
 from sshpilot import __version__ as sshpilot_version
 
@@ -212,6 +214,7 @@ class InProcessClient:
             )
         ):
             supported.add(Capability.CONNECTIONS_WRITE)
+            supported.add(Capability.CONNECTIONS_CONFIG_WRITE)
         self._capabilities = Capabilities(
             protocol_version=PROTOCOL_VERSION,
             api_implementation_version=API_IMPLEMENTATION_VERSION,
@@ -737,6 +740,8 @@ class InProcessClient:
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_WRITE)
+        if request.config_patch:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
         if type(request) is not CreateConnectionRequest:
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
@@ -763,6 +768,25 @@ class InProcessClient:
             "port": request.port,
             "protocol": request.protocol,
         }
+        if request.config_patch:
+            for key, value in request.config_patch.items():
+                if key in ("proxy_jump", "identity_files", "certificate_files"):
+                    if isinstance(value, str):
+                        if key == "proxy_jump":
+                            data[key] = [h.strip() for h in re.split(r'[\s,]+', value) if h.strip()]
+                        else:
+                            data[key] = [f.strip() for f in re.split(r'[\r\n,]+', value) if f.strip()]
+                    else:
+                        data[key] = list(value) if value else []
+                elif key == "forwarding_rules":
+                    from .models.connections import forwarding_rule_to_dict
+                    data[key] = [
+                        forwarding_rule_to_dict(r) if hasattr(r, '__dataclass_fields__')
+                        else r if isinstance(r, dict) else {}
+                        for r in value
+                    ]
+                else:
+                    data[key] = value
         try:
             connection = creator(data)
         except ValueError:
@@ -789,6 +813,8 @@ class InProcessClient:
     ) -> ConnectionDetails:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_WRITE)
+        if request.config_patch:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
         if type(request) is not UpdateConnectionRequest:
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
@@ -829,7 +855,14 @@ class InProcessClient:
         if request.config_patch:
             for key, value in request.config_patch.items():
                 if key in ("proxy_jump", "identity_files", "certificate_files"):
-                    data[key] = list(value) if value else []
+                    if isinstance(value, str):
+                        if key == "proxy_jump":
+                            data[key] = [h.strip() for h in re.split(r'[\s,]+', value) if h.strip()]
+                        else:
+                            data[key] = [f.strip() for f in re.split(r'[\r\n,]+', value) if f.strip()]
+                    else:
+                        data[key] = list(value) if value else []
+
                 elif key == "forwarding_rules":
                     from .models.connections import forwarding_rule_to_dict
                     data[key] = [forwarding_rule_to_dict(r) for r in value]

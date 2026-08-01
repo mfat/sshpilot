@@ -724,7 +724,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** CreateConnectionRequest(nickname: str, hostname: str, username: str = '', port: int = 22, protocol: str = 'ssh')
+**Purpose:** CreateConnectionRequest(nickname: str, hostname: str, username: str = '', port: int = 22, protocol: str = 'ssh', config_patch: Mapping[str, Any] = <factory>)
 
 **Related methods:** `create_connection`
 **Related events:** None
@@ -736,11 +736,13 @@ Synthetic representation:
 | `username` | `str` | No | `` | No |
 | `port` | `int` | No | `22` | No |
 | `protocol` | `str` | No | `ssh` | No |
+| `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "config_patch": {},
   "hostname": "example.invalid",
   "nickname": "example",
   "port": 22,

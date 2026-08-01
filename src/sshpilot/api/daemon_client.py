@@ -489,6 +489,8 @@ class DaemonClient:
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
         self._require_capability(Capability.CONNECTIONS_WRITE)
+        if request.config_patch:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
         result = self._request(
             "connections.create",
             create_connection_request_to_wire(request),
@@ -505,6 +507,8 @@ class DaemonClient:
         request: UpdateConnectionRequest,
     ) -> ConnectionDetails:
         self._require_capability(Capability.CONNECTIONS_WRITE)
+        if request.config_patch:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
         result = self._request(
             "connections.update",
             {

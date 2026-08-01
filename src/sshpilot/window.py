@@ -6016,19 +6016,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.group_manager.remove_connection_from_group(nickname, context_group_id)
                 else:
                     if self._daemon_mode_active():
-                        connection_id = None
-                        from .api.in_process_client import InProcessClient
-                        for conn in self.connection_manager.connections:
-                            if getattr(conn, 'nickname', '') == nickname:
-                                connection_id = InProcessClient.connection_id_for(conn)
-                                break
+                        connection_id = self._find_connection_id_for_nickname(nickname)
                         if connection_id:
                             try:
                                 self.client.assign_connection_to_group(connection_id, "")
-                            except Exception:
-                                self.group_manager.move_connection(nickname, None)
+                            except Exception as exc:
+                                logger.error("Failed to move connection to ungrouped via daemon RPC: %s", exc)
                         else:
-                            self.group_manager.move_connection(nickname, None)
+                            logger.error("Could not find daemon connection_id for %s", nickname)
                     else:
                         self.group_manager.move_connection(nickname, None)
             self.rebuild_connection_list()
@@ -6040,22 +6035,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Move a connection to a specific group"""
         try:
             if self._daemon_mode_active():
-                connection_id = None
-                from .api.in_process_client import InProcessClient as _IPC
-                for conn in self.connection_manager.connections:
-                    if getattr(conn, 'nickname', '') == connection_nickname:
-                        connection_id = _IPC.connection_id_for(conn)
-                        break
+                connection_id = self._find_connection_id_for_nickname(connection_nickname)
                 if connection_id:
                     try:
                         self.client.assign_connection_to_group(
                             connection_id, target_group_id or ""
                         )
-                    except Exception:
-                        logger.debug("Group move via daemon RPC failed, falling back to local")
-                        self.group_manager.move_connection(connection_nickname, target_group_id)
+                    except Exception as exc:
+                        logger.error("Group move via daemon RPC failed: %s", exc)
                 else:
-                    self.group_manager.move_connection(connection_nickname, target_group_id)
+                    logger.error("Could not find daemon connection_id for %s", connection_nickname)
             else:
                 self.group_manager.move_connection(connection_nickname, target_group_id)
             self.rebuild_connection_list()
@@ -6482,7 +6471,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
 
         def _build_config_patch():
+            import re
             patch = {}
+
             for key in EDITABLE_CONFIG_FIELDS:
                 if key in ("nickname", "hostname", "username", "port", "protocol"):
                     continue
@@ -6498,7 +6489,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         patch[key] = []
                 elif key in ("identity_files", "certificate_files", "proxy_jump", "aliases"):
                     val = connection_data.get(key, ())
-                    patch[key] = list(val) if val else []
+                    if isinstance(val, str):
+                        if key in ("proxy_jump", "aliases"):
+                            patch[key] = [h.strip() for h in re.split(r'[\s,]+', val) if h.strip()]
+                        else:
+                            patch[key] = [f.strip() for f in re.split(r'[\r\n,]+', val) if f.strip()]
+                    else:
+                        patch[key] = [str(item).strip() for item in val if str(item).strip()] if val else []
+
                 elif isinstance(connection_data.get(key), bool):
                     patch[key] = connection_data[key]
                 else:
@@ -6522,12 +6520,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 request,
             )
         else:
+            config_patch = _build_config_patch()
             request = CreateConnectionRequest(
                 nickname=connection_data.get('nickname', ''),
                 hostname=connection_data.get('hostname', ''),
                 username=connection_data.get('username', ''),
                 port=connection_data.get('port', 22),
                 protocol='ssh',
+                config_patch=config_patch,
             )
             operation = lambda: self.client.create_connection(request)
 

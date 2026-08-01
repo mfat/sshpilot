@@ -125,10 +125,10 @@ def _basic_data(**overrides):
     return data
 
 
-def test_daemon_create_waits_for_success_and_sends_only_basic_dto():
+def test_daemon_create_waits_for_success_and_sends_create_dto_with_config_patch():
     window = _MutationWindow()
     completed = []
-    data = _basic_data(__save_completion=completed.append)
+    data = _basic_data(proxy_jump=["jump.example.test"], __save_completion=completed.append)
     dialog = SimpleNamespace(is_editing=False, connection=None)
 
     window.on_connection_saved(dialog, data)
@@ -140,6 +140,7 @@ def test_daemon_create_waits_for_success_and_sends_only_basic_dto():
 
     result = operation()
     assert window.client.created[0].nickname == "new"
+    assert window.client.created[0].config_patch["proxy_jump"] == ["jump.example.test"]
     assert not hasattr(window.client.created[0], "password")
     assert completed == []
 
@@ -203,6 +204,30 @@ def test_daemon_editor_allows_config_patch_fields():
     assert advanced_problem is None
 
 
+def test_daemon_editor_handles_proxy_jump_string_and_list():
+    window = _MutationWindow()
+    dialog = SimpleNamespace(
+        is_editing=True,
+        connection=SimpleNamespace(nickname="Oracle", id="Oracle"),
+        key_editor=None,
+    )
+
+    data = _basic_data(
+        nickname="Oracle",
+        hostname="150.230.27.23",
+        username="ubuntu",
+        proxy_jump="ubuntu@150.230.27.23",
+    )
+    window._save_connection_via_client(dialog, data, lambda ok: None)
+
+    assert len(window.client_bridge.calls) == 1
+    operation, _success, _failure = window.client_bridge.calls[0]
+    operation()
+    updated_req = window.client.updated[0][1]
+    assert updated_req.config_patch["proxy_jump"] == ["ubuntu@150.230.27.23"]
+
+
+
 def test_daemon_delete_is_not_optimistic_and_disconnects_only_after_success():
     window = _MutationWindow()
     connection = SimpleNamespace(
@@ -228,3 +253,31 @@ def test_daemon_delete_is_not_optimistic_and_disconnects_only_after_success():
     assert window.disconnected == [connection]
     assert window.connection_manager.reloads == 1
     assert window.rebuilds == 1
+
+
+def test_daemon_group_move_failure_does_not_mutate_local_group_manager():
+    from sshpilot.window import MainWindow
+
+    class GroupTestWindow(_MutationWindow):
+        def __init__(self):
+            super().__init__()
+            self.group_manager = SimpleNamespace(
+                moved=[],
+                move_connection=lambda nickname, group_id: self.group_manager.moved.append((nickname, group_id)),
+            )
+            self.connection_manager = SimpleNamespace(
+                connections=[SimpleNamespace(nickname="demo", id="demo")],
+                load_ssh_config=lambda: None,
+            )
+            self._find_connection_id_for_nickname = MainWindow._find_connection_id_for_nickname.__get__(self)
+
+    window = GroupTestWindow()
+    def failing_assign(connection_id, target_group_id):
+        raise SshPilotError(ErrorCode.INTERNAL_ERROR, "RPC error")
+
+    window.client.assign_connection_to_group = failing_assign
+
+    MainWindow.move_connection_to_group(window, "demo", "group-1")
+
+    assert window.group_manager.moved == []
+
