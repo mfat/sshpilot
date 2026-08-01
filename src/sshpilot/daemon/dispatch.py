@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Hashable, Optional, Set, Union
 
-from sshpilot.runtime_identity import new_client_id
+from sshpilot.runtime_identity import new_server_instance_id
 
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.api.capabilities import Capabilities, Capability
@@ -257,7 +257,7 @@ class RequestDispatcher:
             lifecycle_controller.server_instance_id
             if lifecycle_controller is not None
             and hasattr(lifecycle_controller, "server_instance_id")
-            else new_client_id()
+            else new_server_instance_id()
         )
         if lifecycle_controller is not None and hasattr(
             lifecycle_controller, "_server_instance_id"

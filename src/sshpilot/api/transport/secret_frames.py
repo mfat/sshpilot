@@ -15,7 +15,7 @@ from .wire_ids import id_to_wire_bytes, wire_bytes_to_id
 SECRET_STREAM_VERSION = 1
 MAX_SECRET_PAYLOAD_SIZE = 16 * 1024
 _MAGIC = b"SPSB"
-_HEADER = struct.Struct(">4sBBH16s16s")
+_HEADER = struct.Struct(">4sBBH32s16s")
 
 
 class SecretFrameKind(IntEnum):

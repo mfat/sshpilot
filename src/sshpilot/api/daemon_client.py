@@ -8,7 +8,7 @@ import queue
 import socket
 import threading
 import time
-from sshpilot.runtime_identity import new_client_id, new_request_id
+from sshpilot.runtime_identity import new_unique_client_id, new_request_id
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, NoReturn, Optional, Union
@@ -299,7 +299,7 @@ class DaemonClient:
         self._socket_path = (
             Path(socket_path) if socket_path is not None else self.default_socket_path()
         )
-        self._client_id = ClientId(client_id or new_client_id())
+        self._client_id = ClientId(client_id) if client_id else new_unique_client_id()
         self._client_name = client_name
         self._client_version = client_version
         self._frontend_type = frontend_type

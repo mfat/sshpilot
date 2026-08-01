@@ -1,6 +1,6 @@
-"""Deterministic 16-byte wire encoding for runtime resource IDs.
+"""Deterministic 32-byte wire encoding for runtime resource IDs.
 
-Terminal and secret binary frames reserve a fixed 16-byte field for
+Terminal and secret binary frames reserve a fixed 32-byte field for
 session/attachment/interaction ids. Those ids used to be UUIDs whose
 ``.bytes`` round-tripped across processes. Counter tokens
 (``session-1``, ``attachment-3``, …) are short UTF-8 strings; encode them
@@ -10,11 +10,11 @@ process-local lookup table.
 
 from __future__ import annotations
 
-_WIRE_ID_SIZE = 16
+_WIRE_ID_SIZE = 32
 
 
 def id_to_wire_bytes(id_str: str) -> bytes:
-    """Encode a runtime id into a fixed 16-byte wire field."""
+    """Encode a runtime id into a fixed 32-byte wire field."""
     if not isinstance(id_str, str) or not id_str:
         raise ValueError("wire id must be a non-empty string")
     if "\0" in id_str:
@@ -28,9 +28,9 @@ def id_to_wire_bytes(id_str: str) -> bytes:
 
 
 def wire_bytes_to_id(raw: bytes) -> str:
-    """Decode a fixed 16-byte wire field back to the runtime id string."""
+    """Decode a fixed 32-byte wire field back to the runtime id string."""
     if not isinstance(raw, bytes) or len(raw) != _WIRE_ID_SIZE:
-        raise ValueError("wire id field must be exactly 16 bytes")
+        raise ValueError("wire id field must be exactly 32 bytes")
     try:
         return raw.rstrip(b"\0").decode("utf-8")
     except UnicodeDecodeError as exc:

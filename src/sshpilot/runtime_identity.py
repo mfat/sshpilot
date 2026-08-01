@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import threading
 from typing import TYPE_CHECKING
 
@@ -32,7 +33,7 @@ class RuntimeIdAllocator:
             self._next += 1
         return f"{self.prefix}-{val}"
 
-    def reset(self) -> None:
+    def _reset(self) -> None:
         with self._lock:
             self._next = 1
 
@@ -95,3 +96,14 @@ def new_attachment_id() -> AttachmentId:
 
 def new_command_block_id() -> str:
     return _COMMAND_BLOCK_ALLOCATOR.allocate()
+
+
+def new_server_instance_id() -> str:
+    """Return a random boot token unique to this daemon process."""
+    return f"daemon-{secrets.token_urlsafe(16)}"
+
+
+def new_unique_client_id() -> ClientId:
+    """Return a process-unique client ID using a random token."""
+    from sshpilot.api.models.common import ClientId
+    return ClientId(f"client-{secrets.token_urlsafe(12)}")

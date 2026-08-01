@@ -15,8 +15,8 @@ from .wire_ids import id_to_wire_bytes, wire_bytes_to_id
 TERMINAL_STREAM_VERSION = 1
 MAX_TERMINAL_PAYLOAD_SIZE = 64 * 1024
 _MAGIC = b"SPTB"
-_HEADER = struct.Struct(">4sBBH16sQ16s")
-_ZERO_BYTES = b"\0" * 16
+_HEADER = struct.Struct(">4sBBH32sQ32s")
+_ZERO_BYTES = b"\0" * 32
 
 
 class TerminalFrameKind(IntEnum):
