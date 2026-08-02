@@ -212,11 +212,6 @@ class InteractionBroker:
             name="sshpilot-askpass-accept",
             daemon=False,
         )
-        self._auth_monitor = threading.Thread(
-            target=self._auth_monitor_main,
-            name="sshpilot-auth-monitor",
-            daemon=False,
-        )
         self._publisher = EventPublisher()
         self._scheduler = threading.Thread(
             target=self._scheduler_main,
@@ -226,7 +221,6 @@ class InteractionBroker:
         for worker in self._askpass_workers:
             worker.start()
         self._askpass_acceptor.start()
-        self._auth_monitor.start()
         self._scheduler.start()
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
@@ -257,8 +251,9 @@ class InteractionBroker:
             interaction_policy="broker",
         )
         argv = tuple(argv_value)
-        environment = os.environ.copy()
-        environment.update(environment_value)
+        # The launch builder intentionally returns an allowlisted environment.
+        # Do not reintroduce daemon credentials through wholesale inheritance.
+        environment = dict(environment_value)
         if not argv or len(argv) < 2:
             raise SshPilotError(
                 ErrorCode.SESSION_STARTUP_FAILED,
@@ -302,7 +297,9 @@ class InteractionBroker:
             self._askpass_contexts[token] = context
             self._condition.notify_all()
         environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
-        environment["SSH_ASKPASS_REQUIRE"] = "force"
+        # Unhandled keyboard-interactive, username and hardware-presence
+        # prompts must remain available on the real PTY.
+        environment["SSH_ASKPASS_REQUIRE"] = "prefer"
         environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
         environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(
             self._askpass_socket_path
@@ -905,53 +902,14 @@ class InteractionBroker:
                     return ErrorCode.SESSION_STARTUP_FAILED
         return ErrorCode.SESSION_STARTUP_FAILED
 
-    def wait_for_control_master(
-        self,
-        session_id: SessionId,
-        *,
-        is_alive: Callable[[], bool],
-        timeout: float = 60.0,
-    ) -> bool:
-        """Block until ControlMaster is usable for ``session_id``, or give up.
+    def mark_authenticated(self, session_id: SessionId) -> None:
+        """Commit remember-after-success work for an authenticated PTY."""
 
-        Used by session startup so ``RUNNING`` means authentication succeeded,
-        not merely that the SSH child was spawned. Returns ``False`` when the
-        process dies first, the broker shuts down, or ``timeout`` elapses.
-
-        If this broker never created an askpass/ControlMaster context for the
-        session (mock runners / non-broker launches), return ``True`` while the
-        process is still alive — there is nothing to wait for.
-        """
-
-        if timeout <= 0:
-            raise ValueError("control-master wait timeout must be positive")
-        deadline = monotonic() + float(timeout)
         context = self._context_for_session(session_id)
         if context is None:
-            # prepare_launch always registers the askpass context before the
-            # child is spawned. Absence means this launch did not use the
-            # broker trust/auth path.
-            return is_alive()
-        while monotonic() < deadline:
-            if self._closed or not is_alive():
-                return False
-            context = self._context_for_session(session_id)
-            if context is None or context.closed:
-                return False
-            if self._control_master_ready(context):
-                self._flush_accepted_host_keys(context)
-                return True
-            sleep(0.05)
-        context = self._context_for_session(session_id)
-        ready = bool(
-            context is not None
-            and not context.closed
-            and is_alive()
-            and self._control_master_ready(context)
-        )
-        if ready and context is not None:
-            self._flush_accepted_host_keys(context)
-        return ready
+            return
+        self._store_authenticated_secrets(context.token)
+        self._flush_accepted_host_keys(context)
 
     def _context_for_session(self, session_id: SessionId) -> Optional[_AskpassContext]:
         with self._condition:
@@ -960,23 +918,6 @@ class InteractionBroker:
                     return context
         return None
 
-    @staticmethod
-    def _control_master_ready(context: _AskpassContext) -> bool:
-        if not os.path.exists(context.control_path):
-            return False
-        try:
-            result = subprocess.run(
-                context.control_argv,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=1,
-                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        return result.returncode == 0
 
     def wait_for_result(
         self,
@@ -1168,7 +1109,6 @@ class InteractionBroker:
             self._scheduler.join(max(0.0, shutdown_deadline - monotonic()))
         for thread in (
             self._askpass_acceptor,
-            self._auth_monitor,
             *self._askpass_workers,
         ):
             if threading.current_thread() is not thread:
@@ -1522,42 +1462,6 @@ class InteractionBroker:
         if not value or len(value) > 4096 or "\0" in value:
             return ""
         return value
-
-    def _auth_monitor_main(self) -> None:
-        while True:
-            with self._condition:
-                if self._closed:
-                    return
-                candidates = tuple(
-                    context
-                    for context in self._askpass_contexts.values()
-                    if not context.closed
-                    and (context.pending_remember or context.pending_host_key_store)
-                )
-                if not candidates:
-                    self._condition.wait(0.2)
-                    continue
-            for context in candidates:
-                if not os.path.exists(context.control_path):
-                    continue
-                try:
-                    result = subprocess.run(
-                        context.control_argv,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                        timeout=1,
-                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
-                    )
-                except (OSError, subprocess.SubprocessError):
-                    continue
-                if result.returncode == 0:
-                    self._store_authenticated_secrets(context.token)
-                    self._flush_accepted_host_keys(context)
-            with self._condition:
-                if not self._closed:
-                    self._condition.wait(0.1)
 
     def _store_authenticated_secrets(self, token: str) -> None:
         with self._condition:

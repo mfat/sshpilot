@@ -41,6 +41,7 @@ from .models.connections import (
     DeleteConnectionPasswordRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
+    DeleteKeyPassphraseRequest,
     StoreConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
     UpdateConnectionRequest,
@@ -126,6 +127,7 @@ from .transport.codec import (
     daemon_stop_result_from_wire,
     decode_envelope,
     delete_connection_password_request_to_wire,
+    delete_key_passphrase_request_to_wire,
     delete_connection_request_to_wire,
     delete_connection_result_from_wire,
     delete_group_request_to_wire,
@@ -596,6 +598,19 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid passphrase store result")
         return result
 
+    def delete_key_passphrase(self, request: DeleteKeyPassphraseRequest) -> bool:
+        self._require_write_compatibility("delete passphrase")
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        result = self._request(
+            "connections.delete_passphrase",
+            delete_key_passphrase_request_to_wire(request),
+        )
+        if type(result) is not bool:
+            self._fail_protocol(
+                "The daemon returned an invalid passphrase delete result"
+            )
+        return result
+
     def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         result = self._request(
@@ -657,6 +672,7 @@ class DaemonClient:
 
     def delete_group(self, group_id: str) -> bool:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("delete group")
         from .models.connections import DeleteGroupRequest
         request = DeleteGroupRequest(group_id=group_id)
         result = self._request(
@@ -669,6 +685,7 @@ class DaemonClient:
 
     def rename_group(self, group_id: str, new_name: str) -> bool:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("rename group")
         from .models.connections import RenameGroupRequest
         request = RenameGroupRequest(group_id=group_id, new_name=new_name)
         result = self._request(

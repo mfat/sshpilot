@@ -563,7 +563,7 @@ class InProcessClient:
     ) -> bool:
         connection = self._find_connection(connection_id)
         if connection is None:
-            return True
+            return False
         previous_connection = None
         if previous_hostname or previous_host or previous_username:
             previous_connection = {
@@ -588,9 +588,9 @@ class InProcessClient:
         previous_username: str = "",
     ) -> bool:
         connection = self._find_connection(connection_id)
-        if connection is None:
-            return False
-        removed = self._connection_manager.delete_connection_passwords(connection)
+        removed = False
+        if connection is not None:
+            removed = self._connection_manager.delete_connection_passwords(connection)
         if previous_hostname or previous_host or previous_username:
             previous_connection = {
                 "hostname": previous_hostname,
@@ -640,10 +640,17 @@ class InProcessClient:
         )
 
     def delete_daemon_passphrase(self, key_path: str) -> bool:
-        # Secret-manager deletion reports False when the item was already
-        # absent; that is still a successful idempotent delete operation.
-        self._connection_manager.delete_key_passphrase(key_path)
-        return True
+        # Preserve idempotence without masking a failed backend deletion: a
+        # missing value is already in the requested state, while False for a
+        # value known to exist is a real persistence failure.
+        lookup = getattr(self._connection_manager, "get_key_passphrase", None)
+        if not callable(lookup):
+            self._connection_manager.delete_key_passphrase(key_path)
+            return True
+        existing = lookup(key_path)
+        if existing is None:
+            return True
+        return bool(self._connection_manager.delete_key_passphrase(key_path))
 
     def store_key_passphrase_rpc(
         self, request: StoreKeyPassphraseRequest

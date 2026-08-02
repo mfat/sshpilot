@@ -1381,21 +1381,32 @@ class ConnectionDialog(
     }
 
     class SaveRequest:
-        """Completion callback with an explicit signal-consumer handshake."""
+        """Claimable, cancellable, exactly-once save completion."""
 
         def __init__(self, callback):
             self.claimed = False
+            self.completed = False
+            self.cancelled = False
             self._callback = callback
 
         def claim(self):
             self.claimed = True
             return self
 
-        def __call__(self, *args, **kwargs):
+        def complete(self, *args, **kwargs):
             # Synchronous consumers claim implicitly by completing; asynchronous
             # consumers must call claim() before returning from signal dispatch.
             self.claimed = True
+            if self.completed or self.cancelled:
+                return None
+            self.completed = True
             return self._callback(*args, **kwargs)
+
+        __call__ = complete
+
+        def cancel(self):
+            if not self.completed:
+                self.cancelled = True
 
     content_mount = Gtk.Template.Child()
     cancel_button = Gtk.Template.Child()
@@ -3386,6 +3397,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.show_error(problem)
                 return
 
+        # Config and metadata are asynchronous too; all saves become busy
+        # before emitting any persistence request, not only secret-bearing ones.
+        self._set_secret_save_busy(True, stage='CONFIG_PENDING')
+
         # Unlock first when needed, then persist all changed secrets in one worker. Secret
         # backends may invoke external tools (notably ``bw``), so none of this I/O may run
         # in the GTK signal handler.
@@ -3409,8 +3424,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 return
         self._store_secrets_then_save(connection_data, metadata, secret_plan)
 
-    def _set_secret_save_busy(self, busy):
+    def _set_secret_save_busy(self, busy, stage=None):
         self._secret_save_in_progress = bool(busy)
+        self._save_stage = stage or ('CONFIG_PENDING' if busy else 'IDLE')
         self._refresh_save_sensitivity()
 
     def _store_secrets_then_save(self, connection_data, metadata=None, secret_plan=None):
@@ -3474,14 +3490,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             _("Saving to {backend}").format(backend=backend_name),
             _("Saving passwords and passphrases to secure storage…"),
         )
-        self._set_secret_save_busy(True)
+        self._set_secret_save_busy(True, stage='CONFIG_PENDING')
 
         # Check if we should route through daemon RPCs.
         parent = getattr(self, 'parent_window', None)
         client = getattr(parent, 'client', None)
         bridge = getattr(parent, 'client_bridge', None)
         use_daemon = (
-            bridge is not None
+            connection_data.get('protocol', 'ssh') == 'ssh'
+            and getattr(parent, '_daemon_mode_active', lambda: False)()
+            and bridge is not None
             and client is not None
             and hasattr(client, 'store_connection_password')
         )
