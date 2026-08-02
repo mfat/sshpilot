@@ -273,39 +273,12 @@ class InteractionBroker:
             port = int(effective.get("port", spec.port))
         except (TypeError, ValueError):
             port = spec.port
-        # Prefer the app/CLI StrictHostKeyChecking already on argv (Preferences
-        # default is accept-new). Only fall back to ssh -G / accept-new.
-        strict_mode = self._strict_host_key_mode(argv, effective)
         user_paths = self._known_hosts_paths(effective)
-        session_known = self._private_dir / f"h-{spec.session_id[-12:]}"
-        self._atomic_write(session_known, b"")
-        # ask: session-first known_hosts so ACCEPT_ONCE stays session-scoped and
-        # ACCEPT_AND_STORE can merge into the user file. accept-new/yes/no: leave
-        # UserKnownHostsFile alone so OpenSSH writes where Preferences expect.
-        host_key_options: tuple[str, ...] = ()
-        if strict_mode == "ask":
-            known_hosts_value = " ".join(
-                (str(session_known), *(str(path) for path in user_paths))
-            )
-            host_key_options = (
-                "-o",
-                f"UserKnownHostsFile={known_hosts_value}",
-            )
         token = secrets.token_urlsafe(32)
-        options = (
-            "-o",
-            "BatchMode=no",
-            "-o",
-            "KbdInteractiveAuthentication=no",
-            "-o",
-            "NumberOfPasswordPrompts=3",
-            *host_key_options,
-        )
-        # OpenSSH keeps the first obtained value for each option. Insert broker
-        # controls before preference overrides and strip conflicting earlier
-        # copies of options we set — never strip StrictHostKeyChecking so the
-        # Preferences/default accept-new (or ask/yes/no) reaches ssh.
-        argv = self._with_broker_options(argv, options)
+        # Keep the canonical builder argv unchanged. In particular, the daemon
+        # must not impose BatchMode, KbdInteractiveAuthentication,
+        # NumberOfPasswordPrompts, or UserKnownHostsFile defaults that the
+        # in-process terminal path does not impose.
         context = _AskpassContext(
             token=token,
             session_id=spec.session_id,
@@ -319,7 +292,7 @@ class InteractionBroker:
             attempts={},
             stored_attempted=set(),
             pending_remember=[],
-            session_known_hosts=str(session_known),
+            session_known_hosts="",
             user_known_hosts_paths=tuple(str(path) for path in user_paths),
             hash_known_hosts=effective.get("hashknownhosts", "no") == "yes",
         )
