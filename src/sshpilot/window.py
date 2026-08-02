@@ -4173,19 +4173,80 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # In daemon mode, fetch the editor DTO from the daemon so we have the
         # authoritative generation for stale-editor detection on save.
-        dialog._daemon_generation = 0
-        if self._daemon_mode_active() and connection is not None and not as_new:
-            try:
-                from .api.models.common import ConnectionId
-                cid = ConnectionId(connection.nickname)
-                editor = self.client.get_connection_editor(cid)
-                dialog._daemon_generation = editor.generation
-            except Exception as exc:
-                logger.debug(
-                    "Could not fetch editor generation from daemon: %s", exc
-                )
+        if as_new:
+            dialog._daemon_generation = 0
+        else:
+            self._fetch_daemon_editor_generation(dialog, connection)
 
         dialog.present()
+
+    def _fetch_daemon_editor_generation(self, dialog, connection):
+        """Best-effort, non-blocking fetch of the daemon editor generation.
+
+        Routed through the GTK client bridge so a churning daemon transport
+        cannot block dialog presentation.  Retryable transport failures (e.g.
+        the daemon restarting underneath us) are retried with a short delay —
+        the retry resolves ``self.client`` at call time so a reconnected
+        client is used once the daemon is back — while anything else leaves
+        ``dialog._daemon_generation`` at 0, skipping stale-editor detection
+        for that save.  The chain stops if the dialog is destroyed.
+        """
+        from .api import ErrorCode, SshPilotError
+        from .api.models.common import ConnectionId
+
+        dialog._daemon_generation = 0
+        if not self._daemon_mode_active() or connection is None:
+            return
+        bridge = self.client_bridge
+        if bridge is None:
+            return
+        cid = ConnectionId(connection.nickname)
+
+        retries = [3]
+        destroyed = [False]
+
+        connect = getattr(dialog, 'connect', None)
+        if callable(connect):
+            connect('destroy', lambda _w: destroyed.__setitem__(0, True))
+
+        def _on_success(editor):
+            if destroyed[0]:
+                return
+            dialog._daemon_generation = int(getattr(editor, 'generation', 0) or 0)
+
+        def _submit_fetch():
+            if destroyed[0]:
+                return
+            try:
+                bridge.submit(
+                    lambda: self.client.get_connection_editor(cid),
+                    on_success=_on_success,
+                    on_error=_on_error,
+                )
+            except RuntimeError:
+                pass
+
+        def _on_error(error):
+            if destroyed[0]:
+                return
+            retryable = isinstance(error, SshPilotError) and (
+                error.retryable
+                or error.code
+                in (ErrorCode.TRANSPORT_CLOSED, ErrorCode.TRANSPORT_TIMEOUT)
+            )
+            if retryable and retries[0] > 0:
+                retries[0] -= 1
+                GLib.timeout_add(500, _schedule_retry)
+            else:
+                logger.debug(
+                    "Could not fetch editor generation from daemon: %s", error
+                )
+
+        def _schedule_retry():
+            _submit_fetch()
+            return False
+
+        _submit_fetch()
 
     def open_cli_connect(self, ssh_tokens):
         """Resolve CLI tokens and open a tab, or refuse without starting SSH.
