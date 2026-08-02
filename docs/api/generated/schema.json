@@ -4112,11 +4112,11 @@
           "type": "Mapping[str, Any]"
         },
         {
-          "default": 0,
+          "default": null,
           "name": "expected_generation",
           "required": false,
           "sensitive": false,
-          "type": "int"
+          "type": "int | None"
         }
       ],
       "status": "Schema only"
@@ -4552,11 +4552,11 @@
           "type": "Mapping[str, Any]"
         },
         {
-          "default": 0,
+          "default": null,
           "name": "expected_generation",
           "required": false,
           "sensitive": false,
-          "type": "int"
+          "type": "int | None"
         }
       ],
       "status": "Schema only"

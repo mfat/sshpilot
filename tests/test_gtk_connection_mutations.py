@@ -180,21 +180,51 @@ def test_daemon_mutation_failure_keeps_ui_state_and_uses_safe_completion():
     assert window.rebuilds == 0
 
 
-def test_daemon_editor_accepts_secret_fields_without_mutation():
+def test_daemon_editor_save_path_never_sends_password():
+    """Secrets never cross the daemon mutation wire.
+
+    Drives the real save path (``on_connection_saved`` → bridge submission)
+    with a password present in the collected form data, then asserts the
+    password is stripped by ``prepare_connection_save_for_client`` and can
+    never appear in the mutation request or its config patch.  Secrets go
+    only through the dedicated secret-storage RPCs, never ``connections.*``.
+    """
     window = _MutationWindow()
-    dialog = SimpleNamespace(
-        is_editing=False,
-        connection=None,
-        key_editor=None,
+    dialog = _daemon_save_dialog()
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="demo.example",
+        password="do-not-send",
+        password_changed=True,
+        __save_completion=completed.append,
     )
 
-    secret_problem = window.prepare_connection_save_for_client(
-        dialog,
-        _basic_data(password="do-not-send", password_changed=True),
-    )
-
+    # First, the dialog's prepare step must accept the payload and strip the
+    # secret before anything reaches the bridge.
+    secret_problem = window.prepare_connection_save_for_client(dialog, data)
     assert secret_problem is None
-    assert window.client_bridge.calls == []
+    assert data["password"] == ""
+
+    window.on_connection_saved(dialog, data)
+
+    assert len(window.client_bridge.calls) == 1
+    operation, success, _failure = window.client_bridge.calls[0]
+    assert completed == []
+
+    operation()
+    request = window.client.updated[0][1]
+
+    assert not hasattr(request, "password")
+    assert "password" not in request.config_patch
+    assert "do-not-send" not in repr(request)
+    assert "do-not-send" not in repr(request.config_patch)
+
+    success(SimpleNamespace(id="demo", generation=8))
+    assert completed == [True]
+
+    # Exactly one bridge submission: the mutation.  No secret RPC fired.
+    assert len(window.client_bridge.calls) == 1
 
 
 def test_daemon_editor_allows_config_patch_fields():
@@ -291,26 +321,151 @@ def test_daemon_group_move_failure_does_not_mutate_local_group_manager():
     assert window.group_manager.moved == []
 
 
+class _CancellableBridge(_ControlledBridge):
+    def __init__(self, cancel_cb):
+        super().__init__()
+        self._cancel_cb = cancel_cb
+
+    def submit(self, operation, *, on_success, on_error, **_kwargs):
+        self.calls.append((operation, on_success, on_error))
+        return SimpleNamespace(cancel=self._cancel_cb)
+
+
+class _EditorDialog:
+    """Minimal stand-in for the daemon-editor surface of ConnectionDialog."""
+
+    def __init__(self, source="daemon"):
+        self.source = source
+        self._daemon_editor_loaded = False
+        self._daemon_generation = None
+        self._editor_load_failed = False
+        self.handlers = []
+        self.populated = []
+
+    def connect(self, signal, handler):
+        self.handlers.append((signal, handler))
+
+    def is_daemon_editor(self):
+        return self.source == "daemon"
+
+    def set_editor_source(self, source):
+        self.source = source
+
+    def set_daemon_editor_loading(self):
+        self._daemon_editor_loaded = False
+        self._daemon_generation = None
+        self._editor_load_failed = False
+
+    def set_daemon_editor_load_failed(self):
+        self._daemon_editor_loaded = False
+        self._daemon_generation = None
+        self._editor_load_failed = True
+
+    def set_daemon_editor_loaded(self, generation):
+        self._daemon_editor_loaded = True
+        self._daemon_generation = generation
+        self._editor_load_failed = False
+
+    def populate_from_editor_details(self, details):
+        self.populated.append(details)
+        self._daemon_editor_loaded = True
+        self._daemon_generation = getattr(details, "generation", None)
+        self._editor_load_failed = False
+
+
 def _run_editor_fetch(window, dialog):
+    dialog.set_daemon_editor_loading()
     window._fetch_daemon_editor_generation(dialog, SimpleNamespace(nickname="demo"))
     assert len(window.client_bridge.calls) == 1
     operation, success, failure = window.client_bridge.calls[0]
     return operation, success, failure
 
 
-def test_daemon_editor_generation_set_from_successful_fetch():
+def test_daemon_editor_success_populates_form_from_dto_and_enables_save():
     window = _MutationWindow()
-    window.client.editor = SimpleNamespace(generation=7)
-    dialog = SimpleNamespace()
+    window.client.editor = SimpleNamespace(generation=7, nickname="demo")
+    dialog = _EditorDialog()
 
     _operation, success, _failure = _run_editor_fetch(window, dialog)
     success(window.client.get_connection_editor("demo"))
 
-    assert dialog._daemon_generation == 7
     assert window.client.editor_calls == 1
+    assert dialog.populated == [window.client.editor]
+    assert dialog._daemon_generation == 7
+    assert dialog._daemon_editor_loaded is True
+    assert dialog._editor_load_failed is False
 
 
-def test_daemon_editor_generation_retries_transport_churn_then_succeeds(monkeypatch):
+def test_daemon_editor_populates_from_dto_not_stale_local_connection():
+    from sshpilot.api.models.connections import AuthenticationMethod
+    from sshpilot.connection_dialog import _editor_details_to_connection
+
+    window = _MutationWindow()
+    dto = SimpleNamespace(
+        nickname="demo",
+        hostname="dto.example",
+        username="alice",
+        port=2202,
+        protocol="ssh",
+        proxy_jump=("jump1", "jump2"),
+        forward_agent=True,
+        authentication_method=AuthenticationMethod.PASSWORD,
+        identity_files=["/keys/id_ed25519"],
+        certificate_files=["/keys/cert"],
+        key_select_mode=1,
+        x11_forwarding=True,
+        extra_ssh_config="SetEnv A=1",
+        pre_command="echo pre",
+        local_command="echo local",
+        remote_command="echo remote",
+        forwarding_rules=[],
+        aliases=("a", "b"),
+        source="dto",
+        generation=5,
+        data={},
+    )
+    window.client.editor = dto
+    dialog = _EditorDialog()
+
+    _operation, success, _failure = _run_editor_fetch(window, dialog)
+    success(window.client.get_connection_editor("demo"))
+
+    # The form source is the single daemon DTO, never a local Connection.
+    assert dialog.populated == [dto]
+    form = _editor_details_to_connection(dto)
+    assert form.hostname == "dto.example"
+    assert form.proxy_jump == ("jump1", "jump2")
+    assert form.keyfile == "/keys/id_ed25519"
+    assert form.remote_command == "echo remote"
+    assert form.auth_method == 1
+    assert form.generation == 5
+
+
+def test_daemon_editor_generation_zero_is_valid_loaded_state():
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=0, nickname="demo")
+    dialog = _EditorDialog()
+
+    _operation, success, _failure = _run_editor_fetch(window, dialog)
+    success(window.client.get_connection_editor("demo"))
+
+    assert dialog._daemon_generation == 0
+    assert dialog._daemon_editor_loaded is True
+    assert dialog._editor_load_failed is False
+
+
+def test_daemon_editor_pending_fetch_is_not_a_real_generation():
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=7, nickname="demo")
+    dialog = _EditorDialog()
+
+    _operation, _success, _failure = _run_editor_fetch(window, dialog)
+
+    assert dialog._daemon_generation is None
+    assert dialog._daemon_editor_loaded is False
+
+
+def test_daemon_editor_retries_transport_churn_then_succeeds(monkeypatch):
     from sshpilot.window import GLib
 
     window = _MutationWindow()
@@ -320,11 +475,13 @@ def test_daemon_editor_generation_retries_transport_churn_then_succeeds(monkeypa
         retryable=True,
     )
     window.client.editor = error
-    dialog = SimpleNamespace()
+    dialog = _EditorDialog()
     run_now = []
+
     def _run_now(_ms, cb):
         run_now.append(cb)
         cb()
+
     monkeypatch.setattr(GLib, "timeout_add", _run_now)
 
     _operation, _success, failure = _run_editor_fetch(window, dialog)
@@ -338,10 +495,10 @@ def test_daemon_editor_generation_retries_transport_churn_then_succeeds(monkeypa
     retry_success(retry_operation())
 
     assert dialog._daemon_generation == 9
-    assert window.client.editor_calls == 1
+    assert dialog._daemon_editor_loaded is True
 
 
-def test_daemon_editor_generation_exhausts_retries_on_persistent_churn(monkeypatch):
+def test_daemon_editor_retry_resolves_current_client_and_bridge(monkeypatch):
     from sshpilot.window import GLib
 
     window = _MutationWindow()
@@ -351,64 +508,233 @@ def test_daemon_editor_generation_exhausts_retries_on_persistent_churn(monkeypat
         retryable=True,
     )
     window.client.editor = error
-    dialog = SimpleNamespace()
-    run_now = []
+    dialog = _EditorDialog()
+    scheduled = []
+    monkeypatch.setattr(GLib, "timeout_add", lambda _ms, cb: scheduled.append(cb))
+
+    _operation, _success, failure = _run_editor_fetch(window, dialog)
+    assert len(window.client_bridge.calls) == 1
+    failure(error)
+    assert len(scheduled) == 1
+
+    # The daemon reconnected while the retry was pending: swap the live
+    # client and bridge before the retry fires.
+    new_client = _Client()
+    new_client.editor = SimpleNamespace(generation=4)
+    new_bridge = _ControlledBridge()
+    window.client = new_client
+    window.client_bridge = new_bridge
+
+    scheduled[0]()
+
+    assert len(new_bridge.calls) == 1
+    retry_operation, retry_success, _retry_failure = new_bridge.calls[0]
+    retry_success(retry_operation())
+
+    assert new_client.editor_calls == 1
+    assert dialog._daemon_generation == 4
+    assert dialog._daemon_editor_loaded is True
+
+
+def test_daemon_editor_exhausts_retries_then_disables_save(monkeypatch):
+    from sshpilot.window import GLib
+
+    window = _MutationWindow()
+    error = SshPilotError(
+        ErrorCode.TRANSPORT_CLOSED,
+        "The daemon transport closed unexpectedly",
+        retryable=True,
+    )
+    window.client.editor = error
+    dialog = _EditorDialog()
+
     def _run_now(_ms, cb):
-        run_now.append(cb)
         cb()
+
     monkeypatch.setattr(GLib, "timeout_add", _run_now)
 
     _operation, _success, failure = _run_editor_fetch(window, dialog)
-    for _ in range(3):
+    for _ in range(4):
         failure(error)
-        assert len(window.client_bridge.calls) > 0
-        _operation, _success, failure = window.client_bridge.calls[-1]
 
     assert len(window.client_bridge.calls) == 4
-    assert dialog._daemon_generation == 0
+    assert dialog._daemon_editor_loaded is False
+    assert dialog._editor_load_failed is True
+    assert dialog._daemon_generation is None
 
 
-def test_daemon_editor_generation_does_not_retry_non_transport_errors():
+def test_daemon_editor_does_not_retry_non_transport_errors():
+    window = _MutationWindow()
+    window.client.editor = SshPilotError(ErrorCode.PERSISTENCE_FAILED, "safe")
+    dialog = _EditorDialog()
+
+    _operation, _success, failure = _run_editor_fetch(window, dialog)
+    failure(SshPilotError(ErrorCode.PERSISTENCE_FAILED, "safe"))
+
+    assert len(window.client_bridge.calls) == 1
+    assert dialog._editor_load_failed is True
+    assert dialog._daemon_editor_loaded is False
+    assert dialog._daemon_generation is None
+
+
+def test_daemon_editor_ignores_late_result_after_destroy():
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=7)
+    dialog = _EditorDialog()
+
+    _operation, success, _failure = _run_editor_fetch(window, dialog)
+    handlers = dict(dialog.handlers)
+    assert handlers.get("destroy") is not None
+    handlers["destroy"](None)
+    success(window.client.get_connection_editor("demo"))
+
+    assert dialog.populated == []
+    assert dialog._daemon_generation is None
+    assert dialog._daemon_editor_loaded is False
+
+
+def test_daemon_editor_close_cancels_pending_request(monkeypatch):
+    from sshpilot.window import GLib
+
+    cancelled = []
+
+    def _cancel():
+        cancelled.append(True)
+
+    window = _MutationWindow()
+    window.client_bridge = _CancellableBridge(_cancel)
+    window.client.editor = SimpleNamespace(generation=7)
+    dialog = _EditorDialog()
+    monkeypatch.setattr(GLib, "timeout_add", lambda _ms, cb: object())
+
+    _operation, success, failure = _run_editor_fetch(window, dialog)
+    assert cancelled == []
+
+    handlers = dict(dialog.handlers)
+    handlers["destroy"](None)
+
+    assert cancelled == [True]
+    success(window.client.get_connection_editor("demo"))
+    failure(SshPilotError(ErrorCode.TRANSPORT_CLOSED, "late", retryable=True))
+
+    assert dialog.populated == []
+    assert dialog._daemon_generation is None
+    assert dialog._daemon_editor_loaded is False
+    assert len(window.client_bridge.calls) == 1
+
+
+def test_daemon_editor_close_with_retry_scheduled_submits_nothing(monkeypatch):
+    from sshpilot.window import GLib
+
     window = _MutationWindow()
     error = SshPilotError(
-        ErrorCode.PERSISTENCE_FAILED,
-        "safe",
+        ErrorCode.TRANSPORT_CLOSED,
+        "The daemon transport closed unexpectedly",
+        retryable=True,
     )
     window.client.editor = error
-    dialog = SimpleNamespace()
+    dialog = _EditorDialog()
+    scheduled = []
+    monkeypatch.setattr(GLib, "timeout_add", lambda _ms, cb: scheduled.append(cb))
 
     _operation, _success, failure = _run_editor_fetch(window, dialog)
     failure(error)
+    assert len(scheduled) == 1
+
+    handlers = dict(dialog.handlers)
+    handlers["destroy"](None)
+
+    scheduled[0]()
 
     assert len(window.client_bridge.calls) == 1
-    assert dialog._daemon_generation == 0
+    assert dialog._daemon_generation is None
+    assert dialog._editor_load_failed is False
 
 
-def test_daemon_editor_generation_ignores_late_result_after_destroy():
+def test_daemon_editor_fetch_not_run_outside_daemon_mode():
     window = _MutationWindow()
+    window._app._api_client_selection.mode = SimpleNamespace(value="in_process")
     window.client.editor = SimpleNamespace(generation=7)
-    destroy_handlers = []
-    dialog = SimpleNamespace(
-        connect=lambda _signal, handler: destroy_handlers.append(handler),
-    )
-
-    _operation, success, _failure = _run_editor_fetch(window, dialog)
-    destroy_handlers[0](None)
-    success(window.client.get_connection_editor("demo"))
-
-    assert dialog._daemon_generation == 0
-
-
-def test_daemon_editor_generation_skipped_outside_daemon_mode():
-    window = _MutationWindow()
-    mode = SimpleNamespace(value="in_process")
-    window._app._api_client_selection.mode = mode
-    window.client.editor = SimpleNamespace(generation=7)
-    dialog = SimpleNamespace()
+    dialog = _EditorDialog()
 
     window._fetch_daemon_editor_generation(dialog, SimpleNamespace(nickname="demo"))
 
     assert window.client_bridge.calls == []
-    assert dialog._daemon_generation == 0
+    assert dialog._daemon_generation is None
+    assert dialog._daemon_editor_loaded is False
+
+
+def _daemon_save_dialog(**overrides):
+    dialog = SimpleNamespace(
+        is_editing=True,
+        connection=SimpleNamespace(nickname="demo", id="demo"),
+        is_daemon_editor=lambda: True,
+        _daemon_editor_loaded=True,
+        _daemon_generation=None,
+    )
+    for key, value in overrides.items():
+        setattr(dialog, key, value)
+    return dialog
+
+
+def test_daemon_editor_save_blocked_before_snapshot_arrives():
+    window = _MutationWindow()
+    dialog = _daemon_save_dialog(_daemon_editor_loaded=False, _daemon_generation=None)
+    completed = []
+    data = _basic_data(nickname="demo", hostname="demo.example")
+
+    window._save_connection_via_client(dialog, data, completed.append)
+
+    assert completed == [False]
+    assert window.client_bridge.calls == []
+    assert window.client.updated == []
+
+
+def test_daemon_editor_success_sends_loaded_generation_in_update():
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=7, nickname="demo")
+    dialog = _EditorDialog()
+    _operation, success, _failure = _run_editor_fetch(window, dialog)
+    success(window.client.get_connection_editor("demo"))
+
+    save_dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(nickname="demo", hostname="demo.example")
+    window._save_connection_via_client(save_dialog, data, completed.append)
+
+    operation, _success, _failure = window.client_bridge.calls[1]
+    operation()
+    request = window.client.updated[0][1]
+    assert request.expected_generation == 7
+
+
+def test_daemon_editor_second_save_carries_refreshed_generation_and_surfaces_stale():
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=7, nickname="demo")
+    dialog = _EditorDialog()
+    _operation, success, _failure = _run_editor_fetch(window, dialog)
+    success(window.client.get_connection_editor("demo"))
+
+    save_dialog = _daemon_save_dialog(_daemon_generation=7)
+    first_done = []
+    data = _basic_data(nickname="demo", hostname="demo.example")
+    window._save_connection_via_client(save_dialog, data, first_done.append)
+    op1, ok1, _fail1 = window.client_bridge.calls[1]
+    op1()
+    ok1(SimpleNamespace(id="demo", generation=8))
+
+    assert first_done == [True]
+    assert save_dialog._daemon_generation == 8
+
+    # A competing edit advanced the daemon generation; our next save is stale.
+    second_done = []
+    window._save_connection_via_client(save_dialog, data, second_done.append)
+    op2, _ok2, fail2 = window.client_bridge.calls[2]
+    op2()
+    assert window.client.updated[1][1].expected_generation == 8
+    fail2(SshPilotError(ErrorCode.STALE_EDITOR, "stale editor", details={}))
+
+    assert second_done == [False]
+
 
 

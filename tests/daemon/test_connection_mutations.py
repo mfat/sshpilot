@@ -182,3 +182,83 @@ def test_older_daemon_without_write_capability_fails_locally(
     assert caught.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
     assert caught.value.details == {"capability": "connections.write"}
     client.close()
+
+
+def test_daemon_update_command_fields_round_trip(daemon_factory):
+    """A real daemon mutation carrying RemoteCommand/PreCommand/LocalCommand/
+    ProxyJump must persist — a regression for empty command fields silently
+    dropping out of the wire payload (see the ``update-command-fields``
+    envelope test)."""
+    from sshpilot.api.models import UpdateConnectionRequest
+    from sshpilot.api.models.common import ConnectionId
+
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+
+    client.update_connection(
+        ConnectionId("demo"),
+        UpdateConnectionRequest(
+            config_patch={
+                "proxy_jump": ["bastion"],
+                "pre_command": "",
+                "local_command": "",
+                "remote_command": "echo hello",
+            }
+        ),
+    )
+
+    connection = manager.find_connection_by_nickname("demo")
+    assert connection.data.get("remote_command") == "echo hello"
+    assert connection.data.get("local_command") == ""
+    assert connection.data.get("pre_command") == ""
+    assert connection.data.get("proxy_jump") == ["bastion"]
+
+    # A follow-up update touching only command fields must not drop the
+    # previously persisted values.
+    client.update_connection(
+        ConnectionId("demo"),
+        UpdateConnectionRequest(
+            config_patch={"remote_command": "echo again"},
+        ),
+    )
+    connection = manager.find_connection_by_nickname("demo")
+    assert connection.data.get("remote_command") == "echo again"
+    assert connection.data.get("proxy_jump") == ["bastion"]
+    client.close()
+
+
+def test_daemon_update_stale_editor_rejected_when_generation_mismatches(
+    daemon_factory,
+):
+    from sshpilot.api.models import UpdateConnectionRequest
+    from sshpilot.api.models.common import ConnectionId
+
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+
+    connection = manager.find_connection_by_nickname("demo")
+    connection.generation = 5
+
+    client.update_connection(
+        ConnectionId("demo"),
+        UpdateConnectionRequest(
+            config_patch={"remote_command": "echo hi"},
+            expected_generation=5,
+        ),
+    )
+
+    # A competing editor advanced the generation before our next save.
+    manager.find_connection_by_nickname("demo").generation = 6
+
+    with pytest.raises(SshPilotError) as caught:
+        client.update_connection(
+            ConnectionId("demo"),
+            UpdateConnectionRequest(
+                config_patch={"remote_command": "echo stale"},
+                expected_generation=5,
+            ),
+        )
+    assert caught.value.code is ErrorCode.STALE_EDITOR
+    assert manager.find_connection_by_nickname("demo").data["remote_command"] == "echo hi"
+    client.close()
+

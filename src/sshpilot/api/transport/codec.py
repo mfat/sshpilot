@@ -1307,7 +1307,7 @@ def update_connection_request_to_wire(
         result["port"] = request.port
     if request.config_patch:
         result["config_patch"] = dict(request.config_patch)
-    if request.expected_generation:
+    if request.expected_generation is not None:
         result["expected_generation"] = request.expected_generation
     return result
 
@@ -1352,7 +1352,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
             k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS
         }
 
-    expected_generation = data.get("expected_generation", 0)
+    expected_generation = data.get("expected_generation")
     if expected_generation is not None:
         expected_generation = _integer(expected_generation, "expected generation")
 
@@ -1362,7 +1362,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
         username=username,
         port=port,
         config_patch=config_patch,
-        expected_generation=expected_generation or 0,
+        expected_generation=expected_generation,
     )
 
 
@@ -1677,13 +1677,15 @@ def split_connection_request_to_wire(
 ) -> Dict[str, Any]:
     if type(request) is not SplitConnectionRequest:
         raise TypeError("split connection request is required")
-    return {
+    result = {
         "connection_id": request.connection_id,
         "original_host_token": request.original_host_token,
         "source_config_path": request.source_config_path,
         "config_patch": dict(request.config_patch),
-        "expected_generation": request.expected_generation,
     }
+    if request.expected_generation is not None:
+        result["expected_generation"] = request.expected_generation
+    return result
 
 
 def split_connection_request_from_wire(value: Any) -> SplitConnectionRequest:
@@ -1692,12 +1694,15 @@ def split_connection_request_from_wire(value: Any) -> SplitConnectionRequest:
         required={"connection_id", "original_host_token", "source_config_path", "config_patch"},
         context="split connection request",
     )
+    expected_generation = data.get("expected_generation")
+    if expected_generation is not None:
+        expected_generation = _integer(expected_generation, "expected generation")
     return SplitConnectionRequest(
         connection_id=_identifier(data["connection_id"], "connection_id"),
         original_host_token=_text(data["original_host_token"], "original_host_token"),
         source_config_path=_text(data["source_config_path"], "source_config_path"),
         config_patch=dict(data["config_patch"]),
-        expected_generation=int(data.get("expected_generation", 0)),
+        expected_generation=expected_generation,
     )
 
 

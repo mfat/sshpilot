@@ -4171,80 +4171,164 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
         dialog.connect('connection-saved', self.on_connection_saved)
 
-        # In daemon mode, fetch the editor DTO from the daemon so we have the
-        # authoritative generation for stale-editor detection on save.
+        # Daemon mode: the authoritative editor snapshot gates the form.  A
+        # new connection needs no generation; an edit is populated (and Save
+        # enabled) only once the daemon DTO arrives.
         if as_new:
             dialog._daemon_generation = 0
-        else:
+            dialog.set_editor_source('local')
+        elif self._daemon_mode_active():
+            dialog.set_editor_source('daemon')
+            dialog.set_daemon_editor_loading()
             self._fetch_daemon_editor_generation(dialog, connection)
+        else:
+            dialog.set_editor_source('local')
 
         dialog.present()
 
     def _fetch_daemon_editor_generation(self, dialog, connection):
-        """Best-effort, non-blocking fetch of the daemon editor generation.
+        """Load the authoritative daemon editor snapshot (non-blocking).
 
-        Routed through the GTK client bridge so a churning daemon transport
-        cannot block dialog presentation.  Retryable transport failures (e.g.
-        the daemon restarting underneath us) are retried with a short delay —
-        the retry resolves ``self.client`` at call time so a reconnected
-        client is used once the daemon is back — while anything else leaves
-        ``dialog._daemon_generation`` at 0, skipping stale-editor detection
-        for that save.  The chain stops if the dialog is destroyed.
+        Fetches ``ConnectionEditorDetails`` through the GTK client bridge so
+        the form is populated from, and ``expected_generation`` derives from,
+        the same daemon response.  Transport churn is retried with a short
+        delay — every retry re-resolves ``self.client`` and
+        ``self.client_bridge`` at call time, so a reconnected client is used
+        once the daemon is back.
+
+        The chain has explicit ownership: exactly one of success, terminal
+        failure, or dialog cancellation terminates it; any late callback is
+        ignored.  Save stays gated on ``dialog._daemon_editor_loaded``: a
+        terminal failure disables Save rather than silently degrading
+        stale-editor protection, and pending is never treated as a real
+        generation (``_daemon_generation`` stays None until loaded).
         """
         from .api import ErrorCode, SshPilotError
         from .api.models.common import ConnectionId
 
-        dialog._daemon_generation = 0
-        if not self._daemon_mode_active() or connection is None:
+        # Defensive entry guard: this loader only exists for active daemon
+        # edits.  A missing connection is a hard failure (Save stays off);
+        # leaving daemon mode mid-flight is left to the caller's gating.
+        if connection is None:
+            dialog.set_daemon_editor_load_failed()
             return
-        bridge = self.client_bridge
-        if bridge is None:
+        if not self._daemon_mode_active():
             return
-        cid = ConnectionId(connection.nickname)
 
-        retries = [3]
-        destroyed = [False]
+        class _TransportUnavailable(Exception):
+            pass
 
-        connect = getattr(dialog, 'connect', None)
-        if callable(connect):
-            connect('destroy', lambda _w: destroyed.__setitem__(0, True))
+        state: Dict[str, Any] = {
+            'finished': False,
+            'closed': False,
+            'request': None,
+            'timeout_source': None,
+            'remaining_retries': 3,
+        }
+
+        def _finished():
+            return state['finished']
+
+        def _clear_timer():
+            source = state['timeout_source']
+            if source is not None:
+                try:
+                    GLib.source_remove(source)
+                except Exception:
+                    pass
+                state['timeout_source'] = None
 
         def _on_success(editor):
-            if destroyed[0]:
+            if _finished():
                 return
-            dialog._daemon_generation = int(getattr(editor, 'generation', 0) or 0)
-
-        def _submit_fetch():
-            if destroyed[0]:
-                return
+            state['finished'] = True
+            state['request'] = None
+            _clear_timer()
             try:
-                bridge.submit(
-                    lambda: self.client.get_connection_editor(cid),
-                    on_success=_on_success,
-                    on_error=_on_error,
+                dialog.populate_from_editor_details(editor)
+            except Exception as error:
+                # A populate failure must never wedge Save or smuggle a zero
+                # generation into the stale-editor check.
+                logger.warning(
+                    "Failed to populate editor from daemon snapshot type=%s",
+                    type(error).__name__,
                 )
-            except RuntimeError:
-                pass
+                dialog.set_daemon_editor_load_failed()
 
-        def _on_error(error):
-            if destroyed[0]:
+        def _handle_error(error):
+            if _finished():
                 return
-            retryable = isinstance(error, SshPilotError) and (
-                error.retryable
-                or error.code
-                in (ErrorCode.TRANSPORT_CLOSED, ErrorCode.TRANSPORT_TIMEOUT)
-            )
-            if retryable and retries[0] > 0:
-                retries[0] -= 1
-                GLib.timeout_add(500, _schedule_retry)
-            else:
-                logger.debug(
-                    "Could not fetch editor generation from daemon: %s", error
+            state['request'] = None
+            retryable = isinstance(error, _TransportUnavailable) or (
+                isinstance(error, SshPilotError)
+                and (
+                    error.retryable
+                    or error.code
+                    in (ErrorCode.TRANSPORT_CLOSED, ErrorCode.TRANSPORT_TIMEOUT)
                 )
+            )
+            if retryable and state['remaining_retries'] > 0:
+                state['remaining_retries'] -= 1
+                state['timeout_source'] = GLib.timeout_add(500, _schedule_retry)
+                return
+            state['finished'] = True
+            _clear_timer()
+            logger.debug("Could not fetch daemon editor snapshot: %s", error)
+            dialog.set_daemon_editor_load_failed()
 
         def _schedule_retry():
+            state['timeout_source'] = None
             _submit_fetch()
             return False
+
+        def _submit_fetch():
+            if _finished():
+                return
+            # Re-resolve the live client and bridge on every attempt so a
+            # reconnect between retries is picked up immediately.
+            bridge = self.client_bridge
+            client = self.client
+            if bridge is None or client is None:
+                _handle_error(_TransportUnavailable('daemon transport unavailable'))
+                return
+            try:
+                state['request'] = bridge.submit(
+                    lambda: client.get_connection_editor(
+                        ConnectionId(connection.nickname)
+                    ),
+                    on_success=_on_success,
+                    on_error=_handle_error,
+                )
+            except RuntimeError as exc:
+                state['request'] = None
+                _handle_error(exc)
+
+        def _cancel(_dialog=None):
+            if state['finished']:
+                return
+            state['closed'] = True
+            state['finished'] = True
+            _clear_timer()
+            request = state['request']
+            state['request'] = None
+            if request is not None:
+                try:
+                    cancel = getattr(request, 'cancel', None)
+                    if callable(cancel):
+                        cancel()
+                except Exception:
+                    pass
+
+        # Hook the real close lifecycle.  Adw.Dialog exposes `closed`; our
+        # dialog is an Adw.Window, so fall back to `destroy`.  Connecting an
+        # unknown signal raises under real GTK, hence the defensive wiring.
+        connect = getattr(dialog, 'connect', None)
+        if callable(connect):
+            for signal_name in ('closed', 'destroy'):
+                try:
+                    connect(signal_name, _cancel)
+                except Exception:
+                    pass
 
         _submit_fetch()
 
@@ -6522,6 +6606,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             complete_save(False)
             return
 
+        # Daemon edits may never save against a pending/failed snapshot: the
+        # dialog disables Save in that state, but the signal path (accelerator,
+        # programmatic) is gated here too.
+        is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
+        if (
+            callable(is_daemon_editor)
+            and is_daemon_editor()
+            and not getattr(dialog, '_daemon_editor_loaded', False)
+        ):
+            complete_save(False)
+            return
+
         def _build_config_patch():
             import re
             patch = {}
@@ -6562,14 +6658,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection_id = InProcessClient.connection_id_for(dialog.connection)
                 config_patch = _build_config_patch()
 
-                # In daemon mode, use the generation fetched from the daemon
-                # when the dialog opened (stored on the dialog by
-                # show_connection_dialog).  In in-process mode, re-read the
-                # generation from the shared connection_manager, which is
-                # authoritative.
-                current_generation = 0
+                # In daemon mode, use the generation loaded from the daemon
+                # snapshot when the dialog opened (None until the snapshot
+                # arrives — never a zero sentinel).  In in-process mode,
+                # re-read the generation from the shared connection_manager,
+                # which is authoritative.
+                current_generation = None
                 if self._daemon_mode_active():
-                    current_generation = getattr(dialog, '_daemon_generation', 0)
+                    current_generation = getattr(dialog, '_daemon_generation', None)
                 else:
                     try:
                         live = self.connection_manager.find_connection_by_nickname(
@@ -6640,6 +6736,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception as exc:
                     logger.debug("Metadata update via daemon RPC failed: %s", exc)
             complete_save(True)
+            # If the dialog stays open, carry the freshly saved generation so
+            # the next save still gets real stale-editor protection.
+            try:
+                new_generation = getattr(_details, 'generation', None)
+                is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
+                if (
+                    callable(is_daemon_editor)
+                    and is_daemon_editor()
+                    and new_generation is not None
+                ):
+                    dialog._daemon_generation = int(new_generation)
+            except Exception:
+                pass
             try:
                 self.connection_manager.load_ssh_config()
                 self.rebuild_connection_list()

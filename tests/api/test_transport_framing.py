@@ -197,3 +197,32 @@ def test_json_payload_is_deterministic_and_not_pickle():
 
     assert payload == b'{"a":2,"z":1}'
     assert json.loads(payload) == {"a": 2, "z": 1}
+
+
+def test_update_command_fields_envelope_round_trip():
+    """Command-field edits (RemoteCommand/LocalCommand/PreCommand/ProxyJump)
+    must survive full envelope encoding — a regression for the empty-command
+    fields silently dropping out of the wire payload."""
+    from sshpilot.api.models.common import ClientId, RequestId
+    from sshpilot.api.version import PROTOCOL_VERSION
+
+    request = RequestEnvelope(
+        protocol_version=PROTOCOL_VERSION,
+        request_id=RequestId("update-command-fields"),
+        method="connections.update",
+        params={
+            "connection_id": "demo",
+            "update": {
+                "config_patch": {
+                    "proxy_jump": ["bastion"],
+                    "pre_command": "",
+                    "local_command": "",
+                    "remote_command": "",
+                }
+            },
+        },
+        client_id=ClientId("test-client"),
+    )
+
+    assert decode_envelope(encode_envelope(request)) == request
+

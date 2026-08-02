@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, FrozenSet, Mapping, Tuple, Union
+from typing import Any, FrozenSet, Mapping, Optional, Tuple, Union
 
 from .common import ConnectionId, require_identifier
 
@@ -442,6 +442,10 @@ class UpdateConnectionRequest:
     ``config_patch`` is a presence-aware dict: keys present in the dict
     are applied; absent keys are preserved.  The codec builds this from
     explicitly present keys in the incoming JSON — omission means preserve.
+
+    ``expected_generation`` guards stale editors: ``None`` means no
+    generation supplied (the check is skipped); zero is a legitimate
+    first-generation value and is enforced like any other.
     """
 
     nickname: Union[str, None, _UNSET_TYPE] = UNSET
@@ -449,7 +453,7 @@ class UpdateConnectionRequest:
     username: Union[str, None, _UNSET_TYPE] = UNSET
     port: Union[int, None, _UNSET_TYPE] = UNSET
     config_patch: Mapping[str, Any] = field(default_factory=dict)
-    expected_generation: int = 0  # stale-editor detection
+    expected_generation: Optional[int] = None  # stale-editor detection
 
     def __post_init__(self) -> None:
         has_core = any(
@@ -511,14 +515,16 @@ class SplitConnectionRequest:
     Removes ``original_host_token`` from the block identified by
     ``source_config_path`` and appends a new standalone ``Host`` block
     built from ``config_patch``.  ``expected_generation`` is reserved
-    for stale-editor detection and is ignored when zero.
+    for stale-editor detection: ``None`` means no generation supplied
+    (the check is skipped); zero is a legitimate generation and is
+    enforced like any other value.
     """
 
     connection_id: ConnectionId
     original_host_token: str
     source_config_path: str
     config_patch: Mapping[str, Any]
-    expected_generation: int = 0
+    expected_generation: Optional[int] = None
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")

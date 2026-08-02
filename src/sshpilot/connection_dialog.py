@@ -62,6 +62,58 @@ from gettext import gettext as _
 logger = logging.getLogger(__name__)
 
 
+def _editor_details_to_connection(details):
+    """Adapt a daemon ``ConnectionEditorDetails`` DTO to a form source.
+
+    ``load_connection_data`` reads from ``self.connection``; in daemon mode we
+    point that at this adapter so every editable field is populated from the
+    same authoritative daemon snapshot that supplies ``expected_generation``
+    (never from a stale local ``Connection``).
+    """
+    from .api.models.connections import AuthenticationMethod
+
+    identity_files = [
+        p for p in (getattr(details, 'identity_files', None) or []) if str(p).strip()
+    ]
+    certificate_files = [
+        p for p in (getattr(details, 'certificate_files', None) or []) if str(p).strip()
+    ]
+    authentication_method = getattr(details, 'authentication_method', None)
+    return types.SimpleNamespace(
+        nickname=getattr(details, 'nickname', ''),
+        hostname=getattr(details, 'hostname', '') or getattr(details, 'host', ''),
+        host=getattr(details, 'host', ''),
+        username=getattr(details, 'username', ''),
+        port=getattr(details, 'port', 22),
+        protocol=getattr(details, 'protocol', 'ssh'),
+        proxy_jump=getattr(details, 'proxy_jump', ()),
+        forward_agent=getattr(details, 'forward_agent', False),
+        auth_method=(
+            1 if authentication_method == AuthenticationMethod.PASSWORD else 0
+        ),
+        pubkey_auth_no=getattr(details, 'pubkey_auth_no', False),
+        identity_files=identity_files,
+        keyfile=(identity_files[0] if identity_files else ''),
+        certificate_files=certificate_files,
+        certificate=(certificate_files[0] if certificate_files else ''),
+        identity_agent=getattr(details, 'identity_agent', ''),
+        pkcs11_provider=getattr(details, 'pkcs11_provider', ''),
+        security_key_provider=getattr(details, 'security_key_provider', ''),
+        add_keys_to_agent=getattr(details, 'add_keys_to_agent', ''),
+        key_select_mode=getattr(details, 'key_select_mode', 0),
+        x11_forwarding=getattr(details, 'x11_forwarding', False),
+        extra_ssh_config=getattr(details, 'extra_ssh_config', ''),
+        pre_command=getattr(details, 'pre_command', ''),
+        local_command=getattr(details, 'local_command', ''),
+        remote_command=getattr(details, 'remote_command', ''),
+        forwarding_rules=getattr(details, 'forwarding_rules', ()),
+        aliases=getattr(details, 'aliases', ()),
+        source=getattr(details, 'source', ''),
+        generation=getattr(details, 'generation', 0),
+        data={},
+    )
+
+
 class _AuthMethodToggleFallback(Gtk.Box):
     """Segmented-control fallback for Adw.ToggleGroup (libadwaita < 1.7).
 
@@ -1336,6 +1388,16 @@ class ConnectionDialog(
         self._loading_connection_data = False
         self._active_key_path: Optional[str] = None
 
+        # Daemon editor-snapshot state.  A daemon edit is gated on the
+        # authoritative ``ConnectionEditorDetails`` response: Save stays
+        # disabled and the form stays unpopulated until it arrives, and a
+        # failed fetch permanently disables Save. ``_daemon_generation`` is
+        # None until loaded (never a zero sentinel).
+        self._editor_source = 'local'  # 'daemon' when the DTO flow owns the form
+        self._daemon_editor_loaded = False
+        self._daemon_generation: Optional[int] = None
+        self._editor_load_failed = False
+
         self.set_title(_('Edit Connection') if self.is_editing else _('New Connection'))
         # Set modal and transient parent to ensure dialog stays on top
         self.set_modal(True)
@@ -1991,6 +2053,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not self.connection:
             return
 
+        # Daemon edits must never render from a stale local Connection: keep
+        # the form untouched until the authoritative editor snapshot arrives.
+        if self.is_daemon_editor() and not self._daemon_editor_loaded:
+            return
+
         required_attrs = [
             'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
@@ -2241,6 +2308,70 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.show_error(_("Failed to load connection data"))
         finally:
             self._loading_connection_data = False
+
+
+    def set_editor_source(self, source):
+        """Mark the dialog as owned by the daemon editor flow (or local)."""
+        self._editor_source = source if source == 'daemon' else 'local'
+
+
+    def is_daemon_editor(self):
+        return getattr(self, '_editor_source', 'local') == 'daemon'
+
+
+    def set_daemon_editor_loading(self):
+        """Enter the loading state: keep the form empty and Save disabled."""
+        self._daemon_editor_loaded = False
+        self._daemon_generation = None
+        self._editor_load_failed = False
+        self._refresh_save_sensitivity()
+
+
+    def set_daemon_editor_loaded(self, generation):
+        """Populate the form from the daemon snapshot; enable Save."""
+        self._daemon_editor_loaded = True
+        self._daemon_generation = generation
+        self._editor_load_failed = False
+        self._refresh_save_sensitivity()
+
+
+    def set_daemon_editor_load_failed(self):
+        """Terminal fetch failure: block saving, keep form empty."""
+        self._daemon_editor_loaded = False
+        self._daemon_generation = None
+        self._editor_load_failed = True
+        self._refresh_save_sensitivity()
+
+
+    def populate_from_editor_details(self, details):
+        """Populate the whole form from a daemon ``ConnectionEditorDetails``.
+
+        Both the visible values and ``expected_generation`` come from this one
+        authoritative DTO so a freshly saved generation can never be attached
+        to stale form content. Called on the GTK thread only.
+        """
+        self.connection = _editor_details_to_connection(details)
+        self.is_editing = True
+        self.set_title(_('Edit Connection'))
+        self._daemon_editor_loaded = True
+        self._daemon_generation = getattr(details, 'generation', None)
+        self._editor_load_failed = False
+        try:
+            self.load_connection_data()
+        finally:
+            self._refresh_save_sensitivity()
+
+
+    def _refresh_save_sensitivity(self):
+        """Gate every save button on the daemon snapshot (daemon edits only)."""
+        if not self.is_daemon_editor():
+            return
+        sensitive = self._daemon_editor_loaded and not self._editor_load_failed
+        for button in getattr(self, '_save_buttons', ()):
+            try:
+                button.set_sensitive(sensitive)
+            except Exception:
+                pass
 
 
     def build_authentication_groups(self):
@@ -3044,6 +3175,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Handle save button click or dialog save response"""
         if getattr(self, '_secret_save_in_progress', False):
             return
+        # Daemon edits: never save before the authoritative editor snapshot
+        # arrived, and never save after a terminal load failure.
+        if self.is_daemon_editor():
+            if not self._daemon_editor_loaded:
+                if self._editor_load_failed:
+                    self.show_error(_("Could not load the connection from the daemon"))
+                else:
+                    self.show_error(_("Connection is still loading"))
+                return
         # Plugin protocols collect their own (declarative) fields; the rest of
         # this method is the SSH path, which serializes to ~/.ssh/config.
         backend = self._selected_protocol_backend()

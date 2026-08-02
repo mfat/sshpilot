@@ -723,7 +723,7 @@ class InProcessClient:
                 connection_id=request.connection_id,
             )
         # Stale-editor guard for split operations.
-        if request.expected_generation and request.expected_generation != getattr(connection, 'generation', 0):
+        if request.expected_generation is not None and request.expected_generation != getattr(connection, 'generation', 0):
             raise SshPilotError(
                 ErrorCode.STALE_EDITOR,
                 "The connection has been modified since it was last read",
@@ -874,10 +874,11 @@ class InProcessClient:
                 "The requested connection protocol is not supported",
                 connection_id=connection_id,
             )
-        # Stale-editor guard: if the caller provides an expected generation
-        # (non-zero), reject the update when the connection was modified since
-        # the editor last read it.
-        if request.expected_generation and request.expected_generation != getattr(connection, 'generation', 0):
+        # Stale-editor guard: if the caller provides an expected generation,
+        # reject the update when the connection was modified since the editor
+        # last read it. None means "no generation supplied" (skip the check);
+        # zero is a legitimate first-generation value and is enforced.
+        if request.expected_generation is not None and request.expected_generation != getattr(connection, 'generation', 0):
             raise SshPilotError(
                 ErrorCode.STALE_EDITOR,
                 "The connection has been modified since it was last read",

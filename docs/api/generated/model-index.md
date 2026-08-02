@@ -2573,7 +2573,9 @@ Synthetic representation:
 Removes ``original_host_token`` from the block identified by
 ``source_config_path`` and appends a new standalone ``Host`` block
 built from ``config_patch``.  ``expected_generation`` is reserved
-for stale-editor detection and is ignored when zero.
+for stale-editor detection: ``None`` means no generation supplied
+(the check is skipped); zero is a legitimate generation and is
+enforced like any other value.
 
 **Related methods:** None
 **Related events:** None
@@ -2584,7 +2586,7 @@ for stale-editor detection and is ignored when zero.
 | `original_host_token` | `str` | Yes | — | No |
 | `source_config_path` | `str` | Yes | — | No |
 | `config_patch` | `Mapping[str, Any]` | Yes | — | No |
-| `expected_generation` | `int` | No | `0` | No |
+| `expected_generation` | `int | None` | No | `null` | No |
 
 Synthetic representation:
 
@@ -2592,7 +2594,7 @@ Synthetic representation:
 {
   "config_patch": {},
   "connection_id": "production",
-  "expected_generation": 0,
+  "expected_generation": null,
   "original_host_token": "example",
   "source_config_path": "example"
 }
@@ -2910,6 +2912,10 @@ Newer fields use ``UNSET`` = preserve, ``""`` = clear, value = apply.
 are applied; absent keys are preserved.  The codec builds this from
 explicitly present keys in the incoming JSON — omission means preserve.
 
+``expected_generation`` guards stale editors: ``None`` means no
+generation supplied (the check is skipped); zero is a legitimate
+first-generation value and is enforced like any other.
+
 **Related methods:** `update_connection`
 **Related events:** None
 
@@ -2920,14 +2926,14 @@ explicitly present keys in the incoming JSON — omission means preserve.
 | `username` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `port` | `int | None | UNSET` | No | ``UNSET`` | No |
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
-| `expected_generation` | `int` | No | `0` | No |
+| `expected_generation` | `int | None` | No | `null` | No |
 
 Synthetic representation:
 
 ```json
 {
   "config_patch": {},
-  "expected_generation": 0,
+  "expected_generation": null,
   "hostname": "`UNSET`",
   "nickname": "`UNSET`",
   "port": "`UNSET`",

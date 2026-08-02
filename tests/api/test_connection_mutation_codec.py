@@ -49,6 +49,34 @@ def test_mutation_codec_round_trips_all_public_models():
     ) == result
 
 
+def test_update_expected_generation_none_omitted_but_zero_preserved():
+    """None (no generation supplied) must not collide with a real zero
+    generation, either on the wire or after a decode."""
+    none_request = UpdateConnectionRequest(
+        config_patch={"remote_command": "echo hi"},
+        expected_generation=None,
+    )
+    zero_request = UpdateConnectionRequest(
+        config_patch={"remote_command": "echo hi"},
+        expected_generation=0,
+    )
+
+    none_wire = update_connection_request_to_wire(none_request)
+    zero_wire = update_connection_request_to_wire(zero_request)
+
+    assert "expected_generation" not in none_wire
+    assert zero_wire["expected_generation"] == 0
+    assert update_connection_request_from_wire(none_wire).expected_generation is None
+    assert update_connection_request_from_wire(zero_wire).expected_generation == 0
+    assert update_connection_request_from_wire(
+        update_connection_request_to_wire(none_request)
+    ) == none_request
+    assert update_connection_request_from_wire(
+        update_connection_request_to_wire(zero_request)
+    ) == zero_request
+
+
+
 @pytest.mark.parametrize(
     "decoder,payload",
     [
