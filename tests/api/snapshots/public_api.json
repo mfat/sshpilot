@@ -537,7 +537,7 @@
           "type": "CreateConnectionRequest"
         }
       ],
-      "return": "ConnectionDetails"
+      "return": "ConnectionMutationResult"
     },
     "create_group": {
       "parameters": [
@@ -1073,7 +1073,7 @@
           "type": "UpdateConnectionRequest"
         }
       ],
-      "return": "ConnectionDetails"
+      "return": "ConnectionMutationResult"
     },
     "update_connection_metadata": {
       "parameters": [
@@ -1432,6 +1432,7 @@
     "ConnectionEditorDetails",
     "ConnectionHealth",
     "ConnectionId",
+    "ConnectionMutationResult",
     "ConnectionSummary",
     "ConnectionValidationError",
     "ConnectionValidationResult",
@@ -1656,6 +1657,7 @@
       "security_key_provider",
       "pubkey_auth_no",
       "forward_agent",
+      "forward_agent_explicit_no",
       "forward_agent_target",
       "proxy_command",
       "forwarding_rules",
@@ -1665,8 +1667,15 @@
       "request_tty",
       "extra_ssh_config",
       "identity_file_none",
+      "x11_forwarding_explicit_no",
+      "identities_only_explicit_no",
       "preferred_authentications",
       "source",
+      "generation"
+    ],
+    "ConnectionMutationResult": [
+      "connection_id",
+      "nickname",
       "generation"
     ],
     "ConnectionSummary": [

@@ -855,11 +855,11 @@ def connection_mutation_result_to_wire(result: Any) -> Dict[str, Any]:
 
 def connection_mutation_result_from_wire(value: Any) -> Any:
     from ..models.connections import ConnectionMutationResult
-    data = _strict_fields(value, "ConnectionMutationResult", {"connection_id", "nickname", "generation"})
+    data = _strict_fields(value, context="ConnectionMutationResult", required={"connection_id", "nickname", "generation"})
     return ConnectionMutationResult(
-        connection_id=_str(data["connection_id"]),
-        nickname=_str(data["nickname"]),
-        generation=_int(data["generation"]),
+        connection_id=_text(data["connection_id"], "connection_id"),
+        nickname=_text(data["nickname"], "nickname"),
+        generation=_integer(data["generation"], "generation"),
     )
 
 def connection_details_from_wire(value: Any) -> ConnectionDetails:

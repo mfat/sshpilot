@@ -514,6 +514,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `security_key_provider` | `str` | No | `` | No |
 | `pubkey_auth_no` | `bool` | No | `false` | No |
 | `forward_agent` | `bool` | No | `false` | No |
+| `forward_agent_explicit_no` | `bool` | No | `false` | No |
 | `forward_agent_target` | `str` | No | `` | No |
 | `proxy_command` | `str` | No | `` | No |
 | `forwarding_rules` | `tuple[ForwardingRule, ...]` | No | `[]` | No |
@@ -523,6 +524,8 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `request_tty` | `str` | No | `` | No |
 | `extra_ssh_config` | `str` | No | `` | No |
 | `identity_file_none` | `bool` | No | `false` | No |
+| `x11_forwarding_explicit_no` | `bool` | No | `false` | No |
+| `identities_only_explicit_no` | `bool` | No | `false` | No |
 | `preferred_authentications` | `str` | No | `` | No |
 | `source` | `str` | No | `` | No |
 | `generation` | `int` | No | `0` | No |
@@ -538,6 +541,7 @@ Synthetic representation:
   "certificate_files": [],
   "extra_ssh_config": "",
   "forward_agent": false,
+  "forward_agent_explicit_no": false,
   "forward_agent_target": "",
   "forwarding_rule_count": 0,
   "forwarding_rules": [],
@@ -547,6 +551,7 @@ Synthetic representation:
   "host": "example",
   "hostname": "example.invalid",
   "id": "production",
+  "identities_only_explicit_no": false,
   "identity_agent": "",
   "identity_configured": false,
   "identity_file_none": false,
@@ -567,7 +572,34 @@ Synthetic representation:
   "security_key_provider": "",
   "source": "",
   "username": "user",
-  "x11_forwarding": false
+  "x11_forwarding": false,
+  "x11_forwarding_explicit_no": false
+}
+```
+
+<!-- api-model: ConnectionMutationResult -->
+## `ConnectionMutationResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The authoritative result of a successful connection save.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `str` | Yes | — | No |
+| `nickname` | `str` | Yes | — | No |
+| `generation` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "generation": 0,
+  "nickname": "example"
 }
 ```
 

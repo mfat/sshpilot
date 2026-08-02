@@ -317,7 +317,7 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
         'hostname': 'example.com',
         'nickname': 'example',
         'username': 'demo',
-        'password': 'host-secret',
+        '__password': 'host-secret',
         'password_changed': True,
     }
     dialog._store_secrets_then_save(data)
@@ -394,7 +394,7 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
         'hostname': 'example.com',
         'nickname': 'example',
         'username': 'demo',
-        'password': '',
+        '__password': '',
         'password_changed': True,
     })
 

@@ -675,7 +675,8 @@ def test_advanced_update_succeeds_when_both_capabilities_present(fake_manager, c
         conn_id,
         UpdateConnectionRequest(config_patch={"proxy_jump": ["jump.example.test"]}),
     )
-    assert updated.proxy_jump == ("jump.example.test",)
+    details = client.get_connection(updated.connection_id)
+    assert details.proxy_jump == ("jump.example.test",)
 
     created = client.create_connection(
         CreateConnectionRequest(
@@ -684,5 +685,6 @@ def test_advanced_update_succeeds_when_both_capabilities_present(fake_manager, c
             config_patch={"proxy_jump": ["jump2.example.test"]},
         )
     )
-    assert created.proxy_jump == ("jump2.example.test",)
+    created_details = client.get_connection(created.connection_id)
+    assert created_details.proxy_jump == ("jump2.example.test",)
     client.close()

@@ -26,6 +26,7 @@ from .models.connections import (
     ConnectionDetails,
     ConnectionEditorDetails,
     ConnectionHealth,
+    ConnectionMutationResult,
     ConnectionSummary,
     CreateConnectionRequest,
     DeleteConnectionPasswordRequest,

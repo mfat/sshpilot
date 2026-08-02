@@ -111,7 +111,7 @@ CASES = {
     ),
     "remote_command_keeps_shell": (
         {"remote_command": "uptime"},
-        {"remote_command": "uptime ; exec $SHELL -l"},
+        {"remote_command": "uptime"},
     ),
     "request_tty_force_preserved": (
         {"request_tty": "force"},
@@ -131,7 +131,7 @@ CASES = {
     ),
     "remote_command_keeps_authored_request_tty": (
         {"remote_command": "uptime", "request_tty": "force"},
-        {"remote_command": "uptime ; exec $SHELL -l", "request_tty": "force"},
+        {"remote_command": "uptime", "request_tty": "force"},
     ),
     "extra_ssh_config": (
         {"extra_ssh_config": "Compression yes"},

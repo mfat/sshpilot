@@ -6,6 +6,7 @@ import pytest
 from sshpilot.api import ErrorCode, EventType, SshPilotError
 from sshpilot.api.models import (
     ConnectionDetails,
+    ConnectionMutationResult,
     CreateConnectionRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
@@ -38,12 +39,12 @@ def test_create_update_delete_have_shared_behaviour(fake_manager, client_factory
     )
     _wait_for(events)
 
-    assert isinstance(created, ConnectionDetails)
+    assert isinstance(created, ConnectionMutationResult)
     assert created.nickname == "new"
     assert events[0].type is EventType.CONNECTION_CREATED
-    assert events[0].payload.id == created.id
+    assert events[0].payload.id == created.connection_id
 
-    old_id = created.id
+    old_id = created.connection_id
     updated = client.update_connection(
         old_id,
         UpdateConnectionRequest(
@@ -52,16 +53,16 @@ def test_create_update_delete_have_shared_behaviour(fake_manager, client_factory
         ),
     )
 
-    assert updated.id == "renamed"
+    assert updated.connection_id == "renamed"
     assert updated.nickname == "renamed"
 
     deleted = client.delete_connection(
-        DeleteConnectionRequest(connection_id=updated.id)
+        DeleteConnectionRequest(connection_id=updated.connection_id)
     )
 
     assert isinstance(deleted, DeleteConnectionResult)
     assert deleted == DeleteConnectionResult(
-        connection_id=updated.id,
+        connection_id=updated.connection_id,
         deleted=True,
     )
     subscription.unsubscribe()
@@ -144,6 +145,11 @@ def test_mutation_dtos_and_results_exclude_secret_fields(
     assert "passphrase" not in public_fields
     assert "secret" not in repr(created).lower()
 
+    details = client.get_connection(created.connection_id)
+    details_fields = {field.name for field in fields(details)}
+    assert "password" not in details_fields
+    assert "passphrase" not in details_fields
+
 
 def test_basic_update_preserves_advanced_state_without_passing_secrets(
     fake_manager,
@@ -166,7 +172,8 @@ def test_basic_update_preserves_advanced_state_without_passing_secrets(
         UpdateConnectionRequest(username="changed"),
     )
 
-    assert updated.identity_configured is True
+    details = client.get_connection(updated.connection_id)
+    assert details.identity_configured is True
     assert fake_manager.last_update["keyfile"] == "/private/key-path"
     assert "password" not in fake_manager.last_update
     assert "token" not in fake_manager.last_update

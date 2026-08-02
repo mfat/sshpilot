@@ -93,7 +93,7 @@ def test_requesting_and_observing_clients_receive_one_created_event(
         for events in received
     )
     assert received[0][0].sequence == received[1][0].sequence
-    assert received[0][0].payload.id == created.id
+    assert received[0][0].payload.id == created.connection_id
     for subscription in subscriptions:
         subscription.close()
     requesting.close()

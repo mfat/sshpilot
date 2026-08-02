@@ -314,7 +314,7 @@ def test_daemon_self_write_emits_no_duplicate_reload_event(
         assert _wait_until(
             lambda: any(
                 event.type is EventType.CONNECTION_CREATED
-                and event.payload.id == created.id
+                and event.payload.id == created.connection_id
                 for event in events
             )
         )
@@ -326,7 +326,7 @@ def test_daemon_self_write_emits_no_duplicate_reload_event(
             event
             for event in events
             if event.type is EventType.CONNECTION_CREATED
-            and event.payload.id == created.id
+            and event.payload.id == created.connection_id
         ]
         assert len(matching) == 1
     finally:
@@ -549,9 +549,7 @@ def test_create_connection_with_proxy_jump_persists_to_ssh_config(
             )
         )
         assert created.nickname == "JumpTestHost"
-        assert created.proxy_jump == ("jump.example.test",)
-
-        details = client.get_connection(created.id)
+        details = client.get_connection(created.connection_id)
         assert details.proxy_jump == ("jump.example.test",)
     finally:
         client.close()

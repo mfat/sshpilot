@@ -1453,6 +1453,13 @@
           "type": "bool"
         },
         {
+          "default": false,
+          "name": "forward_agent_explicit_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
           "default": "",
           "name": "forward_agent_target",
           "required": false,
@@ -1516,6 +1523,20 @@
           "type": "bool"
         },
         {
+          "default": false,
+          "name": "x11_forwarding_explicit_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "identities_only_explicit_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
           "default": "",
           "name": "preferred_authentications",
           "required": false,
@@ -1533,6 +1554,32 @@
           "default": 0,
           "name": "generation",
           "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionMutationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "generation",
+          "required": true,
           "sensitive": false,
           "type": "int"
         }

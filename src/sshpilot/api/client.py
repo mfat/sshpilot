@@ -14,6 +14,7 @@ from .terminal_events import (
 from .models.connections import (
     ConnectionDetails,
     ConnectionEditorDetails,
+    ConnectionMutationResult,
     ConnectionSummary,
     CreateConnectionRequest,
     DeleteConnectionPasswordRequest,
