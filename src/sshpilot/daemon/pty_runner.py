@@ -449,9 +449,6 @@ class PtySessionProcessRunner:
                 fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, packed)
             status_read, status_write = os.pipe()
             helper = str(Path(__file__).with_name("_pty_child.py"))
-            with open("/tmp/pty_runner_debug.log", "a") as f:
-                f.write(f"ARGV: {argv}\nENV DISPLAY: {env.get("DISPLAY")}\nENV DBUS: {env.get("DBUS_SESSION_BUS_ADDRESS")}\n")
-
             process = subprocess.Popen(
                 (
                     sys.executable,
