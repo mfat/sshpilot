@@ -237,6 +237,10 @@
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
+    "split_connection": {
+      "capability": "connections.split",
+      "status": "implemented"
+    },
     "start_transfer": {
       "capability": "transfers.write",
       "status": "daemon-only"
@@ -303,6 +307,9 @@
     },
     "connections.rename_group": {
       "capability": "connections.groups"
+    },
+    "connections.split": {
+      "capability": "connections.split"
     },
     "connections.store_passphrase": {
       "capability": "connections.secrets.write"
@@ -4072,6 +4079,46 @@
         }
       ],
       "status": "Implemented"
+    },
+    "SplitConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "original_host_token",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "source_config_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "config_patch",
+          "required": true,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": 0,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
     },
     "StartTransferRequest": {
       "fields": [

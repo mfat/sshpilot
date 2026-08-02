@@ -6442,12 +6442,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # request or trigger local secret storage after a daemon write.
         connection_data['password'] = ''
 
-        if connection_data.get('__split_from_group'):
-            return _(
-                "Splitting grouped SSH host entries is not supported in "
-                "experimental service mode yet."
-            )
-
         return None
 
     def _save_connection_via_client(
@@ -6505,31 +6499,57 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         patch[key] = val
             return patch
 
-        if dialog.is_editing:
-            connection_id = InProcessClient.connection_id_for(dialog.connection)
-            config_patch = _build_config_patch()
-            request = UpdateConnectionRequest(
-                nickname=connection_data.get('nickname'),
-                hostname=connection_data.get('hostname'),
-                username=connection_data.get('username'),
-                port=connection_data.get('port'),
-                config_patch=config_patch,
+        try:
+            if dialog.is_editing:
+                connection_id = InProcessClient.connection_id_for(dialog.connection)
+                config_patch = _build_config_patch()
+
+                # Pop split params — they drive a dedicated RPC, not
+                # the normal update_connection path.
+                split_from_group = connection_data.pop('__split_from_group', None)
+                split_source = connection_data.pop('__split_source', None)
+                split_original = connection_data.pop('__split_original_nickname', None)
+
+                if split_from_group:
+                    from .api.models.connections import SplitConnectionRequest
+                    split_req = SplitConnectionRequest(
+                        connection_id=connection_id,
+                        original_host_token=split_original or connection_data.get('nickname', ''),
+                        source_config_path=split_source or '',
+                        config_patch=config_patch,
+                    )
+                    operation = lambda: self.client.split_connection(split_req)
+                else:
+                    request = UpdateConnectionRequest(
+                        nickname=connection_data.get('nickname'),
+                        hostname=connection_data.get('hostname'),
+                        username=connection_data.get('username'),
+                        port=connection_data.get('port'),
+                        config_patch=config_patch,
+                    )
+                    operation = lambda: self.client.update_connection(
+                        connection_id,
+                        request,
+                    )
+            else:
+                config_patch = _build_config_patch()
+                request = CreateConnectionRequest(
+                    nickname=connection_data.get('nickname', ''),
+                    hostname=connection_data.get('hostname', ''),
+                    username=connection_data.get('username', ''),
+                    port=connection_data.get('port', 22),
+                    protocol='ssh',
+                    config_patch=config_patch,
+                )
+                operation = lambda: self.client.create_connection(request)
+        except (ValueError, TypeError) as build_err:
+            logger.error(
+                "Failed to build connection request: %s",
+                build_err,
+                exc_info=True,
             )
-            operation = lambda: self.client.update_connection(
-                connection_id,
-                request,
-            )
-        else:
-            config_patch = _build_config_patch()
-            request = CreateConnectionRequest(
-                nickname=connection_data.get('nickname', ''),
-                hostname=connection_data.get('hostname', ''),
-                username=connection_data.get('username', ''),
-                port=connection_data.get('port', 22),
-                protocol='ssh',
-                config_patch=config_patch,
-            )
-            operation = lambda: self.client.create_connection(request)
+            complete_save(False)
+            return
 
         def _success(_details):
             if self._is_quitting:
@@ -6561,6 +6581,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.error(
                     "Daemon connection mutation failed type=%s",
                     type(error).__name__,
+                    exc_info=error,
                 )
             complete_save(False)
 

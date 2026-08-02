@@ -21,6 +21,7 @@ from .models.connections import (
     DeleteConnectionResult,
     StoreConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
+    SplitConnectionRequest,
     UpdateConnectionRequest,
 )
 from .models.interactions import (
@@ -144,6 +145,9 @@ class SshPilotClient(Protocol):
         ...
 
     def rename_group(self, group_id: str, new_name: str) -> bool:
+        ...
+
+    def split_connection(self, request: SplitConnectionRequest) -> bool:
         ...
 
     def get_daemon_status(self) -> DaemonStatus:

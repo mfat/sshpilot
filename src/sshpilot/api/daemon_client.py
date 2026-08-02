@@ -147,6 +147,7 @@ from .transport.codec import (
     release_terminal_input_request_to_wire,
     remote_file_entry_from_wire,
     rename_group_request_to_wire,
+    split_connection_request_to_wire,
     replay_request_to_wire,
     replay_result_from_wire,
     resize_terminal_request_to_wire,
@@ -644,6 +645,16 @@ class DaemonClient:
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid group rename result")
+        return result
+
+    def split_connection(self, request) -> bool:
+        self._require_capability(Capability.CONNECTIONS_SPLIT)
+        result = self._request(
+            "connections.split",
+            split_connection_request_to_wire(request),
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid split result")
         return result
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:

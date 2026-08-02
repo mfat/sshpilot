@@ -57,6 +57,7 @@ from ..models.connections import (
     GroupReference,
     LookupKeyPassphraseRequest,
     RenameGroupRequest,
+    SplitConnectionRequest,
     StoreConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
     UNSET,
@@ -1668,6 +1669,35 @@ def rename_group_request_from_wire(value: Any) -> RenameGroupRequest:
     return RenameGroupRequest(
         group_id=_text(data["group_id"], "group_id"),
         new_name=_text(data["new_name"], "new_name"),
+    )
+
+
+def split_connection_request_to_wire(
+    request: SplitConnectionRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SplitConnectionRequest:
+        raise TypeError("split connection request is required")
+    return {
+        "connection_id": request.connection_id,
+        "original_host_token": request.original_host_token,
+        "source_config_path": request.source_config_path,
+        "config_patch": dict(request.config_patch),
+        "expected_generation": request.expected_generation,
+    }
+
+
+def split_connection_request_from_wire(value: Any) -> SplitConnectionRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "original_host_token", "source_config_path", "config_patch"},
+        context="split connection request",
+    )
+    return SplitConnectionRequest(
+        connection_id=_identifier(data["connection_id"], "connection_id"),
+        original_host_token=_text(data["original_host_token"], "original_host_token"),
+        source_config_path=_text(data["source_config_path"], "source_config_path"),
+        config_patch=dict(data["config_patch"]),
+        expected_generation=int(data.get("expected_generation", 0)),
     )
 
 

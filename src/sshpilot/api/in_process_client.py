@@ -36,6 +36,7 @@ from .models.connections import (
     LookupKeyPassphraseRequest,
     StoreConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
+    SplitConnectionRequest,
     UNSET,
     UpdateConnectionRequest,
     forwarding_rule_from_dict,
@@ -112,6 +113,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "create_group": Capability.CONNECTIONS_GROUPS,
     "delete_group": Capability.CONNECTIONS_GROUPS,
     "rename_group": Capability.CONNECTIONS_GROUPS,
+    "split_connection": Capability.CONNECTIONS_SPLIT,
     "subscribe_events": Capability.CONNECTIONS_EVENTS,
     "update_connection": Capability.CONNECTIONS_WRITE,
 }
@@ -204,6 +206,7 @@ class InProcessClient:
             Capability.CONNECTIONS_SECRETS_WRITE,
             Capability.CONNECTIONS_METADATA_WRITE,
             Capability.CONNECTIONS_GROUPS,
+            Capability.CONNECTIONS_SPLIT,
         }
         if all(
             callable(getattr(connection_manager, method_name, None))
@@ -701,6 +704,36 @@ class InProcessClient:
             return True
         except Exception:
             logger.exception("Failed to rename group via daemon RPC")
+            return False
+
+    def split_connection(self, request: SplitConnectionRequest) -> bool:
+        """Split a host out of a multi-host SSH config block.
+
+        Removes ``request.original_host_token`` from its block in
+        ``request.source_config_path`` and appends a new standalone
+        ``Host`` block built from ``request.config_patch``.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SPLIT)
+        connection = self._find_connection(request.connection_id)
+        if connection is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=request.connection_id,
+            )
+        # The connection_manager's _split_host_block does the real work.
+        manager = self._connection_manager
+        try:
+            return bool(
+                manager._split_host_block(
+                    request.original_host_token,
+                    dict(request.config_patch),
+                    request.source_config_path,
+                )
+            )
+        except Exception:
+            logger.exception("Failed to split host block via daemon RPC")
             return False
 
     def enable_serialized_command_threads(self) -> None:

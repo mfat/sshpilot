@@ -66,6 +66,7 @@ from sshpilot.api.transport.codec import (
     replay_request_from_wire,
     replay_result_to_wire,
     rename_group_request_from_wire,
+    split_connection_request_from_wire,
     resize_terminal_request_from_wire,
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
@@ -108,6 +109,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.create_group": Capability.CONNECTIONS_GROUPS,
     "connections.delete_group": Capability.CONNECTIONS_GROUPS,
     "connections.rename_group": Capability.CONNECTIONS_GROUPS,
+    "connections.split": Capability.CONNECTIONS_SPLIT,
     "daemon.status": Capability.DAEMON_STATUS,
     "daemon.diagnostics": Capability.DAEMON_STATUS,
     "daemon.stop": Capability.DAEMON_CONTROL,
@@ -321,6 +323,7 @@ class RequestDispatcher:
             "connections.create_group": self._handle_create_group,
             "connections.delete_group": self._handle_delete_group,
             "connections.rename_group": self._handle_rename_group,
+            "connections.split": self._handle_split_connection,
             "interactions.list": self._handle_list_interactions,
             "interactions.get": self._handle_get_interaction,
             "interactions.claim": self._handle_claim_interaction,
@@ -821,6 +824,14 @@ class RequestDispatcher:
         return self._core_client.rename_group_rpc(
             typed_request.group_id, typed_request.new_name
         )
+
+    def _handle_split_connection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> bool:
+        typed_request = split_connection_request_from_wire(request.params)
+        return self._core_client.split_connection(typed_request)
 
     def _handle_list_sessions(
         self,
@@ -1572,6 +1583,7 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_SECRETS_WRITE,
                 Capability.CONNECTIONS_METADATA_WRITE,
                 Capability.CONNECTIONS_GROUPS,
+                Capability.CONNECTIONS_SPLIT,
             }
         )
         daemon_capabilities = connection_capabilities | frozenset(

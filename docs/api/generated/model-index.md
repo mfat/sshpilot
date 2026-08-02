@@ -2563,6 +2563,41 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SplitConnectionRequest -->
+## `SplitConnectionRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Split a connection out of a multi-host SSH config block.
+
+Removes ``original_host_token`` from the block identified by
+``source_config_path`` and appends a new standalone ``Host`` block
+built from ``config_patch``.  ``expected_generation`` is reserved
+for stale-editor detection and is ignored when zero.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `original_host_token` | `str` | Yes | — | No |
+| `source_config_path` | `str` | Yes | — | No |
+| `config_patch` | `Mapping[str, Any]` | Yes | — | No |
+| `expected_generation` | `int` | No | `0` | No |
+
+Synthetic representation:
+
+```json
+{
+  "config_patch": {},
+  "connection_id": "production",
+  "expected_generation": 0,
+  "original_host_token": "example",
+  "source_config_path": "example"
+}
+```
+
 <!-- api-model: StartTransferRequest -->
 ## `StartTransferRequest`
 

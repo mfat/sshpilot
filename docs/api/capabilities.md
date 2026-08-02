@@ -27,6 +27,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-runtime-capability: connections.secrets.write -->
 <!-- api-runtime-capability: connections.metadata.write -->
 <!-- api-runtime-capability: connections.groups -->
+<!-- api-runtime-capability: connections.split -->
 <!-- api-daemon-runtime-capability: connections.read -->
 <!-- api-daemon-runtime-capability: connections.events -->
 <!-- api-daemon-runtime-capability: connections.write -->
@@ -35,6 +36,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: connections.secrets.write -->
 <!-- api-daemon-runtime-capability: connections.metadata.write -->
 <!-- api-daemon-runtime-capability: connections.groups -->
+<!-- api-daemon-runtime-capability: connections.split -->
 <!-- api-daemon-runtime-capability: sessions.read -->
 <!-- api-daemon-runtime-capability: sessions.write -->
 <!-- api-daemon-runtime-capability: sessions.events -->
@@ -119,7 +121,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `connections.secrets.write` | Write passwords and passphrases through daemon RPCs | `InProcessClient` and daemon: Implemented | `store_connection_password`, `delete_connection_password`, `store_key_passphrase`, `lookup_key_passphrase`; wire `connections.store_password`, `connections.delete_password`, `connections.store_passphrase`, `connections.lookup_passphrase` | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
 | `connections.metadata.write` | Write non-SSH metadata (tags, aliases, WoL settings) | `InProcessClient` and daemon: Implemented | `update_connection_metadata`; wire `connections.update_metadata` | None defined | Gated by `CONNECTIONS_METADATA_WRITE` capability | v1 |
 | `connections.groups` | Assign and reorder connections within groups | `InProcessClient` and daemon: Implemented | `assign_connection_to_group`, `create_group`, `delete_group`, `rename_group`; wire `connections.assign_to_group`, `connections.create_group`, `connections.delete_group`, `connections.rename_group` | None defined | Gated by `CONNECTIONS_GROUPS` capability | v1 |
-| `connections.split` | Split a connection block from a multi-host group | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
+| `connections.split` | Split a connection block from a multi-host group | `InProcessClient` and daemon: Implemented | `split_connection`; wire `connections.split` | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
 
 <!-- api-capability: connections.read -->
 ## `connections.read`
@@ -419,8 +421,9 @@ groups. Gated behind `CONNECTIONS_GROUPS`.
 <!-- api-capability: connections.split -->
 ## `connections.split`
 
-Schema only. Enables splitting a connection block from a multi-host group
-into its own standalone entry. Gated behind `CONNECTIONS_SPLIT`.
+Implemented. Splits a connection block from a multi-host group into its own
+standalone entry. Removes the host token from the original block and appends a
+new standalone `Host` block. Gated behind `CONNECTIONS_SPLIT`.
 
 ## Frontend behaviour
 

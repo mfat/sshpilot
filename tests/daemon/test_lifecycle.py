@@ -20,6 +20,7 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.CONNECTIONS_SECRETS_WRITE,
             Capability.CONNECTIONS_METADATA_WRITE,
             Capability.CONNECTIONS_GROUPS,
+            Capability.CONNECTIONS_SPLIT,
             Capability.SESSIONS_READ,
             Capability.SESSIONS_WRITE,
             Capability.SESSIONS_EVENTS,

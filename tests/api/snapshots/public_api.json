@@ -302,6 +302,10 @@
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
+    "split_connection": {
+      "capability": "connections.split",
+      "status": "implemented"
+    },
     "start_transfer": {
       "capability": "transfers.write",
       "status": "daemon-only"
@@ -395,6 +399,7 @@
     "sftp_rmdir",
     "sftp_stat",
     "sftp_symlink",
+    "split_connection",
     "start_transfer",
     "stop_daemon",
     "store_connection_password",
@@ -965,6 +970,16 @@
       ],
       "return": "None"
     },
+    "split_connection": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SplitConnectionRequest"
+        }
+      ],
+      "return": "bool"
+    },
     "start_transfer": {
       "parameters": [
         {
@@ -1109,6 +1124,9 @@
     },
     "connections.rename_group": {
       "capability": "connections.groups"
+    },
+    "connections.split": {
+      "capability": "connections.split"
     },
     "connections.store_passphrase": {
       "capability": "connections.secrets.write"
@@ -1498,6 +1516,7 @@
     "SftpServiceState",
     "SftpServiceSummary",
     "SftpSymlinkRequest",
+    "SplitConnectionRequest",
     "StartTransferRequest",
     "StopDaemonRequest",
     "StoreConnectionPasswordRequest",
@@ -2097,6 +2116,13 @@
       "service_id",
       "target_path",
       "link_path"
+    ],
+    "SplitConnectionRequest": [
+      "connection_id",
+      "original_host_token",
+      "source_config_path",
+      "config_patch",
+      "expected_generation"
     ],
     "StartTransferRequest": [
       "connection_id",

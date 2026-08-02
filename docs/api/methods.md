@@ -138,6 +138,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: create_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: split_connection status=implemented capability=connections.split -->
 
 ## Daemon wire methods
 
@@ -162,6 +163,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.create_group` | `connections.groups` | Implemented |
 | `connections.delete_group` | `connections.groups` | Implemented |
 | `connections.rename_group` | `connections.groups` | Implemented |
+| `connections.split` | `connections.split` | Implemented |
 | `interactions.list` | `interactions.read` | Implemented |
 | `interactions.get` | `interactions.read` | Implemented |
 | `interactions.claim` | `interactions.respond` | Implemented |
@@ -223,6 +225,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.create_group capability=connections.groups -->
 <!-- api-daemon-method: connections.delete_group capability=connections.groups -->
 <!-- api-daemon-method: connections.rename_group capability=connections.groups -->
+<!-- api-daemon-method: connections.split capability=connections.split -->
 <!-- api-daemon-method: daemon.diagnostics capability=daemon.status -->
 <!-- api-daemon-method: daemon.restart capability=daemon.control -->
 <!-- api-daemon-method: daemon.status capability=daemon.status -->
@@ -492,6 +495,30 @@ client.delete_group("group-production")
 
 ```python
 client.rename_group("group-production", "Staging Servers")
+```
+
+<!-- api-method: split_connection -->
+## `split_connection`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.split`; split a connection out
+  of a multi-host SSH config block.
+- **Parameters / return:** `SplitConnectionRequest` with
+  `connection_id`, `original_host_token`, `source_config_path`,
+  `config_patch`, and optional `expected_generation`;
+  returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Removes the host token from the
+  original multi-host block and appends a new standalone `Host` block
+  to the config file.
+
+```python
+client.split_connection(SplitConnectionRequest(
+    connection_id="abc123",
+    original_host_token="server1",
+    source_config_path="/home/user/.ssh/config",
+    config_patch={"hostname": "10.0.0.1", "port": 22},
+))
 ```
 
 <!-- api-method: delete_connection -->

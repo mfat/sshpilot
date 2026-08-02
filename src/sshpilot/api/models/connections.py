@@ -505,6 +505,32 @@ class DeleteConnectionResult:
 
 
 @dataclass(frozen=True)
+class SplitConnectionRequest:
+    """Split a connection out of a multi-host SSH config block.
+
+    Removes ``original_host_token`` from the block identified by
+    ``source_config_path`` and appends a new standalone ``Host`` block
+    built from ``config_patch``.  ``expected_generation`` is reserved
+    for stale-editor detection and is ignored when zero.
+    """
+
+    connection_id: ConnectionId
+    original_host_token: str
+    source_config_path: str
+    config_patch: Mapping[str, Any]
+    expected_generation: int = 0
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        if not self.original_host_token or not self.original_host_token.strip():
+            raise ValueError("original_host_token must be a non-empty string")
+        if not self.source_config_path or not self.source_config_path.strip():
+            raise ValueError("source_config_path must be a non-empty string")
+        if not isinstance(self.config_patch, Mapping):
+            raise TypeError("config_patch must be a mapping")
+
+
+@dataclass(frozen=True)
 class ConnectionValidationError:
     field: str
     code: str
