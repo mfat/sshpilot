@@ -435,7 +435,19 @@ class DaemonClient:
 
     def _require_write_compatibility(self, operation: str) -> None:
         """Reject write operations if the daemon is running an incompatible API."""
-        if self.build_mismatch() == "api_implementation_version":
+        from .version import API_IMPLEMENTATION_VERSION
+        
+        incompatible = False
+        caps = self._capabilities
+        if caps is not None and caps.api_implementation_version != API_IMPLEMENTATION_VERSION:
+            incompatible = True
+        elif (
+            self._daemon_api_implementation_version
+            and self._daemon_api_implementation_version != API_IMPLEMENTATION_VERSION
+        ):
+            incompatible = True
+            
+        if incompatible:
             from .errors import DaemonRestartRequiredError
             raise DaemonRestartRequiredError(
                 f"Cannot {operation} because the background daemon is running an "
@@ -562,6 +574,7 @@ class DaemonClient:
         return result
 
     def delete_connection_password(self, request: DeleteConnectionPasswordRequest) -> bool:
+        self._require_write_compatibility("delete password")
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         result = self._request(
             "connections.delete_password",
@@ -573,6 +586,7 @@ class DaemonClient:
         return result
 
     def store_key_passphrase(self, request: StoreKeyPassphraseRequest) -> bool:
+        self._require_write_compatibility("store passphrase")
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         result = self._request(
             "connections.store_passphrase",
@@ -596,6 +610,7 @@ class DaemonClient:
         self, connection_id: ConnectionId, meta: Dict[str, Any]
     ) -> bool:
         self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
+        self._require_write_compatibility("update connection metadata")
         from .models.connections import UpdateConnectionMetadataRequest
         request = UpdateConnectionMetadataRequest(connection_id=connection_id, meta=meta)
         result = self._request(
@@ -611,6 +626,7 @@ class DaemonClient:
         self, connection_id: ConnectionId, group_id: str
     ) -> bool:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("assign connection to group")
         from .models.connections import AssignConnectionToGroupRequest
         request = AssignConnectionToGroupRequest(
             connection_id=connection_id, group_id=group_id
@@ -628,6 +644,7 @@ class DaemonClient:
         self, name: str, parent_id: str = "", color: str = ""
     ) -> Optional[str]:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("create group")
         from .models.connections import CreateGroupRequest
         request = CreateGroupRequest(name=name, parent_id=parent_id, color=color)
         result = self._request(

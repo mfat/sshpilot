@@ -377,6 +377,17 @@ class LookupKeyPassphraseRequest:
     key_path: str
 
     def __post_init__(self) -> None:
+        require_text(self.key_path, "key path")
+
+
+@dataclass(frozen=True)
+class DeleteKeyPassphraseRequest:
+    """Request to delete an SSH key passphrase."""
+
+    key_path: str
+
+    def __post_init__(self) -> None:
+        require_text(self.key_path, "key path")
         if not self.key_path.strip():
             raise ValueError("key_path must not be empty")
 
@@ -563,7 +574,11 @@ class SplitConnectionRequest:
     connection_id: ConnectionId
     original_host_token: str
     source_config_path: str
-    config_patch: Mapping[str, Any]
+    nickname: str
+    hostname: Optional[str] = None
+    username: Optional[str] = None
+    port: Optional[int] = None
+    config_patch: Mapping[str, Any] = field(default_factory=dict)
     expected_generation: Optional[int] = None
 
     def __post_init__(self) -> None:

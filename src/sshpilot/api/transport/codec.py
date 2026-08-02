@@ -59,6 +59,7 @@ from ..models.connections import (
     RenameGroupRequest,
     SplitConnectionRequest,
     StoreConnectionPasswordRequest,
+    DeleteKeyPassphraseRequest,
     StoreKeyPassphraseRequest,
     UNSET,
     UpdateConnectionMetadataRequest,
@@ -1011,9 +1012,12 @@ _EDITOR_DETAIL_FIELDS = frozenset({
     # routing
     "forward_agent",
     "forward_agent_target",
+    "forward_agent_explicit_no",
     "proxy_command",
     # forwarding
     "forwarding_rules",
+    "x11_forwarding_explicit_no",
+    "identities_only_explicit_no",
     # commands
     "pre_command",
     "local_command",
@@ -1044,10 +1048,13 @@ def connection_editor_details_to_wire(
         "pubkey_auth_no": details.pubkey_auth_no,
         "forward_agent": details.forward_agent,
         "forward_agent_target": details.forward_agent_target,
+        "forward_agent_explicit_no": details.forward_agent_explicit_no,
         "proxy_command": details.proxy_command,
         "forwarding_rules": [
             forwarding_rule_to_wire(r) for r in details.forwarding_rules
         ],
+        "x11_forwarding_explicit_no": details.x11_forwarding_explicit_no,
+        "identities_only_explicit_no": details.identities_only_explicit_no,
         "pre_command": details.pre_command,
         "local_command": details.local_command,
         "remote_command": details.remote_command,
@@ -1134,6 +1141,9 @@ def connection_editor_details_from_wire(
         ),
         pubkey_auth_no=_boolean(data["pubkey_auth_no"], "pubkey_auth_no"),
         forward_agent=_boolean(data["forward_agent"], "forward_agent"),
+        forward_agent_explicit_no=_boolean(
+            data["forward_agent_explicit_no"], "forward_agent_explicit_no"
+        ),
         forward_agent_target=_text(
             data["forward_agent_target"],
             "forward_agent_target",
@@ -1144,6 +1154,12 @@ def connection_editor_details_from_wire(
         ),
         forwarding_rules=tuple(
             forwarding_rule_from_wire(r) for r in forwarding_rules
+        ),
+        x11_forwarding_explicit_no=_boolean(
+            data["x11_forwarding_explicit_no"], "x11_forwarding_explicit_no"
+        ),
+        identities_only_explicit_no=_boolean(
+            data["identities_only_explicit_no"], "identities_only_explicit_no"
         ),
         pre_command=_text(data["pre_command"], "pre_command", allow_empty=True),
         local_command=_text(
@@ -1547,6 +1563,26 @@ def store_key_passphrase_request_from_wire(
         passphrase=_text(data["passphrase"], "passphrase"),
     )
 
+def delete_key_passphrase_request_to_wire(
+    request: DeleteKeyPassphraseRequest,
+) -> Dict[str, Any]:
+    if type(request) is not DeleteKeyPassphraseRequest:
+        raise TypeError("delete key passphrase request is required")
+    return {"key_path": request.key_path}
+
+
+def delete_key_passphrase_request_from_wire(
+    value: Any,
+) -> DeleteKeyPassphraseRequest:
+    data = _strict_fields(
+        value,
+        required={"key_path"},
+        context="delete key passphrase request",
+    )
+    return DeleteKeyPassphraseRequest(
+        key_path=_text(data["key_path"], "key path"),
+    )
+
 
 def lookup_key_passphrase_request_to_wire(
     request: LookupKeyPassphraseRequest,
@@ -1701,8 +1737,15 @@ def split_connection_request_to_wire(
         "connection_id": request.connection_id,
         "original_host_token": request.original_host_token,
         "source_config_path": request.source_config_path,
+        "nickname": request.nickname,
         "config_patch": dict(request.config_patch),
     }
+    if request.hostname is not None:
+        result["hostname"] = request.hostname
+    if request.username is not None:
+        result["username"] = request.username
+    if request.port is not None:
+        result["port"] = request.port
     if request.expected_generation is not None:
         result["expected_generation"] = request.expected_generation
     return result
@@ -1711,16 +1754,30 @@ def split_connection_request_to_wire(
 def split_connection_request_from_wire(value: Any) -> SplitConnectionRequest:
     data = _strict_fields(
         value,
-        required={"connection_id", "original_host_token", "source_config_path", "config_patch"},
+        required={"connection_id", "original_host_token", "source_config_path", "nickname", "config_patch"},
+        optional={"hostname", "username", "port", "expected_generation"},
         context="split connection request",
     )
     expected_generation = data.get("expected_generation")
     if expected_generation is not None:
-        expected_generation = _integer(expected_generation, "expected generation")
+        if type(expected_generation) is not int:
+            raise TypeError("expected_generation must be an integer if provided")
+    
+    port = data.get("port")
+    if port is not None:
+        if type(port) is not int:
+            raise TypeError("port must be an integer")
+        if not (1 <= port <= 65535):
+            raise ValueError("port must be between 1 and 65535")
+
     return SplitConnectionRequest(
         connection_id=_identifier(data["connection_id"], "connection_id"),
         original_host_token=_text(data["original_host_token"], "original_host_token"),
         source_config_path=_text(data["source_config_path"], "source_config_path"),
+        nickname=_text(data["nickname"], "nickname"),
+        hostname=_text(data["hostname"], "hostname") if "hostname" in data else None,
+        username=_text(data["username"], "username") if "username" in data else None,
+        port=port,
         config_patch=dict(data["config_patch"]),
         expected_generation=expected_generation,
     )

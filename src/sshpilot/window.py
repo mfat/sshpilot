@@ -6718,6 +6718,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         connection_id=connection_id,
                         original_host_token=split_original or connection_data.get('nickname', ''),
                         source_config_path=split_source or '',
+                        nickname=connection_data.get('nickname'),
+                        hostname=connection_data.get('hostname'),
+                        username=connection_data.get('username'),
+                        port=connection_data.get('port'),
                         config_patch=config_patch,
                         expected_generation=current_generation,
                     )
@@ -6768,37 +6772,46 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 complete_save(False, None)
                 return
 
-            pending_meta_local = pending_meta or {}
-            meta_error = None
-            if pending_meta_local and new_conn_id:
+            def _finish_save_flow(meta_error=None):
+                complete_save(True, _details, meta_error=meta_error)
                 try:
-                    self.client.update_connection_metadata(new_conn_id, pending_meta_local)
-                except Exception as exc:
-                    logger.debug("Metadata update via daemon RPC failed: %s", exc)
-                    meta_error = _("Saved, but tags/Wake-on-LAN settings could not be stored.")
+                    is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
+                    if callable(is_daemon_editor) and is_daemon_editor():
+                        dialog._daemon_generation = int(new_generation)
+                except Exception:
+                    pass
+                
+                try:
+                    conf = getattr(self.connection_manager, 'config', None)
+                    if conf and hasattr(conf, 'load_json_config'):
+                        conf.config_data = conf.load_json_config()
+                    self.connection_manager.load_ssh_config()
+                    self.rebuild_connection_list()
+                except Exception as error:
+                    logger.warning(
+                        "Post-mutation connection refresh failed type=%s",
+                        type(error).__name__,
+                    )
+
+            pending_meta_local = pending_meta or {}
+            if pending_meta_local and new_conn_id:
+                def _meta_success(_):
+                    _finish_save_flow()
+                def _meta_failure(error):
+                    logger.debug("Metadata update via daemon RPC failed: %s", error)
+                    _finish_save_flow(meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."))
+                try:
+                    bridge.submit(
+                        lambda: self.client.update_connection_metadata(new_conn_id, pending_meta_local),
+                        on_success=_meta_success,
+                        on_error=_meta_failure,
+                    )
+                    return
+                except RuntimeError:
+                    _finish_save_flow(meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."))
+                    return
                     
-            complete_save(True, _details, meta_error=meta_error)
-            
-            # If the dialog stays open, carry the freshly saved generation so
-            # the next save still gets real stale-editor protection.
-            try:
-                is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
-                if callable(is_daemon_editor) and is_daemon_editor():
-                    dialog._daemon_generation = int(new_generation)
-            except Exception:
-                pass
-            
-            try:
-                conf = getattr(self.connection_manager, 'config', None)
-                if conf and hasattr(conf, 'load_json_config'):
-                    conf.config_data = conf.load_json_config()
-                self.connection_manager.load_ssh_config()
-                self.rebuild_connection_list()
-            except Exception as error:
-                logger.warning(
-                    "Post-mutation connection refresh failed type=%s",
-                    type(error).__name__,
-                )
+            _finish_save_flow()
 
         def _failure(error):
             if isinstance(error, SshPilotError):
@@ -6827,6 +6840,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle connection saved from dialog"""
         save_completion = connection_data.pop('__save_completion', None)
         pending_meta = connection_data.pop('__meta', None)
+        # Prevent secret plan from entering process memory outside of dedicated ops
+        secret_plan = connection_data.pop('__secret_plan', None)
 
         def _complete_save(ok, result=None, meta_error=None):
             if callable(save_completion):

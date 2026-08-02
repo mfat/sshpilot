@@ -572,10 +572,11 @@ class InProcessClient:
                 "host": previous_host,
                 "username": previous_username,
             }
-            username = getattr(connection, "username", "") or ""
-            self._connection_manager.delete_connection_passwords(
+            username = previous_username or getattr(connection, "username", "") or ""
+            removed_prev = self._connection_manager.delete_connection_passwords(
                 previous_connection, username=username,
             )
+            removed = removed or removed_prev
         return removed
 
     def store_connection_password_rpc(
@@ -611,12 +612,22 @@ class InProcessClient:
             self._connection_manager.store_key_passphrase(key_path, passphrase)
         )
 
+    def delete_daemon_passphrase(self, key_path: str) -> bool:
+        return bool(self._connection_manager.delete_key_passphrase(key_path))
+
     def store_key_passphrase_rpc(
         self, request: StoreKeyPassphraseRequest
     ) -> bool:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         return self.store_daemon_passphrase(request.key_path, request.passphrase)
+
+    def delete_key_passphrase_rpc(
+        self, request: DeleteKeyPassphraseRequest
+    ) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.delete_daemon_passphrase(request.key_path)
 
     def lookup_key_passphrase_rpc(
         self, request: LookupKeyPassphraseRequest
@@ -732,28 +743,30 @@ class InProcessClient:
             )
         # The connection_manager's _split_host_block does the real work.
         manager = self._connection_manager
+        
+        # Build complete dataset for format_ssh_config_entry
+        new_data = dict(request.config_patch)
+        new_data["nickname"] = request.nickname
+        if request.hostname is not None:
+            new_data["hostname"] = request.hostname
+        if request.username is not None:
+            new_data["username"] = request.username
+        if request.port is not None:
+            new_data["port"] = request.port
+            
         try:
             success = manager._split_host_block(
                 request.original_host_token,
-                dict(request.config_patch),
+                new_data,
                 request.source_config_path,
             )
             if not success:
                 raise SshPilotError(ErrorCode.PERSISTENCE_FAILED, "Failed to split host block")
             
-            manager.reload_ssh_config_file()
+            manager.load_ssh_config()
             
-            # The nickname could be specified in the patch or use the original token
-            new_nickname = request.original_host_token
-            # The UI typically sends "nickname" mapped to "host" in config_patch, but 
-            # let's be careful. The format_ssh_config_entry looks for 'nickname' or 'Host'.
-            if "host" in request.config_patch:
-                if isinstance(request.config_patch["host"], list) and request.config_patch["host"]:
-                    new_nickname = request.config_patch["host"][0]
-                elif isinstance(request.config_patch["host"], str):
-                    new_nickname = request.config_patch["host"]
-            
-            new_conn = manager.get_connection(new_nickname)
+            new_nickname = request.nickname
+            new_conn = manager.find_connection_by_nickname(new_nickname)
             if new_conn is None:
                 # If we cannot find it under new_nickname, try finding by ID or fallback
                 # but usually it should be found by nickname.

@@ -2361,12 +2361,33 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def _refresh_save_sensitivity(self):
         """Gate every save button on the daemon snapshot (daemon edits only)."""
-        if not self.is_daemon_editor():
-            return
-        sensitive = self._daemon_editor_loaded and not self._editor_load_failed
+        has_errors = False
+        if hasattr(self, 'validation_results'):
+            has_errors = any(
+                (k in self.validation_results and not self.validation_results[k].is_valid)
+                for k in ('name', 'hostname', 'port', 'username')
+            )
+        form_is_valid = not has_errors
+        secret_busy = getattr(self, '_secret_save_in_progress', False)
+        
+        if self.is_daemon_editor():
+            snapshot_ok = self._daemon_editor_loaded
+            load_failed = self._editor_load_failed
+        else:
+            snapshot_ok = True
+            load_failed = False
+            
+        sensitive = form_is_valid and not secret_busy and snapshot_ok and not load_failed
+
         for button in getattr(self, '_save_buttons', ()):
             try:
                 button.set_sensitive(sensitive)
+            except Exception:
+                pass
+                
+        if hasattr(self, 'set_response_enabled'):
+            try:
+                self.set_response_enabled('save', sensitive)
             except Exception:
                 pass
 
@@ -3522,11 +3543,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                             ok = bool(manager.store_key_passphrase(key, value))
                     else:
                         if use_daemon:
-                            # Passphrase deletion not yet supported via daemon RPCs
-                            manager.delete_key_passphrase(key)
+                            from .api.models.connections import DeleteKeyPassphraseRequest
+                            req = DeleteKeyPassphraseRequest(key_path=key)
+                            ok = client.delete_key_passphrase(req)
                         else:
                             manager.delete_key_passphrase(key)
-                        ok = True
+                            ok = True
                     if not ok:
                         break
             except Exception:
@@ -3599,12 +3621,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             from .secret_storage import get_secret_manager
             if not get_secret_manager().selected_needs_unlock():
                 return False
-            pw = connection_data.get('password')
+            secret_plan = connection_data.get('__secret_plan', {})
+            pw = secret_plan.get('password')
             if pw and str(pw).strip():
                 return True
             # Clearing a stored password is a vault delete, which a locked
             # session backend silently skips — unlock for it too.
-            if connection_data.get('password_changed'):
+            if secret_plan.get('password_changed'):
                 return True
             editor = getattr(self, 'key_editor', None)
             return bool(editor is not None and editor.has_pending_passphrases())

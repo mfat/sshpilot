@@ -78,6 +78,7 @@ from sshpilot.api.transport.codec import (
     start_transfer_request_from_wire,
     store_connection_password_request_from_wire,
     store_key_passphrase_request_from_wire,
+    delete_key_passphrase_request_from_wire,
     transfer_summary_to_wire,
     update_connection_metadata_request_from_wire,
     update_connection_request_from_wire,
@@ -324,6 +325,7 @@ class RequestDispatcher:
             "connections.store_password": self._handle_store_connection_password,
             "connections.delete_password": self._handle_delete_connection_password,
             "connections.store_passphrase": self._handle_store_key_passphrase,
+            "connections.delete_passphrase": self._handle_delete_key_passphrase,
             "connections.lookup_passphrase": self._handle_lookup_key_passphrase,
             "connections.update_metadata": self._handle_update_connection_metadata,
             "connections.assign_to_group": self._handle_assign_to_group,
@@ -757,6 +759,20 @@ class RequestDispatcher:
             operation=lambda: self._core_client.store_daemon_passphrase(
                 typed_request.key_path,
                 typed_request.passphrase,
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_delete_key_passphrase(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = delete_key_passphrase_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._core_client.delete_daemon_passphrase(
+                typed_request.key_path,
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,

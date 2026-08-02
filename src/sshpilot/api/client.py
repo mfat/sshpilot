@@ -21,6 +21,7 @@ from .models.connections import (
     DeleteConnectionRequest,
     DeleteConnectionResult,
     StoreConnectionPasswordRequest,
+    DeleteKeyPassphraseRequest,
     StoreKeyPassphraseRequest,
     SplitConnectionRequest,
     UpdateConnectionRequest,
@@ -122,6 +123,9 @@ class SshPilotClient(Protocol):
         ...
 
     def store_key_passphrase(self, request: StoreKeyPassphraseRequest) -> bool:
+        ...
+
+    def delete_key_passphrase(self, request: DeleteKeyPassphraseRequest) -> bool:
         ...
 
     def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
