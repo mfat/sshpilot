@@ -257,8 +257,7 @@ class InteractionBroker:
             interaction_policy="broker",
         )
         argv = tuple(argv_value)
-        environment = os.environ.copy()
-        environment.update(environment_value)
+        environment = dict(environment_value)
         if not argv or len(argv) < 2:
             raise SshPilotError(
                 ErrorCode.SESSION_STARTUP_FAILED,
