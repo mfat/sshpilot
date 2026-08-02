@@ -6917,17 +6917,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         def _complete_save(ok, result=None, meta_error=None):
             if callable(save_completion):
-                import inspect
                 try:
-                    sig = inspect.signature(save_completion)
-                    if 'meta_error' in sig.parameters:
-                        save_completion(bool(ok), result, meta_error=meta_error)
-                    elif len(sig.parameters) >= 2:
-                        save_completion(bool(ok), result)
-                    else:
-                        save_completion(bool(ok))
-                except Exception:
-                    save_completion(bool(ok))
+                    save_completion(bool(ok), result, meta_error)
+                except TypeError:
+                    # Compatibility only for legacy third-party signal handlers;
+                    # ConnectionDialog.SaveRequest has one fixed signature.
+                    save_completion(bool(ok), result)
             has_secret_work = bool(
                 secret_plan and (
                     secret_plan.get('password_changed')

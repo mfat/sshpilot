@@ -224,6 +224,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ChallengePrompt -->
+## `ChallengePrompt`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** ChallengePrompt(text: str, attempt: int)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | No |
+| `attempt` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attempt": 0,
+  "text": "example"
+}
+```
+
 <!-- api-model: ClaimForwardRequest -->
 ## `ClaimForwardRequest`
 
@@ -1649,7 +1673,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionSummary(id: sshpilot.api.models.common.InteractionId, session_id: sshpilot.api.models.common.SessionId, connection_id: sshpilot.api.models.common.ConnectionId, type: sshpilot.api.models.interactions.InteractionType, state: sshpilot.api.models.interactions.InteractionState, created_at: datetime.datetime, expires_at: datetime.datetime, attempt: int, prompt: sshpilot.api.models.interactions.HostKeyPrompt | sshpilot.api.models.interactions.PasswordPrompt | sshpilot.api.models.interactions.PassphrasePrompt, responder_client_id: sshpilot.api.models.common.ClientId | None = None)
+**Purpose:** InteractionSummary(id: sshpilot.api.models.common.InteractionId, session_id: sshpilot.api.models.common.SessionId, connection_id: sshpilot.api.models.common.ConnectionId, type: sshpilot.api.models.interactions.InteractionType, state: sshpilot.api.models.interactions.InteractionState, created_at: datetime.datetime, expires_at: datetime.datetime, attempt: int, prompt: sshpilot.api.models.interactions.HostKeyPrompt | sshpilot.api.models.interactions.PasswordPrompt | sshpilot.api.models.interactions.PassphrasePrompt | sshpilot.api.models.interactions.ChallengePrompt | sshpilot.api.models.interactions.PresencePrompt, responder_client_id: sshpilot.api.models.common.ClientId | None = None)
 
 **Related methods:** None
 **Related events:** None
@@ -1664,7 +1688,7 @@ Synthetic representation:
 | `created_at` | `datetime` | Yes | — | No |
 | `expires_at` | `datetime` | Yes | — | No |
 | `attempt` | `int` | Yes | — | No |
-| `prompt` | `HostKeyPrompt | PasswordPrompt | PassphrasePrompt` | Yes | — | No |
+| `prompt` | `HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt` | Yes | — | No |
 | `responder_client_id` | `ClientId | None` | No | `null` | No |
 
 Synthetic representation:
@@ -2047,6 +2071,28 @@ Synthetic representation:
   "state": {},
   "target_host": "",
   "target_port": null
+}
+```
+
+<!-- api-model: PresencePrompt -->
+## `PresencePrompt`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** PresencePrompt(text: str)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "text": "example"
 }
 ```
 

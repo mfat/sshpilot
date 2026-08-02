@@ -35,6 +35,7 @@ from sshpilot.api.events import (
 )
 from sshpilot.api.interaction_identity import new_interaction_id
 from sshpilot.api.models import (
+    ChallengePrompt,
     ClientId,
     ConnectionId,
     HostKeyDecision,
@@ -49,6 +50,7 @@ from sshpilot.api.models import (
     InteractionType,
     PassphrasePrompt,
     PasswordPrompt,
+    PresencePrompt,
     RememberPolicy,
     SecretDecision,
     SessionId,
@@ -84,6 +86,8 @@ _SECRET_TYPES = frozenset(
     {
         InteractionType.PASSWORD,
         InteractionType.PRIVATE_KEY_PASSPHRASE,
+        InteractionType.KEYBOARD_INTERACTIVE,
+        InteractionType.SECURITY_KEY_PRESENCE,
     }
 )
 
@@ -114,17 +118,6 @@ class _InteractionRecord:
 
 
 @dataclass
-class _PendingRemember:
-    interaction_type: InteractionType
-    key: str
-    secret: bytearray
-
-    def clear(self) -> None:
-        self.secret[:] = b"\0" * len(self.secret)
-        self.secret.clear()
-
-
-@dataclass
 class _AskpassContext:
     token: str
     session_id: SessionId
@@ -137,7 +130,6 @@ class _AskpassContext:
     control_argv: tuple[str, ...]
     attempts: Dict[str, int]
     stored_attempted: set[str]
-    pending_remember: list[_PendingRemember]
     session_known_hosts: str = ""
     user_known_hosts_paths: tuple[str, ...] = ()
     hash_known_hosts: bool = False
@@ -287,7 +279,6 @@ class InteractionBroker:
             control_argv=(),
             attempts={},
             stored_attempted=set(),
-            pending_remember=[],
             session_known_hosts="",
             user_known_hosts_paths=tuple(str(path) for path in user_paths),
             hash_known_hosts=effective.get("hashknownhosts", "no") == "yes",
@@ -296,15 +287,17 @@ class InteractionBroker:
             self._require_open_locked()
             self._askpass_contexts[token] = context
             self._condition.notify_all()
-        environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
-        # Unhandled keyboard-interactive, username and hardware-presence
-        # prompts must remain available on the real PTY.
-        environment["SSH_ASKPASS_REQUIRE"] = "prefer"
-        environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
-        environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(
-            self._askpass_socket_path
-        )
-        environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
+        askpass_active = environment.pop("SSHPILOT_DAEMON_ASKPASS_ACTIVE", "") == "1"
+        if askpass_active:
+            environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
+            # Match the in-process resolver: askpass is preferred only when a
+            # saved password/passphrase activated it.
+            environment["SSH_ASKPASS_REQUIRE"] = "prefer"
+            environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
+            environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(
+                self._askpass_socket_path
+            )
+            environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
             f"session={spec.session_id}"
@@ -903,12 +896,11 @@ class InteractionBroker:
         return ErrorCode.SESSION_STARTUP_FAILED
 
     def mark_authenticated(self, session_id: SessionId) -> None:
-        """Commit remember-after-success work for an authenticated PTY."""
+        """Commit only host keys; PTY startup is not authentication success."""
 
         context = self._context_for_session(session_id)
         if context is None:
             return
-        self._store_authenticated_secrets(context.token)
         self._flush_accepted_host_keys(context)
 
     def _context_for_session(self, session_id: SessionId) -> Optional[_AskpassContext]:
@@ -1047,9 +1039,6 @@ class InteractionBroker:
 
     def _clear_context_locked(self, context: _AskpassContext) -> None:
         context.closed = True
-        for pending in context.pending_remember:
-            pending.clear()
-        context.pending_remember.clear()
         for name in (
             context.control_path,
             str(self._private_dir / f"k-{context.session_id[-12:]}"),
@@ -1206,13 +1195,18 @@ class InteractionBroker:
                 value = json.loads(
                     self._receive_exact(transport, request_size).decode("utf-8")
                 )
-                if type(value) is not dict or set(value) != {"token", "prompt"}:
+                if type(value) is not dict or set(value) not in (
+                    {"token", "prompt"},
+                    {"token", "prompt", "hint"},
+                ):
                     continue
                 token = value["token"]
                 prompt = value["prompt"]
+                hint = value.get("hint", "")
                 if (
                     type(token) is not str
                     or type(prompt) is not str
+                    or type(hint) is not str
                     or len(token) > 256
                     or len(prompt) > 4096
                 ):
@@ -1224,6 +1218,7 @@ class InteractionBroker:
                 secret = self._resolve_askpass_secret(
                     token,
                     prompt,
+                    hint=hint,
                     helper_transport=transport,
                 )
                 if secret is None or not secret or len(secret) > _MAX_SECRET_SIZE:
@@ -1265,17 +1260,28 @@ class InteractionBroker:
         token: str,
         raw_prompt: str,
         *,
+        hint: str = "",
         helper_transport: Optional[socket.socket] = None,
     ) -> Optional[bytearray]:
-        prompt_type = classify_prompt(raw_prompt)
+        normalized_hint = hint.strip().lower()
+        prompt_type = "presence" if normalized_hint == "none" else classify_prompt(raw_prompt)
         if prompt_type == "hostkey":
             return self._resolve_host_key_askpass(
                 token,
                 raw_prompt,
                 helper_transport=helper_transport,
             )
+        if prompt_type == "presence":
+            return self._resolve_nonstored_askpass(
+                token, raw_prompt, presence=True, helper_transport=helper_transport
+            )
         if prompt_type not in {"password", "passphrase"}:
-            return None
+            # This deliberately includes unknown prompts: the in-process helper
+            # treats them as keyboard-interactive because askpass invocation
+            # under REQUIRE=prefer does not reliably fall back to the PTY.
+            return self._resolve_nonstored_askpass(
+                token, raw_prompt, presence=False, helper_transport=helper_transport
+            )
         with self._condition:
             context = self._askpass_contexts.get(token)
             if context is None or context.closed or self._closed:
@@ -1284,8 +1290,6 @@ class InteractionBroker:
             attempt_key = f"{prompt_type}:{key_path}"
             attempt = context.attempts.get(attempt_key, 0) + 1
             context.attempts[attempt_key] = attempt
-            if attempt > 3:
-                return None
             # Only skip stored autofill after we already *returned* a stored
             # secret for this prompt. A miss/exception must not burn the only
             # autofill chance — secrets may not be ready on the first askpass
@@ -1382,7 +1386,7 @@ class InteractionBroker:
                 hostname=hostname,
                 port=port,
                 attempt=attempt,
-                can_remember=self._password_store is not None,
+                can_remember=False,
                 stored_secret_available=bool(stored),
             )
             append_askpass_log(
@@ -1393,7 +1397,7 @@ class InteractionBroker:
                 key_display_name=Path(key_path).name if key_path else "SSH key",
                 key_fingerprint=None,
                 attempt=attempt,
-                can_remember=self._passphrase_store is not None and bool(key_path),
+                can_remember=False,
                 stored_secret_available=bool(stored),
             )
             append_askpass_log(
@@ -1426,31 +1430,52 @@ class InteractionBroker:
         secret = result.secret
         result.secret = None
         append_askpass_log("ASKPASS: Returning secret from user dialog")
-        if result.remember_policy in {
-            RememberPolicy.STORE_AFTER_SUCCESS,
-            RememberPolicy.REPLACE_STORED_AFTER_SUCCESS,
-        }:
-            with self._condition:
-                current = self._askpass_contexts.get(token)
-                if current is not None and not current.closed:
-                    # Retries (wrong password then correct) must not keep the
-                    # failed secret queued for remember-after-success.
-                    if interaction_type is InteractionType.PASSWORD:
-                        retained = []
-                        for pending in current.pending_remember:
-                            if pending.interaction_type is InteractionType.PASSWORD:
-                                pending.clear()
-                            else:
-                                retained.append(pending)
-                        current.pending_remember.clear()
-                        current.pending_remember.extend(retained)
-                    current.pending_remember.append(
-                        _PendingRemember(
-                            interaction_type=interaction_type,
-                            key=key_path,
-                            secret=bytearray(secret),
-                        )
-                    )
+        result.clear()
+        return secret
+
+    def _resolve_nonstored_askpass(
+        self,
+        token: str,
+        raw_prompt: str,
+        *,
+        presence: bool,
+        helper_transport: Optional[socket.socket],
+    ) -> Optional[bytearray]:
+        with self._condition:
+            context = self._askpass_contexts.get(token)
+            if context is None or context.closed or self._closed:
+                return None
+            key = "presence" if presence else "interactive"
+            attempt = context.attempts.get(key, 0) + 1
+            context.attempts[key] = attempt
+            interaction_type = (
+                InteractionType.SECURITY_KEY_PRESENCE
+                if presence else InteractionType.KEYBOARD_INTERACTIVE
+            )
+            prompt: InteractionPrompt = (
+                PresencePrompt(text=raw_prompt.strip() or "Touch your security key")
+                if presence
+                else ChallengePrompt(text=raw_prompt.strip() or "Authentication response", attempt=attempt)
+            )
+            session_id = context.session_id
+            connection_id = context.connection_id
+        interaction = self.create(
+            session_id=session_id,
+            connection_id=connection_id,
+            interaction_type=interaction_type,
+            prompt=prompt,
+            attempt=attempt,
+        )
+        result = self.wait_for_result(
+            interaction.id,
+            cancel_check=(None if helper_transport is None else lambda: self._transport_is_closed(helper_transport)),
+        )
+        if result is None or result.decision is not SecretDecision.SUBMIT or result.secret is None:
+            if result is not None:
+                result.clear()
+            return None
+        secret = result.secret
+        result.secret = None
         result.clear()
         return secret
 
@@ -1462,33 +1487,6 @@ class InteractionBroker:
         if not value or len(value) > 4096 or "\0" in value:
             return ""
         return value
-
-    def _store_authenticated_secrets(self, token: str) -> None:
-        with self._condition:
-            context = self._askpass_contexts.get(token)
-            if context is None or context.closed:
-                return
-            pending = tuple(context.pending_remember)
-            context.pending_remember.clear()
-            connection_id = context.connection_id
-        for item in pending:
-            try:
-                value = item.secret.decode("utf-8")
-                stored = False
-                if item.interaction_type is InteractionType.PASSWORD:
-                    if self._password_store is not None:
-                        stored = bool(self._password_store(connection_id, value))
-                elif self._passphrase_store is not None and item.key:
-                    stored = bool(self._passphrase_store(item.key, value))
-                if not stored:
-                    raise RuntimeError("credential storage did not commit")
-            except Exception:
-                logger.warning(
-                    "Remembered SSH credential could not be stored type=%s",
-                    item.interaction_type.value,
-                )
-            finally:
-                item.clear()
 
     def _scheduler_main(self) -> None:
         while True:

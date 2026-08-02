@@ -1393,14 +1393,14 @@ class ConnectionDialog(
             self.claimed = True
             return self
 
-        def complete(self, *args, **kwargs):
+        def complete(self, ok, result=None, meta_error=None):
             # Synchronous consumers claim implicitly by completing; asynchronous
             # consumers must call claim() before returning from signal dispatch.
             self.claimed = True
             if self.completed or self.cancelled:
                 return None
             self.completed = True
-            return self._callback(*args, **kwargs)
+            return self._callback(ok, result, meta_error)
 
         __call__ = complete
 
@@ -1454,9 +1454,18 @@ class ConnectionDialog(
         self.validator = SSHConnectionValidator()
         self.validation_results: Dict[str, ValidationResult] = {}
         self._save_buttons = []
+        self._active_save_request = None
+        self.connect('close-request', self._cancel_active_save_request)
         
         self.setup_ui()
         GLib.idle_add(self.load_connection_data)
+
+    def _cancel_active_save_request(self, *_args):
+        request = self._active_save_request
+        if request is not None:
+            request.cancel()
+            self._active_save_request = None
+        return False
     
     def setup_ui(self):
         """Wire the dynamic content + buttons into the template skeleton."""
@@ -3455,6 +3464,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # No secret I/O — but the dialog still only closes once the window
             # reports a successful config write.
             def _after_plain_save(ok, result=None, meta_error=None):
+                self._active_save_request = None
                 self._set_secret_save_busy(False)
                 if meta_error:
                     self.show_error(meta_error)
@@ -3465,6 +3475,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     self.show_error(_("The connection settings could not be saved."))
 
             request = self.SaveRequest(_after_plain_save)
+            self._active_save_request = request
             self.emit('connection-saved', connection_data, metadata, secret_plan,
                       request)
             if not request.claimed:
@@ -3578,6 +3589,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                           close_spinner, spinner, True)
 
         def _after_config_saved(ok, mutation_result=None, meta_error=None):
+            self._active_save_request = None
             if mutation_result:
                 self._save_mutation_result = mutation_result
             if meta_error:
@@ -3599,6 +3611,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # its credentials. The private marker keeps update_connection from performing the
         # same secret I/O synchronously inside this signal emission.
         request = self.SaveRequest(_after_config_saved)
+        self._active_save_request = request
         self.emit('connection-saved', connection_data, metadata, secret_plan,
                   request)
         if not request.claimed:

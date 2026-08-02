@@ -62,6 +62,7 @@ from .daemon import (
     is_valid_lifecycle_transition,
 )
 from .interactions import (
+    ChallengePrompt,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -80,6 +81,7 @@ from .interactions import (
     InteractionType,
     PassphrasePrompt,
     PasswordPrompt,
+    PresencePrompt,
     RememberPolicy,
     SecretDecision,
 )
@@ -159,6 +161,7 @@ __all__ = [
     "AttachmentInfo",
     "AuthenticationMethod",
     "CancelTransferRequest",
+    "ChallengePrompt",
     "ClaimForwardRequest",
     "ClaimTerminalInputRequest",
     "ClientId",
@@ -230,6 +233,7 @@ __all__ = [
     "PluginOperationRequest",
     "PluginOperationResult",
     "PortForwardSummary",
+    "PresencePrompt",
     "ReleaseTerminalInputRequest",
     "RememberPolicy",
     "RemoteFileEntry",

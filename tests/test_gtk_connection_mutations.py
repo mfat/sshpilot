@@ -258,11 +258,13 @@ def test_changed_config_invalidates_partial_save_checkpoint():
 
     changed = _basic_data(hostname="corrected.example")
     window.on_connection_saved(dialog, changed, metadata, {}, lambda *_: None)
-    second_create = window.client_bridge.calls[2][0]
-    second_create()
+    update_existing = window.client_bridge.calls[2][0]
+    update_existing()
 
-    assert len(window.client.created) == 2
-    assert window.client.created[-1].hostname == "corrected.example"
+    assert len(window.client.created) == 1
+    assert len(window.client.updated) == 1
+    assert window.client.updated[0][0] == "demo"
+    assert window.client.updated[0][1].hostname == "corrected.example"
 
 
 def test_changed_metadata_invalidates_only_metadata_checkpoint():

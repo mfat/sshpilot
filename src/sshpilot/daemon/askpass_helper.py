@@ -38,7 +38,11 @@ def main() -> int:
     ):
         return 1
     request = json.dumps(
-        {"token": token, "prompt": prompt},
+        {
+            "token": token,
+            "prompt": prompt,
+            "hint": os.environ.get("SSH_ASKPASS_PROMPT", ""),
+        },
         separators=(",", ":"),
     ).encode("utf-8")
     if len(request) > _MAX_REQUEST:

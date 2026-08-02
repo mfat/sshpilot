@@ -8,6 +8,7 @@ from gi.repository import Adw, GLib, Gtk
 
 from .api.events import EventType
 from .api.models import (
+    ChallengePrompt,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -17,6 +18,7 @@ from .api.models import (
     InteractionType,
     PassphrasePrompt,
     PasswordPrompt,
+    PresencePrompt,
     RememberPolicy,
     SecretDecision,
     SessionId,
@@ -97,6 +99,8 @@ class DaemonInteractionDialogs:
         elif summary.type in {
             InteractionType.PASSWORD,
             InteractionType.PRIVATE_KEY_PASSPHRASE,
+            InteractionType.KEYBOARD_INTERACTIVE,
+            InteractionType.SECURITY_KEY_PRESENCE,
         }:
             self._present_secret(summary, parent)
 
@@ -167,12 +171,16 @@ class DaemonInteractionDialogs:
             can_remember = prompt.can_remember
         elif isinstance(prompt, PassphrasePrompt):
             heading = f"Passphrase for {prompt.key_display_name}"
-            can_remember = prompt.can_remember
+        elif isinstance(prompt, ChallengePrompt):
+            heading = "SSH authentication challenge"
+        elif isinstance(prompt, PresencePrompt):
+            heading = "Security key required"
         else:
             return
         dialog = Adw.AlertDialog(
             heading=heading,
-            body=f"Authentication attempt {summary.attempt}",
+            body=(prompt.text if isinstance(prompt, (ChallengePrompt, PresencePrompt))
+                  else f"Authentication attempt {summary.attempt}"),
         )
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -183,11 +191,10 @@ class DaemonInteractionDialogs:
             margin_end=12,
         )
         entry = Gtk.PasswordEntry(show_peek_icon=True)
+        if isinstance(prompt, PresencePrompt):
+            entry.set_visible(False)
         entry.connect("activate", lambda _entry: dialog.response("submit"))
         content.append(entry)
-        remember = Gtk.CheckButton(label="Remember after authentication succeeds")
-        remember.set_visible(can_remember)
-        content.append(remember)
         dialog.set_extra_child(content)
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("submit", "Continue")
@@ -204,7 +211,6 @@ class DaemonInteractionDialogs:
                 item,
                 response,
                 entry,
-                remember,
             ),
         )
         self._dialogs[summary.id] = dialog
@@ -216,7 +222,6 @@ class DaemonInteractionDialogs:
         dialog,
         response: str,
         entry: Gtk.PasswordEntry,
-        remember: Gtk.CheckButton,
     ) -> None:
         self._dialogs.pop(summary.id, None)
         if response != "submit":
@@ -232,14 +237,11 @@ class DaemonInteractionDialogs:
             )
             dialog.close()
             return
-        secret = bytearray(entry.get_text().encode("utf-8"))
+        secret = bytearray(
+            ("yes" if isinstance(summary.prompt, PresencePrompt) else entry.get_text()).encode("utf-8")
+        )
         entry.set_text("")
         self._pending_secrets[summary.id] = secret
-        remember_policy = (
-            RememberPolicy.STORE_AFTER_SUCCESS
-            if remember.get_active()
-            else RememberPolicy.DO_NOT_STORE
-        )
 
         def _send() -> None:
             nonce = self._claims.get(summary.id)
@@ -251,7 +253,7 @@ class DaemonInteractionDialogs:
                 InteractionDecisionRequest(
                     interaction_id=summary.id,
                     secret_decision=SecretDecision.SUBMIT,
-                    remember_policy=remember_policy,
+                    remember_policy=RememberPolicy.DO_NOT_STORE,
                 )
             )
             self._client.send_interaction_secret(
