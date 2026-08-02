@@ -3017,8 +3017,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 # tests): keep the legacy emit-then-close behavior.
                 data.pop('__save_completion', None)
                 self.close()
-            else:
-                _after_saved(False)
+            # else: consumer popped the marker and is handling the
+            # completion asynchronously (e.g. daemon bridge).  Do NOT
+            # assume failure here — the async callback will invoke
+            # _after_saved with the real result.
 
     def _collect_connection_meta(self):
         """Collect Wake-on-LAN and tags metadata (protocol-agnostic app meta)
@@ -3267,8 +3269,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     connection_data.pop('__save_completion', None)
                     self._set_secret_save_busy(False)
                     self.close()
-                else:
-                    _after_plain_save(False)
+                # else: consumer popped the marker and is handling the
+                # completion asynchronously (e.g. daemon bridge).  Do NOT
+                # assume failure here — the async callback will invoke
+                # _after_plain_save with the real result.
             return
         if manager is None:
             self._set_secret_save_busy(False)
@@ -3388,7 +3392,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         connection_data['__save_completion'] = _after_config_saved
         self.emit('connection-saved', connection_data)
         if not completion_called[0]:
-            _after_config_saved(False)
+            # Consumer popped the marker and is handling the completion
+            # asynchronously (e.g. daemon bridge).  Do NOT assume failure
+            # here — the async callback will invoke _after_config_saved
+            # with the real result.
+            pass
 
     def _finish_secret_save(self, connection_data, ok, close_spinner, spinner,
                             settings_saved):

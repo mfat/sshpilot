@@ -10,7 +10,6 @@ _SENSITIVE_DETAIL_KEY_PARTS = frozenset(
     {
         "argv",
         "authorization",
-        "command",
         "cookie",
         "credential",
         "env",
@@ -28,7 +27,8 @@ def _safe_key(key: Any, path: str) -> str:
     if type(key) is not str or not key:
         raise TypeError(f"{path} keys must be non-empty strings")
     normalized = key.lower().replace("-", "_")
-    if any(part in normalized for part in _SENSITIVE_DETAIL_KEY_PARTS):
+    parts = set(normalized.split("_"))
+    if parts & _SENSITIVE_DETAIL_KEY_PARTS:
         raise ValueError(f"{path} contains a disallowed sensitive detail key")
     return key
 

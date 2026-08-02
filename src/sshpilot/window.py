@@ -6486,6 +6486,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection_id = InProcessClient.connection_id_for(dialog.connection)
                 config_patch = _build_config_patch()
 
+                # In daemon mode the GUI and daemon have separate
+                # connection_manager instances with independent generations,
+                # so expected_generation from the GUI side will never match.
+                # Skip the stale-editor guard (generation=0 disables it).
+                # In in-process mode the shared connection_manager means the
+                # generation is authoritative.
+                current_generation = 0
+                if not self._daemon_mode_active():
+                    try:
+                        live = self.connection_manager.find_connection_by_nickname(
+                            str(getattr(dialog.connection, "nickname", "") or ""),
+                        )
+                        if live is not None:
+                            current_generation = getattr(live, "generation", 0)
+                    except Exception:
+                        current_generation = getattr(dialog.connection, "generation", 0)
+
                 # Pop split params — they drive a dedicated RPC, not
                 # the normal update_connection path.
                 split_from_group = connection_data.pop('__split_from_group', None)
@@ -6499,7 +6516,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         original_host_token=split_original or connection_data.get('nickname', ''),
                         source_config_path=split_source or '',
                         config_patch=config_patch,
-                        expected_generation=getattr(dialog.connection, 'generation', 0),
+                        expected_generation=current_generation,
                     )
                     operation = lambda: self.client.split_connection(split_req)
                 else:
@@ -6509,7 +6526,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         username=connection_data.get('username'),
                         port=connection_data.get('port'),
                         config_patch=config_patch,
-                        expected_generation=getattr(dialog.connection, 'generation', 0),
+                        expected_generation=current_generation,
                     )
                     operation = lambda: self.client.update_connection(
                         connection_id,
