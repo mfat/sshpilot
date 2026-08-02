@@ -1370,7 +1370,14 @@ class ConnectionDialog(
     __gtype_name__ = 'ConnectionDialog'
 
     __gsignals__ = {
-        'connection-saved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        # Config, metadata, secrets and completion deliberately travel as
+        # separate objects.  In particular, secret values must never be added
+        # to the dictionary that is accepted by ConnectionManager or encoded
+        # into a daemon mutation DTO.
+        'connection-saved': (
+            GObject.SignalFlags.RUN_FIRST, None,
+            (object, object, object, object),
+        ),
     }
 
     content_mount = Gtk.Template.Child()
@@ -3148,7 +3155,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # The live object is only mutated by the manager after a successful
         # persist; metadata rides the payload and the dialog closes only once
         # the window reports the save outcome.
-        data['__meta'] = self._collect_connection_meta()
+        metadata = self._collect_connection_meta()
         completion_called = [False]
 
         def _after_saved(ok):
@@ -3158,14 +3165,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             else:
                 self.show_error(_("The connection settings could not be saved."))
 
-        data['__save_completion'] = _after_saved
-        self.emit('connection-saved', data)
+        self.emit('connection-saved', data, metadata, {}, _after_saved)
         if not completion_called[0]:
-            if '__save_completion' in data:
-                # No consumer popped the marker (standalone dialog, e.g. in
-                # tests): keep the legacy emit-then-close behavior.
-                data.pop('__save_completion', None)
-                self.close()
+            # No consumer (standalone dialog, e.g. in tests): keep the legacy
+            # emit-then-close behavior.
+            self.close()
             # else: consumer popped the marker and is handling the
             # completion asynchronously (e.g. daemon bridge).  Do NOT
             # assume failure here — the async callback will invoke
@@ -3312,7 +3316,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             logger.debug("Failed to collect key passphrase changes", exc_info=True)
 
-        connection_data['__secret_plan'] = {
+        secret_plan = {
             'password_changed': bool(password_changed),
             'password': self.password_row.get_text(),
             'passphrase_operations': passphrase_ops,
@@ -3335,18 +3339,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Wake-on-LAN and tags metadata ride the payload; the window persists
         # them only after the config write succeeds.
-        connection_data['__meta'] = self._collect_connection_meta()
+        metadata = self._collect_connection_meta()
 
         if self.is_editing and self.connection:
-            connection_data['__previous_secret_identity'] = {
+            secret_plan['previous_identity'] = {
                 'nickname': getattr(self.connection, 'nickname', ''),
                 'hostname': getattr(self.connection, 'hostname', ''),
                 'host': getattr(self.connection, 'host', ''),
                 'username': getattr(self.connection, 'username', ''),
             }
-            # Provide connection ID for daemon secret RPCs
-            from .api.in_process_client import InProcessClient
-            connection_data['__connection_id'] = InProcessClient.connection_id_for(self.connection)
 
         # Editing rewrites the block as `Host <nickname>` (multi-host blocks go
         # through the split path), so aliases are cleared via the payload. The
@@ -3371,13 +3372,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Unlock first when needed, then persist all changed secrets in one worker. Secret
         # backends may invoke external tools (notably ``bw``), so none of this I/O may run
         # in the GTK signal handler.
-        if self._needs_secret_unlock_before_save(connection_data):
+        if self._needs_secret_unlock_before_save(secret_plan):
             try:
                 from .secret_unlock_dialog import prompt_unlock
 
                 def _after_unlock(ok):
                     if ok:
-                        self._store_secrets_then_save(connection_data)
+                        self._store_secrets_then_save(connection_data, metadata, secret_plan)
                     else:
                         self._set_secret_save_busy(False)
 
@@ -3389,17 +3390,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._set_secret_save_busy(False)
                 self.show_error(_("The secure storage backend could not be unlocked."))
                 return
-        self._store_secrets_then_save(connection_data)
+        self._store_secrets_then_save(connection_data, metadata, secret_plan)
 
     def _set_secret_save_busy(self, busy):
         self._secret_save_in_progress = bool(busy)
         self._refresh_save_sensitivity()
 
-    def _store_secrets_then_save(self, connection_data):
+    def _store_secrets_then_save(self, connection_data, metadata=None, secret_plan=None):
         """Persist changed secrets off-thread, then emit the normal save signal."""
+        metadata = metadata or {}
+        secret_plan = secret_plan or {}
         operations = []
-        previous_identity = connection_data.pop('__previous_secret_identity', None)
-        secret_plan = connection_data.get('__secret_plan', {})
+        previous_identity = secret_plan.get('previous_identity')
         manager = getattr(self, 'connection_manager', None)
         if manager is None:
             manager = getattr(getattr(self, 'parent_window', None),
@@ -3428,19 +3430,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     if meta_error:
                         self.show_error(meta_error)
                     else:
+                        self._clear_save_checkpoint()
                         self.close()
                 else:
                     self.show_error(_("The connection settings could not be saved."))
 
-            connection_data['__save_completion'] = _after_plain_save
-            self.emit('connection-saved', connection_data)
+            self.emit('connection-saved', connection_data, metadata, secret_plan,
+                      _after_plain_save)
             if not plain_completion_called[0]:
-                if '__save_completion' in connection_data:
-                    # No consumer popped the marker (standalone dialog, e.g. in
-                    # tests): keep the legacy emit-then-close behavior.
-                    connection_data.pop('__save_completion', None)
-                    self._set_secret_save_busy(False)
-                    self.close()
+                # No consumer (standalone dialog, e.g. in tests).
+                self._set_secret_save_busy(False)
+                self.close()
                 # else: consumer popped the marker and is handling the
                 # completion asynchronously (e.g. daemon bridge).  Do NOT
                 # assume failure here — the async callback will invoke
@@ -3487,7 +3487,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 DeleteConnectionPasswordRequest,
                             )
                             # Use the real connection_id returned by the mutation
-                            mutation_result = connection_data.get('__mutation_result')
+                            mutation_result = getattr(self, '_save_mutation_result', None)
                             conn_id = getattr(mutation_result, 'connection_id', None) or connection_data.get('nickname', '').strip()
                             if conn_id and action == 'store':
                                 req = StoreConnectionPasswordRequest(
@@ -3554,7 +3554,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 logger.exception("Failed to save connection secrets")
                 ok = False
-            GLib.idle_add(self._finish_secret_save, connection_data, ok,
+            GLib.idle_add(self._finish_secret_save, ok,
                           close_spinner, spinner, True)
 
         completion_called = [False]
@@ -3563,19 +3563,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             completion_called[0] = True
             if ok:
                 if mutation_result:
-                    connection_data['__mutation_result'] = mutation_result
-                if meta_error:
-                    connection_data['__meta_error'] = meta_error
+                    self._save_mutation_result = mutation_result
+                self._save_meta_error = meta_error
                 threading.Thread(target=_worker, daemon=True).start()
             else:
                 self._finish_secret_save(
-                    connection_data, False, close_spinner, spinner, False)
+                    False, close_spinner, spinner, False)
 
         # Preserve the established save order: persist connection/config data first, then
         # its credentials. The private marker keeps update_connection from performing the
         # same secret I/O synchronously inside this signal emission.
-        connection_data['__save_completion'] = _after_config_saved
-        self.emit('connection-saved', connection_data)
+        self.emit('connection-saved', connection_data, metadata, secret_plan,
+                  _after_config_saved)
         if not completion_called[0]:
             # Consumer popped the marker and is handling the completion
             # asynchronously (e.g. daemon bridge).  Do NOT assume failure
@@ -3583,16 +3582,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # with the real result.
             pass
 
-    def _finish_secret_save(self, connection_data, ok, close_spinner, spinner,
+    def _finish_secret_save(self, ok, close_spinner, spinner,
                             settings_saved):
         """Finish an asynchronous secret save on the GTK main thread."""
         def _after_closed(*_args):
             self._set_secret_save_busy(False)
             if ok:
-                meta_error = connection_data.get('__meta_error')
+                meta_error = getattr(self, '_save_meta_error', None)
                 if meta_error:
                     self.show_error(meta_error)
                 else:
+                    self._clear_save_checkpoint()
                     self.close()
             elif not settings_saved:
                 self.show_error(_("The connection settings could not be saved."))
@@ -3613,7 +3613,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             _after_closed()
         return False
 
-    def _needs_secret_unlock_before_save(self, connection_data) -> bool:
+    def _clear_save_checkpoint(self):
+        """Forget resumable daemon stages after the entire save succeeds."""
+        for name in ('_save_mutation_result', '_save_meta_error',
+                     '_daemon_save_checkpoint', '_daemon_metadata_saved',
+                     '_resumable_save_active'):
+            try:
+                delattr(self, name)
+            except AttributeError:
+                pass
+
+    def _needs_secret_unlock_before_save(self, secret_plan) -> bool:
         """True when saving would store or delete a secret — a host password or a key
         passphrase — and the selected session backend (Bitwarden/Vaultwarden) is locked
         or not signed in, so it should be unlocked before the secret I/O runs."""
@@ -3621,7 +3631,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             from .secret_storage import get_secret_manager
             if not get_secret_manager().selected_needs_unlock():
                 return False
-            secret_plan = connection_data.get('__secret_plan', {})
             pw = secret_plan.get('password')
             if pw and str(pw).strip():
                 return True

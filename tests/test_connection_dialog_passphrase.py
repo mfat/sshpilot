@@ -305,9 +305,9 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     emitted = []
     closed = []
 
-    def emit(signal, data):
-        emitted.append((signal, dict(data)))
-        data.pop('__save_completion')(True)
+    def emit(signal, data, metadata, secret_plan, completion):
+        emitted.append((signal, dict(data), dict(metadata), dict(secret_plan)))
+        completion(True)
 
     dialog.emit = emit
     dialog.close = lambda: closed.append(True)
@@ -323,13 +323,16 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
             'passphrase_operations': [('store', '/key', 'key-secret')],
         }
     }
-    dialog._store_secrets_then_save(data)
+    secret_plan = data.pop('__secret_plan')
+    dialog._store_secrets_then_save(data, {}, secret_plan)
 
     assert len(pending_threads) == 1
     assert pending_threads[0].daemon is True
     assert calls == []
     assert emitted[0][0] == 'connection-saved'
     assert emitted[0][1]['__secret_storage_done'] is True
+    assert '__secret_plan' not in emitted[0][1]
+    assert emitted[0][3]['password'] == 'host-secret'
     assert closed == []
 
     pending_threads[0].target()
@@ -389,7 +392,7 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     closed = []
     errors = []
 
-    dialog.emit = lambda signal, data: data.pop('__save_completion')(True)
+    dialog.emit = lambda signal, data, metadata, secrets, completion: completion(True)
     dialog.close = lambda: closed.append(True)
     dialog.show_error = lambda message: errors.append(message)
 
@@ -397,9 +400,7 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
         'hostname': 'example.com',
         'nickname': 'example',
         'username': 'demo',
-        '__password': '',
-        'password_changed': True,
-    })
+    }, {}, {'password': '', 'password_changed': True})
 
     assert errors == []
     assert closed == [True]
@@ -429,21 +430,21 @@ def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
     sm = ss.get_secret_manager()
 
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: True)
-    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': ''}}) is True   # passphrase
-    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': 'p'}}) is True  # password
+    assert dialog._needs_secret_unlock_before_save({'password': ''}) is True   # passphrase
+    assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is True  # password
 
     # No pending passphrase and no password -> no prompt even when locked.
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: False)
-    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': ''}}) is False
+    assert dialog._needs_secret_unlock_before_save({'password': ''}) is False
 
     # Clearing a stored password is a vault delete -> must unlock first.
     assert dialog._needs_secret_unlock_before_save(
-        {'__secret_plan': {'password': '', 'password_changed': True}}) is True
+        {'password': '', 'password_changed': True}) is True
 
     # Unlocked -> never needs a prompt.
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
-    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': 'p'}}) is False
+    assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is False
 
 
 def test_rule_editor_remote_to_local_resets_host_to_localhost():

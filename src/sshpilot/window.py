@@ -6633,6 +6633,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             complete_save(False)
             return
 
+        # A later metadata/secret stage may be retried after the config
+        # mutation has committed.  Keep the authoritative mutation result on
+        # the dialog so retry never repeats create/update/rename/split.
+        resumable = bool(getattr(dialog, '_resumable_save_active', False))
+        checkpoint = (getattr(dialog, '_daemon_save_checkpoint', None)
+                      if resumable else None)
+
         # Daemon edits may never save against a pending/failed snapshot: the
         # dialog disables Save in that state, but the signal path (accelerator,
         # programmatic) is gated here too.
@@ -6794,8 +6801,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
 
             pending_meta_local = pending_meta or {}
+            if getattr(dialog, '_daemon_metadata_saved', False):
+                _finish_save_flow()
+                return
             if pending_meta_local and new_conn_id:
                 def _meta_success(_):
+                    dialog._daemon_metadata_saved = True
                     _finish_save_flow()
                 def _meta_failure(error):
                     logger.debug("Metadata update via daemon RPC failed: %s", error)
@@ -6827,21 +6838,40 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 )
             complete_save(False)
 
+        if checkpoint is not None:
+            _success(checkpoint)
+            return
+
+        def _checkpoint_success(details):
+            if resumable:
+                dialog._daemon_save_checkpoint = details
+            _success(details)
+
         try:
             bridge.submit(
                 operation,
-                on_success=_success,
+                on_success=_checkpoint_success,
                 on_error=_failure,
             )
         except RuntimeError:
             complete_save(False)
 
-    def on_connection_saved(self, dialog, connection_data):
+    def on_connection_saved(self, dialog, connection_data, pending_meta=None,
+                            secret_plan=None, save_completion=None):
         """Handle connection saved from dialog"""
-        save_completion = connection_data.pop('__save_completion', None)
-        pending_meta = connection_data.pop('__meta', None)
-        # Prevent secret plan from entering process memory outside of dedicated ops
-        secret_plan = connection_data.pop('__secret_plan', None)
+        # Compatibility for third-party/plugin emitters using the pre-v2
+        # one-object signal.  Values are removed before any persistence call.
+        if save_completion is None:
+            save_completion = connection_data.pop('__save_completion', None)
+        if pending_meta is None:
+            pending_meta = connection_data.pop('__meta', None)
+        # The signal contract keeps these objects separate by construction.
+        # Assert at the persistence boundary as defence in depth.
+        if '__secret_plan' in connection_data:
+            logger.error("Rejected connection payload containing a secret plan")
+            if callable(save_completion):
+                save_completion(False)
+            return
 
         def _complete_save(ok, result=None, meta_error=None):
             if callable(save_completion):
@@ -6856,6 +6886,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         save_completion(bool(ok))
                 except Exception:
                     save_completion(bool(ok))
+            has_secret_work = bool(
+                secret_plan and (
+                    secret_plan.get('password_changed')
+                    or secret_plan.get('passphrase_operations')
+                )
+            )
+            if ok and not meta_error and not has_secret_work:
+                for name in ('_daemon_save_checkpoint', '_daemon_metadata_saved',
+                             '_resumable_save_active'):
+                    try:
+                        delattr(dialog, name)
+                    except AttributeError:
+                        pass
 
         try:
             if connection_data.get('protocol', 'ssh') != 'ssh':
@@ -6863,6 +6906,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     dialog, connection_data, _complete_save, pending_meta)
                 return
             if self._daemon_mode_active():
+                dialog._resumable_save_active = True
                 self._save_connection_via_client(
                     dialog,
                     connection_data,
