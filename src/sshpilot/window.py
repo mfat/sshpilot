@@ -4179,7 +4179,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if connection is None or as_new:
             dialog._daemon_generation = 0
             dialog.set_editor_source('local')
-        elif self._daemon_mode_active():
+        elif self._daemon_mode_active() and getattr(connection, 'protocol', 'ssh') == 'ssh':
             dialog.set_editor_source('daemon')
             dialog.set_daemon_editor_loading()
             self._fetch_daemon_editor_generation(dialog, connection)
@@ -6755,24 +6755,41 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if self._is_quitting:
                 complete_save(False)
                 return
+            try:
+                class DummyConnection:
+                    def __init__(self, nickname):
+                        self.nickname = nickname
+                new_conn_id = InProcessClient.connection_id_for(
+                    DummyConnection(connection_data.get('nickname', ''))
+                )
+            except Exception:
+                new_conn_id = None
+
             pending_meta = connection_data.get('__meta') or {}
-            if dialog.is_editing and pending_meta:
+            if dialog.is_editing and pending_meta and new_conn_id:
                 try:
-                    self.client.update_connection_metadata(connection_id, pending_meta)
+                    self.client.update_connection_metadata(new_conn_id, pending_meta)
                 except Exception as exc:
                     logger.debug("Metadata update via daemon RPC failed: %s", exc)
             complete_save(True)
             # If the dialog stays open, carry the freshly saved generation so
             # the next save still gets real stale-editor protection.
             try:
-                new_generation = getattr(_details, 'generation', None)
                 is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
                 if (
                     callable(is_daemon_editor)
                     and is_daemon_editor()
-                    and new_generation is not None
+                    and new_conn_id
                 ):
-                    dialog._daemon_generation = int(new_generation)
+                    new_generation = getattr(_details, 'generation', None)
+                    if new_generation is None:
+                        try:
+                            fresh = self.client.get_connection_editor(new_conn_id)
+                            new_generation = fresh.generation
+                        except Exception as e:
+                            logger.debug("Failed to refresh editor generation after save: %s", e)
+                    if new_generation is not None:
+                        dialog._daemon_generation = int(new_generation)
             except Exception:
                 pass
             try:

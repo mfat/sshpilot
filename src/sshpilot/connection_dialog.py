@@ -91,37 +91,37 @@ def _editor_details_to_connection(details):
         for rule in (getattr(details, 'forwarding_rules', None) or ())
     ]
     return types.SimpleNamespace(
-        nickname=getattr(details, 'nickname', ''),
-        hostname=getattr(details, 'hostname', '') or getattr(details, 'host', ''),
-        host=getattr(details, 'host', ''),
-        username=getattr(details, 'username', ''),
-        port=getattr(details, 'port', 22),
-        protocol=getattr(details, 'protocol', 'ssh'),
-        proxy_jump=getattr(details, 'proxy_jump', ()),
-        forward_agent=getattr(details, 'forward_agent', False),
+        nickname=getattr(details, 'nickname', '') or '',
+        hostname=getattr(details, 'hostname', '') or '',
+        host=getattr(details, 'host', '') or '',
+        username=getattr(details, 'username', '') or '',
+        port=getattr(details, 'port', None) or 22,
+        protocol=getattr(details, 'protocol', None) or 'ssh',
+        proxy_jump=getattr(details, 'proxy_jump', None) or (),
+        forward_agent=bool(getattr(details, 'forward_agent', False)),
         auth_method=(
             1 if authentication_method == AuthenticationMethod.PASSWORD else 0
         ),
-        pubkey_auth_no=getattr(details, 'pubkey_auth_no', False),
+        pubkey_auth_no=bool(getattr(details, 'pubkey_auth_no', False)),
         identity_files=identity_files,
         keyfile=(identity_files[0] if identity_files else ''),
         certificate_files=certificate_files,
         certificate=(certificate_files[0] if certificate_files else ''),
-        identity_agent=getattr(details, 'identity_agent', ''),
-        pkcs11_provider=getattr(details, 'pkcs11_provider', ''),
-        security_key_provider=getattr(details, 'security_key_provider', ''),
-        add_keys_to_agent=getattr(details, 'add_keys_to_agent', ''),
-        key_select_mode=getattr(details, 'key_select_mode', 0),
-        x11_forwarding=getattr(details, 'x11_forwarding', False),
-        extra_ssh_config=getattr(details, 'extra_ssh_config', ''),
-        pre_command=getattr(details, 'pre_command', ''),
-        local_command=getattr(details, 'local_command', ''),
-        remote_command=getattr(details, 'remote_command', ''),
+        identity_agent=getattr(details, 'identity_agent', '') or '',
+        pkcs11_provider=getattr(details, 'pkcs11_provider', '') or '',
+        security_key_provider=getattr(details, 'security_key_provider', '') or '',
+        add_keys_to_agent=getattr(details, 'add_keys_to_agent', '') or '',
+        key_select_mode=int(getattr(details, 'key_select_mode', 0) or 0),
+        x11_forwarding=bool(getattr(details, 'x11_forwarding', False)),
+        extra_ssh_config=getattr(details, 'extra_ssh_config', '') or '',
+        pre_command=getattr(details, 'pre_command', '') or '',
+        local_command=getattr(details, 'local_command', '') or '',
+        remote_command=getattr(details, 'remote_command', '') or '',
         forwarding_rules=forwarding_rules,
-        aliases=getattr(details, 'aliases', ()),
-        source=getattr(details, 'source', ''),
-        generation=getattr(details, 'generation', 0),
-        data={},
+        aliases=getattr(details, 'aliases', None) or (),
+        source=getattr(details, 'source', '') or '',
+        generation=getattr(details, 'generation', 0) or 0,
+        data=getattr(details, 'data', None) or {},
     )
 
 
@@ -2227,7 +2227,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                             mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
                         except Exception:
                             mode = 0
-                if has_specific_key and mode not in (1, 2):
+                if (has_specific_key or bool(certificate_files)) and mode not in (1, 2):
                     mode = 2
                 specific = mode in (1, 2)
                 self.key_select_row.set_selected(1 if specific else 0)
@@ -3282,6 +3282,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'security_key_provider': (self.security_key_provider_row.get_text().strip()
                                       if hasattr(self, 'security_key_provider_row') else ''),
             'password': self.password_row.get_text(),
+            '__password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
             'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
@@ -3362,11 +3363,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def _set_secret_save_busy(self, busy):
         self._secret_save_in_progress = bool(busy)
-        for button in getattr(self, '_save_buttons', []) or []:
-            try:
-                button.set_sensitive(not busy)
-            except Exception:
-                pass
+        self._refresh_save_sensitivity()
 
     def _store_secrets_then_save(self, connection_data):
         """Persist changed secrets off-thread, then emit the normal save signal."""
@@ -3377,8 +3374,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             manager = getattr(getattr(self, 'parent_window', None),
                               'connection_manager', None)
 
-        password = connection_data.get('password') or ''
-        if password or connection_data.get('password_changed'):
+        password = connection_data.get('__password') or ''
+        if connection_data.get('password_changed'):
             operations.append(('password', 'store' if password else 'delete', '', password))
 
         editor = getattr(self, 'key_editor', None)
@@ -3465,16 +3462,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 StoreConnectionPasswordRequest,
                                 DeleteConnectionPasswordRequest,
                             )
-                            conn_id = connection_data.get('__connection_id', '')
+                            # Use the new nickname as the identifier after a save
+                            conn_id = connection_data.get('nickname', '').strip()
                             if conn_id and action == 'store':
                                 req = StoreConnectionPasswordRequest(
                                     connection_id=conn_id,
                                     password=value,
+                                    previous_hostname=previous_identity.get('hostname', '') if previous_identity else '',
+                                    previous_host=previous_identity.get('host', '') if previous_identity else '',
+                                    previous_username=previous_identity.get('username', '') if previous_identity else '',
                                 )
                                 ok = client.store_connection_password(req)
                             elif conn_id:
                                 req = DeleteConnectionPasswordRequest(
                                     connection_id=conn_id,
+                                    previous_hostname=previous_identity.get('hostname', '') if previous_identity else '',
+                                    previous_host=previous_identity.get('host', '') if previous_identity else '',
+                                    previous_username=previous_identity.get('username', '') if previous_identity else '',
                                 )
                                 ok = client.delete_connection_password(req)
                             else:
@@ -3648,6 +3652,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         def _on_response(_dialog, response):
             if response == "retry" and callable(on_retry):
                 on_retry()
+            elif response == "close":
+                self.close()
 
         dialog.connect("response", _on_response)
         dialog.present()
