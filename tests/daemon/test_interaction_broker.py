@@ -652,6 +652,32 @@ def test_broker_options_win_over_conflicting_preference_overrides(
     assert argv[-1] == "example"
 
 
+def test_prepare_launch_does_not_force_connection_multiplexing(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+
+    argv, _environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+
+    assert not any("ControlMaster=" in item for item in argv)
+    assert not any("ControlPersist=" in item for item in argv)
+    assert not any("ControlPath=" in item for item in argv)
+
+
 def test_strict_host_key_mode_selects_first_occurrence() -> None:
     """Match OpenSSH: first obtained StrictHostKeyChecking wins."""
     argv = (

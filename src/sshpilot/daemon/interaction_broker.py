@@ -248,8 +248,8 @@ class InteractionBroker:
 
         ``trailing_args`` are appended after the target host once broker
         options have been inserted (e.g. ``("sftp",)`` for the SFTP subsystem
-        request) — the host must stay ``argv[-1]`` while ControlMaster options
-        are computed.
+        request) — the host must stay ``argv[-1]`` while broker options are
+        inserted.
         """
 
         argv_value, environment_value = launch_builder(
@@ -292,7 +292,6 @@ class InteractionBroker:
                 f"UserKnownHostsFile={known_hosts_value}",
             )
         token = secrets.token_urlsafe(32)
-        control_path = str(self._private_dir / f"c-{spec.session_id[-12:]}")
         options = (
             "-o",
             "BatchMode=no",
@@ -301,26 +300,12 @@ class InteractionBroker:
             "-o",
             "NumberOfPasswordPrompts=3",
             *host_key_options,
-            "-o",
-            "ControlMaster=yes",
-            "-o",
-            "ControlPersist=no",
-            "-o",
-            f"ControlPath={control_path}",
         )
         # OpenSSH keeps the first obtained value for each option. Insert broker
         # controls before preference overrides and strip conflicting earlier
         # copies of options we set — never strip StrictHostKeyChecking so the
         # Preferences/default accept-new (or ask/yes/no) reaches ssh.
         argv = self._with_broker_options(argv, options)
-        control_argv = (
-            argv[0],
-            "-S",
-            control_path,
-            "-O",
-            "check",
-            target,
-        )
         context = _AskpassContext(
             token=token,
             session_id=spec.session_id,
@@ -328,9 +313,9 @@ class InteractionBroker:
             hostname=hostname,
             username=username,
             port=port,
-            control_path=control_path,
+            control_path="",
             control_target=target,
-            control_argv=control_argv,
+            control_argv=(),
             attempts={},
             stored_attempted=set(),
             pending_remember=[],
