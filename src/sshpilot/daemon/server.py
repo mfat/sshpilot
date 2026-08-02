@@ -588,21 +588,6 @@ class DaemonServer:
                     ),
                 )
             )
-            # RUNNING means authenticated: wait for ControlMaster before the
-            # session leaves STARTING. Cancelled askpass maps to OPERATION_CANCELLED.
-            if (
-                hasattr(self._session_runtime, "set_auth_gate")
-                and hasattr(self._interaction_broker, "wait_for_control_master")
-            ):
-                broker = self._interaction_broker
-
-                def _auth_failure_classifier(session_id: SessionId) -> ErrorCode:
-                    if hasattr(broker, "classify_startup_failure"):
-                        return broker.classify_startup_failure(session_id)
-                    return ErrorCode.SESSION_STARTUP_FAILED
-
-                self._session_runtime._auth_failure_classifier = _auth_failure_classifier
-                self._session_runtime.set_auth_gate(broker.wait_for_control_master)
             self._dispatcher = RequestDispatcher(
                 self._core_client,
                 self._session_runtime,

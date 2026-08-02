@@ -486,6 +486,51 @@ def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     assert preloads == [True]
 
 
+def test_prepare_daemon_terminal_launch_carries_local_command(monkeypatch) -> None:
+    """Daemon SSH argv must preserve the host's parsed LocalCommand."""
+    from sshpilot.api.in_process_client import InProcessClient
+    from tests.daemon.conftest import TestConnection, TestConnectionManager
+
+    class LocalCommandConnection(TestConnection):
+        def __init__(self):
+            super().__init__(nickname="local-command", hostname="h", username="u")
+            self.id = "local-command"
+            self.uuid = "local-command"
+            self.local_command = 'notify-send "connected"'
+            self.data.update({
+                "id": "local-command",
+                "local_command": self.local_command,
+            })
+
+        async def native_connect(self, **kwargs):
+            from types import SimpleNamespace
+
+            self.ssh_connection_cmd = SimpleNamespace(
+                command=("ssh", "local-command"),
+                env={"PATH": "/usr/bin", "HOME": "/tmp", "TERM": "xterm"},
+                use_askpass=False,
+            )
+            return True
+
+    manager = TestConnectionManager()
+    manager.connections = [LocalCommandConnection()]
+    client = InProcessClient(manager, allow_cross_thread_commands=True)
+    monkeypatch.setattr("shutil.which", lambda name, path=None: "/usr/bin/ssh")
+
+    argv, _env = client.prepare_daemon_terminal_launch(
+        ConnectionId("local-command"), interaction_policy="broker"
+    )
+
+    assert argv == (
+        "/usr/bin/ssh",
+        "-o",
+        "PermitLocalCommand=yes",
+        "-o",
+        'LocalCommand=notify-send "connected"',
+        "local-command",
+    )
+
+
 def test_remembered_password_is_stored_only_after_authenticated_status(
     monkeypatch,
 ) -> None:
@@ -650,6 +695,32 @@ def test_broker_options_win_over_conflicting_preference_overrides(
     # UserKnownHostsFile from argv is left alone unless mode is ask.
     assert "UserKnownHostsFile=/tmp/user-known-hosts" in argv
     assert argv[-1] == "example"
+
+
+def test_prepare_launch_does_not_force_connection_multiplexing(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+
+    argv, _environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+
+    assert not any("ControlMaster=" in item for item in argv)
+    assert not any("ControlPersist=" in item for item in argv)
+    assert not any("ControlPath=" in item for item in argv)
 
 
 def test_strict_host_key_mode_selects_first_occurrence() -> None:
