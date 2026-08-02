@@ -20,6 +20,7 @@ class _Client:
         self.deleted = []
         self.editor = None
         self.editor_calls = 0
+        self.metadata = []
 
     def create_connection(self, request):
         self.created.append(request)
@@ -38,6 +39,10 @@ class _Client:
     def delete_connection(self, request):
         self.deleted.append(request)
         return SimpleNamespace(connection_id=request.connection_id, deleted=True)
+
+    def update_connection_metadata(self, connection_id, metadata):
+        self.metadata.append((connection_id, metadata))
+        return True
 
     def get_connection_editor(self, connection_id):
         self.editor_calls += 1
@@ -184,6 +189,54 @@ def test_daemon_mutation_failure_keeps_ui_state_and_uses_safe_completion():
     assert completed == [False]
     assert window.connection_manager.reloads == 0
     assert window.rebuilds == 0
+
+
+def test_metadata_retry_resumes_without_repeating_create():
+    window = _MutationWindow()
+    completed = []
+    metadata = {"wol_port": 9, "tags": []}
+    dialog = SimpleNamespace(is_editing=False, connection=None)
+
+    window.on_connection_saved(
+        dialog, _basic_data(), metadata, {},
+        lambda ok, *args, **kwargs: completed.append(ok),
+    )
+    mutation, mutation_ok, _ = window.client_bridge.calls[0]
+    result = mutation()
+    mutation_ok(result)
+    assert len(window.client.created) == 1
+
+    # Metadata failed after create committed.  Saving again retries metadata
+    # from the checkpoint instead of submitting another create operation.
+    window.client_bridge.calls[1][2](RuntimeError("metadata unavailable"))
+    assert completed == [True]
+    window.on_connection_saved(
+        dialog, _basic_data(), metadata, {},
+        lambda ok, *args, **kwargs: completed.append(ok),
+    )
+    assert len(window.client_bridge.calls) == 3
+    metadata_retry, metadata_ok, _ = window.client_bridge.calls[2]
+    metadata_retry()
+    metadata_ok(True)
+
+    assert len(window.client.created) == 1
+    assert completed == [True, True]
+
+
+def test_secret_plan_is_rejected_at_config_persistence_boundary():
+    window = _MutationWindow()
+    completed = []
+    data = _basic_data()
+    data["__secret_plan"] = {"password": "must-not-persist"}
+
+    window.on_connection_saved(
+        SimpleNamespace(is_editing=False, connection=None), data, {}, {},
+        lambda ok: completed.append(ok),
+    )
+
+    assert completed == [False]
+    assert window.client_bridge.calls == []
+    assert window.client.created == []
 
 
 def test_daemon_editor_save_path_never_sends_password():
@@ -988,7 +1041,5 @@ def test_daemon_editor_terminal_failure_offers_retry_that_works(monkeypatch):
     assert dialog._daemon_generation == 11
     assert dialog._daemon_editor_loaded is True
     assert dialog._editor_load_failed is False
-
-
 
 
