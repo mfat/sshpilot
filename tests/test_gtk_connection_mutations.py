@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from sshpilot.api import ErrorCode, SshPilotError
 from sshpilot.window import MainWindow
+from sshpilot.api.in_process_client import InProcessClient
 
 
 class _ControlledBridge:
@@ -209,7 +210,7 @@ def test_metadata_retry_resumes_without_repeating_create():
     # Metadata failed after create committed.  Saving again retries metadata
     # from the checkpoint instead of submitting another create operation.
     window.client_bridge.calls[1][2](RuntimeError("metadata unavailable"))
-    assert completed == [True]
+    assert completed == [False]
     window.on_connection_saved(
         dialog, _basic_data(), metadata, {},
         lambda ok, *args, **kwargs: completed.append(ok),
@@ -220,7 +221,96 @@ def test_metadata_retry_resumes_without_repeating_create():
     metadata_ok(True)
 
     assert len(window.client.created) == 1
-    assert completed == [True, True]
+    assert completed == [False, True]
+
+
+def test_metadata_false_is_failure_and_retry_does_not_repeat_create():
+    window = _MutationWindow()
+    completed = []
+    metadata = {"tags": ["ops"]}
+    dialog = SimpleNamespace(is_editing=False, connection=None)
+
+    window.on_connection_saved(
+        dialog, _basic_data(), metadata, {},
+        lambda ok, result=None, meta_error=None: completed.append(
+            (ok, result, meta_error)
+        ),
+    )
+    create, create_ok, _ = window.client_bridge.calls[0]
+    create_ok(create())
+    window.client_bridge.calls[1][1](False)
+
+    assert completed[0][0] is False
+    assert completed[0][1].connection_id == "demo"
+    assert completed[0][2]
+    assert len(window.client.created) == 1
+
+
+def test_changed_config_invalidates_partial_save_checkpoint():
+    window = _MutationWindow()
+    dialog = SimpleNamespace(is_editing=False, connection=None)
+    metadata = {"tags": ["ops"]}
+
+    window.on_connection_saved(dialog, _basic_data(), metadata, {}, lambda *_: None)
+    create, create_ok, _ = window.client_bridge.calls[0]
+    create_ok(create())
+    window.client_bridge.calls[1][2](RuntimeError("metadata unavailable"))
+
+    changed = _basic_data(hostname="corrected.example")
+    window.on_connection_saved(dialog, changed, metadata, {}, lambda *_: None)
+    second_create = window.client_bridge.calls[2][0]
+    second_create()
+
+    assert len(window.client.created) == 2
+    assert window.client.created[-1].hostname == "corrected.example"
+
+
+def test_changed_metadata_invalidates_only_metadata_checkpoint():
+    window = _MutationWindow()
+    dialog = SimpleNamespace(
+        is_editing=False,
+        connection=None,
+        _resumable_save_active=True,
+        _daemon_save_checkpoint=SimpleNamespace(connection_id="demo", generation=1),
+        _daemon_config_fingerprint=MainWindow._normalise_daemon_editor_value({
+            key: value for key, value in _basic_data().items()
+            if not key.startswith('__')
+        }),
+        _daemon_metadata_saved=True,
+        _daemon_metadata_fingerprint=MainWindow._normalise_daemon_editor_value(
+            {"tags": ["old"]}
+        ),
+    )
+
+    window.on_connection_saved(
+        dialog, _basic_data(), {"tags": ["new"]}, {}, lambda *_: None
+    )
+
+    assert len(window.client.created) == 0
+    metadata_operation = window.client_bridge.calls[0][0]
+    assert metadata_operation() is True
+    assert window.client.metadata == [("demo", {"tags": ["new"]})]
+
+
+def test_daemon_delete_absent_password_is_idempotent():
+    client = InProcessClient.__new__(InProcessClient)
+    client._find_connection = lambda _connection_id: SimpleNamespace(
+        hostname="demo.example", host="demo", username="alice"
+    )
+    client._connection_manager = SimpleNamespace(
+        delete_connection_passwords=lambda *_args, **_kwargs: False
+    )
+
+    assert client.delete_daemon_password("demo") is True
+
+
+def test_daemon_delete_absent_passphrase_is_idempotent():
+    client = InProcessClient.__new__(InProcessClient)
+    client._connection_manager = SimpleNamespace(
+        delete_key_passphrase=lambda _path: False
+    )
+
+    assert client.delete_daemon_passphrase("/tmp/missing-key") is True
 
 
 def test_secret_plan_is_rejected_at_config_persistence_boundary():
@@ -1041,5 +1131,3 @@ def test_daemon_editor_terminal_failure_offers_retry_that_works(monkeypatch):
     assert dialog._daemon_generation == 11
     assert dialog._daemon_editor_loaded is True
     assert dialog._editor_load_failed is False
-
-

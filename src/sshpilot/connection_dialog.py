@@ -1380,6 +1380,23 @@ class ConnectionDialog(
         ),
     }
 
+    class SaveRequest:
+        """Completion callback with an explicit signal-consumer handshake."""
+
+        def __init__(self, callback):
+            self.claimed = False
+            self._callback = callback
+
+        def claim(self):
+            self.claimed = True
+            return self
+
+        def __call__(self, *args, **kwargs):
+            # Synchronous consumers claim implicitly by completing; asynchronous
+            # consumers must call claim() before returning from signal dispatch.
+            self.claimed = True
+            return self._callback(*args, **kwargs)
+
     content_mount = Gtk.Template.Child()
     cancel_button = Gtk.Template.Child()
     save_button = Gtk.Template.Child()
@@ -3421,30 +3438,25 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not operations:
             # No secret I/O — but the dialog still only closes once the window
             # reports a successful config write.
-            plain_completion_called = [False]
-
             def _after_plain_save(ok, result=None, meta_error=None):
-                plain_completion_called[0] = True
                 self._set_secret_save_busy(False)
-                if ok:
-                    if meta_error:
-                        self.show_error(meta_error)
-                    else:
-                        self._clear_save_checkpoint()
-                        self.close()
+                if meta_error:
+                    self.show_error(meta_error)
+                elif ok:
+                    self._clear_save_checkpoint()
+                    self.close()
                 else:
                     self.show_error(_("The connection settings could not be saved."))
 
+            request = self.SaveRequest(_after_plain_save)
             self.emit('connection-saved', connection_data, metadata, secret_plan,
-                      _after_plain_save)
-            if not plain_completion_called[0]:
-                # No consumer (standalone dialog, e.g. in tests).
+                      request)
+            if not request.claimed:
+                # An unclaimed request means there is no persistence consumer.
+                # Never infer that from whether an asynchronous callback happened
+                # to complete while emit() was on the stack.
                 self._set_secret_save_busy(False)
                 self.close()
-                # else: consumer popped the marker and is handling the
-                # completion asynchronously (e.g. daemon bridge).  Do NOT
-                # assume failure here — the async callback will invoke
-                # _after_plain_save with the real result.
             return
         if manager is None:
             self._set_secret_save_busy(False)
@@ -3488,7 +3500,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                             )
                             # Use the real connection_id returned by the mutation
                             mutation_result = getattr(self, '_save_mutation_result', None)
-                            conn_id = getattr(mutation_result, 'connection_id', None) or connection_data.get('nickname', '').strip()
+                            conn_id = getattr(mutation_result, 'connection_id', None)
+                            if not conn_id:
+                                raise RuntimeError(
+                                    "Daemon secret save has no authoritative mutation result"
+                                )
                             if conn_id and action == 'store':
                                 req = StoreConnectionPasswordRequest(
                                     connection_id=conn_id,
@@ -3506,20 +3522,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                     previous_username=previous_identity.get('username', '') if previous_identity else '',
                                 )
                                 ok = client.delete_connection_password(req)
-                            else:
-                                # Create case: no connection_id yet, use local manager
-                                if action == 'store':
-                                    ok = bool(manager.store_connection_password(
-                                        connection_data, value, username=username,
-                                        previous_connection=previous_identity))
-                                else:
-                                    manager.delete_connection_passwords(
-                                        connection_data, username=username)
-                                    if previous_identity:
-                                        previous_user = previous_identity.get('username') or username
-                                        manager.delete_connection_passwords(
-                                            previous_identity, username=previous_user)
-                                    ok = True
                         else:
                             # Direct local storage
                             if action == 'store':
@@ -3557,14 +3559,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             GLib.idle_add(self._finish_secret_save, ok,
                           close_spinner, spinner, True)
 
-        completion_called = [False]
-
         def _after_config_saved(ok, mutation_result=None, meta_error=None):
-            completion_called[0] = True
-            if ok:
+            if mutation_result:
+                self._save_mutation_result = mutation_result
+            if meta_error:
+                self._save_meta_error = meta_error
+                self._finish_secret_save(False, close_spinner, spinner, True)
+            elif ok:
+                try:
+                    delattr(self, '_save_meta_error')
+                except AttributeError:
+                    pass
                 if mutation_result:
                     self._save_mutation_result = mutation_result
-                self._save_meta_error = meta_error
                 threading.Thread(target=_worker, daemon=True).start()
             else:
                 self._finish_secret_save(
@@ -3573,14 +3580,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Preserve the established save order: persist connection/config data first, then
         # its credentials. The private marker keeps update_connection from performing the
         # same secret I/O synchronously inside this signal emission.
+        request = self.SaveRequest(_after_config_saved)
         self.emit('connection-saved', connection_data, metadata, secret_plan,
-                  _after_config_saved)
-        if not completion_called[0]:
-            # Consumer popped the marker and is handling the completion
-            # asynchronously (e.g. daemon bridge).  Do NOT assume failure
-            # here — the async callback will invoke _after_config_saved
-            # with the real result.
-            pass
+                  request)
+        if not request.claimed:
+            self._finish_secret_save(False, close_spinner, spinner, False)
 
     def _finish_secret_save(self, ok, close_spinner, spinner,
                             settings_saved):
@@ -3594,6 +3598,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 else:
                     self._clear_save_checkpoint()
                     self.close()
+            elif getattr(self, '_save_meta_error', None):
+                self.show_error(self._save_meta_error)
             elif not settings_saved:
                 self.show_error(_("The connection settings could not be saved."))
             else:
@@ -3617,6 +3623,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Forget resumable daemon stages after the entire save succeeds."""
         for name in ('_save_mutation_result', '_save_meta_error',
                      '_daemon_save_checkpoint', '_daemon_metadata_saved',
+                     '_daemon_config_fingerprint', '_daemon_metadata_fingerprint',
                      '_resumable_save_active'):
             try:
                 delattr(self, name)

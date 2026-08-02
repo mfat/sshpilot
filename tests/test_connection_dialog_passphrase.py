@@ -406,6 +406,34 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     assert closed == [True]
 
 
+def test_no_secret_daemon_save_waits_for_explicit_async_claim():
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.connection_manager = DummyConnectionManager()
+    dialog._save_buttons = []
+    completions = []
+    closed = []
+    errors = []
+
+    def emit(_signal, _data, _metadata, _secrets, request):
+        request.claim()
+        completions.append(request)
+
+    dialog.emit = emit
+    dialog.close = lambda: closed.append(True)
+    dialog.show_error = lambda message: errors.append(message)
+
+    dialog._store_secrets_then_save(
+        {'nickname': 'demo', 'hostname': 'demo.example', 'username': 'alice'},
+        {}, {},
+    )
+
+    assert closed == []
+    assert len(completions) == 1
+    completions[0](False)
+    assert closed == []
+    assert len(errors) == 1
+
+
 def test_has_pending_passphrases_detects_cleared_entry():
     # A cleared passphrase (initial non-empty, entry now empty) is a pending
     # delete and must count as a change, so the unlock gate fires for it.
