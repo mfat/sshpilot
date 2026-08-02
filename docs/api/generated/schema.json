@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.11",
+  "api_implementation_version": "0.12",
   "client_method_contract": {
     "assign_connection_to_group": {
       "capability": "connections.groups",
@@ -550,6 +550,7 @@
     ],
     "ErrorCode": [
       "unsupported_capability",
+      "api_version_mismatch",
       "invalid_request",
       "validation_failed",
       "connection_already_exists",

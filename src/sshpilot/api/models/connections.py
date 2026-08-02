@@ -43,8 +43,31 @@ class ForwardingRule:
             raise ValueError("forwarding rule listen_port must be 1-65535")
 
 
-def forwarding_rule_to_dict(rule: ForwardingRule) -> dict:
-    """Convert to the dict schema used by the existing formatter/parser."""
+def forwarding_rule_to_dict(rule: Union['ForwardingRule', dict]) -> dict:
+    """Convert to the dict schema used by the existing formatter/parser.
+    Also accepts a dict and returns a validated copy.
+    """
+    if isinstance(rule, dict):
+        d = dict(rule)
+        rtype = d.get('type')
+        if rtype not in ('local', 'remote', 'dynamic'):
+            raise ValueError(f"forwarding rule type must be local/remote/dynamic, got {rtype!r}")
+        try:
+            d['listen_port'] = int(d.get('listen_port', 0) or 0)
+        except (TypeError, ValueError):
+            d['listen_port'] = 0
+        if rtype == 'local':
+            try:
+                d['remote_port'] = int(d.get('remote_port', 0) or 0)
+            except (TypeError, ValueError):
+                d['remote_port'] = 0
+        elif rtype == 'remote' and not d.get('socks'):
+            try:
+                d['local_port'] = int(d.get('local_port', 0) or 0)
+            except (TypeError, ValueError):
+                d['local_port'] = 0
+        return d
+
     d: dict = {
         "type": rule.type,
         "listen_addr": rule.listen_addr,

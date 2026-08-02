@@ -707,7 +707,7 @@ class InProcessClient:
             logger.exception("Failed to rename group via daemon RPC")
             return False
 
-    def split_connection(self, request: SplitConnectionRequest) -> bool:
+    def split_connection(self, request: SplitConnectionRequest) -> 'ConnectionMutationResult':
         """Split a host out of a multi-host SSH config block.
 
         Removes ``request.original_host_token`` from its block in
@@ -733,16 +733,43 @@ class InProcessClient:
         # The connection_manager's _split_host_block does the real work.
         manager = self._connection_manager
         try:
-            return bool(
-                manager._split_host_block(
-                    request.original_host_token,
-                    dict(request.config_patch),
-                    request.source_config_path,
-                )
+            success = manager._split_host_block(
+                request.original_host_token,
+                dict(request.config_patch),
+                request.source_config_path,
             )
+            if not success:
+                raise SshPilotError(ErrorCode.PERSISTENCE_FAILED, "Failed to split host block")
+            
+            manager.reload_ssh_config_file()
+            
+            # The nickname could be specified in the patch or use the original token
+            new_nickname = request.original_host_token
+            # The UI typically sends "nickname" mapped to "host" in config_patch, but 
+            # let's be careful. The format_ssh_config_entry looks for 'nickname' or 'Host'.
+            if "host" in request.config_patch:
+                if isinstance(request.config_patch["host"], list) and request.config_patch["host"]:
+                    new_nickname = request.config_patch["host"][0]
+                elif isinstance(request.config_patch["host"], str):
+                    new_nickname = request.config_patch["host"]
+            
+            new_conn = manager.get_connection(new_nickname)
+            if new_conn is None:
+                # If we cannot find it under new_nickname, try finding by ID or fallback
+                # but usually it should be found by nickname.
+                raise SshPilotError(ErrorCode.CONNECTION_NOT_FOUND, "Failed to locate split connection")
+
+            from .models.connections import ConnectionMutationResult
+            return ConnectionMutationResult(
+                connection_id=getattr(new_conn, "id", new_conn.nickname),
+                nickname=new_conn.nickname,
+                generation=getattr(new_conn, "generation", 0),
+            )
+        except SshPilotError:
+            raise
         except Exception:
             logger.exception("Failed to split host block via daemon RPC")
-            return False
+            raise SshPilotError(ErrorCode.PERSISTENCE_FAILED, "Failed to split host block")
 
     def enable_serialized_command_threads(self) -> None:
         """Allow daemon-owned serialized workers to invoke this adapter."""
@@ -821,11 +848,13 @@ class InProcessClient:
                         data[key] = list(value) if value else []
                 elif key == "forwarding_rules":
                     from .models.connections import forwarding_rule_to_dict
-                    data[key] = [
-                        forwarding_rule_to_dict(r) if hasattr(r, '__dataclass_fields__')
-                        else r if isinstance(r, dict) else {}
-                        for r in value
-                    ]
+                    try:
+                        data[key] = [forwarding_rule_to_dict(r) for r in value]
+                    except ValueError as e:
+                        raise SshPilotError(
+                            ErrorCode.VALIDATION_FAILED,
+                            str(e),
+                        )
                 else:
                     data[key] = value
         try:
@@ -920,7 +949,14 @@ class InProcessClient:
 
                 elif key == "forwarding_rules":
                     from .models.connections import forwarding_rule_to_dict
-                    data[key] = [forwarding_rule_to_dict(r) for r in value]
+                    try:
+                        data[key] = [forwarding_rule_to_dict(r) for r in value]
+                    except ValueError as e:
+                        raise SshPilotError(
+                            ErrorCode.VALIDATION_FAILED,
+                            str(e),
+                            connection_id=connection_id,
+                        )
                 else:
                     data[key] = value
         updater = getattr(self._connection_manager, "update_connection", None)
@@ -1531,9 +1567,8 @@ class InProcessClient:
         data = data if isinstance(data, dict) else {}
 
         def _get_val(attr_name: str, default: Any = None) -> Any:
-            val = getattr(connection, attr_name, None)
-            if val is not None:
-                return val
+            if hasattr(connection, attr_name):
+                return getattr(connection, attr_name)
             if attr_name in data:
                 return data[attr_name]
             return default

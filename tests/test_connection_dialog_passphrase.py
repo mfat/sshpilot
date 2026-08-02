@@ -317,8 +317,11 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
         'hostname': 'example.com',
         'nickname': 'example',
         'username': 'demo',
-        '__password': 'host-secret',
-        'password_changed': True,
+        '__secret_plan': {
+            'password': 'host-secret',
+            'password_changed': True,
+            'passphrase_operations': [('store', '/key', 'key-secret')],
+        }
     }
     dialog._store_secrets_then_save(data)
 

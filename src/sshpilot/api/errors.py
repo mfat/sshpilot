@@ -13,6 +13,7 @@ class ErrorCode(str, Enum):
     """Machine-readable protocol error codes."""
 
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
+    API_VERSION_MISMATCH = "api_version_mismatch"
     INVALID_REQUEST = "invalid_request"
     VALIDATION_FAILED = "validation_failed"
     CONNECTION_ALREADY_EXISTS = "connection_already_exists"
@@ -161,6 +162,21 @@ class SshPilotError(Exception):
             "connection_id": self.connection_id,
             "session_id": self.session_id,
         }
+
+
+class UnsupportedCapabilityError(SshPilotError):
+    def __init__(self, message: str, capability: str) -> None:
+        super().__init__(ErrorCode.UNSUPPORTED_CAPABILITY, message)
+        self.capability = capability
+
+
+class DaemonRestartRequiredError(SshPilotError):
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.API_VERSION_MISMATCH, message)
+
+
+class InvalidRequestError(SshPilotError):
+    pass
 
 
 def unsupported_capability(capability: CapabilityLike) -> SshPilotError:

@@ -6757,48 +6757,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         def _success(_details):
             if self._is_quitting:
-                complete_save(False)
+                complete_save(False, None)
                 return
+            
             try:
-                if hasattr(_details, "connection_id"):
-                    new_conn_id = _details.connection_id
-                else:
-                    class DummyConnection:
-                        def __init__(self, nickname):
-                            self.nickname = nickname
-                    new_conn_id = InProcessClient.connection_id_for(
-                        DummyConnection(connection_data.get('nickname', ''))
-                    )
-            except Exception:
-                new_conn_id = None
+                new_conn_id = _details.connection_id
+                new_generation = _details.generation
+            except AttributeError:
+                logger.error("Daemon mutation succeeded but returned invalid details")
+                complete_save(False, None)
+                return
 
             pending_meta_local = pending_meta or {}
+            meta_error = None
             if pending_meta_local and new_conn_id:
                 try:
                     self.client.update_connection_metadata(new_conn_id, pending_meta_local)
                 except Exception as exc:
                     logger.debug("Metadata update via daemon RPC failed: %s", exc)
-            complete_save(True)
+                    meta_error = _("Saved, but tags/Wake-on-LAN settings could not be stored.")
+                    
+            complete_save(True, _details, meta_error=meta_error)
+            
             # If the dialog stays open, carry the freshly saved generation so
             # the next save still gets real stale-editor protection.
             try:
                 is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
-                if (
-                    callable(is_daemon_editor)
-                    and is_daemon_editor()
-                    and new_conn_id
-                ):
-                    new_generation = getattr(_details, 'generation', None)
-                    if new_generation is None:
-                        try:
-                            fresh = self.client.get_connection_editor(new_conn_id)
-                            new_generation = fresh.generation
-                        except Exception as e:
-                            logger.debug("Failed to refresh editor generation after save: %s", e)
-                    if new_generation is not None:
-                        dialog._daemon_generation = int(new_generation)
+                if callable(is_daemon_editor) and is_daemon_editor():
+                    dialog._daemon_generation = int(new_generation)
             except Exception:
                 pass
+            
             try:
                 conf = getattr(self.connection_manager, 'config', None)
                 if conf and hasattr(conf, 'load_json_config'):
@@ -6839,9 +6828,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         save_completion = connection_data.pop('__save_completion', None)
         pending_meta = connection_data.pop('__meta', None)
 
-        def _complete_save(ok):
+        def _complete_save(ok, result=None, meta_error=None):
             if callable(save_completion):
-                save_completion(bool(ok))
+                import inspect
+                try:
+                    sig = inspect.signature(save_completion)
+                    if 'meta_error' in sig.parameters:
+                        save_completion(bool(ok), result, meta_error=meta_error)
+                    elif len(sig.parameters) >= 2:
+                        save_completion(bool(ok), result)
+                    else:
+                        save_completion(bool(ok))
+                except Exception:
+                    save_completion(bool(ok))
 
         try:
             if connection_data.get('protocol', 'ssh') != 'ssh':

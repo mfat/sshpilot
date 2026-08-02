@@ -1295,7 +1295,11 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
         }
     return CreateConnectionRequest(
         nickname=_identifier(data["nickname"], "connection nickname"),
-        hostname=_identifier(data["hostname"], "connection hostname"),
+        hostname=_text(
+            data["hostname"],
+            "connection hostname",
+            allow_empty=True,
+        ),
         username=_text(
             data["username"],
             "connection username",
@@ -1353,7 +1357,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if nickname is not UNSET and nickname is not None:
         nickname = _identifier(nickname, "connection nickname")
     if hostname is not UNSET and hostname is not None:
-        hostname = _identifier(hostname, "connection hostname")
+        hostname = _text(hostname, "connection hostname", allow_empty=True)
     if username is not UNSET and username is not None:
         username = _text(username, "connection username", allow_empty=True)
     if port is not UNSET and port is not None:

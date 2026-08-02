@@ -2206,23 +2206,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Key selection mode → Automatic/Specific radios + IdentitiesOnly switch.
             # (Per-key passphrases are loaded on demand by the editor's key button.)
             try:
-                mode = None
                 try:
-                    mgr = getattr(self.parent_window, 'connection_manager', None)
-                    if mgr and hasattr(self.connection, 'nickname'):
-                        fresh = mgr.find_connection_by_nickname(self.connection.nickname)
-                        if fresh is not None and hasattr(fresh, 'key_select_mode'):
-                            mode = int(getattr(fresh, 'key_select_mode', 0) or 0)
+                    mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
                 except Exception:
-                    mode = None
-                if mode is None:
                     try:
-                        mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
+                        mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
                     except Exception:
-                        try:
-                            mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
-                        except Exception:
-                            mode = 0
+                        mode = 0
                 if (has_specific_key or bool(certificate_files)) and mode not in (1, 2):
                     mode = 2
                 specific = mode in (1, 2)
@@ -3277,8 +3267,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 if hasattr(self, 'pkcs11_provider_row') else ''),
             'security_key_provider': (self.security_key_provider_row.get_text().strip()
                                       if hasattr(self, 'security_key_provider_row') else ''),
-            'password': self.password_row.get_text(),
-            '__password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
             'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
@@ -3289,15 +3277,40 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
             'extra_ssh_config': extra_ssh_config,
+        }
+
+        # Create a separate local-only secret plan that never enters wire DTOs.
+        passphrase_ops = []
+        try:
+            if hasattr(self, 'key_editor') and self.key_editor:
+                ops = self.key_editor.pending_passphrase_operations()
+                if ops is None:
+                    self.show_error(_("Please correct the invalid key passphrase."))
+                    return
+                passphrase_ops = ops
+        except Exception:
+            logger.debug("Failed to collect key passphrase changes", exc_info=True)
+
+        connection_data['__secret_plan'] = {
             'password_changed': bool(password_changed),
+            'password': self.password_row.get_text(),
+            'passphrase_operations': passphrase_ops,
         }
         
         if getattr(self, 'force_split_from_group', False):
             connection_data['__split_from_group'] = True
-            if getattr(self, 'split_group_source', None):
-                connection_data['__split_source'] = self.split_group_source
-            if getattr(self, 'split_original_nickname', None):
-                connection_data['__split_original_nickname'] = self.split_original_nickname
+            
+            # Prefer the authoritative daemon snapshot if available
+            is_daemon = getattr(self, '_daemon_editor_loaded', False)
+            source_path = getattr(self.connection, 'source', None) if is_daemon else None
+            source_path = source_path or getattr(self, 'split_group_source', None)
+            if source_path:
+                connection_data['__split_source'] = source_path
+                
+            orig_nick = getattr(self.connection, 'nickname', None) if is_daemon else None
+            orig_nick = orig_nick or getattr(self, 'split_original_nickname', None)
+            if orig_nick:
+                connection_data['__split_original_nickname'] = orig_nick
 
         # Wake-on-LAN and tags metadata ride the payload; the window persists
         # them only after the config write succeeds.
@@ -3365,28 +3378,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Persist changed secrets off-thread, then emit the normal save signal."""
         operations = []
         previous_identity = connection_data.pop('__previous_secret_identity', None)
+        secret_plan = connection_data.get('__secret_plan', {})
         manager = getattr(self, 'connection_manager', None)
         if manager is None:
             manager = getattr(getattr(self, 'parent_window', None),
                               'connection_manager', None)
 
-        password = connection_data.get('__password') or ''
-        if connection_data.get('password_changed'):
+        password = secret_plan.get('password') or ''
+        if secret_plan.get('password_changed'):
             operations.append(('password', 'store' if password else 'delete', '', password))
 
-        editor = getattr(self, 'key_editor', None)
-        if editor is not None:
-            try:
-                passphrase_operations = editor.pending_passphrase_operations()
-                if passphrase_operations is None:
-                    self._set_secret_save_busy(False)
-                    self.show_error(_("Please correct the invalid key passphrase."))
-                    return
-                operations.extend(
-                    ('passphrase', action, path, value)
-                    for action, path, value in passphrase_operations)
-            except Exception:
-                logger.debug("Failed to collect key passphrase changes", exc_info=True)
+        passphrase_ops = secret_plan.get('passphrase_operations') or []
+        for action, path, value in passphrase_ops:
+            operations.append(('passphrase', action, path, value))
 
         # update_connection normally persists the password synchronously. Mark this save
         # as pre-handled even when nothing changed so it does not repeat backend I/O.
@@ -3396,11 +3400,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # reports a successful config write.
             plain_completion_called = [False]
 
-            def _after_plain_save(ok):
+            def _after_plain_save(ok, result=None, meta_error=None):
                 plain_completion_called[0] = True
                 self._set_secret_save_busy(False)
                 if ok:
-                    self.close()
+                    if meta_error:
+                        self.show_error(meta_error)
+                    else:
+                        self.close()
                 else:
                     self.show_error(_("The connection settings could not be saved."))
 
@@ -3458,8 +3465,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 StoreConnectionPasswordRequest,
                                 DeleteConnectionPasswordRequest,
                             )
-                            # Use the new nickname as the identifier after a save
-                            conn_id = connection_data.get('nickname', '').strip()
+                            # Use the real connection_id returned by the mutation
+                            mutation_result = connection_data.get('__mutation_result')
+                            conn_id = getattr(mutation_result, 'connection_id', None) or connection_data.get('nickname', '').strip()
                             if conn_id and action == 'store':
                                 req = StoreConnectionPasswordRequest(
                                     connection_id=conn_id,
@@ -3529,9 +3537,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         completion_called = [False]
 
-        def _after_config_saved(ok):
+        def _after_config_saved(ok, mutation_result=None, meta_error=None):
             completion_called[0] = True
             if ok:
+                if mutation_result:
+                    connection_data['__mutation_result'] = mutation_result
+                if meta_error:
+                    connection_data['__meta_error'] = meta_error
                 threading.Thread(target=_worker, daemon=True).start()
             else:
                 self._finish_secret_save(
@@ -3555,7 +3567,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         def _after_closed(*_args):
             self._set_secret_save_busy(False)
             if ok:
-                self.close()
+                meta_error = connection_data.get('__meta_error')
+                if meta_error:
+                    self.show_error(meta_error)
+                else:
+                    self.close()
             elif not settings_saved:
                 self.show_error(_("The connection settings could not be saved."))
             else:
@@ -3629,11 +3645,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             pass
         parent_window = getattr(self, 'parent_window', None)
+        if callable(on_retry):
+            msg = _("The connection could not be loaded from the service. "
+                    "You can retry or close the editor.")
+        else:
+            msg = _("The connection could not be loaded from the service. "
+                    "Please close the editor and try again.")
         dialog = Adw.MessageDialog.new(
             parent_window,
             _("Could not load connection"),
-            _("The connection could not be loaded from the service. "
-              "You can retry or close the editor."),
+            msg,
         )
         if callable(on_retry):
             dialog.add_response("retry", _("_Retry"))

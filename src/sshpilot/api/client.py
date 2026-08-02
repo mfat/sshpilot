@@ -148,7 +148,9 @@ class SshPilotClient(Protocol):
     def rename_group(self, group_id: str, new_name: str) -> bool:
         ...
 
-    def split_connection(self, request: SplitConnectionRequest) -> bool:
+    def split_connection(
+        self, request: SplitConnectionRequest
+    ) -> 'ConnectionMutationResult':
         ...
 
     def get_daemon_status(self) -> DaemonStatus:

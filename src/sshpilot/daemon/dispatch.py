@@ -836,9 +836,10 @@ class RequestDispatcher:
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> bool:
+    ) -> dict:
         typed_request = split_connection_request_from_wire(request.params)
-        return self._core_client.split_connection(typed_request)
+        result = self._core_client.split_connection(typed_request)
+        return connection_mutation_result_to_wire(result)
 
     def _handle_list_sessions(
         self,

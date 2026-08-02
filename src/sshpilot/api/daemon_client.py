@@ -433,6 +433,15 @@ class DaemonClient:
                 mismatch,
             )
 
+    def _require_write_compatibility(self, operation: str) -> None:
+        """Reject write operations if the daemon is running an incompatible API."""
+        if self.build_mismatch() == "api_implementation_version":
+            from .errors import DaemonRestartRequiredError
+            raise DaemonRestartRequiredError(
+                f"Cannot {operation} because the background daemon is running an "
+                "older or incompatible version. Please restart the application."
+            )
+
     def threads_alive(self) -> dict:
         """Return reader/event/terminal thread liveness for watchdog assertions."""
         return {
@@ -489,6 +498,7 @@ class DaemonClient:
             )
 
     def create_connection(self, request: CreateConnectionRequest) -> 'ConnectionMutationResult':
+        self._require_write_compatibility("create connection")
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
             self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
@@ -508,6 +518,7 @@ class DaemonClient:
         connection_id: ConnectionId,
         request: UpdateConnectionRequest,
     ) -> 'ConnectionMutationResult':
+        self._require_write_compatibility("update connection")
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
             self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
@@ -526,6 +537,7 @@ class DaemonClient:
             self._fail_protocol("The daemon returned invalid connection details")
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
+        self._require_write_compatibility("delete connection")
         self._require_capability(Capability.CONNECTIONS_WRITE)
         result = self._request(
             "connections.delete",
@@ -538,6 +550,7 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid delete result")
 
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
+        self._require_write_compatibility("store password")
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         result = self._request(
             "connections.store_password",
@@ -649,15 +662,18 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid group rename result")
         return result
 
-    def split_connection(self, request) -> bool:
+    def split_connection(self, request) -> 'ConnectionMutationResult':
+        self._require_write_compatibility("split connection")
         self._require_capability(Capability.CONNECTIONS_SPLIT)
         result = self._request(
             "connections.split",
             split_connection_request_to_wire(request),
         )
-        if type(result) is not bool:
+        try:
+            from .transport.codec import connection_mutation_result_from_wire
+            return connection_mutation_result_from_wire(result)
+        except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid split result")
-        return result
 
     def open_session(self, request: OpenSessionRequest) -> SessionSummary:
         self._require_capability(Capability.SESSIONS_WRITE)

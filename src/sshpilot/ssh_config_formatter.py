@@ -156,7 +156,10 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         if sk_provider:
             lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
         # Include password-based fallback if a password is provided
-        if data.get('password'):
+        custom_pref = (data.get('preferred_authentications') or '').strip()
+        if custom_pref:
+            lines.append(f"    PreferredAuthentications {custom_pref}")
+        elif data.get('password'):
             lines.append(
                 "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
             )
@@ -164,9 +167,13 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # Password-based authentication. Include keyboard-interactive so
         # PAM/2FA hosts (which often disable the raw "password" method)
         # still negotiate; order prefers kbd-int first.
-        lines.append(
-            "    PreferredAuthentications keyboard-interactive,password"
-        )
+        custom_pref = (data.get('preferred_authentications') or '').strip()
+        if custom_pref:
+            lines.append(f"    PreferredAuthentications {custom_pref}")
+        else:
+            lines.append(
+                "    PreferredAuthentications keyboard-interactive,password"
+            )
         if data.get('pubkey_auth_no'):
             lines.append("    PubkeyAuthentication no")
 

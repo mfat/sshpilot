@@ -14,7 +14,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.11",
+  "api_implementation_version": "0.12",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -978,7 +978,7 @@
           "type": "SplitConnectionRequest"
         }
       ],
-      "return": "bool"
+      "return": "ConnectionMutationResult"
     },
     "start_transfer": {
       "parameters": [
@@ -1286,6 +1286,7 @@
     }
   },
   "error_codes": [
+    "api_version_mismatch",
     "askpass_helper_unavailable",
     "authentication_attempts_exhausted",
     "connection_already_exists",
@@ -2295,6 +2296,7 @@
     ],
     "ErrorCode": [
       "unsupported_capability",
+      "api_version_mismatch",
       "invalid_request",
       "validation_failed",
       "connection_already_exists",

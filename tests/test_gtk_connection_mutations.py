@@ -24,13 +24,15 @@ class _Client:
     def create_connection(self, request):
         self.created.append(request)
         return SimpleNamespace(
-            id="demo"
+            connection_id="demo",
+            generation=1
         )
 
     def update_connection(self, connection_id, request):
         self.updated.append((connection_id, request))
         return SimpleNamespace(
-            id="demo"
+            connection_id="demo",
+            generation=2
         )
 
     def delete_connection(self, request):
@@ -139,7 +141,7 @@ def _basic_data(**overrides):
 def test_daemon_create_waits_for_success_and_sends_create_dto_with_config_patch():
     window = _MutationWindow()
     completed = []
-    data = _basic_data(proxy_jump=["jump.example.test"], __save_completion=completed.append)
+    data = _basic_data(proxy_jump=["jump.example.test"], __save_completion=lambda ok, *a, **k: completed.append(ok))
     dialog = SimpleNamespace(is_editing=False, connection=None)
 
     window.on_connection_saved(dialog, data)
@@ -164,7 +166,7 @@ def test_daemon_create_waits_for_success_and_sends_create_dto_with_config_patch(
 def test_daemon_mutation_failure_keeps_ui_state_and_uses_safe_completion():
     window = _MutationWindow()
     completed = []
-    data = _basic_data(__save_completion=completed.append)
+    data = _basic_data(__save_completion=lambda ok, *a, **k: completed.append(ok))
     dialog = SimpleNamespace(is_editing=False, connection=None)
 
     window.on_connection_saved(dialog, data)
@@ -199,7 +201,7 @@ def test_daemon_editor_save_path_never_sends_password():
         hostname="demo.example",
         password="do-not-send",
         password_changed=True,
-        __save_completion=completed.append,
+        __save_completion=lambda ok, *a, **k: completed.append(ok),
     )
 
     # First, the dialog's prepare step must accept the payload and strip the
@@ -222,7 +224,7 @@ def test_daemon_editor_save_path_never_sends_password():
     assert "do-not-send" not in repr(request)
     assert "do-not-send" not in repr(request.config_patch)
 
-    success(SimpleNamespace(id="demo", generation=8))
+    success(SimpleNamespace(connection_id="demo", generation=8))
     assert completed == [True]
 
     # Exactly one bridge submission: the mutation.  No secret RPC fired.
@@ -249,7 +251,7 @@ def test_daemon_editor_handles_proxy_jump_string_and_list():
     window = _MutationWindow()
     dialog = SimpleNamespace(
         is_editing=True,
-        connection=SimpleNamespace(nickname="Oracle", id="Oracle"),
+        connection=SimpleNamespace(nickname="Oracle", connection_id="Oracle"),
         key_editor=None,
     )
 
@@ -274,7 +276,7 @@ def test_daemon_delete_is_not_optimistic_and_disconnects_only_after_success():
     connection = SimpleNamespace(
         nickname="demo",
         protocol="ssh",
-        id="demo",
+        connection_id="demo",
         uuid="demo",
     )
 
@@ -307,7 +309,7 @@ def test_daemon_group_move_failure_does_not_mutate_local_group_manager():
                 move_connection=lambda nickname, group_id: self.group_manager.moved.append((nickname, group_id)),
             )
             self.connection_manager = SimpleNamespace(
-                connections=[SimpleNamespace(nickname="demo", id="demo")],
+                connections=[SimpleNamespace(nickname="demo", connection_id="demo")],
                 load_ssh_config=lambda: None,
             )
             self._find_connection_id_for_nickname = MainWindow._find_connection_id_for_nickname.__get__(self)
@@ -715,7 +717,7 @@ def test_daemon_editor_fetch_not_run_outside_daemon_mode():
 def _daemon_save_dialog(**overrides):
     dialog = SimpleNamespace(
         is_editing=True,
-        connection=SimpleNamespace(nickname="demo", id="demo"),
+        connection=SimpleNamespace(nickname="demo", connection_id="demo"),
         is_daemon_editor=lambda: True,
         _daemon_editor_loaded=True,
         _daemon_generation=None,
@@ -731,7 +733,7 @@ def test_daemon_editor_save_blocked_before_snapshot_arrives():
     completed = []
     data = _basic_data(nickname="demo", hostname="demo.example")
 
-    window._save_connection_via_client(dialog, data, completed.append)
+    window._save_connection_via_client(dialog, data, lambda ok, *a, **k: completed.append(ok))
 
     assert completed == [False]
     assert window.client_bridge.calls == []
@@ -748,7 +750,7 @@ def test_daemon_editor_success_sends_loaded_generation_in_update():
     save_dialog = _daemon_save_dialog(_daemon_generation=7)
     completed = []
     data = _basic_data(nickname="demo", hostname="demo.example")
-    window._save_connection_via_client(save_dialog, data, completed.append)
+    window._save_connection_via_client(save_dialog, data, lambda ok, *a, **k: completed.append(ok))
 
     operation, _success, _failure = window.client_bridge.calls[1]
     operation()
@@ -766,17 +768,17 @@ def test_daemon_editor_second_save_carries_refreshed_generation_and_surfaces_sta
     save_dialog = _daemon_save_dialog(_daemon_generation=7)
     first_done = []
     data = _basic_data(nickname="demo", hostname="demo.example")
-    window._save_connection_via_client(save_dialog, data, first_done.append)
+    window._save_connection_via_client(save_dialog, data, lambda ok, *a, **k: first_done.append(ok))
     op1, ok1, _fail1 = window.client_bridge.calls[1]
     op1()
-    ok1(SimpleNamespace(id="demo", generation=8))
+    ok1(SimpleNamespace(connection_id="demo", generation=8))
 
     assert first_done == [True]
     assert save_dialog._daemon_generation == 8
 
     # A competing edit advanced the daemon generation; our next save is stale.
     second_done = []
-    window._save_connection_via_client(save_dialog, data, second_done.append)
+    window._save_connection_via_client(save_dialog, data, lambda ok, *a, **k: second_done.append(ok))
     op2, _ok2, fail2 = window.client_bridge.calls[2]
     op2()
     assert window.client.updated[1][1].expected_generation == 8
@@ -862,13 +864,13 @@ def test_daemon_new_connection_dialog_is_local_and_save_works(monkeypatch):
     data = _basic_data(
         nickname="new",
         hostname="new.example",
-        __save_completion=completed.append,
+        __save_completion=lambda ok, *a, **k: completed.append(ok),
     )
     window.on_connection_saved(dialog, data)
     operation, success, _failure = window.client_bridge.calls[0]
     operation()
     assert window.client.created[0].nickname == "new"
-    success(SimpleNamespace(id="new"))
+    success(SimpleNamespace(connection_id="new", generation=1))
     assert completed == [True]
 
 
@@ -877,7 +879,7 @@ def test_daemon_as_new_dialog_is_local_not_gated(monkeypatch):
     created, _original = _patch_dialog(monkeypatch)
 
     window.show_connection_dialog(
-        connection=SimpleNamespace(nickname="demo", id="demo"),
+        connection=SimpleNamespace(nickname="demo", connection_id="demo"),
         as_new=True,
     )
 
@@ -893,7 +895,7 @@ def test_daemon_edit_dialog_uses_daemon_snapshot_flow(monkeypatch):
     created, _original = _patch_dialog(monkeypatch)
 
     window.show_connection_dialog(
-        connection=SimpleNamespace(nickname="demo", id="demo"),
+        connection=SimpleNamespace(nickname="demo", connection_id="demo"),
     )
 
     dialog = created[0]

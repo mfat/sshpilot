@@ -26,6 +26,8 @@ the validated internal envelope.
 
 | Code | Runtime status | Retryable | Related operations | Frontend guidance |
 | --- | --- | --- | --- | --- |
+| `api_version_mismatch` | Implemented | No | Client initialization | Abort initialization and show a compatibility error |
+<!-- api-error: api_version_mismatch -->
 | `unsupported_capability` | Implemented | No | All unsupported client methods | Re-check capabilities; hide or disable the feature |
 | `invalid_request` | Implemented | Usually no | Closed client, wrong owner thread, invalid subscription state | Fix caller lifecycle/threading; do not blindly retry |
 | `validation_failed` | Implemented | No until input changes | Connection writes and future operations | Show field-safe validation feedback |
