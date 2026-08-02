@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+### Daemon askpass parity (Added)
+
+- Added typed keyboard-interactive and security-key-presence prompts so daemon
+  sessions can route OTP, PIN, PAM, and hardware-presence interactions through
+  the same frontend-neutral interaction protocol as passwords and passphrases.
+- Daemon askpass is now activated only when the normal native authentication
+  resolver finds a saved password or key passphrase.
+
 ### Phase 11: Daemon lifecycle and management (Added)
 
 - Added `DaemonLifecycleState` and management models (`DaemonStatus`,

@@ -724,7 +724,9 @@
     "InteractionType": [
       "host_key_confirmation",
       "password",
-      "private_key_passphrase"
+      "private_key_passphrase",
+      "keyboard_interactive",
+      "security_key_presence"
     ],
     "RememberPolicy": [
       "do_not_store",
@@ -1003,6 +1005,25 @@
         }
       ],
       "status": "Implemented"
+    },
+    "ChallengePrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
     },
     "ClaimForwardRequest": {
       "fields": [
@@ -3063,7 +3084,7 @@
           "name": "prompt",
           "required": true,
           "sensitive": false,
-          "type": "HostKeyPrompt | PasswordPrompt | PassphrasePrompt"
+          "type": "HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt"
         },
         {
           "default": null,
@@ -3486,6 +3507,18 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[int]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PresencePrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Schema only"

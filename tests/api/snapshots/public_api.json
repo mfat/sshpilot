@@ -1435,6 +1435,7 @@
     "AttachmentInfo",
     "AuthenticationMethod",
     "CancelTransferRequest",
+    "ChallengePrompt",
     "ClaimForwardRequest",
     "ClaimTerminalInputRequest",
     "ClientId",
@@ -1508,6 +1509,7 @@
     "PluginOperationRequest",
     "PluginOperationResult",
     "PortForwardSummary",
+    "PresencePrompt",
     "ReleaseTerminalInputRequest",
     "RememberPolicy",
     "RemoteFileEntry",
@@ -1596,6 +1598,10 @@
       "core",
       "supported",
       "compatibility"
+    ],
+    "ChallengePrompt": [
+      "text",
+      "attempt"
     ],
     "ClaimForwardRequest": [
       "forward_id"
@@ -2027,6 +2033,9 @@
       "bind_port",
       "target_host",
       "target_port"
+    ],
+    "PresencePrompt": [
+      "text"
     ],
     "ReleaseTerminalInputRequest": [
       "session_id",
@@ -2489,7 +2498,9 @@
     "InteractionType": [
       "host_key_confirmation",
       "password",
-      "private_key_passphrase"
+      "private_key_passphrase",
+      "keyboard_interactive",
+      "security_key_presence"
     ],
     "RememberPolicy": [
       "do_not_store",

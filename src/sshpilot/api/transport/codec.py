@@ -23,6 +23,7 @@ from ..models.common import (
     TransferId,
 )
 from ..models.interactions import (
+    ChallengePrompt,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -33,6 +34,7 @@ from ..models.interactions import (
     InteractionType,
     PassphrasePrompt,
     PasswordPrompt,
+    PresencePrompt,
     RememberPolicy,
     SecretDecision,
 )
@@ -2377,7 +2379,7 @@ def capabilities_from_wire(value: Any) -> Capabilities:
 
 def _interaction_prompt_to_wire(
     interaction_type: InteractionType,
-    prompt: HostKeyPrompt | PasswordPrompt | PassphrasePrompt,
+    prompt: HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt,
 ) -> Dict[str, Any]:
     if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
         if type(prompt) is not HostKeyPrompt:
@@ -2410,13 +2412,21 @@ def _interaction_prompt_to_wire(
             "can_remember": prompt.can_remember,
             "saved_value_available": prompt.stored_secret_available,
         }
+    if interaction_type is InteractionType.KEYBOARD_INTERACTIVE:
+        if type(prompt) is not ChallengePrompt:
+            raise TypeError("challenge interaction requires a challenge prompt")
+        return {"text": prompt.text, "attempt": prompt.attempt}
+    if interaction_type is InteractionType.SECURITY_KEY_PRESENCE:
+        if type(prompt) is not PresencePrompt:
+            raise TypeError("presence interaction requires a presence prompt")
+        return {"text": prompt.text}
     raise TypeError("unsupported interaction type")
 
 
 def _interaction_prompt_from_wire(
     interaction_type: InteractionType,
     value: Any,
-) -> HostKeyPrompt | PasswordPrompt | PassphrasePrompt:
+) -> HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt:
     if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
         data = _strict_fields(
             value,
@@ -2479,6 +2489,15 @@ def _interaction_prompt_from_wire(
                 "passphrase stored-secret availability",
             ),
         )
+    if interaction_type is InteractionType.KEYBOARD_INTERACTIVE:
+        data = _strict_fields(value, required={"text", "attempt"}, context="challenge prompt")
+        return ChallengePrompt(
+            text=_text(data["text"], "challenge prompt"),
+            attempt=_integer(data["attempt"], "challenge attempt"),
+        )
+    if interaction_type is InteractionType.SECURITY_KEY_PRESENCE:
+        data = _strict_fields(value, required={"text"}, context="presence prompt")
+        return PresencePrompt(text=_text(data["text"], "presence prompt"))
     raise ValueError("unsupported interaction type")
 
 

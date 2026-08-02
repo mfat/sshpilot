@@ -20,6 +20,8 @@ class InteractionType(str, Enum):
     HOST_KEY_CONFIRMATION = "host_key_confirmation"
     PASSWORD = "password"
     PRIVATE_KEY_PASSPHRASE = "private_key_passphrase"
+    KEYBOARD_INTERACTIVE = "keyboard_interactive"
+    SECURITY_KEY_PRESENCE = "security_key_presence"
 
 
 class InteractionState(str, Enum):
@@ -128,7 +130,28 @@ class PassphrasePrompt:
             raise TypeError("passphrase stored-secret availability must be boolean")
 
 
-InteractionPrompt = Union[HostKeyPrompt, PasswordPrompt, PassphrasePrompt]
+@dataclass(frozen=True)
+class ChallengePrompt:
+    text: str
+    attempt: int
+
+    def __post_init__(self) -> None:
+        _require_safe_display(self.text, "challenge prompt", 4096)
+        if type(self.attempt) is not int or self.attempt < 1:
+            raise ValueError("challenge attempt must be positive")
+
+
+@dataclass(frozen=True)
+class PresencePrompt:
+    text: str
+
+    def __post_init__(self) -> None:
+        _require_safe_display(self.text, "presence prompt", 4096)
+
+
+InteractionPrompt = Union[
+    HostKeyPrompt, PasswordPrompt, PassphrasePrompt, ChallengePrompt, PresencePrompt
+]
 
 
 def _require_safe_display(value: str, name: str, maximum: int) -> None:
@@ -174,10 +197,12 @@ class InteractionSummary:
             InteractionType.HOST_KEY_CONFIRMATION: HostKeyPrompt,
             InteractionType.PASSWORD: PasswordPrompt,
             InteractionType.PRIVATE_KEY_PASSPHRASE: PassphrasePrompt,
+            InteractionType.KEYBOARD_INTERACTIVE: ChallengePrompt,
+            InteractionType.SECURITY_KEY_PRESENCE: PresencePrompt,
         }[self.type]
         if type(self.prompt) is not expected_prompt:
             raise TypeError("interaction prompt does not match its type")
-        if isinstance(self.prompt, (PasswordPrompt, PassphrasePrompt)):
+        if isinstance(self.prompt, (PasswordPrompt, PassphrasePrompt, ChallengePrompt)):
             if self.prompt.attempt != self.attempt:
                 raise ValueError("interaction prompt attempt is inconsistent")
         if self.state is InteractionState.CLAIMED:

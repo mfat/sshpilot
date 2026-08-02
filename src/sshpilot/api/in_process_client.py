@@ -252,8 +252,9 @@ class InProcessClient:
         import shutil
 
         connection = self._find_connection(connection_id)
+        resolver_policy = "normal" if interaction_policy == "broker" else interaction_policy
         prepared = asyncio.run(
-            connection.native_connect(interaction_policy=interaction_policy)
+            connection.native_connect(interaction_policy=resolver_policy)
         )
         command = getattr(connection, "ssh_connection_cmd", None)
         if not prepared or command is None:
@@ -269,17 +270,27 @@ class InProcessClient:
         self._preload_connection_keys(connection)
         argv = tuple(getattr(command, "command", ()) or ())
         environment = dict(getattr(command, "env", {}) or {})
-        if (
-            not argv
-            or getattr(command, "use_askpass", False)
-            or environment.get("SSH_ASKPASS")
-            or environment.get("SSH_ASKPASS_REQUIRE")
-        ):
+        if not argv:
             raise SshPilotError(
                 ErrorCode.SESSION_STARTUP_FAILED,
                 "The SSH session requires unsupported interaction",
                 connection_id=connection_id,
             )
+        # Preserve the normal resolver's askpass activation decision, but never
+        # pass the in-process helper endpoint (or its staged secrets) to the
+        # daemon.  The broker replaces the transport with its private helper.
+        askpass_active = bool(
+            getattr(command, "use_askpass", False)
+            or environment.get("SSH_ASKPASS")
+        )
+        for key in tuple(environment):
+            if key.startswith("SSHPILOT_ASKPASS") or key.startswith("SSHPILOT_SESSION_"):
+                environment.pop(key, None)
+        environment.pop("SSH_ASKPASS", None)
+        environment.pop("SSH_ASKPASS_REQUIRE", None)
+        if askpass_active:
+            environment["SSHPILOT_DAEMON_ASKPASS_ACTIVE"] = "1"
+
         # Keep daemon launches on the canonical ``ssh Host`` path, but carry the
         # parsed LocalCommand explicitly.  Unlike the in-process terminal, the
         # daemon owns a separately prepared process and must not depend on a

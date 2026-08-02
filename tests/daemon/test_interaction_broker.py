@@ -190,6 +190,7 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
             {
                 "HOME": "/tmp",
                 "PATH": os.environ.get("PATH", ""),
+                "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
             },
         ),
     )
@@ -237,7 +238,7 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
     assert stderr == b""
 
 
-def test_askpass_helper_disconnect_cancels_pending_interaction(
+def test_prepare_launch_leaves_askpass_disabled_without_saved_secret(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
@@ -254,6 +255,64 @@ def test_askpass_helper_disconnect_cancels_pending_interaction(
         lambda _connection_id, **_kwargs: (
             ("/usr/bin/ssh", "example"),
             {"PATH": os.environ.get("PATH", "")},
+        ),
+    )
+    assert "SSH_ASKPASS" not in environment
+    assert "SSH_ASKPASS_REQUIRE" not in environment
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_type"),
+    [
+        ("Enter verification code:", InteractionType.KEYBOARD_INTERACTIVE),
+        ("Custom PAM response:", InteractionType.KEYBOARD_INTERACTIVE),
+        ("Touch your security key", InteractionType.SECURITY_KEY_PRESENCE),
+    ],
+)
+def test_daemon_routes_interactive_and_presence_prompts(
+    broker: InteractionBroker,
+    monkeypatch,
+    prompt: str,
+    expected_type: InteractionType,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {"SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
+        ),
+    )
+    token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+    monkeypatch.setattr(broker, "wait_for_result", lambda *_a, **_k: None)
+    assert broker._resolve_askpass_secret(token, prompt) is None
+    assert broker.list(CLIENT_A)[-1].type is expected_type
+
+
+def test_askpass_helper_disconnect_cancels_pending_interaction(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
         ),
     )
     request = json.dumps(
@@ -317,7 +376,7 @@ def test_stored_password_is_used_once_without_public_secret_metadata(
             ),
             lambda _connection_id, **_kwargs: (
                 ("/usr/bin/ssh", "example"),
-                {"PATH": os.environ.get("PATH", "")},
+                {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
             ),
         )
         secret = instance._resolve_askpass_secret(
@@ -362,7 +421,7 @@ def test_stored_passphrase_autofills_unquoted_openssh_prompt(monkeypatch) -> Non
             ),
             lambda _connection_id, **_kwargs: (
                 ("/usr/bin/ssh", "example"),
-                {"PATH": os.environ.get("PATH", "")},
+                {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
             ),
         )
         secret = instance._resolve_askpass_secret(
@@ -417,7 +476,7 @@ def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
             ),
             lambda _connection_id, **_kwargs: (
                 ("/usr/bin/ssh", "example"),
-                {"PATH": os.environ.get("PATH", "")},
+                {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
             ),
         )
         token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
@@ -531,7 +590,7 @@ def test_prepare_daemon_terminal_launch_carries_local_command(monkeypatch) -> No
     )
 
 
-def test_remembered_password_is_stored_only_after_authenticated_status(
+def test_daemon_entered_password_is_never_implicitly_stored(
     monkeypatch,
 ) -> None:
     stored = []
@@ -555,7 +614,7 @@ def test_remembered_password_is_stored_only_after_authenticated_status(
             ),
             lambda _connection_id, **_kwargs: (
                 ("/usr/bin/ssh", "example"),
-                {"PATH": os.environ.get("PATH", "")},
+                {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
             ),
         )
         token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
@@ -598,8 +657,8 @@ def test_remembered_password_is_stored_only_after_authenticated_status(
         waiter.join(1)
         assert not waiter.is_alive()
         assert stored == []
-        instance._store_authenticated_secrets(token)
-        assert stored == [(CONNECTION_ID, "new-value")]
+        instance.mark_authenticated(SESSION_ID)
+        assert stored == []
         assert resolved == [bytearray(b"new-value")]
         resolved[0][:] = b"\0" * len(resolved[0])
         resolved[0].clear()
@@ -676,7 +735,7 @@ def test_prepare_launch_preserves_canonical_ssh_options(
                 "ConnectTimeout=5",
                 "example",
             ),
-            {"PATH": os.environ.get("PATH", "")},
+            {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
         ),
     )
     assert argv == (
@@ -712,7 +771,7 @@ def test_prepare_launch_does_not_add_ssh_option_defaults(
         ),
         lambda _connection_id, **_kwargs: (
             ("/usr/bin/ssh", "example"),
-            {"PATH": os.environ.get("PATH", "")},
+            {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
         ),
     )
 
@@ -778,7 +837,7 @@ def test_prepare_launch_ask_preserves_user_known_hosts(
                 "UserKnownHostsFile=/tmp/user-known-hosts",
                 "example",
             ),
-            {"PATH": os.environ.get("PATH", "")},
+            {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
         ),
     )
     assert "StrictHostKeyChecking=ask" in argv
@@ -836,10 +895,10 @@ def test_prepare_launch_does_not_invoke_keyscan(
         ),
         lambda _connection_id, **_kwargs: (
             ("/usr/bin/ssh", "-F", "/tmp/config", "example"),
-            {"PATH": os.environ.get("PATH", "")},
+            {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
         ),
     )
-    assert environment["SSH_ASKPASS_REQUIRE"] == "force"
+    assert environment["SSH_ASKPASS_REQUIRE"] == "prefer"
     assert "StrictHostKeyChecking=ask" not in argv
     assert not any(
         item.startswith("HostKeyAlgorithms=")
