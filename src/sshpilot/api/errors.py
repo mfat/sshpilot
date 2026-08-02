@@ -78,6 +78,7 @@ class ErrorCode(str, Enum):
     SERVICE_OWNER_REQUIRED = "service_owner_required"
     INTERNAL_ERROR = "internal_error"
     DAEMON_UNAVAILABLE = "daemon_unavailable"
+    STALE_EDITOR = "stale_editor"
     TRANSPORT_CLOSED = "transport_closed"
     TRANSPORT_TIMEOUT = "transport_timeout"
     FRAME_TOO_LARGE = "frame_too_large"

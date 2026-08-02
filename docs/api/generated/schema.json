@@ -615,6 +615,7 @@
       "service_owner_required",
       "internal_error",
       "daemon_unavailable",
+      "stale_editor",
       "transport_closed",
       "transport_timeout",
       "frame_too_large",

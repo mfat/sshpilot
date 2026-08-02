@@ -466,6 +466,14 @@ local launcher categories and do not trigger a restart. Any daemon-selection
 failure falls back once to in-process mode with a fixed safe notification;
 these composition categories do not change the Protocol v1 error-code surface.
 
+<!-- api-error: stale_editor -->
+## `stale_editor`
+
+The connection was modified since the editor last read it. The caller should
+re-read the connection and retry the operation. This is raised when the
+`expected_generation` on an update or split request does not match the
+connection's current generation counter.
+
 <!-- api-error: transport_closed -->
 ## `transport_closed`
 

@@ -722,6 +722,13 @@ class InProcessClient:
                 "The requested connection does not exist",
                 connection_id=request.connection_id,
             )
+        # Stale-editor guard for split operations.
+        if request.expected_generation and request.expected_generation != getattr(connection, 'generation', 0):
+            raise SshPilotError(
+                ErrorCode.STALE_EDITOR,
+                "The connection has been modified since it was last read",
+                connection_id=request.connection_id,
+            )
         # The connection_manager's _split_host_block does the real work.
         manager = self._connection_manager
         try:
@@ -865,6 +872,15 @@ class InProcessClient:
             raise SshPilotError(
                 ErrorCode.VALIDATION_FAILED,
                 "The requested connection protocol is not supported",
+                connection_id=connection_id,
+            )
+        # Stale-editor guard: if the caller provides an expected generation
+        # (non-zero), reject the update when the connection was modified since
+        # the editor last read it.
+        if request.expected_generation and request.expected_generation != getattr(connection, 'generation', 0):
+            raise SshPilotError(
+                ErrorCode.STALE_EDITOR,
+                "The connection has been modified since it was last read",
                 connection_id=connection_id,
             )
         old_nickname = str(getattr(connection, "nickname", "") or "")

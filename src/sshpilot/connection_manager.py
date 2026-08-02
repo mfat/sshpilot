@@ -289,6 +289,10 @@ class Connection:
         self.connection = None
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
+        # Monotonic revision counter for stale-editor detection.
+        # Bumped on every successful config write and on config reload
+        # when the connection's block actually changed.
+        self.generation: int = int(data.get('generation', 0))
 
         self._apply_common_fields(data)
 
@@ -1795,6 +1799,7 @@ class ConnectionManager(GObject.Object):
             ]:
                 conn.update_data(connection_data)
                 conn._connection_manager = self
+                conn.generation = getattr(conn, 'generation', 0) + 1
             binder = getattr(
                 getattr(self, 'config', None),
                 'bind_connection_identities',
@@ -2603,6 +2608,7 @@ class ConnectionManager(GObject.Object):
 
             # Update existing object IN-PLACE instead of creating new ones
             connection.update_data(new_data)
+            connection.generation = getattr(connection, 'generation', 0) + 1
 
             # The dialog's new_data carries the new nickname/hostname but not the
             # parsed Host-line tokens. resolve_host_identifier() prefers the cached

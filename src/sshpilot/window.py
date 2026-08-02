@@ -6517,6 +6517,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         original_host_token=split_original or connection_data.get('nickname', ''),
                         source_config_path=split_source or '',
                         config_patch=config_patch,
+                        expected_generation=getattr(dialog.connection, 'generation', 0),
                     )
                     operation = lambda: self.client.split_connection(split_req)
                 else:
@@ -6526,6 +6527,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         username=connection_data.get('username'),
                         port=connection_data.get('port'),
                         config_patch=config_patch,
+                        expected_generation=getattr(dialog.connection, 'generation', 0),
                     )
                     operation = lambda: self.client.update_connection(
                         connection_id,
