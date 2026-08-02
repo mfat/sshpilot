@@ -6602,9 +6602,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not self._daemon_mode_active():
             return None
         if connection_data.get('protocol', 'ssh') != 'ssh':
-            return _(
-                "Experimental service mode does not support this connection type."
-            )
+            # Plugins remain owned by their local persistence backend even
+            # while SSH connections are routed through the daemon.
+            return None
 
         # An unchanged pre-filled password must never enter the mutation
         # request or trigger local secret storage after a daemon write.
@@ -6648,8 +6648,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             dialog, '_daemon_config_fingerprint', None
         ) != config_fingerprint:
             checkpoint = None
-            for name in ('_daemon_save_checkpoint', '_daemon_metadata_saved',
-                         '_daemon_metadata_fingerprint', '_save_mutation_result'):
+            for name in ('_daemon_metadata_saved',
+                         '_daemon_metadata_fingerprint'):
                 try:
                     delattr(dialog, name)
                 except AttributeError:
@@ -6707,7 +6707,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         try:
             if dialog.is_editing:
-                connection_id = InProcessClient.connection_id_for(dialog.connection)
+                connection_id = getattr(dialog, '_saved_connection_id', None)
+                if not connection_id:
+                    connection_id = InProcessClient.connection_id_for(dialog.connection)
                 config_patch = _build_config_patch()
 
                 # In daemon mode, use the generation loaded from the daemon
@@ -6794,6 +6796,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 complete_save(False, None)
                 return
 
+            # The config mutation is committed. Transition immediately, before
+            # metadata/secrets can fail, so every retry addresses the returned
+            # identity and generation and can never repeat create/split.
+            dialog.is_editing = True
+            dialog._saved_connection_id = new_conn_id
+            dialog._daemon_generation = int(new_generation)
+            dialog._config_stage_complete = True
+            dialog._save_mutation_result = _details
+            dialog._daemon_save_checkpoint = _details
+            dialog._daemon_config_fingerprint = config_fingerprint
+            dialog.force_split_from_group = False
+
             def _finish_save_flow(meta_error=None):
                 complete_save(True, _details, meta_error=meta_error)
                 try:
@@ -6870,9 +6884,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
 
         def _checkpoint_success(details):
-            if resumable:
-                dialog._daemon_save_checkpoint = details
-                dialog._daemon_config_fingerprint = config_fingerprint
             _success(details)
 
         try:
