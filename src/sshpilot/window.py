@@ -6420,24 +6420,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 "Experimental service mode does not support this connection type."
             )
 
-        password_changed = bool(connection_data.get('password_changed'))
-        password = connection_data.get('password') or ''
-        editor = getattr(dialog, 'key_editor', None)
-        passphrase_changes = ()
-        if editor is not None:
-            try:
-                passphrase_changes = editor.pending_passphrase_operations() or ()
-            except Exception:
-                passphrase_changes = ()
-        if (
-            password_changed
-            or (not getattr(dialog, 'is_editing', False) and password)
-            or passphrase_changes
-        ):
-            return _(
-                "Passwords and key passphrases cannot be changed in "
-                "experimental service mode yet."
-            )
         # An unchanged pre-filled password must never enter the mutation
         # request or trigger local secret storage after a daemon write.
         connection_data['password'] = ''

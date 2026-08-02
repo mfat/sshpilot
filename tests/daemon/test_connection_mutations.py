@@ -128,7 +128,7 @@ def test_malformed_secret_bearing_mutation_is_rejected_without_logging_payload(
     )
 
     assert isinstance(response, ErrorResponseEnvelope)
-    assert response.error.code is ErrorCode.PROTOCOL_ERROR
+    assert response.error.code is ErrorCode.INVALID_REQUEST
     assert [connection.nickname for connection in manager.connections] == ["demo"]
     assert secret not in caplog.text
     assert secret not in repr(response)
