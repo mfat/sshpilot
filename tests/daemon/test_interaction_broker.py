@@ -486,6 +486,51 @@ def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     assert preloads == [True]
 
 
+def test_prepare_daemon_terminal_launch_carries_local_command(monkeypatch) -> None:
+    """Daemon SSH argv must preserve the host's parsed LocalCommand."""
+    from sshpilot.api.in_process_client import InProcessClient
+    from tests.daemon.conftest import TestConnection, TestConnectionManager
+
+    class LocalCommandConnection(TestConnection):
+        def __init__(self):
+            super().__init__(nickname="local-command", hostname="h", username="u")
+            self.id = "local-command"
+            self.uuid = "local-command"
+            self.local_command = 'notify-send "connected"'
+            self.data.update({
+                "id": "local-command",
+                "local_command": self.local_command,
+            })
+
+        async def native_connect(self, **kwargs):
+            from types import SimpleNamespace
+
+            self.ssh_connection_cmd = SimpleNamespace(
+                command=("ssh", "local-command"),
+                env={"PATH": "/usr/bin", "HOME": "/tmp", "TERM": "xterm"},
+                use_askpass=False,
+            )
+            return True
+
+    manager = TestConnectionManager()
+    manager.connections = [LocalCommandConnection()]
+    client = InProcessClient(manager, allow_cross_thread_commands=True)
+    monkeypatch.setattr("shutil.which", lambda name, path=None: "/usr/bin/ssh")
+
+    argv, _env = client.prepare_daemon_terminal_launch(
+        ConnectionId("local-command"), interaction_policy="broker"
+    )
+
+    assert argv == (
+        "/usr/bin/ssh",
+        "-o",
+        "PermitLocalCommand=yes",
+        "-o",
+        'LocalCommand=notify-send "connected"',
+        "local-command",
+    )
+
+
 def test_remembered_password_is_stored_only_after_authenticated_status(
     monkeypatch,
 ) -> None:

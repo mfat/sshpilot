@@ -280,6 +280,30 @@ class InProcessClient:
                 "The SSH session requires unsupported interaction",
                 connection_id=connection_id,
             )
+        # Keep daemon launches on the canonical ``ssh Host`` path, but carry the
+        # parsed LocalCommand explicitly.  Unlike the in-process terminal, the
+        # daemon owns a separately prepared process and must not depend on a
+        # frontend-side Connection object retaining this directive indirectly.
+        # Command-line options precede ssh_config, so PermitLocalCommand cannot
+        # be lost to a differing daemon-side config/default during launch.
+        connection_data = getattr(connection, "data", None)
+        data_local_command = (
+            connection_data.get("local_command", "")
+            if isinstance(connection_data, dict)
+            else ""
+        )
+        local_command = str(
+            getattr(connection, "local_command", "") or data_local_command or ""
+        ).strip()
+        if local_command:
+            argv = (
+                *argv[:-1],
+                "-o",
+                "PermitLocalCommand=yes",
+                "-o",
+                f"LocalCommand={local_command}",
+                argv[-1],
+            )
         executable = shutil.which(argv[0], path=environment.get("PATH"))
         if executable is None:
             raise SshPilotError(
