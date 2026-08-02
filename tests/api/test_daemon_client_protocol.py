@@ -10,6 +10,7 @@ from sshpilot.api.models import (
     ConnectionSummary,
     CreateConnectionRequest,
 )
+from sshpilot.api.version import API_IMPLEMENTATION_VERSION
 from sshpilot.api.transport import (
     EventEnvelope,
     SuccessResponseEnvelope,
@@ -86,7 +87,7 @@ def _connected_protocol_server(socket_path, action):
                     capabilities.request_id,
                     {
                         "protocol_version": "1.0",
-                        "api_implementation_version": "0.5",
+                        "api_implementation_version": API_IMPLEMENTATION_VERSION,
                         "client": {
                             "name": "daemon-client",
                             "version": "test",

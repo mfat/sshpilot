@@ -108,6 +108,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "lookup_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "update_connection_metadata": Capability.CONNECTIONS_METADATA_WRITE,
     "assign_connection_to_group": Capability.CONNECTIONS_GROUPS,

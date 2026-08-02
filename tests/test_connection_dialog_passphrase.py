@@ -429,21 +429,21 @@ def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
     sm = ss.get_secret_manager()
 
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: True)
-    assert dialog._needs_secret_unlock_before_save({'password': ''}) is True   # passphrase
-    assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is True  # password
+    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': ''}}) is True   # passphrase
+    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': 'p'}}) is True  # password
 
     # No pending passphrase and no password -> no prompt even when locked.
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: False)
-    assert dialog._needs_secret_unlock_before_save({'password': ''}) is False
+    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': ''}}) is False
 
     # Clearing a stored password is a vault delete -> must unlock first.
     assert dialog._needs_secret_unlock_before_save(
-        {'password': '', 'password_changed': True}) is True
+        {'__secret_plan': {'password': '', 'password_changed': True}}) is True
 
     # Unlocked -> never needs a prompt.
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
-    assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is False
+    assert dialog._needs_secret_unlock_before_save({'__secret_plan': {'password': 'p'}}) is False
 
 
 def test_rule_editor_remote_to_local_resets_host_to_localhost():

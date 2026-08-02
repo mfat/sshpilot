@@ -134,6 +134,10 @@
       "capability": "connections.groups",
       "status": "implemented"
     },
+    "delete_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
     "detach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -357,6 +361,7 @@
     "delete_connection",
     "delete_connection_password",
     "delete_group",
+    "delete_key_passphrase",
     "detach_session",
     "detach_sftp",
     "get_capabilities",
@@ -585,6 +590,16 @@
           "kind": "positional_or_keyword",
           "name": "group_id",
           "type": "str"
+        }
+      ],
+      "return": "bool"
+    },
+    "delete_key_passphrase": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "DeleteKeyPassphraseRequest"
         }
       ],
       "return": "bool"
@@ -1451,6 +1466,7 @@
     "DeleteConnectionRequest",
     "DeleteConnectionResult",
     "DeleteGroupRequest",
+    "DeleteKeyPassphraseRequest",
     "DetachSessionRequest",
     "EDITABLE_CONFIG_FIELDS",
     "FORBIDDEN_IN_PATCH",
@@ -1796,6 +1812,9 @@
     "DeleteGroupRequest": [
       "group_id"
     ],
+    "DeleteKeyPassphraseRequest": [
+      "key_path"
+    ],
     "DetachSessionRequest": [
       "session_id",
       "attachment_id"
@@ -2132,6 +2151,10 @@
       "connection_id",
       "original_host_token",
       "source_config_path",
+      "nickname",
+      "hostname",
+      "username",
+      "port",
       "config_patch",
       "expected_generation"
     ],

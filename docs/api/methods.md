@@ -18,6 +18,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `store_connection_password` | Implemented | `connections.secrets.write` |
 | `delete_connection_password` | Implemented | `connections.secrets.write` |
 | `store_key_passphrase` | Implemented | `connections.secrets.write` |
+| `delete_key_passphrase` | Implemented | `connections.secrets.write` |
 | `lookup_key_passphrase` | Implemented | `connections.secrets.write` |
 | `list_sessions` | Daemon only | `sessions.read` |
 | `get_session` | Daemon only | `sessions.read` |
@@ -128,6 +129,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
 <!-- api-method-contract: store_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: store_key_passphrase status=implemented capability=connections.secrets.write -->
+<!-- api-method-contract: delete_key_passphrase status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: claim_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: release_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
@@ -590,6 +592,21 @@ client.delete_connection_password(
 ```python
 client.store_key_passphrase(
     StoreKeyPassphraseRequest(key_path="/home/user/.ssh/id_rsa", passphrase="s3cret")
+)
+```
+
+<!-- api-method: delete_key_passphrase -->
+## `delete_key_passphrase`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.secrets.write`; delete a stored key passphrase.
+- **Parameters / return:** `DeleteKeyPassphraseRequest` (key_path); returns `bool`.
+- **Errors:** Transport/protocol errors only.
+- **Side effects / security:** Delegates to `ConnectionManager.delete_key_passphrase`.
+
+```python
+client.delete_key_passphrase(
+    DeleteKeyPassphraseRequest(key_path="/home/user/.ssh/id_rsa")
 )
 ```
 

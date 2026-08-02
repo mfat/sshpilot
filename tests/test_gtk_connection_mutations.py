@@ -158,6 +158,8 @@ def test_daemon_create_waits_for_success_and_sends_create_dto_with_config_patch(
     assert completed == []
 
     success(result)
+    assert len(window.client_bridge.calls) == 2
+    window.client_bridge.calls[1][1](True)
     assert completed == [True]
     assert window.connection_manager.reloads == 1
     assert window.rebuilds == 1
@@ -225,10 +227,12 @@ def test_daemon_editor_save_path_never_sends_password():
     assert "do-not-send" not in repr(request.config_patch)
 
     success(SimpleNamespace(connection_id="demo", generation=8))
+    assert len(window.client_bridge.calls) == 2
+    window.client_bridge.calls[1][1](True)
     assert completed == [True]
 
-    # Exactly one bridge submission: the mutation.  No secret RPC fired.
-    assert len(window.client_bridge.calls) == 1
+    # Exactly two bridge submissions: the mutation and metadata. No secret RPC fired.
+    assert len(window.client_bridge.calls) == 2
 
 
 def test_daemon_editor_allows_config_patch_fields():
@@ -871,6 +875,8 @@ def test_daemon_new_connection_dialog_is_local_and_save_works(monkeypatch):
     operation()
     assert window.client.created[0].nickname == "new"
     success(SimpleNamespace(connection_id="new", generation=1))
+    assert len(window.client_bridge.calls) == 2
+    window.client_bridge.calls[1][1](True)
     assert completed == [True]
 
 

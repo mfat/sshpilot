@@ -69,6 +69,10 @@
       "capability": "connections.groups",
       "status": "implemented"
     },
+    "delete_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
     "detach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -2262,6 +2266,18 @@
       ],
       "status": "Schema only"
     },
+    "DeleteKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
     "DetachSessionRequest": {
       "fields": [
         {
@@ -4154,8 +4170,36 @@
         },
         {
           "default": null,
-          "name": "config_patch",
+          "name": "nickname",
           "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": {},
+          "name": "config_patch",
+          "required": false,
           "sensitive": false,
           "type": "Mapping[str, Any]"
         },

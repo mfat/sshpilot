@@ -1093,6 +1093,28 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: DeleteKeyPassphraseRequest -->
+## `DeleteKeyPassphraseRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Request to delete an SSH key passphrase.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_path` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key_path": "example"
+}
+```
+
 <!-- api-model: DetachSessionRequest -->
 ## `DetachSessionRequest`
 
@@ -2617,7 +2639,11 @@ enforced like any other value.
 | `connection_id` | `ConnectionId` | Yes | — | No |
 | `original_host_token` | `str` | Yes | — | No |
 | `source_config_path` | `str` | Yes | — | No |
-| `config_patch` | `Mapping[str, Any]` | Yes | — | No |
+| `nickname` | `str` | Yes | — | No |
+| `hostname` | `str | None` | No | `null` | No |
+| `username` | `str | None` | No | `null` | No |
+| `port` | `int | None` | No | `null` | No |
+| `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 | `expected_generation` | `int | None` | No | `null` | No |
 
 Synthetic representation:
@@ -2627,8 +2653,12 @@ Synthetic representation:
   "config_patch": {},
   "connection_id": "production",
   "expected_generation": null,
+  "hostname": null,
+  "nickname": "example",
   "original_host_token": "example",
-  "source_config_path": "example"
+  "port": null,
+  "source_config_path": "example",
+  "username": null
 }
 ```
 
