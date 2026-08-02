@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, FrozenSet, Mapping, Optional, Tuple
 
-from .._safe_values import copy_safe_details
+from .._safe_values import copy_safe_details, copy_transport_value
 from ..capabilities import Capability
 from ..errors import ErrorCode
 from ..models.common import (
@@ -20,12 +20,21 @@ from ..models.common import (
 def _safe_mapping(value: Mapping[str, Any], field_name: str) -> dict:
     if type(value) is not dict:
         raise TypeError(f"{field_name} must be a dictionary")
+    try:
+        return copy_transport_value(value, field_name)
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(f"{field_name} is not a safe transport mapping") from None
+
+
+def _safe_detail_mapping(value: Mapping[str, Any], field_name: str) -> dict:
+    if type(value) is not dict:
+        raise TypeError(f"{field_name} must be a dictionary")
     return copy_safe_details(value)
 
 
 def _safe_value(value: Any, field_name: str) -> Any:
     try:
-        return copy_safe_details({"value": value})["value"]
+        return copy_transport_value(value, field_name)
     except (TypeError, ValueError) as exc:
         raise type(exc)(f"{field_name} is not a safe transport value") from None
 
@@ -87,7 +96,7 @@ class ErrorData:
         ):
             if value is not None:
                 require_identifier(value, field_name)
-        object.__setattr__(self, "details", _safe_mapping(self.details, "error details"))
+        object.__setattr__(self, "details", _safe_detail_mapping(self.details, "error details"))
 
 
 @dataclass(frozen=True)

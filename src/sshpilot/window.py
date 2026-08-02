@@ -4170,6 +4170,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             as_new=as_new,
         )
         dialog.connect('connection-saved', self.on_connection_saved)
+
+        # In daemon mode, fetch the editor DTO from the daemon so we have the
+        # authoritative generation for stale-editor detection on save.
+        dialog._daemon_generation = 0
+        if self._daemon_mode_active() and connection is not None and not as_new:
+            try:
+                from .api.models.common import ConnectionId
+                cid = ConnectionId(connection.nickname)
+                editor = self.client.get_connection_editor(cid)
+                dialog._daemon_generation = editor.generation
+            except Exception as exc:
+                logger.debug(
+                    "Could not fetch editor generation from daemon: %s", exc
+                )
+
         dialog.present()
 
     def open_cli_connect(self, ssh_tokens):
@@ -6486,14 +6501,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection_id = InProcessClient.connection_id_for(dialog.connection)
                 config_patch = _build_config_patch()
 
-                # In daemon mode the GUI and daemon have separate
-                # connection_manager instances with independent generations,
-                # so expected_generation from the GUI side will never match.
-                # Skip the stale-editor guard (generation=0 disables it).
-                # In in-process mode the shared connection_manager means the
-                # generation is authoritative.
+                # In daemon mode, use the generation fetched from the daemon
+                # when the dialog opened (stored on the dialog by
+                # show_connection_dialog).  In in-process mode, re-read the
+                # generation from the shared connection_manager, which is
+                # authoritative.
                 current_generation = 0
-                if not self._daemon_mode_active():
+                if self._daemon_mode_active():
+                    current_generation = getattr(dialog, '_daemon_generation', 0)
+                else:
                     try:
                         live = self.connection_manager.find_connection_by_nickname(
                             str(getattr(dialog.connection, "nickname", "") or ""),

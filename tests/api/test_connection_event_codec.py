@@ -89,7 +89,12 @@ def test_malformed_connection_event_payload_is_rejected_without_secret_repr():
     assert "must-not-appear" not in str(caught.value)
 
 
-def test_wire_payload_rejects_extra_secret_fields():
+def test_wire_payload_allows_ssh_config_keys():
+    """Event payloads may carry any dict key; transport validation is structural only.
+
+    Sensitive-key rejection belongs in error details (``copy_safe_details``),
+    not in event payloads or request params.
+    """
     envelope = connection_event_to_envelope(
         CoreEvent(
             type=EventType.CONNECTION_UPDATED,
@@ -99,10 +104,9 @@ def test_wire_payload_rejects_extra_secret_fields():
         sequence=5,
         protocol_version="1.0",
     )
-    with pytest.raises(ValueError) as caught:
-        replace(
-            envelope,
-            payload={**envelope.payload, "password": "must-not-cross-wire"},
-        )
-
-    assert "must-not-cross-wire" not in str(caught.value)
+    # Transport-safe validation should accept these keys without error
+    replaced = replace(
+        envelope,
+        payload={**envelope.payload, "remote_command": "echo hello"},
+    )
+    assert replaced.payload["remote_command"] == "echo hello"

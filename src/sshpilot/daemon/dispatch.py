@@ -186,6 +186,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.create",
         "connections.update",
         "connections.delete",
+        "connections.get_editor",
         "sessions.open",
         "sessions.close",
         "sftp.open",

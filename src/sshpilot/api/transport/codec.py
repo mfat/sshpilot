@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import AbstractSet, Any, Dict, Iterable, Optional, Union
 
-from .._safe_values import copy_safe_details
+from .._safe_values import copy_transport_value
 from ..capabilities import Capabilities, Capability
 from ..errors import ErrorCode, SshPilotError
 from ..events import CoreEvent, EventType
@@ -211,11 +211,11 @@ def _json_value(value: Any, context: str = "transport value") -> Any:
     if value is None or type(value) in (str, bool, int):
         return value
     if type(value) is float:
-        return copy_safe_details({"value": value})["value"]
+        return copy_transport_value({"value": value})["value"]
     if type(value) is list:
         return [_json_value(item, f"{context}[]") for item in value]
     if type(value) is dict:
-        return copy_safe_details(value)
+        return copy_transport_value(value)
     raise TypeError(f"{context} contains an unsupported value")
 
 

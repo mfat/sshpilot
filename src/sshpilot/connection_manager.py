@@ -1994,6 +1994,8 @@ class ConnectionManager(GObject.Object):
             # Custom options not handled by standard UI fields
             extra_config_lines = []
             for key, value in config.items():
+                if key.startswith('__'):
+                    continue
                 if key.lower() in MANAGED_HOST_OPTIONS:
                     continue
                 if isinstance(value, list):
