@@ -51,13 +51,15 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
             return f"[{host}]"
         return host
 
-    host = data.get('hostname') or data.get('host', '')
+    host = data.get('hostname')
+    if host is None:
+        host = data.get('host', '')
     nickname = data.get('nickname') or host
     primary_token = _quote_token(nickname)
     lines = [f"Host {primary_token}"]
 
     # Add basic connection info
-    if host and host != nickname:
+    if host != '' and host != nickname:
         lines.append(f"    HostName {host}")
     # Omit User when empty: a bare "User" line is a fatal ssh_config parse
     # error that makes ssh reject the ENTIRE file, and ssh defaults to the
@@ -84,6 +86,8 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # ForwardAgent also accepts a socket path / $ENV per ssh_config(5).
         forward_target = str(data.get('forward_agent_target') or '').strip()
         lines.append(f"    ForwardAgent {forward_target or 'yes'}")
+    elif data.get('forward_agent_explicit_no'):
+        lines.append("    ForwardAgent no")
 
     # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
     keyfile = data.get('keyfile') or data.get('private_key')
@@ -122,14 +126,19 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
 
             if key_select_mode == 1:
                 lines.append("    IdentitiesOnly yes")
+        elif data.get('identity_file_none'):
+            lines.append("    IdentityFile none")
 
-            # Add certificate(s) if specified (exclude placeholder text)
-            certificate_files = _clean_list(
-                data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
-                'select certificate',
-            )
-            for cert in certificate_files:
-                lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
+        if key_select_mode != 1 and data.get('identities_only_explicit_no'):
+            lines.append("    IdentitiesOnly no")
+
+        # Add certificate(s) if specified (exclude placeholder text)
+        certificate_files = _clean_list(
+            data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
+            'select certificate',
+        )
+        for cert in certificate_files:
+            lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
 
         # Agent / hardware key sources — valid in both automatic and
         # specific-key modes (the key may come from an agent socket, a
@@ -164,6 +173,8 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     # Add X11 forwarding if enabled
     if data.get('x11_forwarding', False):
         lines.append("    ForwardX11 yes")
+    elif data.get('x11_forwarding_explicit_no'):
+        lines.append("    ForwardX11 no")
 
     # Add PreCommand (sshpilot-specific, stored as a comment)
     pre_cmd = (data.get('pre_command') or '').strip()
@@ -189,12 +200,10 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     # Add RemoteCommand and RequestTTY if specified (ensure shell stays active)
     remote_cmd = (data.get('remote_command') or '').strip()
     if remote_cmd:
-        # Ensure we keep an interactive shell after the command
-        remote_cmd_aug = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
         # Write RemoteCommand first, then RequestTTY (order for readability).
         # The interactive shell needs a TTY, so default to yes — but an
         # explicitly authored token still wins.
-        lines.append(f"    RemoteCommand {remote_cmd_aug}")
+        lines.append(f"    RemoteCommand {remote_cmd}")
         lines.append(f"    RequestTTY {tty_token or 'yes'}")
     elif tty_token:
         lines.append(f"    RequestTTY {tty_token}")

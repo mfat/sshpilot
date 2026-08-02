@@ -488,7 +488,7 @@ class DaemonClient:
                 "The daemon returned invalid connection editor details"
             )
 
-    def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
+    def create_connection(self, request: CreateConnectionRequest) -> 'ConnectionMutationResult':
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
             self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
@@ -498,7 +498,8 @@ class DaemonClient:
             mutation_connection_id=None,
         )
         try:
-            return connection_details_from_wire(result)
+            from .transport.codec import connection_mutation_result_from_wire
+            return connection_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
 
@@ -506,7 +507,7 @@ class DaemonClient:
         self,
         connection_id: ConnectionId,
         request: UpdateConnectionRequest,
-    ) -> ConnectionDetails:
+    ) -> 'ConnectionMutationResult':
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
             self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
@@ -519,7 +520,8 @@ class DaemonClient:
             mutation_connection_id=connection_id,
         )
         try:
-            return connection_details_from_wire(result)
+            from .transport.codec import connection_mutation_result_from_wire
+            return connection_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
 

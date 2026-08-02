@@ -2007,12 +2007,8 @@ class ConnectionDialog(
                 config_lines.append("    PermitLocalCommand yes")
                 config_lines.append(f"    LocalCommand {local_cmd}")
             
-            # Add remote command if specified
             if hasattr(self, 'remote_command_row') and self.remote_command_row.get_text().strip():
                 remote_cmd = self.remote_command_row.get_text().strip()
-                # Ensure shell stays active after command
-                if 'exec $SHELL' not in remote_cmd:
-                    remote_cmd = f"{remote_cmd} ; exec $SHELL -l"
                 config_lines.append(f"    RemoteCommand {remote_cmd}")
                 config_lines.append("    RequestTTY yes")
             

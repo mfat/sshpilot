@@ -846,6 +846,22 @@ def connection_details_to_wire(details: ConnectionDetails) -> Dict[str, Any]:
     return result
 
 
+def connection_mutation_result_to_wire(result: Any) -> Dict[str, Any]:
+    return {
+        "connection_id": result.connection_id,
+        "nickname": result.nickname,
+        "generation": result.generation,
+    }
+
+def connection_mutation_result_from_wire(value: Any) -> Any:
+    from ..models.connections import ConnectionMutationResult
+    data = _strict_fields(value, "ConnectionMutationResult", {"connection_id", "nickname", "generation"})
+    return ConnectionMutationResult(
+        connection_id=_str(data["connection_id"]),
+        nickname=_str(data["nickname"]),
+        generation=_int(data["generation"]),
+    )
+
 def connection_details_from_wire(value: Any) -> ConnectionDetails:
     detail_fields = {
         "aliases",

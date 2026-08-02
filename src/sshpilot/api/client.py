@@ -101,14 +101,14 @@ class SshPilotClient(Protocol):
     ) -> ConnectionEditorDetails:
         ...
 
-    def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
+    def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:
         ...
 
     def update_connection(
         self,
         connection_id: ConnectionId,
         request: UpdateConnectionRequest,
-    ) -> ConnectionDetails:
+    ) -> ConnectionMutationResult:
         ...
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:

@@ -6652,6 +6652,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for key in EDITABLE_CONFIG_FIELDS:
                 if key in ("nickname", "hostname", "username", "port", "protocol"):
                     continue
+                if key not in connection_data:
+                    continue
+
                 if key == "forwarding_rules":
                     raw = connection_data.get(key, ())
                     if raw:
@@ -6757,12 +6760,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 complete_save(False)
                 return
             try:
-                class DummyConnection:
-                    def __init__(self, nickname):
-                        self.nickname = nickname
-                new_conn_id = InProcessClient.connection_id_for(
-                    DummyConnection(connection_data.get('nickname', ''))
-                )
+                if hasattr(_details, "connection_id"):
+                    new_conn_id = _details.connection_id
+                else:
+                    class DummyConnection:
+                        def __init__(self, nickname):
+                            self.nickname = nickname
+                    new_conn_id = InProcessClient.connection_id_for(
+                        DummyConnection(connection_data.get('nickname', ''))
+                    )
             except Exception:
                 new_conn_id = None
 
@@ -6794,7 +6800,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
             try:
-                self.connection_manager.config.config_data = self.connection_manager.config.load_json_config()
+                conf = getattr(self.connection_manager, 'config', None)
+                if conf and hasattr(conf, 'load_json_config'):
+                    conf.config_data = conf.load_json_config()
                 self.connection_manager.load_ssh_config()
                 self.rebuild_connection_list()
             except Exception as error:

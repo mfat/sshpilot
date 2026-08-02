@@ -214,8 +214,8 @@ def _parse_forwarding_rules_from_config(config: Dict[str, Any]) -> List[Dict[str
     return rules
 
 
-def _resolve_key_select_mode(config: Dict[str, Any], has_specific_key: bool) -> int:
-    """Map IdentitiesOnly / IdentityFile presence to UI key_select_mode."""
+def _resolve_key_select_mode(config: Dict[str, Any], has_specific_key: bool) -> Tuple[int, bool]:
+    """Map IdentitiesOnly / IdentityFile presence to UI key_select_mode and explicit no flag."""
     try:
         ident_only_raw = config.get('identitiesonly')
         ident_only_normalized = ident_only_raw
@@ -227,14 +227,14 @@ def _resolve_key_select_mode(config: Dict[str, Any], has_specific_key: bool) -> 
             ident_only = ident_only_normalized.strip().lower()
 
         if ident_only in ('yes', 'true', '1', 'on'):
-            return 1
+            return 1, False
         if ident_only in ('no', 'false', '0', 'off'):
-            return 2 if has_specific_key else 0
+            return 2 if has_specific_key else 0, True
         if ident_only_raw is None or (isinstance(ident_only_raw, str) and not ident_only_raw.strip()):
-            return 2 if has_specific_key else 0
-        return 0
+            return 2 if has_specific_key else 0, False
+        return 0, False
     except Exception:
-        return 2 if has_specific_key else 0
+        return 2 if has_specific_key else 0, False
 
 
 def _resolve_auth_method_from_config(config: Dict[str, Any]) -> Tuple[int, List[str], bool]:
@@ -1915,8 +1915,9 @@ class ConnectionManager(GObject.Object):
                     parsed['config_root'] = self.ssh_config_path
 
             try:
-                fwd_x11 = str(config.get('forwardx11', 'no')).strip().lower()
-                parsed['x11_forwarding'] = fwd_x11 in ('yes', 'true', '1', 'on')
+                fwd_x11_raw = str(config.get('forwardx11', '')).strip().lower()
+                parsed['x11_forwarding'] = fwd_x11_raw in ('yes', 'true', '1', 'on')
+                parsed['x11_forwarding_explicit_no'] = (fwd_x11_raw == 'no')
             except Exception:
                 parsed['x11_forwarding'] = False
 
@@ -1942,16 +1943,16 @@ class ConnectionManager(GObject.Object):
                         parsed[parsed_key] = str(val).strip()
 
             if 'forwardagent' in config:
-                fa_raw = str(_unwrap_ssh_value(config.get('forwardagent', ''))).strip()
-                fa = fa_raw.lower()
-                # ssh_config(5): yes/no, socket path, or $ENV. Anything not an
-                # explicit "off" value enables agent forwarding.
-                if fa in ('no', 'false', '0', 'off', ''):
-                    parsed['forward_agent'] = False
-                else:
-                    parsed['forward_agent'] = True
-                    if fa not in ('yes', 'true', '1', 'on'):
-                        parsed['forward_agent_target'] = fa_raw
+                fa_raw_wrapped = config.get('forwardagent')
+                if fa_raw_wrapped is not None:
+                    fa_raw = str(_unwrap_ssh_value(fa_raw_wrapped)).strip()
+                    if fa_raw.lower() in ('no', 'false', '0', 'off'):
+                        parsed['forward_agent'] = False
+                        parsed['forward_agent_explicit_no'] = True
+                    else:
+                        parsed['forward_agent'] = True
+                        if fa_raw.lower() not in ('yes', 'true', '1', 'on', ''):
+                            parsed['forward_agent_target'] = fa_raw
 
             try:
                 def _unescape_cfg_value(val: str) -> str:
@@ -1984,7 +1985,7 @@ class ConnectionManager(GObject.Object):
             keyfile_value = parsed.get('keyfile', '')
             keyfile_path = keyfile_value.strip() if isinstance(keyfile_value, str) else ''
             has_specific_key = bool(keyfile_path and not keyfile_path.lower().startswith('select key file'))
-            parsed['key_select_mode'] = _resolve_key_select_mode(config, has_specific_key)
+            parsed['key_select_mode'], parsed['identities_only_explicit_no'] = _resolve_key_select_mode(config, has_specific_key)
 
             auth_method, prefer_auth_list, pubkey_auth_no = _resolve_auth_method_from_config(config)
             parsed['preferred_authentications'] = prefer_auth_list

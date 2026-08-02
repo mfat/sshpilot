@@ -40,6 +40,7 @@ from sshpilot.api.transport.codec import (
     close_sftp_request_from_wire,
     connection_details_to_wire,
     connection_editor_details_to_wire,
+    connection_mutation_result_to_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
     create_group_request_from_wire,
@@ -636,7 +637,7 @@ class RequestDispatcher:
         if mutation.config_patch:
             self._require_capability(state, Capability.CONNECTIONS_CONFIG_WRITE)
         return DeferredResult(
-            operation=lambda: connection_details_to_wire(
+            operation=lambda: connection_mutation_result_to_wire(
                 self._core_client.create_connection(mutation)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
@@ -660,7 +661,7 @@ class RequestDispatcher:
             self._require_capability(state, Capability.CONNECTIONS_CONFIG_WRITE)
         typed_id = ConnectionId(connection_id)
         return DeferredResult(
-            operation=lambda: connection_details_to_wire(
+            operation=lambda: connection_mutation_result_to_wire(
                 self._core_client.update_connection(typed_id, mutation)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,

@@ -251,6 +251,22 @@ class ConnectionEditorCapabilities:
 
 
 @dataclass(frozen=True)
+class ConnectionMutationResult:
+    """The authoritative result of a successful connection save."""
+
+    connection_id: str
+    nickname: str
+    generation: int
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        if not self.nickname.strip():
+            raise ValueError("connection nickname must not be empty")
+        if self.generation < 0:
+            raise ValueError("generation must not be negative")
+
+
+@dataclass(frozen=True)
 class ConnectionEditorDetails(ConnectionDetails):
     """Full editor state for local authenticated clients.
 
@@ -269,6 +285,7 @@ class ConnectionEditorDetails(ConnectionDetails):
     pubkey_auth_no: bool = False
     # Routing
     forward_agent: bool = False
+    forward_agent_explicit_no: bool = False
     forward_agent_target: str = ""  # preserved, no widget
     proxy_command: str = ""  # preserved, no widget
     # Forwarding
@@ -281,6 +298,8 @@ class ConnectionEditorDetails(ConnectionDetails):
     # Advanced
     extra_ssh_config: str = ""
     identity_file_none: bool = False  # IdentityFile none suppression
+    x11_forwarding_explicit_no: bool = False
+    identities_only_explicit_no: bool = False
     preferred_authentications: str = ""  # preserved for round-trip
     # Context
     source: str = ""  # config file owning this block
@@ -417,8 +436,8 @@ class CreateConnectionRequest:
     def __post_init__(self) -> None:
         if type(self.nickname) is not str or not self.nickname.strip():
             raise ValueError("connection nickname must not be empty")
-        if type(self.hostname) is not str or not self.hostname.strip():
-            raise ValueError("connection hostname must not be empty")
+        if type(self.hostname) is not str:
+            raise TypeError("connection hostname must be a string")
         if type(self.username) is not str:
             raise TypeError("connection username must be a string")
         if type(self.port) is not int or not 1 <= self.port <= 65535:
@@ -467,10 +486,8 @@ class UpdateConnectionRequest:
             type(self.nickname) is not str or not self.nickname.strip()
         ):
             raise ValueError("connection nickname must not be empty")
-        if self.hostname is not None and self.hostname is not UNSET and (
-            type(self.hostname) is not str or not self.hostname.strip()
-        ):
-            raise ValueError("connection hostname must not be empty")
+        if self.hostname is not None and self.hostname is not UNSET and type(self.hostname) is not str:
+            raise TypeError("connection hostname must be a string")
         if self.username is not None and self.username is not UNSET and type(self.username) is not str:
             raise TypeError("connection username must be a string")
         if self.port is not None and self.port is not UNSET and (

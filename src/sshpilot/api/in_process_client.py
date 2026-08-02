@@ -777,7 +777,7 @@ class InProcessClient:
             )
         return self._to_editor_details(connection)
 
-    def create_connection(self, request: CreateConnectionRequest) -> ConnectionDetails:
+    def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
@@ -844,13 +844,17 @@ class InProcessClient:
             raise self._persistence_error() from None
         if connection is None:
             raise self._persistence_error()
-        return self._to_details(connection)
+        return ConnectionMutationResult(
+            connection_id=self.connection_id_for(connection),
+            nickname=connection.nickname,
+            generation=getattr(connection, "generation", 0),
+        )
 
     def update_connection(
         self,
         connection_id: ConnectionId,
         request: UpdateConnectionRequest,
-    ) -> ConnectionDetails:
+    ) -> ConnectionMutationResult:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
@@ -946,7 +950,11 @@ class InProcessClient:
                         type(error).__name__,
                     )
         self._emit_manager_event("connection-updated", connection)
-        return self._to_details(connection)
+        return ConnectionMutationResult(
+            connection_id=self.connection_id_for(connection),
+            nickname=connection.nickname,
+            generation=getattr(connection, "generation", 0),
+        )
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
         self._assert_command_thread()
@@ -1518,6 +1526,18 @@ class InProcessClient:
         summary = self._to_summary(connection)
         details = self._to_details(connection)
 
+        data = getattr(connection, "data", None)
+        data = data if isinstance(data, dict) else {}
+
+        def _get_val(attr_name: str, default: Any = None) -> Any:
+            val = getattr(connection, attr_name, None)
+            if val is not None:
+                return val
+            if attr_name in data:
+                return data[attr_name]
+            return default
+
+
         def _str(val: Any, default: str = "") -> str:
             v = str(val) if val is not None else default
             return v
@@ -1548,9 +1568,6 @@ class InProcessClient:
                     rules.append(item)
             return tuple(rules)
 
-        data = getattr(connection, "data", None)
-        data = data if isinstance(data, dict) else {}
-
         return ConnectionEditorDetails(
             id=summary.id,
             nickname=summary.nickname,
@@ -1568,89 +1585,30 @@ class InProcessClient:
             x11_forwarding=details.x11_forwarding,
             forwarding_rule_count=details.forwarding_rule_count,
             proxy_jump=details.proxy_jump,
-            key_select_mode=_int(
-                getattr(connection, "key_select_mode", None)
-                or data.get("key_select_mode", 0)
-            ),
-            identity_files=_tuple_str(
-                getattr(connection, "identity_files", None)
-                or data.get("identity_files", ())
-            ),
-            certificate_files=_tuple_str(
-                getattr(connection, "certificate_files", None)
-                or data.get("certificate_files", ())
-            ),
-            identity_agent=_str(
-                getattr(connection, "identity_agent", None)
-                or data.get("identity_agent", "")
-            ),
-            add_keys_to_agent=_str(
-                getattr(connection, "add_keys_to_agent", None)
-                or data.get("add_keys_to_agent", "")
-            ),
-            pkcs11_provider=_str(
-                getattr(connection, "pkcs11_provider", None)
-                or data.get("pkcs11_provider", "")
-            ),
-            security_key_provider=_str(
-                getattr(connection, "security_key_provider", None)
-                or data.get("security_key_provider", "")
-            ),
-            pubkey_auth_no=_bool(
-                getattr(connection, "pubkey_auth_no", None)
-                or data.get("pubkey_auth_no", False)
-            ),
-            forward_agent=_bool(
-                getattr(connection, "forward_agent", None)
-                or data.get("forward_agent", False)
-            ),
-            forward_agent_target=_str(
-                getattr(connection, "forward_agent_target", None)
-                or data.get("forward_agent_target", "")
-            ),
-            proxy_command=_str(
-                getattr(connection, "proxy_command", None)
-                or data.get("proxy_command", "")
-            ),
-            forwarding_rules=_tuple_fw(
-                getattr(connection, "forwarding_rules", None)
-                or data.get("forwarding_rules", ())
-            ),
-            pre_command=_str(
-                getattr(connection, "pre_command", None)
-                or data.get("pre_command", "")
-            ),
-            local_command=_str(
-                getattr(connection, "local_command", None)
-                or data.get("local_command", "")
-            ),
-            remote_command=_str(
-                getattr(connection, "remote_command", None)
-                or data.get("remote_command", "")
-            ),
-            request_tty=_str(
-                getattr(connection, "request_tty", None)
-                or data.get("request_tty", "")
-            ),
-            extra_ssh_config=_str(
-                getattr(connection, "extra_ssh_config", None)
-                or data.get("extra_ssh_config", "")
-            ),
-            identity_file_none=_bool(
-                data.get("identity_file_none", False)
-            ),
-            preferred_authentications=_str(
-                getattr(connection, "preferred_authentications", None)
-                or data.get("preferred_authentications", "")
-            ),
-            source=_str(
-                getattr(connection, "source", None)
-                or data.get("source", "")
-            ),
-            generation=_int(
-                getattr(connection, "generation", None)
-                or data.get("generation", 0)
-            ),
+            key_select_mode=_int(_get_val("key_select_mode", 0)),
+            identity_files=_tuple_str(_get_val("identity_files", ())),
+            certificate_files=_tuple_str(_get_val("certificate_files", ())),
+            identity_agent=_str(_get_val("identity_agent", "")),
+            add_keys_to_agent=_str(_get_val("add_keys_to_agent", "")),
+            pkcs11_provider=_str(_get_val("pkcs11_provider", "")),
+            security_key_provider=_str(_get_val("security_key_provider", "")),
+            pubkey_auth_no=_bool(_get_val("pubkey_auth_no", False)),
+            forward_agent=_bool(_get_val("forward_agent", False)),
+            forward_agent_explicit_no=_bool(_get_val("forward_agent_explicit_no", False)),
+            forward_agent_target=_str(_get_val("forward_agent_target", "")),
+            proxy_command=_str(_get_val("proxy_command", "")),
+            forwarding_rules=_tuple_fw(_get_val("forwarding_rules", ())),
+            pre_command=_str(_get_val("pre_command", "")),
+            local_command=_str(_get_val("local_command", "")),
+            remote_command=_str(_get_val("remote_command", "")),
+            request_tty=_str(_get_val("request_tty", "")),
+            extra_ssh_config=_str(_get_val("extra_ssh_config", "")),
+            identity_file_none=_bool(_get_val("identity_file_none", False)),
+            x11_forwarding_explicit_no=_bool(_get_val("x11_forwarding_explicit_no", False)),
+            identities_only_explicit_no=_bool(_get_val("identities_only_explicit_no", False)),
+            preferred_authentications=_str(_get_val("preferred_authentications", "")),
+            source=_str(_get_val("source", "")),
+            generation=_int(_get_val("generation", 0)),
         )
 
     @staticmethod
