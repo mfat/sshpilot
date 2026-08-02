@@ -6639,6 +6639,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         resumable = bool(getattr(dialog, '_resumable_save_active', False))
         checkpoint = (getattr(dialog, '_daemon_save_checkpoint', None)
                       if resumable else None)
+        config_fingerprint = self._normalise_daemon_editor_value({
+            key: value for key, value in connection_data.items()
+            if not key.startswith('__')
+        })
+        metadata_fingerprint = self._normalise_daemon_editor_value(pending_meta or {})
+        if checkpoint is not None and getattr(
+            dialog, '_daemon_config_fingerprint', None
+        ) != config_fingerprint:
+            checkpoint = None
+            for name in ('_daemon_save_checkpoint', '_daemon_metadata_saved',
+                         '_daemon_metadata_fingerprint', '_save_mutation_result'):
+                try:
+                    delattr(dialog, name)
+                except AttributeError:
+                    pass
 
         # Daemon edits may never save against a pending/failed snapshot: the
         # dialog disables Save in that state, but the signal path (accelerator,
@@ -6801,16 +6816,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
 
             pending_meta_local = pending_meta or {}
-            if getattr(dialog, '_daemon_metadata_saved', False):
+            metadata_saved = getattr(dialog, '_daemon_metadata_saved', False)
+            if metadata_saved and getattr(
+                dialog, '_daemon_metadata_fingerprint', None
+            ) == metadata_fingerprint:
                 _finish_save_flow()
                 return
             if pending_meta_local and new_conn_id:
-                def _meta_success(_):
+                def _meta_success(result):
+                    if result is not True:
+                        _meta_failure(RuntimeError(
+                            "Metadata persistence returned false"
+                        ))
+                        return
                     dialog._daemon_metadata_saved = True
+                    dialog._daemon_metadata_fingerprint = metadata_fingerprint
                     _finish_save_flow()
                 def _meta_failure(error):
                     logger.debug("Metadata update via daemon RPC failed: %s", error)
-                    _finish_save_flow(meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."))
+                    complete_save(
+                        False, _details,
+                        meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."),
+                    )
                 try:
                     bridge.submit(
                         lambda: self.client.update_connection_metadata(new_conn_id, pending_meta_local),
@@ -6819,7 +6846,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
                     return
                 except RuntimeError:
-                    _finish_save_flow(meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."))
+                    complete_save(False, _details, meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."))
                     return
                     
             _finish_save_flow()
@@ -6845,6 +6872,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         def _checkpoint_success(details):
             if resumable:
                 dialog._daemon_save_checkpoint = details
+                dialog._daemon_config_fingerprint = config_fingerprint
             _success(details)
 
         try:
@@ -6859,6 +6887,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_connection_saved(self, dialog, connection_data, pending_meta=None,
                             secret_plan=None, save_completion=None):
         """Handle connection saved from dialog"""
+        claim = getattr(save_completion, 'claim', None)
+        if callable(claim):
+            claim()
         # Compatibility for third-party/plugin emitters using the pre-v2
         # one-object signal.  Values are removed before any persistence call.
         if save_completion is None:
@@ -6894,6 +6925,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
             if ok and not meta_error and not has_secret_work:
                 for name in ('_daemon_save_checkpoint', '_daemon_metadata_saved',
+                             '_daemon_config_fingerprint',
+                             '_daemon_metadata_fingerprint',
                              '_resumable_save_active'):
                     try:
                         delattr(dialog, name)
