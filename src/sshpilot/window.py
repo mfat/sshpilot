@@ -6767,7 +6767,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 new_conn_id = None
 
             pending_meta_local = pending_meta or {}
-            if dialog.is_editing and pending_meta_local and new_conn_id:
+            if pending_meta_local and new_conn_id:
                 try:
                     self.client.update_connection_metadata(new_conn_id, pending_meta_local)
                 except Exception as exc:
