@@ -647,7 +647,7 @@ def test_persistent_host_key_rejects_symlink(
     assert target.read_text() == ""
 
 
-def test_broker_options_win_over_conflicting_preference_overrides(
+def test_prepare_launch_preserves_canonical_ssh_options(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
@@ -679,25 +679,23 @@ def test_broker_options_win_over_conflicting_preference_overrides(
             {"PATH": os.environ.get("PATH", "")},
         ),
     )
-    assert argv[:5] == (
+    assert argv == (
         "/usr/bin/ssh",
         "-F",
         "/tmp/config",
         "-o",
-        "BatchMode=no",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "UserKnownHostsFile=/tmp/user-known-hosts",
+        "-o",
+        "ConnectTimeout=5",
+        "example",
     )
-    text = " ".join(argv)
-    assert text.index("BatchMode=no") < text.index("ConnectTimeout=5")
-    assert "BatchMode=yes" not in argv
-    # Preferences / argv StrictHostKeyChecking must survive (default accept-new).
-    assert "StrictHostKeyChecking=accept-new" in argv
-    assert "StrictHostKeyChecking=ask" not in argv
-    # UserKnownHostsFile from argv is left alone unless mode is ask.
-    assert "UserKnownHostsFile=/tmp/user-known-hosts" in argv
-    assert argv[-1] == "example"
 
 
-def test_prepare_launch_does_not_force_connection_multiplexing(
+def test_prepare_launch_does_not_add_ssh_option_defaults(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
@@ -718,9 +716,7 @@ def test_prepare_launch_does_not_force_connection_multiplexing(
         ),
     )
 
-    assert not any("ControlMaster=" in item for item in argv)
-    assert not any("ControlPersist=" in item for item in argv)
-    assert not any("ControlPath=" in item for item in argv)
+    assert argv == ("/usr/bin/ssh", "example")
 
 
 def test_strict_host_key_mode_selects_first_occurrence() -> None:
@@ -759,7 +755,7 @@ def test_strict_host_key_mode_selects_first_occurrence() -> None:
     ) == "yes"
 
 
-def test_prepare_launch_ask_uses_session_known_hosts(
+def test_prepare_launch_ask_preserves_user_known_hosts(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
@@ -786,12 +782,7 @@ def test_prepare_launch_ask_uses_session_known_hosts(
         ),
     )
     assert "StrictHostKeyChecking=ask" in argv
-    known_opt = next(
-        item for item in argv if item.startswith("UserKnownHostsFile=")
-    )
-    assert known_opt.startswith("UserKnownHostsFile=")
-    assert "/tmp/user-known-hosts" not in known_opt
-    assert "known_hosts" in known_opt or "/h-" in known_opt or "h-" in known_opt
+    assert "UserKnownHostsFile=/tmp/user-known-hosts" in argv
 
 
 def test_parse_openssh_host_key_askpass_prompt(broker: InteractionBroker) -> None:
