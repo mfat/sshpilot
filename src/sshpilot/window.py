@@ -6617,6 +6617,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         dialog,
         connection_data,
         complete_save,
+        pending_meta=None,
     ) -> None:
         from .api import SshPilotError
         from .api.in_process_client import InProcessClient
@@ -6765,10 +6766,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 new_conn_id = None
 
-            pending_meta = connection_data.get('__meta') or {}
-            if dialog.is_editing and pending_meta and new_conn_id:
+            pending_meta_local = pending_meta or {}
+            if dialog.is_editing and pending_meta_local and new_conn_id:
                 try:
-                    self.client.update_connection_metadata(new_conn_id, pending_meta)
+                    self.client.update_connection_metadata(new_conn_id, pending_meta_local)
                 except Exception as exc:
                     logger.debug("Metadata update via daemon RPC failed: %s", exc)
             complete_save(True)
@@ -6843,6 +6844,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     dialog,
                     connection_data,
                     _complete_save,
+                    pending_meta=pending_meta,
                 )
                 return
             if dialog.is_editing:
