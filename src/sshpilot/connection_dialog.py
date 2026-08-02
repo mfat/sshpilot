@@ -70,7 +70,8 @@ def _editor_details_to_connection(details):
     same authoritative daemon snapshot that supplies ``expected_generation``
     (never from a stale local ``Connection``).
     """
-    from .api.models.connections import AuthenticationMethod
+    from .api.models.connections import AuthenticationMethod, ForwardingRule
+    from .api.models.connections import forwarding_rule_to_dict
 
     identity_files = [
         p for p in (getattr(details, 'identity_files', None) or []) if str(p).strip()
@@ -79,6 +80,16 @@ def _editor_details_to_connection(details):
         p for p in (getattr(details, 'certificate_files', None) or []) if str(p).strip()
     ]
     authentication_method = getattr(details, 'authentication_method', None)
+
+    # The dialog's forwarding UI (and the save handler) consume the dict
+    # schema (``rule.get("enabled", True)``…); the DTO carries typed
+    # ForwardingRule objects, so normalize them here.
+    forwarding_rules = [
+        forwarding_rule_to_dict(rule)
+        if isinstance(rule, ForwardingRule)
+        else dict(rule)
+        for rule in (getattr(details, 'forwarding_rules', None) or ())
+    ]
     return types.SimpleNamespace(
         nickname=getattr(details, 'nickname', ''),
         hostname=getattr(details, 'hostname', '') or getattr(details, 'host', ''),
@@ -106,7 +117,7 @@ def _editor_details_to_connection(details):
         pre_command=getattr(details, 'pre_command', ''),
         local_command=getattr(details, 'local_command', ''),
         remote_command=getattr(details, 'remote_command', ''),
-        forwarding_rules=getattr(details, 'forwarding_rules', ()),
+        forwarding_rules=forwarding_rules,
         aliases=getattr(details, 'aliases', ()),
         source=getattr(details, 'source', ''),
         generation=getattr(details, 'generation', 0),
@@ -3602,4 +3613,41 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         dialog.add_response("ok", _("OK"))
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")
+        dialog.present()
+
+    def show_daemon_editor_load_error(self, on_retry=None):
+        """Explain a terminal daemon snapshot load failure.
+
+        The form stays empty and Save stays disabled, so present a clear
+        dialog offering ``_Retry`` (re-run the load via ``on_retry``) and
+        ``_Close`` (leave the editor as-is).  When ``on_retry`` is None only
+        ``_Close`` is offered (e.g. an unrepairable populate failure).
+        """
+        try:
+            if hasattr(self, 'present'):
+                self.present()
+        except Exception:
+            pass
+        parent_window = getattr(self, 'parent_window', None)
+        dialog = Adw.MessageDialog.new(
+            parent_window,
+            _("Could not load connection"),
+            _("The connection could not be loaded from the service. "
+              "You can retry or close the editor."),
+        )
+        if callable(on_retry):
+            dialog.add_response("retry", _("_Retry"))
+            try:
+                dialog.set_response_appearance("retry", Adw.ResponseAppearance.SUGGESTED)
+            except Exception:
+                pass
+        dialog.add_response("close", _("_Close"))
+        dialog.set_default_response("close")
+        dialog.set_close_response("close")
+
+        def _on_response(_dialog, response):
+            if response == "retry" and callable(on_retry):
+                on_retry()
+
+        dialog.connect("response", _on_response)
         dialog.present()

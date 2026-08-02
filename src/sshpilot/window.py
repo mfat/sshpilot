@@ -4172,9 +4172,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         dialog.connect('connection-saved', self.on_connection_saved)
 
         # Daemon mode: the authoritative editor snapshot gates the form.  A
-        # new connection needs no generation; an edit is populated (and Save
-        # enabled) only once the daemon DTO arrives.
-        if as_new:
+        # blank/new connection (``connection is None`` or ``as_new``) needs no
+        # generation and must never enter the load-failed state; an existing
+        # edit is populated (and Save enabled) only once the daemon DTO
+        # arrives.
+        if connection is None or as_new:
             dialog._daemon_generation = 0
             dialog.set_editor_source('local')
         elif self._daemon_mode_active():
@@ -4248,12 +4250,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 dialog.populate_from_editor_details(editor)
             except Exception as error:
                 # A populate failure must never wedge Save or smuggle a zero
-                # generation into the stale-editor check.
+                # generation into the stale-editor check.  Report it so the
+                # empty form is not left unexplained.
                 logger.warning(
                     "Failed to populate editor from daemon snapshot type=%s",
                     type(error).__name__,
                 )
                 dialog.set_daemon_editor_load_failed()
+                try:
+                    dialog.show_daemon_editor_load_error(on_retry=None)
+                except Exception:
+                    pass
 
         def _handle_error(error):
             if _finished():
@@ -4275,6 +4282,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _clear_timer()
             logger.debug("Could not fetch daemon editor snapshot: %s", error)
             dialog.set_daemon_editor_load_failed()
+            try:
+                dialog.show_daemon_editor_load_error(
+                    on_retry=lambda: self._retry_daemon_editor_load(dialog, connection)
+                )
+            except Exception:
+                pass
 
         def _schedule_retry():
             state['timeout_source'] = None
@@ -4300,8 +4313,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     on_error=_handle_error,
                 )
             except RuntimeError as exc:
+                # A bridge that raises on submit() is mid-shutdown/replacement —
+                # the transport-churn case this retry loop exists for.  Classify
+                # it as retryable so the replacement bridge is picked up on the
+                # next attempt; the message is logged, never shown to the user.
                 state['request'] = None
-                _handle_error(exc)
+                _handle_error(_TransportUnavailable(str(exc)))
 
         def _cancel(_dialog=None):
             if state['finished']:
@@ -4331,6 +4348,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     pass
 
         _submit_fetch()
+
+    def _retry_daemon_editor_load(self, dialog, connection):
+        """Re-attempt a failed daemon editor snapshot load (Retry action).
+
+        Resets the dialog to the loading state and starts a fresh fetch; the
+        new chain re-resolves the current client and bridge.
+        """
+        dialog.set_daemon_editor_loading()
+        self._fetch_daemon_editor_generation(dialog, connection)
 
     def open_cli_connect(self, ssh_tokens):
         """Resolve CLI tokens and open a tab, or refuse without starting SSH.

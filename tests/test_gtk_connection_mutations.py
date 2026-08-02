@@ -64,6 +64,8 @@ class _MutationWindow:
     on_connection_saved = MainWindow.on_connection_saved
     _delete_connections_via_client = MainWindow._delete_connections_via_client
     _fetch_daemon_editor_generation = MainWindow._fetch_daemon_editor_generation
+    _retry_daemon_editor_load = MainWindow._retry_daemon_editor_load
+    show_connection_dialog = MainWindow.show_connection_dialog
 
     def __init__(self):
         self.client = _Client()
@@ -372,6 +374,10 @@ class _EditorDialog:
         self._daemon_generation = getattr(details, "generation", None)
         self._editor_load_failed = False
 
+    def show_daemon_editor_load_error(self, on_retry=None):
+        self.load_error_shown = True
+        self.load_error_on_retry = on_retry
+
 
 def _run_editor_fetch(window, dialog):
     dialog.set_daemon_editor_loading()
@@ -397,7 +403,10 @@ def test_daemon_editor_success_populates_form_from_dto_and_enables_save():
 
 
 def test_daemon_editor_populates_from_dto_not_stale_local_connection():
-    from sshpilot.api.models.connections import AuthenticationMethod
+    from sshpilot.api.models.connections import (
+        AuthenticationMethod,
+        ForwardingRule,
+    )
     from sshpilot.connection_dialog import _editor_details_to_connection
 
     window = _MutationWindow()
@@ -418,7 +427,23 @@ def test_daemon_editor_populates_from_dto_not_stale_local_connection():
         pre_command="echo pre",
         local_command="echo local",
         remote_command="echo remote",
-        forwarding_rules=[],
+        forwarding_rules=[
+            ForwardingRule(
+                type="local",
+                listen_port=8080,
+                listen_addr="127.0.0.1",
+                remote_host="app.internal",
+                remote_port=80,
+                enabled=True,
+            ),
+            ForwardingRule(
+                type="remote",
+                listen_port=2222,
+                local_host="localhost",
+                local_port=22,
+                enabled=False,
+            ),
+        ],
         aliases=("a", "b"),
         source="dto",
         generation=5,
@@ -439,6 +464,29 @@ def test_daemon_editor_populates_from_dto_not_stale_local_connection():
     assert form.remote_command == "echo remote"
     assert form.auth_method == 1
     assert form.generation == 5
+
+    # Typed ForwardingRule objects from the DTO are normalized to the dict
+    # schema the dialog UI and save handler consume (``rule.get("enabled")``).
+    assert form.forwarding_rules == [
+        {
+            "type": "local",
+            "listen_addr": "127.0.0.1",
+            "listen_port": 8080,
+            "enabled": True,
+            "remote_host": "app.internal",
+            "remote_port": 80,
+        },
+        {
+            "type": "remote",
+            "listen_addr": "",
+            "listen_port": 2222,
+            "enabled": False,
+            "local_host": "localhost",
+            "local_port": 22,
+        },
+    ]
+    assert form.forwarding_rules[0].get("enabled", True) is True
+    assert form.forwarding_rules[1].get("enabled", True) is False
 
 
 def test_daemon_editor_generation_zero_is_valid_loaded_state():
@@ -735,6 +783,204 @@ def test_daemon_editor_second_save_carries_refreshed_generation_and_surfaces_sta
     fail2(SshPilotError(ErrorCode.STALE_EDITOR, "stale editor", details={}))
 
     assert second_done == [False]
+
+
+class _FakeDialog:
+    """Stand-in ConnectionDialog recording what show_connection_dialog drives."""
+
+    def __init__(self, *args, **kwargs):
+        self.source = None
+        self.loading = False
+        self.presented = False
+        self._daemon_generation = None
+        self._daemon_editor_loaded = False
+        self._editor_load_failed = False
+        self.is_editing = False
+        self.connection = None
+
+    def connect(self, *_args, **_kwargs):
+        return None
+
+    def set_editor_source(self, source):
+        self.source = source
+
+    def set_daemon_editor_loading(self):
+        self.loading = True
+        self._daemon_editor_loaded = False
+        self._editor_load_failed = False
+
+    def set_daemon_editor_load_failed(self):
+        self._editor_load_failed = True
+        self._daemon_editor_loaded = False
+
+    def is_daemon_editor(self):
+        return self.source == "daemon"
+
+    def populate_from_editor_details(self, details):
+        self._daemon_editor_loaded = True
+        self._daemon_generation = getattr(details, "generation", None)
+        self._editor_load_failed = False
+
+    def present(self):
+        self.presented = True
+
+
+def _patch_dialog(monkeypatch):
+    from sshpilot import connection_dialog as connection_dialog_module
+
+    created = []
+    original = connection_dialog_module.ConnectionDialog
+
+    class _Patched(_FakeDialog):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(connection_dialog_module, "ConnectionDialog", _Patched)
+    return created, original
+
+
+def test_daemon_new_connection_dialog_is_local_and_save_works(monkeypatch):
+    """Opening the blank New Connection dialog in daemon mode must not enter
+    the daemon snapshot flow or permanently disable Save."""
+    window = _MutationWindow()
+    created, _original = _patch_dialog(monkeypatch)
+
+    window.show_connection_dialog(connection=None)
+
+    assert len(created) == 1
+    dialog = created[0]
+    assert dialog.source == "local"
+    assert dialog.loading is False
+    assert dialog._editor_load_failed is False
+    assert dialog.presented is True
+    # No daemon editor fetch was started.
+    assert window.client_bridge.calls == []
+
+    # After valid form input, a normal create succeeds end-to-end.
+    completed = []
+    data = _basic_data(
+        nickname="new",
+        hostname="new.example",
+        __save_completion=completed.append,
+    )
+    window.on_connection_saved(dialog, data)
+    operation, success, _failure = window.client_bridge.calls[0]
+    operation()
+    assert window.client.created[0].nickname == "new"
+    success(SimpleNamespace(id="new"))
+    assert completed == [True]
+
+
+def test_daemon_as_new_dialog_is_local_not_gated(monkeypatch):
+    window = _MutationWindow()
+    created, _original = _patch_dialog(monkeypatch)
+
+    window.show_connection_dialog(
+        connection=SimpleNamespace(nickname="demo", id="demo"),
+        as_new=True,
+    )
+
+    dialog = created[0]
+    assert dialog.source == "local"
+    assert dialog.loading is False
+    assert window.client_bridge.calls == []
+
+
+def test_daemon_edit_dialog_uses_daemon_snapshot_flow(monkeypatch):
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=7, nickname="demo")
+    created, _original = _patch_dialog(monkeypatch)
+
+    window.show_connection_dialog(
+        connection=SimpleNamespace(nickname="demo", id="demo"),
+    )
+
+    dialog = created[0]
+    assert dialog.source == "daemon"
+    assert dialog.loading is True
+    assert len(window.client_bridge.calls) == 1
+    operation, success, _failure = window.client_bridge.calls[0]
+    success(operation())
+    assert dialog._daemon_generation == 7
+    assert dialog._daemon_editor_loaded is True
+
+
+def test_daemon_editor_submit_runtime_error_retried_with_replacement_bridge(
+    monkeypatch,
+):
+    from sshpilot.window import GLib
+
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(generation=3)
+    dialog = _EditorDialog()
+    scheduled = []
+    monkeypatch.setattr(GLib, "timeout_add", lambda _ms, cb: scheduled.append(cb))
+
+    class _RaisingBridge:
+        def submit(self, *_args, **_kwargs):
+            raise RuntimeError("bridge shutting down")
+
+    window.client_bridge = _RaisingBridge()
+
+    dialog.set_daemon_editor_loading()
+    window._fetch_daemon_editor_generation(dialog, SimpleNamespace(nickname="demo"))
+
+    # A submit() RuntimeError is transport churn: retryable, so a retry is
+    # scheduled rather than terminal failure.
+    assert len(scheduled) == 1
+    assert dialog._editor_load_failed is False
+
+    new_bridge = _ControlledBridge()
+    window.client_bridge = new_bridge
+    scheduled[0]()
+
+    assert len(new_bridge.calls) == 1
+    retry_operation, retry_success, _retry_failure = new_bridge.calls[0]
+    retry_success(retry_operation())
+    assert dialog._daemon_generation == 3
+    assert dialog._daemon_editor_loaded is True
+
+
+def test_daemon_editor_terminal_failure_offers_retry_that_works(monkeypatch):
+    from sshpilot.window import GLib
+
+    window = _MutationWindow()
+    error = SshPilotError(
+        ErrorCode.TRANSPORT_CLOSED,
+        "The daemon transport closed unexpectedly",
+        retryable=True,
+    )
+    window.client.editor = error
+    dialog = _EditorDialog()
+
+    def _run_now(_ms, cb):
+        cb()
+
+    monkeypatch.setattr(GLib, "timeout_add", _run_now)
+
+    _operation, _success, failure = _run_editor_fetch(window, dialog)
+    for _ in range(4):
+        failure(error)
+
+    # Terminal failure: Save off AND a Retry/Close error is offered.
+    assert dialog._editor_load_failed is True
+    assert getattr(dialog, "load_error_shown", False) is True
+    on_retry = dialog.load_error_on_retry
+    assert callable(on_retry)
+
+    # The Retry action re-runs the load against the now-available daemon.
+    before = len(window.client_bridge.calls)
+    window.client.editor = SimpleNamespace(generation=11)
+    on_retry()
+
+    assert len(window.client_bridge.calls) == before + 1
+    retry_operation, retry_success, _retry_failure = window.client_bridge.calls[-1]
+    retry_success(retry_operation())
+    assert dialog._daemon_generation == 11
+    assert dialog._daemon_editor_loaded is True
+    assert dialog._editor_load_failed is False
+
 
 
 
