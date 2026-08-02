@@ -6794,6 +6794,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
             try:
+                self.connection_manager.config.config_data = self.connection_manager.config.load_json_config()
                 self.connection_manager.load_ssh_config()
                 self.rebuild_connection_list()
             except Exception as error:
