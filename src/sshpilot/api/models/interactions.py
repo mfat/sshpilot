@@ -22,6 +22,7 @@ class InteractionType(str, Enum):
     PRIVATE_KEY_PASSPHRASE = "private_key_passphrase"
     KEYBOARD_INTERACTIVE = "keyboard_interactive"
     SECURITY_KEY_PRESENCE = "security_key_presence"
+    CONFIRMATION = "confirmation"
 
 
 class InteractionState(str, Enum):
@@ -136,7 +137,7 @@ class ChallengePrompt:
     attempt: int
 
     def __post_init__(self) -> None:
-        _require_safe_display(self.text, "challenge prompt", 4096)
+        _require_safe_display(self.text, "challenge prompt", 4096, multiline=True)
         if type(self.attempt) is not int or self.attempt < 1:
             raise ValueError("challenge attempt must be positive")
 
@@ -149,17 +150,32 @@ class PresencePrompt:
         _require_safe_display(self.text, "presence prompt", 4096)
 
 
+@dataclass(frozen=True)
+class ConfirmationPrompt:
+    text: str
+
+    def __post_init__(self) -> None:
+        _require_safe_display(self.text, "confirmation prompt", 4096, multiline=True)
+
+
 InteractionPrompt = Union[
-    HostKeyPrompt, PasswordPrompt, PassphrasePrompt, ChallengePrompt, PresencePrompt
+    HostKeyPrompt, PasswordPrompt, PassphrasePrompt, ChallengePrompt, PresencePrompt,
+    ConfirmationPrompt,
 ]
 
 
-def _require_safe_display(value: str, name: str, maximum: int) -> None:
+def _require_safe_display(
+    value: str, name: str, maximum: int, *, multiline: bool = False
+) -> None:
     if (
         type(value) is not str
         or not value.strip()
         or len(value) > maximum
-        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or any(
+            (ord(character) < 32 and not (multiline and character in "\n\t"))
+            or ord(character) == 127
+            for character in value
+        )
     ):
         raise ValueError(f"{name} is invalid")
 
@@ -199,6 +215,7 @@ class InteractionSummary:
             InteractionType.PRIVATE_KEY_PASSPHRASE: PassphrasePrompt,
             InteractionType.KEYBOARD_INTERACTIVE: ChallengePrompt,
             InteractionType.SECURITY_KEY_PRESENCE: PresencePrompt,
+            InteractionType.CONFIRMATION: ConfirmationPrompt,
         }[self.type]
         if type(self.prompt) is not expected_prompt:
             raise TypeError("interaction prompt does not match its type")

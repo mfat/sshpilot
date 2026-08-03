@@ -9,6 +9,7 @@ from gi.repository import Adw, GLib, Gtk
 from .api.events import EventType
 from .api.models import (
     ChallengePrompt,
+    ConfirmationPrompt,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -101,6 +102,7 @@ class DaemonInteractionDialogs:
             InteractionType.PRIVATE_KEY_PASSPHRASE,
             InteractionType.KEYBOARD_INTERACTIVE,
             InteractionType.SECURITY_KEY_PRESENCE,
+            InteractionType.CONFIRMATION,
         }:
             self._present_secret(summary, parent)
 
@@ -175,13 +177,31 @@ class DaemonInteractionDialogs:
             heading = "SSH authentication challenge"
         elif isinstance(prompt, PresencePrompt):
             heading = "Security key required"
+        elif isinstance(prompt, ConfirmationPrompt):
+            heading = "Confirm SSH operation"
         else:
             return
         dialog = Adw.AlertDialog(
             heading=heading,
-            body=(prompt.text if isinstance(prompt, (ChallengePrompt, PresencePrompt))
-                  else f"Authentication attempt {summary.attempt}"),
+            body=(
+                prompt.text
+                if isinstance(
+                    prompt, (ChallengePrompt, PresencePrompt, ConfirmationPrompt)
+                )
+                else f"Authentication attempt {summary.attempt}"
+            ),
         )
+        if isinstance(prompt, PresencePrompt):
+            dialog.add_response("close", "Close")
+            dialog.set_close_response("close")
+            dialog.connect(
+                "response",
+                lambda item, _response: self._presence_closed(summary, item),
+            )
+            self._dialogs[summary.id] = dialog
+            dialog.present(parent)
+            return
+
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=12,
@@ -191,13 +211,14 @@ class DaemonInteractionDialogs:
             margin_end=12,
         )
         entry = Gtk.PasswordEntry(show_peek_icon=True)
-        if isinstance(prompt, PresencePrompt):
-            entry.set_visible(False)
         entry.connect("activate", lambda _entry: dialog.response("submit"))
         content.append(entry)
         dialog.set_extra_child(content)
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("submit", "Continue")
+        dialog.add_response(
+            "submit",
+            "Yes" if isinstance(prompt, ConfirmationPrompt) else "Continue",
+        )
         dialog.set_response_appearance(
             "submit",
             Adw.ResponseAppearance.SUGGESTED,
@@ -215,6 +236,15 @@ class DaemonInteractionDialogs:
         )
         self._dialogs[summary.id] = dialog
         dialog.present(parent)
+
+    def _presence_closed(self, summary, dialog) -> None:
+        self._dialogs.pop(summary.id, None)
+        self._bridge.submit_interaction(
+            lambda: self._client.cancel_interaction(summary.id),
+            on_success=lambda _value: None,
+            on_error=lambda _error: None,
+        )
+        dialog.close()
 
     def _secret_response(
         self,
@@ -237,9 +267,8 @@ class DaemonInteractionDialogs:
             )
             dialog.close()
             return
-        secret = bytearray(
-            ("yes" if isinstance(summary.prompt, PresencePrompt) else entry.get_text()).encode("utf-8")
-        )
+        value = "yes" if isinstance(summary.prompt, ConfirmationPrompt) else entry.get_text()
+        secret = bytearray(value.encode("utf-8"))
         entry.set_text("")
         self._pending_secrets[summary.id] = secret
 

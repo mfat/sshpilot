@@ -5,6 +5,9 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.13` for the expanded interaction
+  API, including typed generic confirmations.
+
 ### Daemon askpass parity (Added)
 
 - Added typed keyboard-interactive and security-key-presence prompts so daemon

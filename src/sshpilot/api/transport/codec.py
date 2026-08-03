@@ -24,6 +24,7 @@ from ..models.common import (
 )
 from ..models.interactions import (
     ChallengePrompt,
+    ConfirmationPrompt,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -2379,7 +2380,7 @@ def capabilities_from_wire(value: Any) -> Capabilities:
 
 def _interaction_prompt_to_wire(
     interaction_type: InteractionType,
-    prompt: HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt,
+    prompt: HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt | ConfirmationPrompt,
 ) -> Dict[str, Any]:
     if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
         if type(prompt) is not HostKeyPrompt:
@@ -2420,13 +2421,17 @@ def _interaction_prompt_to_wire(
         if type(prompt) is not PresencePrompt:
             raise TypeError("presence interaction requires a presence prompt")
         return {"text": prompt.text}
+    if interaction_type is InteractionType.CONFIRMATION:
+        if type(prompt) is not ConfirmationPrompt:
+            raise TypeError("confirmation interaction requires a confirmation prompt")
+        return {"text": prompt.text}
     raise TypeError("unsupported interaction type")
 
 
 def _interaction_prompt_from_wire(
     interaction_type: InteractionType,
     value: Any,
-) -> HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt:
+) -> HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt | ConfirmationPrompt:
     if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
         data = _strict_fields(
             value,
@@ -2498,6 +2503,9 @@ def _interaction_prompt_from_wire(
     if interaction_type is InteractionType.SECURITY_KEY_PRESENCE:
         data = _strict_fields(value, required={"text"}, context="presence prompt")
         return PresencePrompt(text=_text(data["text"], "presence prompt"))
+    if interaction_type is InteractionType.CONFIRMATION:
+        data = _strict_fields(value, required={"text"}, context="confirmation prompt")
+        return ConfirmationPrompt(text=_text(data["text"], "confirmation prompt"))
     raise ValueError("unsupported interaction type")
 
 

@@ -53,7 +53,7 @@ def main() -> int:
             transport.connect(socket_path)
             transport.sendall(_LENGTH.pack(len(request)) + request)
             size = _LENGTH.unpack(_receive_exact(transport, _LENGTH.size))[0]
-            if size < 1 or size > _MAX_RESPONSE:
+            if size > _MAX_RESPONSE:
                 return 1
             secret = bytearray(_receive_exact(transport, size))
         sys.stdout.buffer.write(secret)
