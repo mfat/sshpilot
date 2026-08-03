@@ -3119,9 +3119,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Attach tags so the search filter and freshly built rows see them.
         for conn in connections:
             try:
-                conn.tags = self.config.get_connection_tags(conn.nickname)
+                object.__setattr__(conn, 'tags', self.config.get_connection_tags(conn.nickname))
             except Exception:
-                conn.tags = []
+                object.__setattr__(conn, 'tags', [])
         connections_dict = {conn.nickname: conn for conn in connections}
         connections_dict.update(
             {
@@ -6193,7 +6193,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     logger.debug("Failed to migrate connection meta on rename", exc_info=True)
             try:
-                old_connection.tags = self.config.get_connection_tags(old_connection.nickname)
+                object.__setattr__(old_connection, 'tags', self.config.get_connection_tags(old_connection.nickname))
             except Exception:
                 pass
             rows = self._rows_for_connection(old_connection)
@@ -6665,7 +6665,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     fresh_tags = self.config.get_connection_tags(old_connection.nickname)
                     if list(getattr(old_connection, 'tags', None) or []) != fresh_tags:
                         tags_changed = True
-                    old_connection.tags = fresh_tags
+                    object.__setattr__(old_connection, 'tags', fresh_tags)
                 except Exception:
                     pass
                 rows = self._rows_for_connection(old_connection)

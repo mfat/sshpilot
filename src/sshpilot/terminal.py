@@ -210,8 +210,8 @@ class TerminalWidget(Gtk.Box):
         # Connect to signals
         self.connect('destroy', self._on_destroy)
 
-        # Connect to connection manager signals using GObject.GObject.connect directly
-        self._connection_updated_handler = GObject.GObject.connect(connection_manager, 'connection-updated', self._on_connection_updated_signal)
+        # Connect to connection manager signals using connect_after
+        self._connection_updated_handler = connection_manager.connect_after('connection-updated', self._on_connection_updated_signal)
         logger.debug("Connected to connection-updated signal")
 
         # Create scrolled window for terminal
@@ -4000,7 +4000,12 @@ class TerminalWidget(Gtk.Box):
         # already False (e.g. pressing Reconnect after a failed connection), in
         # which case the block below is skipped but the finally clause still
         # references is_quitting.
-        root = self.get_root() if hasattr(self, 'get_root') else None
+        root = None
+        try:
+            if hasattr(self, 'get_root'):
+                root = self.get_root()
+        except RuntimeError:
+            pass
         # Prefer this terminal's own flag: cleanup_all() sets terminal._is_quitting
         # directly, and by the time it runs the window may already be unrooted
         # (get_root() → None), which would otherwise miss the quit fast-path.
