@@ -263,6 +263,35 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
     return list(discover_ssh_config_paths(main_path, max_depth=max_depth).files)
 
 
+def collect_host_block_lines(host_identifier: str, ssh_config_path: Optional[str] = None) -> List[str]:
+    """Combined lines of every *concrete* Host stanza matching *host_identifier*."""
+    host_identifier = (host_identifier or '').strip()
+    if not host_identifier:
+        return []
+    
+    if not ssh_config_path:
+        ssh_config_path = os.path.expanduser('~/.ssh/config')
+
+    try:
+        files = resolve_ssh_config_files(ssh_config_path)
+    except Exception:
+        files = [ssh_config_path]
+
+    from .ssh_config_document import SSHConfigDocument
+
+    combined: List[str] = []
+    for path in files:
+        try:
+            if not path or not os.path.exists(path):
+                continue
+            doc = SSHConfigDocument.parse_file(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        for block in doc.host_blocks(host_identifier):
+            combined.extend(line.rstrip('\r\n') for line in block.lines)
+    return combined
+
+
 def get_effective_ssh_config(
     host: str, config_file: Optional[str] = None
 
