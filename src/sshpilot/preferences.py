@@ -3664,7 +3664,6 @@ class PreferencesWindow(Adw.NavigationPage):
                         if hasattr(terminal, 'backend') and terminal.backend:
                             terminal.backend.set_font(font_desc)
                             count += 1
-                            count += 1
                 logger.info(f"Applied font {font_string} to {count} terminals")
         except Exception as e:
             logger.error(f"Failed to apply font to terminals: {e}")
