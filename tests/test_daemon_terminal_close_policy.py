@@ -1,9 +1,23 @@
 """Test daemon terminal close policy behavior."""
 
+import logging
 import pytest
 from unittest.mock import Mock, patch
 
+from sshpilot.api.models.connections import ConnectionSummary
 from sshpilot.daemon_terminal_policy import TerminalClosePolicy
+from sshpilot.gtk.connection_store import ConnectionPresentationStore
+
+
+def _immutable_connection():
+    return ConnectionSummary(
+        id="connection-1",
+        nickname="example",
+        host="example",
+        hostname="example.test",
+        username="alice",
+        port=22,
+    )
 
 
 class TestDaemonTerminalClosePolicy:
@@ -210,3 +224,57 @@ class TestDaemonTerminalClosePolicy:
             assert mock_terminal_widget._daemon_tab_state is None
             mock_hide_indicator.assert_called_once()
             assert mock_terminal_widget.is_connected == False
+
+    def test_close_does_not_mutate_daemon_connection_projection(
+        self,
+        mock_terminal_widget,
+        caplog,
+    ):
+        """Daemon connection DTOs are immutable presentation data."""
+        mock_terminal_widget.connection = _immutable_connection()
+
+        with (
+            patch(
+                'sshpilot.daemon_terminal_policy.resolve_tab_close_policy',
+                return_value=TerminalClosePolicy.DETACH,
+            ),
+            caplog.at_level(logging.ERROR, logger='sshpilot.terminal'),
+        ):
+            from sshpilot.terminal import TerminalWidget
+
+            TerminalWidget._handle_daemon_close(
+                mock_terminal_widget,
+                is_quitting=False,
+            )
+
+        assert mock_terminal_widget.is_connected is False
+        assert "Failed to handle daemon close" not in caplog.text
+
+    def test_transport_failure_skips_legacy_state_api_for_daemon_projection(
+        self,
+        caplog,
+    ):
+        """Presentation stores expose snapshots, not mutable status methods."""
+        terminal = Mock()
+        terminal.connection = _immutable_connection()
+        terminal.connection_manager = ConnectionPresentationStore()
+        terminal.backend = Mock()
+        terminal.pty = None
+        terminal._fallback_timer_id = None
+        terminal._classify_exit.return_value = (None, "")
+
+        with caplog.at_level(logging.ERROR, logger='sshpilot.terminal'):
+            from sshpilot.terminal import TerminalWidget
+
+            TerminalWidget._on_connection_failed(
+                terminal,
+                "The daemon transport is closed",
+            )
+
+        assert terminal.is_connected is False
+        assert terminal.last_error_message == "The daemon transport is closed"
+        terminal.emit.assert_called_once_with(
+            'connection-failed',
+            "The daemon transport is closed",
+        )
+        assert "Error in _on_connection_failed" not in caplog.text

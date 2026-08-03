@@ -1457,8 +1457,6 @@ class TerminalWidget(Gtk.Box):
 
             # Update connection state
             self.is_connected = False
-            if hasattr(self, 'connection') and self.connection:
-                self.connection.is_connected = False
 
         except Exception as e:
             logger.error(f"Failed to handle daemon close: {e}")
@@ -1518,8 +1516,6 @@ class TerminalWidget(Gtk.Box):
 
                 # Update connection state
                 self.is_connected = False
-                if hasattr(self, 'connection') and self.connection:
-                    self.connection.is_connected = False
 
                 # Emit connection-lost signal to close the tab
                 self.emit('connection-lost')
@@ -4153,9 +4149,17 @@ class TerminalWidget(Gtk.Box):
             _state, _reason = self._classify_exit(255, False)
             self.connection_state = ConnectionState.FAILED
             self.connection_state_reason = _reason or error_message
-            if hasattr(self, 'connection_manager') and self.connection_manager and self.connection \
-                    and getattr(self.connection, 'hostname', None) != 'localhost':
-                self.connection_manager.update_connection_state(
+            update_connection_state = getattr(
+                getattr(self, 'connection_manager', None),
+                'update_connection_state',
+                None,
+            )
+            if (
+                callable(update_connection_state)
+                and self.connection
+                and getattr(self.connection, 'hostname', None) != 'localhost'
+            ):
+                update_connection_state(
                     self.connection, ConnectionState.FAILED, self.connection_state_reason
                 )
 
