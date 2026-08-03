@@ -751,11 +751,11 @@ class DaemonServer:
         ):
             return True
         text = str(session_id)
-        if text.startswith("sftp:") and self._sftp_runtime is not None:
+        if text.startswith("sftp-") and self._sftp_runtime is not None:
             return self._sftp_runtime.client_can_interact(
                 SftpServiceId(text), client_id
             )
-        if text.startswith("forward:") and self._forward_runtime is not None:
+        if text.startswith("forward-") and self._forward_runtime is not None:
             return self._forward_runtime.client_can_interact(
                 ForwardId(text), client_id
             )
