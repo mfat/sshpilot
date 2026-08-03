@@ -5,7 +5,12 @@ built-in file manager or populate GTK listing models.
 """
 from __future__ import annotations
 
+import pytest
+
 from sshpilot.api import DaemonClient
+
+pytestmark = pytest.mark.integration
+
 
 class TestSftpDaemonPath:
     """Prove the daemon SFTP service API works."""

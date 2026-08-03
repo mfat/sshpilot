@@ -7,7 +7,12 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from sshpilot.api import DaemonClient
+
+pytestmark = pytest.mark.integration
+
 
 class _BlockingSessionRunner:
     """Keep a session STARTING/RUNNING until terminate/kill."""

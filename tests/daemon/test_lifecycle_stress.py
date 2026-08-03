@@ -10,6 +10,8 @@ import pytest
 from sshpilot.api import DaemonClient
 from sshpilot.api.models.daemon import StopDaemonRequest
 
+pytestmark = pytest.mark.integration
+
 
 def _open_fds() -> int:
     try:

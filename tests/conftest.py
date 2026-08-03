@@ -62,32 +62,34 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(xfail_marker)
 
 
-def pytest_sessionstart(session):
-    """Remove leftover temporary OpenSSH fixture containers from prior crashes.
-
-    Only touches ``sshpilot-p13-*`` podman/docker containers — never the
-    production sshPilot daemon.
-    """
+def _cleanup_integration_containers(label):
+    """Clean test containers only for runs that selected integration tests."""
     try:
         from tests.fixtures.temporary_openssh import cleanup_orphaned_temporary_openssh
 
         removed = cleanup_orphaned_temporary_openssh()
         if removed:
-            print(f"[fixtures] removed orphan OpenSSH containers: {removed}")
+            print(f"[fixtures] {label} removed OpenSSH containers: {removed}")
     except Exception as exc:
-        print(f"[fixtures] orphan OpenSSH cleanup skipped: {exc!r}")
+        print(f"[fixtures] {label} OpenSSH cleanup skipped: {exc!r}")
+
+
+def pytest_collection_finish(session):
+    """Clean leftovers before a run that will actually exercise integration."""
+    selected = any(
+        item.get_closest_marker("integration") is not None
+        for item in session.items
+    )
+    integration_run = selected and not session.config.option.collectonly
+    session.config._sshpilot_integration_selected = integration_run
+    if integration_run:
+        _cleanup_integration_containers("pre-run")
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Final sweep for temporary OpenSSH fixtures after the suite ends."""
-    try:
-        from tests.fixtures.temporary_openssh import cleanup_orphaned_temporary_openssh
-
-        removed = cleanup_orphaned_temporary_openssh()
-        if removed:
-            print(f"[fixtures] session-end removed OpenSSH containers: {removed}")
-    except Exception as exc:
-        print(f"[fixtures] session-end OpenSSH cleanup skipped: {exc!r}")
+    """Sweep fixtures only if this invocation selected integration tests."""
+    if getattr(session.config, "_sshpilot_integration_selected", False):
+        _cleanup_integration_containers("session-end")
 
 
 # Ensure project root is on sys.path

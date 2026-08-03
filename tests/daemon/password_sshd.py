@@ -29,13 +29,17 @@ def container_runtime() -> Optional[str]:
         path = shutil.which(name)
         if path is None:
             continue
-        probe = subprocess.run(
-            (path, "info"),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        try:
+            probe = subprocess.run(
+                (path, "info"),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            continue
         if probe.returncode == 0:
             return path
     return None

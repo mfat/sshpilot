@@ -51,5 +51,5 @@ jobs:
       # least-covered modules are visible (informational, does not fail the run).
       - name: Run pytest
         run: >
-          pytest -ra -m "not integration"
+          pytest -ra -m "not integration and not gui"
           --cov=sshpilot --cov-report=term-missing --cov-report=xml

@@ -684,6 +684,7 @@ class TestCombinedAuthPreloadHandoff:
 # ---------------------------------------------------------------------------
 
 @requires_ssh_tools
+@pytest.mark.integration
 class TestCombinedAuthConnection:
     def _drive(self, monkeypatch, combined_server, agent, *, passphrase_stored, password_stored):
         """Resolve auth for an encrypted-key connection, then connect supplying

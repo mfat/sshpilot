@@ -23,6 +23,8 @@ from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.pty_runner import PtySessionProcessRunner
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
+pytestmark = pytest.mark.integration
+
 
 def _free_port() -> int:
     listener = socket.socket()

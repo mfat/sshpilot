@@ -20,6 +20,8 @@ from sshpilot.api.models.sessions import (
 )
 from sshpilot.api.models.terminal import TerminalInput
 
+pytestmark = pytest.mark.integration
+
 
 class _BlockingSessionRunner:
     """Keep a session STARTING/RUNNING until terminate/kill."""
