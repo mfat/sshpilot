@@ -36,6 +36,7 @@ from sshpilot.api.events import (
 from sshpilot.api.interaction_identity import new_interaction_id
 from sshpilot.api.models import (
     ChallengePrompt,
+    ConfirmationPrompt,
     ClientId,
     ConnectionId,
     HostKeyDecision,
@@ -67,6 +68,7 @@ from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
 DEFAULT_HOST_KEY_INTERACTION_TIMEOUT = 180.0
+DEFAULT_PRESENCE_INTERACTION_TIMEOUT = 600.0
 DEFAULT_COMPLETED_INTERACTION_LIMIT = 100
 DEFAULT_ASKPASS_WORKERS = 4
 DEFAULT_ASKPASS_QUEUE_LIMIT = 32
@@ -87,7 +89,7 @@ _SECRET_TYPES = frozenset(
         InteractionType.PASSWORD,
         InteractionType.PRIVATE_KEY_PASSPHRASE,
         InteractionType.KEYBOARD_INTERACTIVE,
-        InteractionType.SECURITY_KEY_PRESENCE,
+        InteractionType.CONFIRMATION,
     }
 )
 
@@ -148,6 +150,7 @@ class InteractionBroker:
         ] = None,
         secret_timeout: float = DEFAULT_SECRET_INTERACTION_TIMEOUT,
         host_key_timeout: float = DEFAULT_HOST_KEY_INTERACTION_TIMEOUT,
+        presence_timeout: float = DEFAULT_PRESENCE_INTERACTION_TIMEOUT,
         completed_limit: int = DEFAULT_COMPLETED_INTERACTION_LIMIT,
         password_lookup: Optional[Callable[[ConnectionId], Optional[str]]] = None,
         password_store: Optional[Callable[[ConnectionId, str], bool]] = None,
@@ -156,7 +159,7 @@ class InteractionBroker:
         askpass_workers: int = DEFAULT_ASKPASS_WORKERS,
         askpass_queue_limit: int = DEFAULT_ASKPASS_QUEUE_LIMIT,
     ) -> None:
-        if secret_timeout <= 0 or host_key_timeout <= 0:
+        if secret_timeout <= 0 or host_key_timeout <= 0 or presence_timeout <= 0:
             raise ValueError("interaction timeouts must be positive")
         if completed_limit < 1:
             raise ValueError("completed interaction limit must be positive")
@@ -165,6 +168,7 @@ class InteractionBroker:
         self._client_is_eligible = client_is_eligible or (lambda _session, _client: True)
         self._secret_timeout = float(secret_timeout)
         self._host_key_timeout = float(host_key_timeout)
+        self._presence_timeout = float(presence_timeout)
         self._completed_limit = completed_limit
         self._password_lookup = password_lookup
         self._password_store = password_store
@@ -224,6 +228,7 @@ class InteractionBroker:
         launch_builder: Callable[..., tuple[Sequence[str], dict[str, str]]],
         *,
         trailing_args: Sequence[str] = (),
+        headless: bool = False,
     ) -> tuple[tuple[str, ...], dict[str, str]]:
         """Prepare canonical SSH argv, OpenSSH trust, and daemon askpass.
 
@@ -240,11 +245,11 @@ class InteractionBroker:
 
         argv_value, environment_value = launch_builder(
             spec.connection_id,
-            interaction_policy="broker",
+            interaction_policy="normal",
         )
         argv = tuple(argv_value)
-        # The launch builder intentionally returns an allowlisted environment.
-        # Do not reintroduce daemon credentials through wholesale inheritance.
+        # Keep the normal OpenSSH child environment.  Replace only SSH Pilot's
+        # private, process-local askpass transport below.
         environment = dict(environment_value)
         if not argv or len(argv) < 2:
             raise SshPilotError(
@@ -287,12 +292,21 @@ class InteractionBroker:
             self._require_open_locked()
             self._askpass_contexts[token] = context
             self._condition.notify_all()
-        askpass_active = environment.pop("SSHPILOT_DAEMON_ASKPASS_ACTIVE", "") == "1"
+        resolver_askpass_active = (
+            environment.pop("SSHPILOT_DAEMON_ASKPASS_ACTIVE", "") == "1"
+        )
+        for name in tuple(environment):
+            if (
+                name in {"SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"}
+                or name.startswith("SSHPILOT_ASKPASS_")
+                or name.startswith("SSHPILOT_SESSION_")
+                or name.startswith("SSHPILOT_DAEMON_ASKPASS_")
+            ):
+                environment.pop(name, None)
+        askpass_active = headless or resolver_askpass_active
         if askpass_active:
             environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
-            # Match the in-process resolver: askpass is preferred only when a
-            # saved password/passphrase activated it.
-            environment["SSH_ASKPASS_REQUIRE"] = "prefer"
+            environment["SSH_ASKPASS_REQUIRE"] = "force" if headless else "prefer"
             environment["DISPLAY"] = environment.get("DISPLAY") or ":sshpilot-daemon"
             environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(
                 self._askpass_socket_path
@@ -301,13 +315,6 @@ class InteractionBroker:
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
             f"session={spec.session_id}"
-        )
-        source_root = str(Path(__file__).resolve().parents[2])
-        current_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            source_root
-            if not current_pythonpath
-            else os.pathsep.join((source_root, current_pythonpath))
         )
         if trailing_args:
             argv = (*argv, *trailing_args)
@@ -697,6 +704,8 @@ class InteractionBroker:
             duration = (
                 self._host_key_timeout
                 if interaction_type is InteractionType.HOST_KEY_CONFIRMATION
+                else self._presence_timeout
+                if interaction_type is InteractionType.SECURITY_KEY_PRESENCE
                 else self._secret_timeout
             )
         if duration <= 0:
@@ -824,6 +833,11 @@ class InteractionBroker:
             else:
                 decision = request.secret_decision
                 if decision is None:
+                    raise self._invalid_decision(record)
+                if (
+                    record.summary.type is InteractionType.SECURITY_KEY_PRESENCE
+                    and decision is SecretDecision.SUBMIT
+                ):
                     raise self._invalid_decision(record)
                 if decision is SecretDecision.CANCEL:
                     record.result = InteractionResult(
@@ -1185,7 +1199,12 @@ class InteractionBroker:
             secret: Optional[bytearray] = None
             try:
                 transport.settimeout(
-                    max(self._secret_timeout, self._host_key_timeout) + 5
+                    max(
+                        self._secret_timeout,
+                        self._host_key_timeout,
+                        self._presence_timeout,
+                    )
+                    + 5
                 )
                 request_size = _ASKPASS_LENGTH.unpack(
                     self._receive_exact(transport, _ASKPASS_LENGTH.size)
@@ -1221,7 +1240,7 @@ class InteractionBroker:
                     hint=hint,
                     helper_transport=transport,
                 )
-                if secret is None or not secret or len(secret) > _MAX_SECRET_SIZE:
+                if secret is None or len(secret) > _MAX_SECRET_SIZE:
                     continue
                 transport.sendall(
                     _ASKPASS_LENGTH.pack(len(secret)) + bytes(secret)
@@ -1264,7 +1283,11 @@ class InteractionBroker:
         helper_transport: Optional[socket.socket] = None,
     ) -> Optional[bytearray]:
         normalized_hint = hint.strip().lower()
-        prompt_type = "presence" if normalized_hint == "none" else classify_prompt(raw_prompt)
+        prompt_type = (
+            "presence" if normalized_hint == "none"
+            else "confirmation" if normalized_hint == "confirm"
+            else classify_prompt(raw_prompt)
+        )
         if prompt_type == "hostkey":
             return self._resolve_host_key_askpass(
                 token,
@@ -1274,6 +1297,11 @@ class InteractionBroker:
         if prompt_type == "presence":
             return self._resolve_nonstored_askpass(
                 token, raw_prompt, presence=True, helper_transport=helper_transport
+            )
+        if prompt_type == "confirmation":
+            return self._resolve_nonstored_askpass(
+                token, raw_prompt, presence=False, confirmation=True,
+                helper_transport=helper_transport,
             )
         if prompt_type not in {"password", "passphrase"}:
             # This deliberately includes unknown prompts: the in-process helper
@@ -1439,22 +1467,34 @@ class InteractionBroker:
         raw_prompt: str,
         *,
         presence: bool,
+        confirmation: bool = False,
         helper_transport: Optional[socket.socket],
     ) -> Optional[bytearray]:
         with self._condition:
             context = self._askpass_contexts.get(token)
             if context is None or context.closed or self._closed:
                 return None
-            key = "presence" if presence else "interactive"
+            key = (
+                "presence"
+                if presence
+                else "confirmation"
+                if confirmation
+                else "interactive"
+            )
             attempt = context.attempts.get(key, 0) + 1
             context.attempts[key] = attempt
             interaction_type = (
-                InteractionType.SECURITY_KEY_PRESENCE
-                if presence else InteractionType.KEYBOARD_INTERACTIVE
+                InteractionType.SECURITY_KEY_PRESENCE if presence
+                else InteractionType.CONFIRMATION if confirmation
+                else InteractionType.KEYBOARD_INTERACTIVE
             )
             prompt: InteractionPrompt = (
                 PresencePrompt(text=raw_prompt.strip() or "Touch your security key")
                 if presence
+                else ConfirmationPrompt(
+                    text=raw_prompt.strip() or "Confirm SSH operation"
+                )
+                if confirmation
                 else ChallengePrompt(text=raw_prompt.strip() or "Authentication response", attempt=attempt)
             )
             session_id = context.session_id
@@ -1466,9 +1506,26 @@ class InteractionBroker:
             prompt=prompt,
             attempt=attempt,
         )
+        if presence:
+            # Presence is a passive notification.  OpenSSH ends its askpass
+            # helper when the hardware operation finishes; no answer frame is
+            # required (or meaningful).
+            self.wait_for_result(
+                interaction.id,
+                cancel_check=(
+                    None
+                    if helper_transport is None
+                    else lambda: self._transport_is_closed(helper_transport)
+                ),
+            )
+            return None
         result = self.wait_for_result(
             interaction.id,
-            cancel_check=(None if helper_transport is None else lambda: self._transport_is_closed(helper_transport)),
+            cancel_check=(
+                None
+                if helper_transport is None
+                else lambda: self._transport_is_closed(helper_transport)
+            ),
         )
         if result is None or result.decision is not SecretDecision.SUBMIT or result.secret is None:
             if result is not None:

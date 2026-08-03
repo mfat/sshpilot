@@ -21,6 +21,7 @@ from sshpilot.api.models import (
     InteractionState,
     InteractionType,
     PasswordPrompt,
+    PresencePrompt,
     RememberPolicy,
     SecretDecision,
     SessionId,
@@ -261,12 +262,126 @@ def test_prepare_launch_leaves_askpass_disabled_without_saved_secret(
     assert "SSH_ASKPASS_REQUIRE" not in environment
 
 
+def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    policies = []
+
+    def builder(_connection_id, *, interaction_policy):
+        policies.append(interaction_policy)
+        return ("/usr/bin/ssh", "example"), {
+            "PATH": "/custom/bin",
+            "USER_DEFINED_AUTH": "preserved",
+            "SSH_ASKPASS": "/old/helper",
+            "SSH_ASKPASS_REQUIRE": "prefer",
+            "SSHPILOT_ASKPASS_SOCKET": "/old/socket",
+            "SSHPILOT_SESSION_PASSWORD": "staged-secret",
+            "SSHPILOT_DAEMON_ASKPASS_SOCKET": "/stale/socket",
+            "SSHPILOT_DAEMON_ASKPASS_TOKEN": "stale-token",
+        }
+
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        builder,
+        headless=True,
+    )
+
+    assert policies == ["normal"]
+    assert environment["USER_DEFINED_AUTH"] == "preserved"
+    assert environment["SSH_ASKPASS_REQUIRE"] == "force"
+    assert environment["SSH_ASKPASS"] == str(broker._askpass_helper_path)
+    assert environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] == str(
+        broker._askpass_socket_path
+    )
+    assert "SSHPILOT_ASKPASS_SOCKET" not in environment
+    assert "SSHPILOT_SESSION_PASSWORD" not in environment
+
+
+@pytest.mark.parametrize("original", ["/user/custom/modules", None])
+def test_prepare_launch_does_not_modify_pythonpath(
+    broker: InteractionBroker,
+    monkeypatch,
+    original: str | None,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    prepared_environment = {
+        "PATH": "/usr/bin",
+        "SSHPILOT_DAEMON_ASKPASS_SOCKET": "/stale/socket",
+        "SSHPILOT_DAEMON_ASKPASS_TOKEN": "stale-token",
+    }
+    if original is not None:
+        prepared_environment["PYTHONPATH"] = original
+
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda *_args, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            prepared_environment,
+        ),
+    )
+
+    if original is None:
+        assert "PYTHONPATH" not in environment
+    else:
+        assert environment["PYTHONPATH"] == original
+    assert "SSHPILOT_DAEMON_ASKPASS_SOCKET" not in environment
+    assert "SSHPILOT_DAEMON_ASKPASS_TOKEN" not in environment
+
+
+def test_presence_rejects_submit_and_has_dedicated_lifetime() -> None:
+    instance = InteractionBroker(
+        secret_timeout=0.03,
+        host_key_timeout=0.03,
+        presence_timeout=10,
+    )
+    try:
+        summary = instance.create(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            interaction_type=InteractionType.SECURITY_KEY_PRESENCE,
+            prompt=PresencePrompt(text="Touch your security key"),
+        )
+        instance.claim(summary.id, CLIENT_A)
+        with pytest.raises(SshPilotError):
+            instance.respond(
+                InteractionDecisionRequest(
+                    interaction_id=summary.id,
+                    secret_decision=SecretDecision.SUBMIT,
+                ),
+                CLIENT_A,
+            )
+        assert (
+            instance.get(summary.id, CLIENT_A).expires_at
+            - instance.get(summary.id, CLIENT_A).created_at
+        ).total_seconds() == 10
+        assert instance.get(summary.id, CLIENT_A).state is InteractionState.CLAIMED
+    finally:
+        instance.close()
+
+
 @pytest.mark.parametrize(
     ("prompt", "expected_type"),
     [
         ("Enter verification code:", InteractionType.KEYBOARD_INTERACTIVE),
         ("Custom PAM response:", InteractionType.KEYBOARD_INTERACTIVE),
         ("Touch your security key", InteractionType.SECURITY_KEY_PRESENCE),
+        ("Allow signing?", InteractionType.CONFIRMATION),
     ],
 )
 def test_daemon_routes_interactive_and_presence_prompts(
@@ -292,7 +407,10 @@ def test_daemon_routes_interactive_and_presence_prompts(
     )
     token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
     monkeypatch.setattr(broker, "wait_for_result", lambda *_a, **_k: None)
-    assert broker._resolve_askpass_secret(token, prompt) is None
+    hint = "none" if expected_type is InteractionType.SECURITY_KEY_PRESENCE else (
+        "confirm" if expected_type is InteractionType.CONFIRMATION else ""
+    )
+    assert broker._resolve_askpass_secret(token, prompt, hint=hint) is None
     assert broker.list(CLIENT_A)[-1].type is expected_type
 
 

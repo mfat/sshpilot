@@ -10,6 +10,7 @@ import sys
 
 _MAX_RESPONSE = 16 * 1024
 _MAX_REQUEST = 8 * 1024
+_HELPER_TIMEOUT_SECONDS = 605
 _LENGTH = struct.Struct(">I")
 
 
@@ -49,11 +50,13 @@ def main() -> int:
         return 1
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as transport:
-            transport.settimeout(190)
+            # Presence notifications may legitimately remain open while a user
+            # locates and touches a hardware key.
+            transport.settimeout(_HELPER_TIMEOUT_SECONDS)
             transport.connect(socket_path)
             transport.sendall(_LENGTH.pack(len(request)) + request)
             size = _LENGTH.unpack(_receive_exact(transport, _LENGTH.size))[0]
-            if size < 1 or size > _MAX_RESPONSE:
+            if size > _MAX_RESPONSE:
                 return 1
             secret = bytearray(_receive_exact(transport, size))
         sys.stdout.buffer.write(secret)

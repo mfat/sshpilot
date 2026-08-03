@@ -687,7 +687,9 @@ class DaemonServer:
                 connection_id=spec.connection_id,
                 session_id=spec.session_id,
             )
-        return broker.prepare_launch(spec, launch_builder, trailing_args=("sftp",))
+        return broker.prepare_launch(
+            spec, launch_builder, trailing_args=("sftp",), headless=True
+        )
 
     def _prepare_forward_launch(
         self,
@@ -723,7 +725,7 @@ class DaemonServer:
                 interaction_policy=interaction_policy,
             )
 
-        return broker.prepare_launch(spec, _wrapped_builder)
+        return broker.prepare_launch(spec, _wrapped_builder, headless=True)
 
     def _client_can_interact(self, session_id: SessionId, client_id: Any) -> bool:
         session_runtime = self._session_runtime

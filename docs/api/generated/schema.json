@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.12",
+  "api_implementation_version": "0.13",
   "client_method_contract": {
     "assign_connection_to_group": {
       "capability": "connections.groups",
@@ -726,7 +726,8 @@
       "password",
       "private_key_passphrase",
       "keyboard_interactive",
-      "security_key_presence"
+      "security_key_presence",
+      "confirmation"
     ],
     "RememberPolicy": [
       "do_not_store",
@@ -1143,6 +1144,18 @@
         }
       ],
       "status": "Implemented"
+    },
+    "ConfirmationPrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
     },
     "ConnectionDetails": {
       "fields": [
@@ -3084,7 +3097,7 @@
           "name": "prompt",
           "required": true,
           "sensitive": false,
-          "type": "HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt"
+          "type": "HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt | ConfirmationPrompt"
         },
         {
           "default": null,
