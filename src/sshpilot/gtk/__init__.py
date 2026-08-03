@@ -2,5 +2,16 @@
 
 from .interaction import GtkInteractionProvider, get_default_provider, set_default_provider
 from .connection_store import ConnectionPresentationStore
+from .connection_runtime_status import (
+    ConnectionRuntimeStatus,
+    ConnectionRuntimeStatusStore,
+)
 
-__all__ = ["ConnectionPresentationStore", "GtkInteractionProvider", "get_default_provider", "set_default_provider"]
+__all__ = [
+    "ConnectionPresentationStore",
+    "ConnectionRuntimeStatus",
+    "ConnectionRuntimeStatusStore",
+    "GtkInteractionProvider",
+    "get_default_provider",
+    "set_default_provider",
+]

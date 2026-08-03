@@ -580,7 +580,6 @@ class TerminalManager:
                             "Failed to initialize daemon session for pane type=%s",
                             type(exc).__name__,
                         )
-                        connection.is_connected = False
                         self._unregister_terminal(connection, terminal)
                     return
 

@@ -34,7 +34,15 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     from sshpilot import main as main_module
 
     app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
-    app.window = SimpleNamespace(_is_quitting=False, client=None, welcome_view=None)
+    connection_projection = MagicMock()
+    runtime_projection = MagicMock()
+    app.window = SimpleNamespace(
+        _is_quitting=False,
+        client=None,
+        welcome_view=None,
+        connection_manager=connection_projection,
+        connection_runtime_status=runtime_projection,
+    )
     app._api_client_bridge = None
     app._api_client_selection = None
     app._api_daemon_launcher = object()
@@ -89,7 +97,36 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     assert app.window.client is new_client
     assert app._api_client_selection.client is new_client
     assert installed == [new_client]
+    connection_projection.attach_client.assert_called_once_with(new_client)
+    runtime_projection.attach_client.assert_called_once_with(new_client)
     assert app._daemon_reconnect_in_progress is False
+
+
+def test_transport_loss_clears_stale_runtime_status_before_reconnect():
+    from sshpilot import main as main_module
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    runtime_projection = MagicMock()
+    app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+    app.window = SimpleNamespace(
+        _is_quitting=False,
+        _daemon_shutdown_intent=None,
+        _daemon_quit_decision=None,
+        connection_runtime_status=runtime_projection,
+    )
+    app._daemon_shutdown_intent = None
+    app._daemon_quit_decision = None
+    app.request_daemon_reconnect = MagicMock()
+
+    app._on_daemon_transport_lost(
+        SshPilotError(ErrorCode.TRANSPORT_CLOSED, "closed")
+    )
+
+    runtime_projection.close.assert_called_once_with()
+    app.request_daemon_reconnect.assert_called_once_with(
+        reason="transport_loss",
+        immediate=False,
+    )
 
 
 def test_preferences_schedules_reconnect_after_restart(monkeypatch):

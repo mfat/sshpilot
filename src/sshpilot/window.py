@@ -45,6 +45,7 @@ from gettext import gettext as _
 
 from .connection_manager import Connection, ConnectionState
 from .gtk.connection_store import ConnectionPresentationStore
+from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
 from .key_manager import KeyManager
 from .update_checker import check_for_updates_async
@@ -243,6 +244,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 lambda: (callback(), GLib.SOURCE_REMOVE)[1]
             )
         )
+        self.connection_runtime_status = ConnectionRuntimeStatusStore(
+            dispatch=lambda callback: GLib.idle_add(
+                lambda: (callback(), GLib.SOURCE_REMOVE)[1]
+            ),
+            on_changed=self._on_runtime_connection_status_changed,
+        )
 
         # Wire GTK interaction provider for core.interaction requests.
         try:
@@ -319,6 +326,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._compose_api_client(app)
         if self.client is not None:
             self.connection_manager.attach_client(self.client)
+            self.connection_runtime_status.attach_client(self.client)
 
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -432,6 +440,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         self.client = selection.client
         self.connection_manager.attach_client(self.client)
+        self.connection_runtime_status.attach_client(self.client)
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         app = self.get_application()
@@ -448,6 +457,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         self.client = None
+        self.connection_runtime_status.close()
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
         logger.error(
             "Daemon client selection failed reason=%s type=%s",
@@ -3337,6 +3347,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
             effective_warning_callback=self._request_effective_warning,
+            status_resolver=self.connection_runtime_status.status_for,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
         )
@@ -3353,6 +3364,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
         return row
+
+    def _on_runtime_connection_status_changed(self, connection_id, _status):
+        """Refresh every row representing a changed daemon connection status."""
+        connection = self.connection_manager.get_connection_by_id(connection_id)
+        if connection is None:
+            return
+        for row in self._rows_for_connection(connection):
+            row.update_status()
+            row.queue_draw()
 
     def on_search_changed(self, entry):
         """Handle search text changes and update connection list."""

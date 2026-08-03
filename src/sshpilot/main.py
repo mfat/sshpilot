@@ -604,6 +604,15 @@ class SshPilotApplication(Adw.Application):
             "Daemon transport lost code=%s; scheduling reconnect",
             code or type(error).__name__,
         )
+        window = self.window
+        runtime_status = (
+            getattr(window, "connection_runtime_status", None)
+            if window is not None
+            else None
+        )
+        close_runtime_status = getattr(runtime_status, "close", None)
+        if callable(close_runtime_status):
+            close_runtime_status()
         self.request_daemon_reconnect(
             reason="transport_loss",
             immediate=False,
@@ -762,6 +771,22 @@ class SshPilotApplication(Adw.Application):
         window = self.window
         if window is not None and not getattr(window, "_is_quitting", False):
             window.client = result.client
+            for projection_name in (
+                "connection_manager",
+                "connection_runtime_status",
+            ):
+                projection = getattr(window, projection_name, None)
+                attach_client = getattr(projection, "attach_client", None)
+                if not callable(attach_client):
+                    continue
+                try:
+                    attach_client(result.client)
+                except Exception:
+                    logger.warning(
+                        "Failed to refresh %s after daemon reconnect",
+                        projection_name,
+                        exc_info=True,
+                    )
             welcome = getattr(window, "welcome_view", None)
             if welcome is not None and hasattr(welcome, "set_client"):
                 try:

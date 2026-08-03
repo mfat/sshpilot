@@ -1468,6 +1468,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         config,
         file_manager_callback=None,
         effective_warning_callback=None,
+        status_resolver=None,
         display_group_id: Optional[str] = None,
         in_tag_section: bool = False,
     ):
@@ -1481,6 +1482,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         _apply_sidebar_row_style(self, config, in_tag_section=in_tag_section)
         self._file_manager_callback = file_manager_callback
         self._effective_warning_callback = effective_warning_callback
+        self._status_resolver = status_resolver
         self._tint_provider = None
         self._color_badge_provider = None
         self._color_dot_provider = None
@@ -2131,24 +2133,14 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Render the status icon from the connection's authoritative state.
 
         This is render-only: it never computes or writes back connection state.
-        Aggregation across multiple terminals lives in the reporting layer
-        (``window._recompute_connection_state``) which sets the state via
-        ``ConnectionManager.update_connection_state``.
+        Daemon mode reads the session-derived runtime projection; legacy mode
+        reads the mutable connection model maintained by ``ConnectionManager``.
         """
         try:
             from sshpilot import icon_utils
             from .connection_manager import ConnectionState
 
-            try:
-                state = self.connection.get_status()
-            except Exception:
-                # Older/foreign connection objects without the status API: if we
-                # can't tell, stay neutral (UNKNOWN) rather than alarming in red.
-                state = (
-                    ConnectionState.CONNECTED
-                    if getattr(self.connection, "is_connected", False)
-                    else ConnectionState.UNKNOWN
-                )
+            state, reason = self._resolve_status()
 
             host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
 
@@ -2184,11 +2176,6 @@ class ConnectionRow(Gtk.ListBoxRow):
             elif state == ConnectionState.FAILED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
                 self.status_icon.add_css_class("conn-status-down")
-                reason = ''
-                try:
-                    reason = self.connection.get_status_reason() or ''
-                except Exception:
-                    reason = ''
                 self.status_icon.set_tooltip_text(
                     _("Connection failed: {reason}").format(reason=reason) if reason
                     else _("Connection failed")
@@ -2210,10 +2197,29 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _is_online(self) -> bool:
         from .connection_manager import ConnectionState
+        state, _reason = self._resolve_status()
+        return state == ConnectionState.CONNECTED
+
+    def _resolve_status(self):
+        """Resolve daemon runtime projection first, then legacy object state."""
+        from .connection_manager import ConnectionState
+
+        resolver = getattr(self, '_status_resolver', None)
+        if callable(resolver):
+            runtime = resolver(self.connection)
+            if runtime is not None and runtime.state is not ConnectionState.UNKNOWN:
+                return runtime.state, runtime.reason
         try:
-            return self.connection.get_status() == ConnectionState.CONNECTED
+            state = self.connection.get_status()
+            reason = self.connection.get_status_reason() or ''
+            return state, reason
         except Exception:
-            return bool(getattr(self.connection, 'is_connected', False))
+            state = (
+                ConnectionState.CONNECTED
+                if getattr(self.connection, 'is_connected', False)
+                else ConnectionState.UNKNOWN
+            )
+            return state, ''
 
     def _refresh_compact_status(self) -> None:
         """Restyle the compact avatar/icon for the current connection state and
