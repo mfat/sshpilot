@@ -506,12 +506,10 @@ class VTETerminalBackend:
             self._selection_background = self._clone_rgba(highlight_bg)
             self._selection_foreground = self._clone_rgba(highlight_fg)
 
-            # Paint only inside the rounded terminal card.  Applying this
-            # class to TerminalWidget itself also paints the four-pixel margin
-            # behind the card, making its clipped corners appear square.
-            container = getattr(owner, "container_box", None)
-            if container is not None and hasattr(container, "add_css_class"):
-                container.add_css_class(self._css_class)
+            # Preserve Adwaita's original card paint at the rounded edge.  The
+            # terminal background belongs only to the content widgets; putting
+            # it on TerminalWidget hides the radius, while putting it on the
+            # card changes the antialiased fringe and makes the curve harsher.
             if hasattr(owner.scrolled_window, "add_css_class"):
                 owner.scrolled_window.add_css_class(self._css_class)
             if hasattr(self.vte, "add_css_class"):

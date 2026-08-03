@@ -78,7 +78,7 @@ def test_vte_backend_applies_palette_cursor_selection_and_font(monkeypatch):
     assert calls["font"].get_size() > 0
     assert calls["redrawn"] is True
     assert styled["owner"] == []
-    assert styled["container"] == ["terminal-bg-test"]
+    assert styled["container"] == []
     assert styled["scrolled"] == ["terminal-bg-test"]
     assert styled["vte"] == ["terminal-bg-test"]
 
