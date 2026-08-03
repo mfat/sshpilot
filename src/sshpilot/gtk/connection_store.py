@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from threading import RLock
 from typing import Callable, Dict, Iterable, Optional, Tuple
+import logging
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.connections import ConnectionSummary
@@ -225,3 +226,113 @@ class ConnectionPresentationStore:
         for registered_name, callback in handlers:
             if registered_name == signal_name:
                 self._dispatch(lambda callback=callback: callback(self, connection))
+
+    def store_password(self, host: str, username: str, password: str):
+        """Store a password via the selected secret backend (see secret_storage)."""
+        from ..secret_storage import get_secret_manager, password_spec
+        stored = get_secret_manager().store(password_spec(host, username), password)
+        if not stored:
+            logging.getLogger(__name__).warning("No secure storage backend available; password not stored")
+        return stored
+
+    def store_connection_password(self, connection, password: str,
+                                  username: Optional[str] = None,
+                                  previous_connection=None) -> bool:
+        """Store a connection's SSH password under the canonical host key.
+
+        Clears legacy copies stored under older host aliases (nickname, etc.) and,
+        when an edited connection changed host or username, its previous identity.
+        """
+        from ..credential_model import canonical_password_host, password_host_candidates
+
+        user = (username or getattr(connection, 'username', '') or '').strip()
+        canonical = canonical_password_host(connection)
+        if not canonical or not user or not password:
+            return False
+        stored = self.store_password(canonical, user, password)
+        if stored:
+            cleanup = {
+                (host, user)
+                for host in password_host_candidates(connection)
+                if host and host != canonical
+            }
+            if previous_connection:
+                previous_user = (
+                    previous_connection.get('username')
+                    if isinstance(previous_connection, dict)
+                    else getattr(previous_connection, 'username', '')
+                ) or user
+                cleanup.update(
+                    (host, previous_user)
+                    for host in password_host_candidates(previous_connection)
+                    if host and (host != canonical or previous_user != user)
+                )
+            for host, cleanup_user in cleanup:
+                self.delete_password(host, cleanup_user)
+        return stored
+
+    def get_password(self, host: str, username: str) -> Optional[str]:
+        """Retrieve a password via the selected secret backend."""
+        from ..secret_storage import get_secret_manager, password_spec
+        return get_secret_manager().lookup(password_spec(host, username))
+
+    def get_connection_password(self, connection,
+                                username: Optional[str] = None) -> Optional[str]:
+        """Look up a connection's SSH password, migrating legacy host aliases on hit."""
+        from ..credential_model import canonical_password_host, password_host_candidates
+
+        user = (username or getattr(connection, 'username', '') or '').strip()
+        if not user:
+            return None
+        canonical = canonical_password_host(connection)
+        for host in password_host_candidates(connection) or ([canonical] if canonical else []):
+            if not host:
+                continue
+            value = self.get_password(host, user)
+            if value:
+                if canonical and host != canonical:
+                    if self.store_password(canonical, user, value):
+                        self.delete_password(host, user)
+                return value
+        return None
+
+    def delete_password(self, host: str, username: str) -> bool:
+        """Delete a stored password from all available secret backends."""
+        from ..secret_storage import get_secret_manager, password_spec
+        removed_any = get_secret_manager().delete(password_spec(host, username))
+        if removed_any:
+            logging.getLogger(__name__).debug(f"Deleted stored password for {username}@{host}")
+        return removed_any
+
+    def delete_connection_passwords(self, connection,
+                                    username: Optional[str] = None) -> bool:
+        """Delete a connection's SSH password from every host alias and backend."""
+        from ..credential_model import password_host_candidates
+
+        user = (username or getattr(connection, 'username', '') or '').strip()
+        removed = False
+        for host in password_host_candidates(connection):
+            if host and user and self.delete_password(host, user):
+                removed = True
+        return removed
+
+    # --- Plugin secrets ----------------------------------------------------
+    #
+    # Namespaced per plugin id so a plugin can never read another plugin's
+    # (or a connection's) secrets. Reuses the store_password() path — which routes
+    # through the configurable secret backend (see secret_storage.py) — with a
+    # reserved host identifier: real SSH hosts are stored under their hostname,
+    # plugin secrets under 'sshpilot-plugin/<id>'.
+
+    @staticmethod
+    def _plugin_secret_host(plugin_id: str) -> str:
+        return f"sshpilot-plugin/{plugin_id}"
+
+    def store_plugin_secret(self, plugin_id: str, key: str, value: str) -> bool:
+        return bool(self.store_password(self._plugin_secret_host(plugin_id), key, value))
+
+    def get_plugin_secret(self, plugin_id: str, key: str) -> Optional[str]:
+        return self.get_password(self._plugin_secret_host(plugin_id), key)
+
+    def delete_plugin_secret(self, plugin_id: str, key: str) -> bool:
+        return self.delete_password(self._plugin_secret_host(plugin_id), key)
