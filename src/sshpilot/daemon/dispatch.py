@@ -27,6 +27,11 @@ from sshpilot.api.models.common import (
     InteractionId,
     require_identifier,
 )
+from sshpilot.api.models.connections import (
+    delete_plugin_secret_request_from_wire,
+    get_plugin_secret_request_from_wire,
+    store_plugin_secret_request_from_wire,
+)
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
     attach_session_request_from_wire,
@@ -102,7 +107,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
-        "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.store_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.get_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.delete_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -192,8 +197,9 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.update",
         "connections.delete",
         "connections.get_editor",
-                "connections.store_password",
+        "connections.store_password",
         "connections.store_plugin_secret",
+        "connections.get_plugin_secret",
         "connections.delete_plugin_secret",
         "connections.delete_password",
         "connections.store_passphrase",
@@ -327,7 +333,7 @@ class RequestDispatcher:
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
             "connections.get_editor": self._handle_get_connection_editor,
-                        "connections.store_password": self._handle_store_connection_password,
+            "connections.store_password": self._handle_store_connection_password,
             "connections.store_plugin_secret": self._handle_store_plugin_secret,
             "connections.get_plugin_secret": self._handle_get_plugin_secret,
             "connections.delete_plugin_secret": self._handle_delete_plugin_secret,
@@ -735,6 +741,46 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_request.connection_id,
+        )
+
+    def _handle_store_plugin_secret(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = store_plugin_secret_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.store_plugin_secret_rpc(
+                typed_request
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_get_plugin_secret(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = get_plugin_secret_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.get_plugin_secret_rpc(typed_request),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_delete_plugin_secret(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = delete_plugin_secret_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.delete_plugin_secret_rpc(
+                typed_request
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _handle_delete_connection_password(

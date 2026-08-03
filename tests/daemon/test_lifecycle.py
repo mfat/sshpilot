@@ -1,9 +1,34 @@
+import logging
 import socket
 import threading
 
 import pytest
 
 from sshpilot.api import Capability, DaemonClient, ErrorCode, SshPilotError
+
+
+def test_startup_failure_logs_safe_verbose_trace(tmp_path, caplog):
+    from sshpilot.daemon import DaemonServer
+
+    secret = "token=must-not-appear"
+
+    def failing_core_factory():
+        raise RuntimeError(secret)
+
+    socket_dir = tmp_path / "startup-log"
+    socket_dir.mkdir(mode=0o700)
+    server = DaemonServer(
+        failing_core_factory,
+        socket_path=socket_dir / "sshpilotd.sock",
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="sshpilot.daemon.server"):
+        server.serve_forever()
+
+    assert "Daemon startup failed type=RuntimeError" in caplog.text
+    assert "Daemon startup traceback (exception text redacted)" in caplog.text
+    assert "failing_core_factory" in caplog.text
+    assert secret not in caplog.text
 
 
 def test_start_connect_disconnect_and_clean_stop(daemon_factory):
@@ -60,6 +85,26 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
 
     assert server.wait_stopped()
     assert not server.socket_path.exists()
+
+
+def test_plugin_secret_rpc_round_trip_uses_daemon_command_thread(
+    daemon_factory,
+    caplog,
+):
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+    secret = "plugin-secret-must-not-be-logged"
+
+    with caplog.at_level(logging.DEBUG):
+        assert client.store_plugin_secret("example.plugin", "token", secret) is True
+        assert client.get_plugin_secret("example.plugin", "token") == secret
+        assert client.get_plugin_secret("other.plugin", "token") is None
+        assert client.delete_plugin_secret("example.plugin", "token") is True
+        assert client.get_plugin_secret("example.plugin", "token") is None
+
+    assert manager.plugin_secrets == {}
+    assert secret not in caplog.text
+    client.close()
 
 
 def test_multiple_sequential_and_simultaneous_clients(daemon_factory):

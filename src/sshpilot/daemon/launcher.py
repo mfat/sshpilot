@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence, Tuple
 
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
@@ -21,6 +22,9 @@ from .lifecycle import (
     resolve_socket_path,
     validate_client_socket_path,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_STARTUP_TIMEOUT = 3.0
@@ -179,6 +183,7 @@ class DaemonLauncher:
                 str(self.socket_path),
                 *(("--verbose",) if self._verbose else ()),
             )
+            daemon_log_marker = self._daemon_log_marker()
             try:
                 process = self._popen(
                     list(command),
@@ -198,11 +203,70 @@ class DaemonLauncher:
             handle = DaemonProcessHandle(process=process, command=command)
             try:
                 client = self._wait_until_ready(process)
-            except BaseException:
+            except BaseException as error:
                 self._stop_failed_child(process)
+                self._forward_daemon_log(daemon_log_marker)
+                logger.debug(
+                    "Daemon launch attempt failed type=%s",
+                    type(error).__name__,
+                )
                 raise
             self._ensure_gtk_askpass_log_forwarder()
             return DaemonLaunchResult(client=client, process=handle)
+
+    def _daemon_log_marker(self) -> Optional[Tuple[Path, int]]:
+        """Remember where this verbose launch's daemon diagnostics begin."""
+
+        if not self._verbose:
+            return None
+        try:
+            from sshpilot.platform_utils import get_state_dir
+
+            path = Path(get_state_dir()) / "daemon.log"
+            try:
+                offset = path.stat().st_size
+            except FileNotFoundError:
+                offset = 0
+            return path, offset
+        except Exception as error:
+            logger.debug(
+                "Could not locate daemon log type=%s",
+                type(error).__name__,
+            )
+            return None
+
+    @staticmethod
+    def _forward_daemon_log(marker: Optional[Tuple[Path, int]]) -> None:
+        """Forward bounded diagnostics from a failed verbose daemon launch."""
+
+        if marker is None:
+            return
+        path, offset = marker
+        try:
+            end = path.stat().st_size
+            start = offset if end >= offset else 0
+            start = max(start, end - 64 * 1024)
+            with path.open("r", encoding="utf-8", errors="replace") as stream:
+                stream.seek(start)
+                if start > offset:
+                    stream.readline()
+                lines = stream.read().splitlines()
+        except FileNotFoundError:
+            logger.debug("Daemon produced no file diagnostics")
+            return
+        except Exception as error:
+            logger.debug(
+                "Could not read daemon diagnostics type=%s",
+                type(error).__name__,
+            )
+            return
+
+        if not lines:
+            logger.debug("Daemon produced no new file diagnostics")
+            return
+        logger.debug("Daemon diagnostics from %s:", path)
+        for line in lines:
+            logger.debug("daemon | %s", line)
 
     def _connect(self, timeout: float) -> DaemonClient:
         # ``timeout`` here is the launcher probe budget for socket connect only.

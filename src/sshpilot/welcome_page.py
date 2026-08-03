@@ -320,6 +320,15 @@ class WelcomePage(Gtk.Overlay):
             )
             return
 
+        client = getattr(self, 'client', None)
+        if client is None:
+            WelcomePage._append_recent_message(
+                box,
+                WelcomePage._recent_read_error_message(),
+                warning=True,
+            )
+            return
+
         bridge = getattr(self, 'client_bridge', None)
         if bridge is not None:
             self._recent_generation = getattr(self, '_recent_generation', 0) + 1
@@ -329,7 +338,7 @@ class WelcomePage(Gtk.Overlay):
                 _('Loading recent connections…'),
             )
             self._recent_request = bridge.submit(
-                self.client.list_connections,
+                client.list_connections,
                 on_success=lambda connections: self._finish_recent_read(
                     generation,
                     connections,
@@ -342,7 +351,7 @@ class WelcomePage(Gtk.Overlay):
         # Activation remains on the existing terminal path in this milestone.
         read_error = False
         try:
-            connections = self.client.list_connections()
+            connections = client.list_connections()
         except SshPilotError as error:
             # Do not render or log the public message/details here. The stable
             # code is sufficient correlation without backend or connection data.

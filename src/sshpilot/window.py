@@ -12,6 +12,7 @@ import logging
 import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
+import traceback
 import weakref
 from datetime import datetime
 from pathlib import Path
@@ -448,6 +449,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_request = None
         self.client = None
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
+        logger.error(
+            "Daemon client selection failed reason=%s type=%s",
+            reason,
+            type(error).__name__,
+        )
+        frames = traceback.extract_tb(error.__traceback__)
+        if frames:
+            logger.debug(
+                "Daemon client selection traceback (exception text redacted): %s",
+                " -> ".join(
+                    f"{frame.filename}:{frame.lineno} in {frame.name}"
+                    for frame in frames
+                ),
+            )
+        cause = error.__cause__ or error.__context__
+        if cause is not None:
+            logger.debug(
+                "Daemon client selection cause type=%s code=%s",
+                type(cause).__name__,
+                getattr(getattr(cause, 'code', None), 'value', None),
+            )
         self._client_mode_warning = _(
             "SSH Pilot requires its background service. "
             "The service could not be started (%s). Retry, restart the service, "

@@ -160,6 +160,55 @@ def test_structured_client_error_keeps_recent_fallback_visible(
     assert "private diagnostic" not in caplog.text
 
 
+def test_clearing_client_renders_unavailable_recent_state(monkeypatch):
+    class _Label:
+        def __init__(self, *, label):
+            self.label = label
+            self.css_classes = []
+
+        def add_css_class(self, name):
+            self.css_classes.append(name)
+
+        def set_wrap(self, _value):
+            pass
+
+        def set_justify(self, _value):
+            pass
+
+        def set_halign(self, _value):
+            pass
+
+        def set_hexpand(self, _value):
+            pass
+
+        def set_margin_top(self, _value):
+            pass
+
+    class _Page:
+        set_client = WelcomePage.set_client
+        refresh_recent = WelcomePage.refresh_recent
+        _populate_recent_box = WelcomePage._populate_recent_box
+
+        def __init__(self):
+            self._recent_box = _Box()
+            self.client = object()
+            self.client_bridge = object()
+            self._client_selection_pending = True
+            self._recent_request = None
+
+    monkeypatch.setattr(welcome_page.Gtk, "Label", _Label)
+    page = _Page()
+
+    page.set_client(None)
+
+    assert page.client is None
+    assert page.client_bridge is None
+    assert page._client_selection_pending is False
+    fallback = page._recent_box.items[0]
+    assert fallback.label == "Recent connections are temporarily unavailable"
+    assert "warning" in fallback.css_classes
+
+
 def test_unexpected_client_exception_remains_diagnosable():
     class _BrokenClient:
         def list_connections(self):

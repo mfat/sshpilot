@@ -1,3 +1,4 @@
+import logging
 import os
 import subprocess
 import sys
@@ -318,6 +319,23 @@ def test_socket_readiness_timeout_is_bounded_and_stops_exact_child(tmp_path):
 
     assert caught.value.reason is DaemonStartupFailure.STARTUP_TIMEOUT
     assert process.terminated is True
+
+
+def test_failed_verbose_launch_forwards_only_new_daemon_log(
+    tmp_path,
+    caplog,
+):
+    log_path = tmp_path / "daemon.log"
+    log_path.write_text("old daemon line\n", encoding="utf-8")
+    marker = (log_path, log_path.stat().st_size)
+    with log_path.open("a", encoding="utf-8") as stream:
+        stream.write("new startup failure type=RuntimeError\n")
+
+    with caplog.at_level(logging.DEBUG, logger="sshpilot.daemon.launcher"):
+        DaemonLauncher._forward_daemon_log(marker)
+
+    assert "new startup failure type=RuntimeError" in caplog.text
+    assert "old daemon line" not in caplog.text
 
 
 @pytest.mark.parametrize(

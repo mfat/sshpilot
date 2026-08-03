@@ -71,6 +71,7 @@ class TestConnection:
 class TestConnectionManager:
     def __init__(self):
         self.connections = [TestConnection()]
+        self.plugin_secrets = {}
         self._handlers = {}
         self._next_handler = 1
 
@@ -123,6 +124,16 @@ class TestConnectionManager:
         self.connections.remove(connection)
         self.emit("connection-removed", connection)
         return True
+
+    def store_plugin_secret(self, plugin_id, key, value):
+        self.plugin_secrets[(plugin_id, key)] = value
+        return True
+
+    def get_plugin_secret(self, plugin_id, key):
+        return self.plugin_secrets.get((plugin_id, key))
+
+    def delete_plugin_secret(self, plugin_id, key):
+        return self.plugin_secrets.pop((plugin_id, key), None) is not None
 
 
 @pytest.fixture

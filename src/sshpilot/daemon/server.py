@@ -11,6 +11,7 @@ import socket
 import stat
 import threading
 import time
+import traceback
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -342,6 +343,19 @@ class DaemonServer:
         try:
             self._setup()
         except BaseException as exc:
+            logger.error(
+                "Daemon startup failed type=%s",
+                type(exc).__name__,
+            )
+            frames = traceback.extract_tb(exc.__traceback__)
+            if frames:
+                logger.debug(
+                    "Daemon startup traceback (exception text redacted): %s",
+                    " -> ".join(
+                        f"{frame.filename}:{frame.lineno} in {frame.name}"
+                        for frame in frames
+                    ),
+                )
             self._startup_error = exc
             if self._lifecycle is not None:
                 self._lifecycle.mark_failed()
