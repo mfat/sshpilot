@@ -303,7 +303,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # So ConnectionManager.sync_domain_from_live_connections can mirror groups.
         self.connection_manager.group_manager = self.group_manager
         try:
-            self.connection_manager.sync_domain_from_live_connections(self.group_manager)
+            if hasattr(self.connection_manager, 'sync_domain_from_live_connections'):
+                self.connection_manager.sync_domain_from_live_connections(self.group_manager)
         except Exception:
             logger.debug("Initial domain group sync failed", exc_info=True)
         self.session_manager = SessionManager(
