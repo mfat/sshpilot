@@ -45,10 +45,10 @@ def test_default_keepalive_skipped_when_in_overrides():
     assert cmd == []
 
 
-def test_default_keepalive_defaults_to_on_when_flag_absent():
-    # Missing apply_default_keepalive defaults to True.
+def test_default_keepalive_defaults_to_off_when_flag_absent():
+    # OpenSSH configuration remains authoritative unless the policy is opted in.
     cmd = _inject(app_cfg={'default_keepalive_interval': 20, 'default_keepalive_count': 2})
-    assert cmd == ['-o', 'ServerAliveInterval=20', '-o', 'ServerAliveCountMax=2']
+    assert cmd == []
 
 
 # --- Phase 2: ConnectionState model + is_connected compat -------------------

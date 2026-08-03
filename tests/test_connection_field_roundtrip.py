@@ -166,3 +166,14 @@ def test_field_roundtrip(tmp_path, name):
         # key that happens to survive in conn.data.
         got = getattr(conn, key)
         assert got == want, f"{name}.{key}: {got!r} != {want!r}\n---\n{entry}"
+
+
+def test_remote_command_does_not_invent_request_tty(tmp_path):
+    cm = make_cm(tmp_path)
+    entry = cm.format_ssh_config_entry({
+        "nickname": "batch",
+        "remote_command": "printf ready",
+    })
+
+    assert "    RemoteCommand printf ready" in entry
+    assert "RequestTTY" not in entry

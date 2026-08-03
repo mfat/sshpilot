@@ -212,14 +212,13 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     else:
         tty_token = ''
 
-    # Add RemoteCommand and RequestTTY if specified (ensure shell stays active)
+    # Preserve RemoteCommand without inventing TTY policy. RequestTTY changes
+    # command semantics and is emitted only when the user authored it.
     remote_cmd = (data.get('remote_command') or '').strip()
     if remote_cmd:
-        # Write RemoteCommand first, then RequestTTY (order for readability).
-        # The interactive shell needs a TTY, so default to yes — but an
-        # explicitly authored token still wins.
         lines.append(f"    RemoteCommand {remote_cmd}")
-        lines.append(f"    RequestTTY {tty_token or 'yes'}")
+        if tty_token:
+            lines.append(f"    RequestTTY {tty_token}")
     elif tty_token:
         lines.append(f"    RequestTTY {tty_token}")
 

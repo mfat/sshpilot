@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -13,7 +10,6 @@ import re
 import secrets
 import shutil
 import socket
-import stat
 import struct
 import subprocess
 import sys
@@ -134,7 +130,7 @@ class _AskpassContext:
     stored_attempted: set[str]
     session_known_hosts: str = ""
     user_known_hosts_paths: tuple[str, ...] = ()
-    hash_known_hosts: bool = False
+    initial_known_hosts_lines: frozenset[str] = frozenset()
     pending_host_key_store: bool = False
     closed: bool = False
 
@@ -259,7 +255,7 @@ class InteractionBroker:
                 session_id=spec.session_id,
             )
         target = argv[-1]
-        effective = self._effective_ssh_config(argv)
+        effective = self._effective_ssh_config(argv, environment)
         hostname = effective.get("hostname", spec.hostname)
         username = effective.get("user", spec.username)
         try:
@@ -268,10 +264,25 @@ class InteractionBroker:
             port = spec.port
         user_paths = self._known_hosts_paths(effective)
         token = secrets.token_urlsafe(32)
-        # Keep the canonical builder argv unchanged. In particular, the daemon
-        # must not impose BatchMode, KbdInteractiveAuthentication,
-        # NumberOfPasswordPrompts, or UserKnownHostsFile defaults that the
-        # in-process terminal path does not impose.
+        session_known_hosts = self._private_dir / f"known-hosts-{token}"
+        known_hosts_content = bytearray()
+        for user_path in user_paths:
+            try:
+                content = user_path.expanduser().read_bytes()
+            except OSError:
+                continue
+            known_hosts_content.extend(content)
+            if content and not content.endswith(b"\n"):
+                known_hosts_content.extend(b"\n")
+        session_known_hosts.write_bytes(known_hosts_content)
+        os.chmod(session_known_hosts, 0o600)
+        initial_known_hosts_lines = frozenset(
+            line
+            for line in known_hosts_content.decode("utf-8", errors="replace").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        # Keep authentication and connection policy from the canonical builder.
+        # Only known-host persistence is redirected to session-private storage.
         context = _AskpassContext(
             token=token,
             session_id=spec.session_id,
@@ -284,9 +295,9 @@ class InteractionBroker:
             control_argv=(),
             attempts={},
             stored_attempted=set(),
-            session_known_hosts="",
+            session_known_hosts=str(session_known_hosts),
             user_known_hosts_paths=tuple(str(path) for path in user_paths),
-            hash_known_hosts=effective.get("hashknownhosts", "no") == "yes",
+            initial_known_hosts_lines=initial_known_hosts_lines,
         )
         with self._condition:
             self._require_open_locked()
@@ -316,6 +327,15 @@ class InteractionBroker:
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
             f"session={spec.session_id}"
+        )
+        # OpenSSH owns known_hosts parsing, matching, hashing, and line
+        # generation. It reads a private snapshot for the session and writes
+        # newly accepted keys there; ACCEPT_ONCE therefore cannot modify the
+        # user's files. ACCEPT_AND_STORE promotes OpenSSH's exact generated
+        # line only after authentication succeeds.
+        argv = self._with_broker_options(
+            argv,
+            ("-o", f"UserKnownHostsFile={session_known_hosts}"),
         )
         if trailing_args:
             argv = (*argv, *trailing_args)
@@ -407,21 +427,20 @@ class InteractionBroker:
             insert_at = 3
         return tuple((*head[:insert_at], *options, *head[insert_at:], target))
 
-    def _effective_ssh_config(self, argv: Sequence[str]) -> dict[str, str]:
+    def _effective_ssh_config(
+        self,
+        argv: Sequence[str],
+        environment: Optional[dict[str, str]] = None,
+    ) -> dict[str, str]:
         target = argv[-1]
         # ``ssh … -s <host> sftp`` (and any pre-host ``-s``) must not be fed to
         # ``ssh -G`` — OpenSSH treats ``-s`` as a subsystem request and the
         # probe can hang instead of dumping config.
         probe = tuple(argument for argument in argv[:-1] if argument != "-s")
         try:
-            # Keep HOME so ``~`` in IdentityFile / UserKnownHostsFile expands the
-            # same way as the real SSH child (PATH-only env breaks that).
-            probe_env = {
-                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            }
-            home = os.environ.get("HOME")
-            if home:
-                probe_env["HOME"] = home
+            # Probe with the same sanitized environment as the SSH child.
+            # Only the broker-private askpass variables are added later.
+            probe_env = dict(environment or os.environ)
             completed = subprocess.run(
                 (*probe, "-G", target),
                 stdin=subprocess.DEVNULL,
@@ -586,6 +605,7 @@ class InteractionBroker:
                 line.rstrip("\n")
                 for line in session_path.read_text(encoding="utf-8").splitlines()
                 if line.strip() and not line.lstrip().startswith("#")
+                and line not in context.initial_known_hosts_lines
             ]
         except OSError:
             return
@@ -626,45 +646,6 @@ class InteractionBroker:
             if item and item.lower() != "none"
         )
         return paths or (Path("~/.ssh/known_hosts").expanduser(),)
-
-    def _persist_host_key(
-        self,
-        path: Path,
-        host_token: str,
-        selected: tuple[str, str],
-        *,
-        hash_host: bool,
-    ) -> None:
-        path = path.expanduser()
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if path.exists():
-            current_stat = path.lstat()
-            if stat.S_ISLNK(current_stat.st_mode):
-                raise SshPilotError(
-                    ErrorCode.HOST_KEY_PERSISTENCE_FAILED,
-                    "The known-hosts file is unsafe",
-                )
-            existing = path.read_bytes()
-        else:
-            existing = b""
-        stored_host = host_token
-        if hash_host:
-            salt = secrets.token_bytes(20)
-            digest = hmac.new(salt, host_token.encode(), hashlib.sha1).digest()
-            stored_host = (
-                "|1|"
-                + base64.b64encode(salt).decode()
-                + "|"
-                + base64.b64encode(digest).decode()
-            )
-        line = f"{stored_host} {selected[0]} {selected[1]}\n".encode()
-        try:
-            self._atomic_write(path, existing + line)
-        except OSError:
-            raise SshPilotError(
-                ErrorCode.HOST_KEY_PERSISTENCE_FAILED,
-                "The known-hosts file could not be updated",
-            ) from None
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:
