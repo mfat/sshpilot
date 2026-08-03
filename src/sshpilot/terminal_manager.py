@@ -1334,7 +1334,7 @@ class TerminalManager:
 
     # --- Controlled reconnect after a connection edit ----------------------
 
-    def prompt_reconnect(self, connection):
+    def prompt_reconnect(self, connection, terminal=None):
         """Ask whether to reconnect *connection* with its updated settings."""
         dialog = Adw.AlertDialog(
             heading=_("Settings Changed"),
@@ -1346,21 +1346,19 @@ class TerminalManager:
         dialog.set_response_appearance('reconnect', Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response('reconnect')
         dialog.set_close_response('cancel')
-        dialog.connect('response', self._on_reconnect_response, connection)
+        dialog.connect('response', self._on_reconnect_response, connection, terminal)
         dialog.present(self.window)
 
-    def _on_reconnect_response(self, dialog, response, connection):
+    def _on_reconnect_response(self, dialog, response, connection, terminal=None):
         """Handle response from the reconnect prompt."""
         window = self.window
         # Only proceed if the user confirmed and the connection is still active
         if response != 'reconnect' or connection not in window.active_terminals:
-            # Clean up the stored terminal instance if it exists
-            if hasattr(connection, '_terminal_instance'):
-                delattr(connection, '_terminal_instance')
             return
 
-        # Get the terminal instance either from active_terminals or the stored instance
-        terminal = window.active_terminals.get(connection) or getattr(connection, '_terminal_instance', None)
+        # Prefer the active mapping, with the explicitly supplied terminal as
+        # a fallback. Connection presentation DTOs must remain immutable.
+        terminal = window.active_terminals.get(connection) or terminal
         if not terminal:
             logger.warning("No terminal instance found for reconnection")
             return
@@ -1408,10 +1406,6 @@ class TerminalManager:
             )
 
         finally:
-            # Clean up the stored terminal instance
-            if hasattr(connection, '_terminal_instance'):
-                delattr(connection, '_terminal_instance')
-
             # Reset the flag after a delay to ensure it's not set during normal operations
             GLib.timeout_add(1000, self._reset_controlled_reconnect)
 

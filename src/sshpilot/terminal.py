@@ -179,6 +179,7 @@ class TerminalWidget(Gtk.Box):
         self.last_error_message = None  # Store last SSH error for reporting
         self._last_error_detail = None  # Structured context for the Details dialog
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
+        self._connection_updated_handler = None
 
         # Job detection state
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
@@ -210,9 +211,14 @@ class TerminalWidget(Gtk.Box):
         # Connect to signals
         self.connect('destroy', self._on_destroy)
 
-        # Connect to connection manager signals using GObject.GObject.connect directly
-        self._connection_updated_handler = GObject.GObject.connect(connection_manager, 'connection-updated', self._on_connection_updated_signal)
-        logger.debug("Connected to connection-updated signal")
+        # Depend on the manager's presentation subscription interface rather
+        # than requiring it to be a GObject.
+        connect_after = getattr(connection_manager, 'connect_after', None)
+        if callable(connect_after):
+            self._connection_updated_handler = connect_after(
+                'connection-updated', self._on_connection_updated_signal
+            )
+            logger.debug("Connected to connection-updated signal")
 
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
@@ -3890,15 +3896,25 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"Error disconnecting backend signals: {e}")
 
         # Disconnect from connection manager signals
-        if hasattr(self, '_connection_updated_handler') and hasattr(self.connection_manager, 'disconnect'):
+        if self._connection_updated_handler is not None:
+            disconnect = getattr(self.connection_manager, 'disconnect', None)
             try:
-                self.connection_manager.disconnect(self._connection_updated_handler)
-                logger.debug("Disconnected from connection manager signals")
+                if callable(disconnect):
+                    disconnect(self._connection_updated_handler)
+                    logger.debug("Disconnected from connection manager signals")
             except Exception as e:
                 logger.error(f"Error disconnecting from connection manager: {e}")
+            finally:
+                self._connection_updated_handler = None
 
         # Disconnect the terminal
-        self.disconnect()
+        try:
+            self.disconnect()
+        except RuntimeError:
+            logger.debug(
+                "Ignoring cleanup of partially initialized terminal",
+                exc_info=True,
+            )
 
         # Remove custom controllers and disconnect config listeners
         try:

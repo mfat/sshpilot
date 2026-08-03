@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable, Optional
 
 
-def connection_matches(connection: Any, query: str) -> bool:
+def connection_matches(
+    connection: Any,
+    query: str,
+    *,
+    tags: Optional[Iterable[str]] = None,
+) -> bool:
     """Return True if connection matches the search query.
 
     The search checks the connection's nickname, SSH Host alias, HostName/IP
@@ -24,7 +29,7 @@ def connection_matches(connection: Any, query: str) -> bool:
         getattr(connection, "nickname", ""),
         getattr(connection, "host", ""),
         getattr(connection, "hostname", ""),
-        " ".join(getattr(connection, "tags", None) or []),
+        " ".join(tags if tags is not None else (getattr(connection, "tags", None) or [])),
     ]
     fields = [(field or "").lower() for field in fields]
     return all(

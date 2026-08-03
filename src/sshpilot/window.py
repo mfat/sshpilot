@@ -3116,12 +3116,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Get all connections
         connections = self.connection_manager.get_connections()
-        # Attach tags so the search filter and freshly built rows see them.
+        # Daemon DTOs are immutable. Tags remain GTK-owned metadata until they
+        # become part of the daemon presentation model, so keep them sidecar.
+        tags_by_id = {}
         for conn in connections:
             try:
-                conn.tags = self.config.get_connection_tags(conn.nickname)
+                tags_by_id[conn.id] = tuple(
+                    self.config.get_connection_tags(conn.nickname) or ()
+                )
             except Exception:
-                conn.tags = []
+                tags_by_id[conn.id] = ()
+        self._connection_tags_by_id = tags_by_id
         connections_dict = {conn.nickname: conn for conn in connections}
         connections_dict.update(
             {
@@ -3143,8 +3148,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             matches = [
                 c for c in connections
                 if (not tag_filter or tag_filter in {str(t).casefold()
-                    for t in (getattr(c, 'tags', None) or [])})
-                and (not search_text or connection_matches(c, search_text))
+                    for t in tags_by_id.get(c.id, ())})
+                and (not search_text or connection_matches(
+                    c, search_text, tags=tags_by_id.get(c.id, ())))
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
@@ -3154,8 +3160,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if tag_filter:
             matches = [
                 c for c in connections
-                if tag_filter in {str(t).casefold() for t in (getattr(c, 'tags', None) or [])}
-                and (not search_text or connection_matches(c, search_text))
+                if tag_filter in {str(t).casefold() for t in tags_by_id.get(c.id, ())}
+                and (not search_text or connection_matches(
+                    c, search_text, tags=tags_by_id.get(c.id, ())))
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
@@ -3196,7 +3203,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             matches = [
                 c for c in connections
-                if connection_matches(c, search_text)
+                if connection_matches(c, search_text, tags=tags_by_id.get(c.id, ()))
                 and c.id not in displayed_connections
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
@@ -6192,10 +6199,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         self.config.set_connection_meta(new_nickname, merged)
                 except Exception:
                     logger.debug("Failed to migrate connection meta on rename", exc_info=True)
-            try:
-                old_connection.tags = self.config.get_connection_tags(old_connection.nickname)
-            except Exception:
-                pass
             rows = self._rows_for_connection(old_connection)
             if rows:
                 for row in rows:
@@ -6663,9 +6666,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 tags_changed = False
                 try:
                     fresh_tags = self.config.get_connection_tags(old_connection.nickname)
-                    if list(getattr(old_connection, 'tags', None) or []) != fresh_tags:
+                    previous_tags = getattr(self, '_connection_tags_by_id', {}).get(
+                        old_connection.id, ()
+                    )
+                    if list(previous_tags) != fresh_tags:
                         tags_changed = True
-                    old_connection.tags = fresh_tags
+                    self._connection_tags_by_id = {
+                        **getattr(self, '_connection_tags_by_id', {}),
+                        old_connection.id: tuple(fresh_tags),
+                    }
                 except Exception:
                     pass
                 rows = self._rows_for_connection(old_connection)
@@ -6683,9 +6692,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 # If the connection is active, ask if user wants to reconnect
                 if is_connected and terminal is not None:
-                    # Store the terminal in the connection for later use
-                    old_connection._terminal_instance = terminal
-                    self.terminal_manager.prompt_reconnect(old_connection)
+                    self.terminal_manager.prompt_reconnect(old_connection, terminal)
                 _complete_save(True)
                 # Its own block changed: drop the stale result and recompute.
                 self._invalidate_effective_check(original_nickname)

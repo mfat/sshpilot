@@ -2,7 +2,7 @@ import importlib
 import sys
 import types
 
-from sshpilot.connection_manager import Connection
+from sshpilot.api.models.connections import ConnectionSummary
 
 
 class DummyRowBase:
@@ -66,6 +66,9 @@ class DummyConnectionManager:
 class DummyConfig:
     def get_setting(self, key, default=None):
         return default
+
+    def get_connection_tags(self, nickname):
+        return ["prod"] if nickname == "bastion" else []
 
 
 class DummyGroupManager:
@@ -133,12 +136,12 @@ def test_search_results_include_matching_groups(monkeypatch):
     original_matcher = window_module.connection_matches
     match_calls = []
 
-    def recording_match(connection, query):
+    def recording_match(connection, query, *, tags=None):
         fields = [
             getattr(connection, "nickname", ""),
             getattr(connection, "host", ""),
         ]
-        result = original_matcher(connection, query)
+        result = original_matcher(connection, query, tags=tags)
         match_calls.append((connection.nickname, query, fields, result))
         return result
 
@@ -156,8 +159,14 @@ def test_search_results_include_matching_groups(monkeypatch):
         }
     }
 
-    grouped_connection = Connection({"nickname": "prod-server", "host": "prod-01"})
-    direct_connection = Connection({"nickname": "prod-bastion", "host": "bastion"})
+    grouped_connection = ConnectionSummary(
+        id="prod-server", nickname="prod-server", host="prod-01",
+        hostname="prod-01", username="user", port=22,
+    )
+    direct_connection = ConnectionSummary(
+        id="bastion", nickname="bastion", host="bastion",
+        hostname="bastion", username="user", port=22,
+    )
 
     test_window = window_module.MainWindow.__new__(window_module.MainWindow)
     test_window.connection_list = DummyListBox()
@@ -170,7 +179,7 @@ def test_search_results_include_matching_groups(monkeypatch):
     test_window._hide_hosts = False
 
     assert original_matcher(grouped_connection, "prod")
-    assert original_matcher(direct_connection, "prod")
+    assert original_matcher(direct_connection, "prod", tags=("prod",))
 
     test_window.rebuild_connection_list()
 
@@ -182,18 +191,17 @@ def test_search_results_include_matching_groups(monkeypatch):
     assert group_rows[0].group_info["name"] == "Production"
     assert match_calls == [
         ("prod-server", "prod", ["prod-server", "prod-01"], True),
-        ("prod-bastion", "prod", ["prod-bastion", "bastion"], True),
+        ("bastion", "prod", ["bastion", "bastion"], True),
     ]
     assert added_connections == [
         ("prod-server", 1, "group-1"),
-        ("prod-bastion", 0, None),
+        ("bastion", 0, None),
     ]
 
     grouped_rows = [row for row in connection_rows if row.connection.nickname == "prod-server"]
     assert len(grouped_rows) == 1
     assert grouped_rows[0].indentation == 1
 
-    direct_rows = [row for row in connection_rows if row.connection.nickname == "prod-bastion"]
+    direct_rows = [row for row in connection_rows if row.connection.nickname == "bastion"]
     assert len(direct_rows) == 1
     assert direct_rows[0].indentation == 0
-
