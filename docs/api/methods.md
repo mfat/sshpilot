@@ -12,11 +12,13 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `list_connections` | Implemented | `connections.read` |
 | `get_connection` | Implemented | `connections.read` |
 | `create_connection` | Implemented | `connections.write` |
+| `duplicate_connection` | Implemented | `connections.write` |
 | `update_connection` | Implemented | `connections.write` |
 | `delete_connection` | Implemented | `connections.write` |
 | `get_connection_editor` | Implemented | `connections.config.read` |
 | `store_connection_password` | Implemented | `connections.secrets.write` |
 | `delete_connection_password` | Implemented | `connections.secrets.write` |
+| `lookup_connection_password` | Implemented | `connections.secrets.write` |
 | `store_key_passphrase` | Implemented | `connections.secrets.write` |
 | `delete_key_passphrase` | Implemented | `connections.secrets.write` |
 | `lookup_key_passphrase` | Implemented | `connections.secrets.write` |
@@ -87,6 +89,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: close_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: close_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
+<!-- api-method-contract: duplicate_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
@@ -106,6 +109,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: list_sftp_services status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: list_transfers status=daemon-only capability=transfers.read -->
 <!-- api-method-contract: lookup_key_passphrase status=implemented capability=connections.secrets.write -->
+<!-- api-method-contract: lookup_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: open_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_sftp status=daemon-only capability=sftp.write -->
@@ -153,6 +157,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.list` | `connections.read` | Implemented |
 | `connections.get` | `connections.read` | Implemented |
 | `connections.create` | `connections.write` | Implemented |
+| `connections.duplicate` | `connections.write` | Implemented |
 | `connections.update` | `connections.write` | Implemented |
 | `connections.delete` | `connections.write` | Implemented |
 | `connections.get_editor` | `connections.config.read` | Implemented |
@@ -160,6 +165,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.delete_password` | `connections.secrets.write` | Implemented |
 | `connections.store_passphrase` | `connections.secrets.write` | Implemented |
 | `connections.lookup_passphrase` | `connections.secrets.write` | Implemented |
+| `connections.lookup_password` | `connections.secrets.write` | Implemented |
 | `connections.store_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.get_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.delete_plugin_secret` | `connections.secrets.write` | Implemented |
@@ -216,6 +222,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `daemon.restart` | `daemon.control` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
+<!-- api-daemon-method: connections.duplicate capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.delete_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.delete_plugin_secret capability=connections.secrets.write -->
@@ -224,6 +231,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.get_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.lookup_passphrase capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.lookup_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_plugin_secret capability=connections.secrets.write -->
@@ -406,6 +414,20 @@ created = client.create_connection(
 )
 ```
 
+<!-- api-method: duplicate_connection -->
+## `duplicate_connection`
+
+- **Status / introduced:** Implemented / Protocol v1 additive extension
+- **Capability / purpose:** `connections.write`; duplicate a saved connection
+  through the core persistence owner.
+- **Parameters / return:** `connection_id`; returns `ConnectionMutationResult`
+  for the new connection.
+- **Errors:** `connection_not_found`, `persistence_failed`, and daemon
+  transport/protocol errors.
+- **Events:** Exactly one `connection.created` on success.
+- **Side effects / security:** Copies connection configuration but not runtime
+  session ownership; the core assigns a unique nickname and stable ID.
+
 <!-- api-method: update_connection -->
 ## `update_connection`
 
@@ -566,6 +588,17 @@ client.store_connection_password(
     StoreConnectionPasswordRequest(connection_id, password)
 )
 ```
+
+<!-- api-method: lookup_connection_password -->
+## `lookup_connection_password`
+
+- **Status / introduced:** Implemented / Protocol v1 additive extension
+- **Capability / purpose:** `connections.secrets.write`; retrieve the selected
+  secret backend's saved login password for an authorized connection workflow.
+- **Parameters / return:** `connection_id`; returns the password or `None`.
+- **Errors:** `connection_not_found` and daemon transport/protocol errors.
+- **Side effects / security:** Used by authentication preparation such as
+  ssh-copy-id. Implementations must not log the returned value.
 
 <!-- api-method: delete_connection_password -->
 ## `delete_connection_password`

@@ -1294,6 +1294,8 @@ def create_connection_request_to_wire(
     }
     if request.config_patch:
         result["config_patch"] = dict(request.config_patch)
+    if request.plugin_data:
+        result["plugin_data"] = dict(request.plugin_data)
     return result
 
 
@@ -1301,7 +1303,7 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
     data = _strict_fields(
         value,
         required={"nickname", "hostname", "username", "port", "protocol"},
-        optional={"config_patch"},
+        optional={"config_patch", "plugin_data"},
         context="create connection request",
     )
     raw_patch = data.get("config_patch")
@@ -1312,6 +1314,9 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
         config_patch = {
             k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS
         }
+    raw_plugin_data = data.get("plugin_data", {})
+    if type(raw_plugin_data) is not dict:
+        raise ValueError("plugin_data must be an object")
     return CreateConnectionRequest(
         nickname=_identifier(data["nickname"], "connection nickname"),
         hostname=_text(
@@ -1327,6 +1332,7 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
         port=_integer(data["port"], "connection port"),
         protocol=_identifier(data["protocol"], "connection protocol"),
         config_patch=config_patch,
+        plugin_data=dict(raw_plugin_data),
     )
 
 
@@ -1346,6 +1352,8 @@ def update_connection_request_to_wire(
         result["port"] = request.port
     if request.config_patch:
         result["config_patch"] = dict(request.config_patch)
+    if request.plugin_data:
+        result["plugin_data"] = dict(request.plugin_data)
     if request.expected_generation is not None:
         result["expected_generation"] = request.expected_generation
     return result
@@ -1361,6 +1369,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
             "username",
             "port",
             "config_patch",
+            "plugin_data",
             "expected_generation",
         },
         context="update connection request",
@@ -1395,12 +1404,16 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if expected_generation is not None:
         expected_generation = _integer(expected_generation, "expected generation")
 
+    raw_plugin_data = data.get("plugin_data", {})
+    if type(raw_plugin_data) is not dict:
+        raise ValueError("plugin_data must be an object")
     return UpdateConnectionRequest(
         nickname=nickname,
         hostname=hostname,
         username=username,
         port=port,
         config_patch=config_patch,
+        plugin_data=dict(raw_plugin_data),
         expected_generation=expected_generation,
     )
 

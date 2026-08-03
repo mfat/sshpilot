@@ -2,6 +2,7 @@
 
 from .interaction import GtkInteractionProvider, get_default_provider, set_default_provider
 from .connection_store import ConnectionPresentationStore
+from .daemon_connection_services import DaemonConnectionServices
 from .connection_runtime_status import (
     ConnectionRuntimeStatus,
     ConnectionRuntimeStatusStore,
@@ -9,6 +10,7 @@ from .connection_runtime_status import (
 
 __all__ = [
     "ConnectionPresentationStore",
+    "DaemonConnectionServices",
     "ConnectionRuntimeStatus",
     "ConnectionRuntimeStatusStore",
     "GtkInteractionProvider",

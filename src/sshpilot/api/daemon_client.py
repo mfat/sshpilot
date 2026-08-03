@@ -36,6 +36,7 @@ from .models.common import (
 from .models.connections import (
     ConnectionDetails,
     ConnectionEditorDetails,
+    ConnectionMutationResult,
     ConnectionSummary,
     CreateConnectionRequest,
     DeleteConnectionPasswordRequest,
@@ -511,7 +512,7 @@ class DaemonClient:
                 "The daemon returned invalid connection editor details"
             )
 
-    def create_connection(self, request: CreateConnectionRequest) -> 'ConnectionMutationResult':
+    def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:
         self._require_write_compatibility("create connection")
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
@@ -531,7 +532,7 @@ class DaemonClient:
         self,
         connection_id: ConnectionId,
         request: UpdateConnectionRequest,
-    ) -> 'ConnectionMutationResult':
+    ) -> ConnectionMutationResult:
         self._require_write_compatibility("update connection")
         self._require_capability(Capability.CONNECTIONS_WRITE)
         if request.config_patch:
@@ -543,6 +544,22 @@ class DaemonClient:
                 "update": update_connection_request_to_wire(request),
             },
             mutation_connection_id=connection_id,
+        )
+        try:
+            from .transport.codec import connection_mutation_result_from_wire
+            return connection_mutation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid connection details")
+
+    def duplicate_connection(
+        self, connection_id: ConnectionId
+    ) -> ConnectionMutationResult:
+        self._require_write_compatibility("duplicate connection")
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        result = self._request(
+            "connections.duplicate",
+            {"connection_id": connection_id},
+            mutation_connection_id=None,
         )
         try:
             from .transport.codec import connection_mutation_result_from_wire
@@ -573,6 +590,18 @@ class DaemonClient:
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid password store result")
+        return result
+
+    def lookup_connection_password(
+        self, connection_id: ConnectionId
+    ) -> Optional[str]:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        result = self._request(
+            "connections.lookup_password",
+            {"connection_id": connection_id},
+        )
+        if result is not None and type(result) is not str:
+            self._fail_protocol("The daemon returned an invalid password lookup result")
         return result
 
     def delete_connection_password(self, request: DeleteConnectionPasswordRequest) -> bool:
@@ -696,7 +725,7 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid group rename result")
         return result
 
-    def split_connection(self, request) -> 'ConnectionMutationResult':
+    def split_connection(self, request) -> ConnectionMutationResult:
         self._require_write_compatibility("split connection")
         self._require_capability(Capability.CONNECTIONS_SPLIT)
         result = self._request(

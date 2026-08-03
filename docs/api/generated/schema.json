@@ -81,6 +81,10 @@
       "capability": "sftp.write",
       "status": "daemon-only"
     },
+    "duplicate_connection": {
+      "capability": "connections.write",
+      "status": "implemented"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -144,6 +148,10 @@
     "list_transfers": {
       "capability": "transfers.read",
       "status": "daemon-only"
+    },
+    "lookup_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
     },
     "lookup_key_passphrase": {
       "capability": "connections.secrets.write",
@@ -300,6 +308,9 @@
     "connections.delete_plugin_secret": {
       "capability": "connections.secrets.write"
     },
+    "connections.duplicate": {
+      "capability": "connections.write"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -313,6 +324,9 @@
       "capability": "connections.read"
     },
     "connections.lookup_passphrase": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.lookup_password": {
       "capability": "connections.secrets.write"
     },
     "connections.rename_group": {
@@ -1866,6 +1880,13 @@
         {
           "default": {},
           "name": "config_patch",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": {},
+          "name": "plugin_data",
           "required": false,
           "sensitive": false,
           "type": "Mapping[str, Any]"
@@ -4757,6 +4778,13 @@
         {
           "default": {},
           "name": "config_patch",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": {},
+          "name": "plugin_data",
           "required": false,
           "sensitive": false,
           "type": "Mapping[str, Any]"

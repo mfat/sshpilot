@@ -197,7 +197,7 @@ exec /usr/sbin/sshd -D -e
                     f"    User {username}",
                     "    PreferredAuthentications password",
                     "    PubkeyAuthentication no",
-                    "    NumberOfPasswordPrompts 1",
+                    "    NumberOfPasswordPrompts 3",
                     f"    UserKnownHostsFile {known_hosts}",
                     "    GlobalKnownHostsFile /dev/null",
                     "    StrictHostKeyChecking yes",

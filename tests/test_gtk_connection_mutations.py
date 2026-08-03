@@ -56,7 +56,7 @@ class _Manager:
     def __init__(self):
         self.reloads = 0
 
-    def load_ssh_config(self):
+    def refresh(self):
         self.reloads += 1
 
 

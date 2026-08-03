@@ -1526,6 +1526,7 @@ def get_ssh_env_with_askpass(
     password_user: "str | None" = None,
     password_hosts: "List[str] | None" = None,
     session_password: "str | None" = None,
+    session_passphrase: "str | None" = None,
 ) -> dict:
     """Get SSH environment with askpass for passphrase and/or password handling.
 
@@ -1573,6 +1574,11 @@ def get_ssh_env_with_askpass(
     env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
     if session_password:
         env.update(stage_session_password(session_password))
+    env.pop("SSHPILOT_SESSION_PASSPHRASE_FILE", None)
+    if session_passphrase:
+        path = _stage_session_password_file(session_passphrase)
+        if path:
+            env["SSHPILOT_SESSION_PASSPHRASE_FILE"] = path
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
@@ -1679,4 +1685,3 @@ def get_scp_ssh_options() -> list:
         "-o", "KbdInteractiveAuthentication=no",
         "-o", "IdentitiesOnly=yes",
     ]
-

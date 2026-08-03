@@ -743,6 +743,24 @@ class SshCopyIdRunner:
     def __init__(self, window):
         self.window = window
 
+    class _DaemonCredentials:
+        """Credential lookups used by the shared auth resolver."""
+
+        secret_lookup_authoritative = True
+
+        def __init__(self, client):
+            self._client = client
+
+        def get_connection_password(self, connection):
+            from .api.connection_identity import connection_id_for
+
+            return self._client.lookup_connection_password(
+                connection_id_for(connection)
+            )
+
+        def lookup_key_passphrase(self, key_path):
+            return self._client.lookup_key_passphrase(key_path)
+
     @staticmethod
     def _find_ssh_copy_id_helper(binary_name: str) -> Optional[str]:
         """Return the preferred path for a helper used by ssh-copy-id."""
@@ -825,6 +843,28 @@ class SshCopyIdRunner:
 
     def run(self, connection, ssh_key, force=False):
         """Show an Adw window with embedded terminal running ssh-copy-id."""
+        credential_source = getattr(self.window, 'connection_manager', None)
+        client = getattr(self.window, 'client', None)
+        if client is not None:
+            try:
+                from .api.connection_identity import connection_id_for
+
+                connection = client.get_connection_editor(
+                    connection_id_for(connection)
+                )
+                credential_source = self._DaemonCredentials(client)
+            except Exception as error:
+                logger.error(
+                    "Could not load daemon ssh-copy-id connection details "
+                    "type=%s",
+                    type(error).__name__,
+                )
+                self.window._error_dialog(
+                    _("SSH Key Copy Error"),
+                    _("Could not load the connection configuration."),
+                    _("Reconnect to the sshPilot daemon and try again."),
+                )
+                return
         logger.info("Main window: Starting ssh-copy-id terminal window creation")
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)
         logger.debug(
@@ -979,14 +1019,21 @@ class SshCopyIdRunner:
 
             auth = resolve_native_auth(
                 connection,
-                getattr(self.window, 'connection_manager', None),
+                credential_source,
                 getattr(self.window, 'config', None),
             )
 
-            known_hosts_path = None
+            from .ssh_connection_builder import frontend_ssh_config_override
+
+            config_file = frontend_ssh_config_override(
+                getattr(self.window, 'config', None)
+            )
             manager = getattr(self.window, 'connection_manager', None)
-            if manager is not None:
-                known_hosts_path = getattr(manager, 'known_hosts_path', None)
+            known_hosts_path = getattr(manager, 'known_hosts_path', None)
+            if config_file:
+                known_hosts_path = os.path.join(
+                    os.path.dirname(config_file), 'known_hosts'
+                )
 
             argv = self._build_argv(
                 connection,
@@ -994,6 +1041,7 @@ class SshCopyIdRunner:
                 force,
                 known_hosts_path=known_hosts_path,
                 auth=auth,
+                config_file=config_file,
             )
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
@@ -1230,6 +1278,7 @@ class SshCopyIdRunner:
         force: bool = False,
         known_hosts_path: Optional[str] = None,
         auth=None,
+        config_file: Optional[str] = None,
     ):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences.
 
@@ -1263,13 +1312,22 @@ class SshCopyIdRunner:
         from .ssh_config_utils import get_effective_ssh_config
 
         try:
-            effective_config = get_effective_ssh_config(host_value) if host_value else {}
+            effective_config = (
+                get_effective_ssh_config(host_value, config_file=config_file)
+                if host_value else {}
+            )
         except Exception:
             effective_config = {}
         app_cfg = getattr(self.window, 'config', None)
         if app_cfg is None:
             app_cfg = Config()
-        argv = _build_base_ssh_command(connection, effective_config, app_cfg, 'ssh-copy-id')
+        argv = _build_base_ssh_command(
+            connection,
+            effective_config,
+            app_cfg,
+            'ssh-copy-id',
+            config_file=config_file,
+        )
 
         # Add force option if enabled
         if force:
@@ -1362,4 +1420,3 @@ class SshCopyIdRunner:
         logger.debug(f"Main window: Added target: {target}")
         logger.debug(f"Main window: Final argv: {argv}")
         return argv
-

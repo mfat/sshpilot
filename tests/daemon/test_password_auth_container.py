@@ -9,6 +9,8 @@ import time
 
 import pytest
 
+from sshpilot.core.connection_evidence import classify_connection_evidence
+
 from sshpilot.api.events import EventType
 from sshpilot.api.models import (
     ClientId,
@@ -113,6 +115,13 @@ def test_password_auth_wrong_then_correct_with_isolated_sshd(
     broker.subscribe_events(answer)
     try:
         with caplog.at_level(logging.DEBUG):
+            def collect_output(data):
+                output.extend(data)
+                if classify_connection_evidence(
+                    bytes(output).decode("utf-8", errors="replace")
+                ).verdict == "connected":
+                    broker.mark_authenticated(session_id)
+
             runner = PtySessionProcessRunner(
                 lambda spec: broker.prepare_launch(
                     spec,
@@ -144,7 +153,7 @@ def test_password_auth_wrong_then_correct_with_isolated_sshd(
                     port=env.port,
                 ),
                 lambda _info: exited.set(),
-                output.extend,
+                collect_output,
                 lambda: None,
             )
 
@@ -261,6 +270,13 @@ def test_password_auth_reconnect_uses_stored_secret_only_after_success(
                     ),
                 )
             )
+            def collect_output(data):
+                output.extend(data)
+                if classify_connection_evidence(
+                    bytes(output).decode("utf-8", errors="replace")
+                ).verdict == "connected":
+                    broker.mark_authenticated(session_id)
+
             handle = runner.start(
                 SessionLaunchSpec(
                     session_id=session_id,
@@ -271,7 +287,7 @@ def test_password_auth_reconnect_uses_stored_secret_only_after_success(
                     port=env.port,
                 ),
                 lambda _info: exited.set(),
-                output.extend,
+                collect_output,
                 lambda: None,
             )
             if expect_prompt:

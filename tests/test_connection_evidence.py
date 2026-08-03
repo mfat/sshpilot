@@ -20,3 +20,14 @@ def test_classify_connection_evidence_for_raw_daemon_output(text, expected):
     result = classify_connection_evidence(text)
     assert result.verdict == expected
     assert bool(result.failure_reason) is (expected == "failed")
+
+
+def test_later_remote_output_supersedes_failed_authentication_attempt():
+    result = classify_connection_evidence(
+        "Permission denied, please try again.\n"
+        "alice@example.test's password: \n"
+        "alice@host:~$ "
+    )
+
+    assert result.verdict == "connected"
+    assert result.failure_reason == ""

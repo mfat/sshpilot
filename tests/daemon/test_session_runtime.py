@@ -353,6 +353,9 @@ def test_attachment_membership_always_creates_new_attachments_phase9(runtime_par
 
     assert first.attachment.input_owner is False
     assert other.attachment.input_owner is False
+    assert runtime.client_can_interact(session.id, ClientId("client:a")) is True
+    assert runtime.client_can_interact(session.id, ClientId("client:b")) is True
+    assert runtime.client_can_interact(session.id, ClientId("client:c")) is False
 
     # Test that attachments belong to the right clients
     with pytest.raises(SshPilotError) as caught:
@@ -367,6 +370,7 @@ def test_attachment_membership_always_creates_new_attachments_phase9(runtime_par
 
     # Clean up - detach client removes all attachments for that client
     runtime.detach_client(ClientId("client:b"))
+    assert runtime.client_can_interact(session.id, ClientId("client:b")) is False
 
     # Detach specific attachments for client:a
     runtime.detach_session(

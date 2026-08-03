@@ -8,13 +8,22 @@ notes remain separate.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.13` for the expanded interaction
   API, including typed generic confirmations.
 
+### GTK daemon migration parity (Added)
+
+- Added daemon-owned connection duplication and saved login-password lookup
+  (`connections.duplicate`, `connections.lookup_password`) so GTK callers do
+  not bypass the daemon's connection and secret ownership boundaries.
+- Added optional `plugin_data` to connection create/update requests, allowing
+  plugin connection types to preserve their frontend-neutral custom fields.
+
 ### Daemon askpass parity (Added)
 
 - Added typed keyboard-interactive and security-key-presence prompts so daemon
   sessions can route OTP, PIN, PAM, and hardware-presence interactions through
   the same frontend-neutral interaction protocol as passwords and passphrases.
-- Daemon askpass is now activated only when the normal native authentication
-  resolver finds a saved password or key passphrase.
+- Daemon-owned SSH children always install the interaction broker so unknown
+  host decisions, unstored credentials, MFA/PIN, and hardware presence remain
+  reachable; the normal auth resolver still decides stored-secret autofill.
 
 ### Phase 11: Daemon lifecycle and management (Added)
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.connections import ConnectionSummary
@@ -15,12 +15,20 @@ from sshpilot.gtk.connection_runtime_status import (
 )
 
 
-def session(session_id, connection_id, state, *, failure=None, exit_info=None):
+def session(
+    session_id,
+    connection_id,
+    state,
+    *,
+    failure=None,
+    exit_info=None,
+    created_at=None,
+):
     return SessionSummary(
         id=session_id,
         connection_id=connection_id,
         state=state,
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at or datetime.now(timezone.utc),
         failure=failure,
         exit_info=exit_info,
     )
@@ -172,6 +180,41 @@ def test_closed_failed_session_retains_its_authoritative_failure():
     assert store.status_for("connection-1") == ConnectionRuntimeStatus(
         ConnectionState.FAILED,
         "permission denied (publickey,password).",
+    )
+
+
+def test_newer_clean_close_supersedes_retained_failure():
+    now = datetime.now(timezone.utc)
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [
+                session(
+                    "failed",
+                    "connection-1",
+                    SessionState.CLOSED,
+                    failure=SessionFailure(
+                        "session_startup_failed",
+                        "permission denied",
+                    ),
+                    exit_info=SessionExitInfo(exit_code=255, reason="process_exit"),
+                    created_at=now,
+                ),
+                session(
+                    "clean",
+                    "connection-1",
+                    SessionState.CLOSED,
+                    exit_info=SessionExitInfo(exit_code=0, reason="clean close"),
+                    created_at=now + timedelta(seconds=1),
+                ),
+            ],
+        )
+    )
+
+    assert store.status_for("connection-1") == ConnectionRuntimeStatus(
+        ConnectionState.DISCONNECTED,
+        "clean close",
     )
 
 

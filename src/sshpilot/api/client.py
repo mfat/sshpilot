@@ -113,10 +113,20 @@ class SshPilotClient(Protocol):
     ) -> ConnectionMutationResult:
         ...
 
+    def duplicate_connection(
+        self, connection_id: ConnectionId
+    ) -> ConnectionMutationResult:
+        ...
+
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
         ...
 
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
+        ...
+
+    def lookup_connection_password(
+        self, connection_id: ConnectionId
+    ) -> Optional[str]:
         ...
 
     def delete_connection_password(self, request: DeleteConnectionPasswordRequest) -> bool:

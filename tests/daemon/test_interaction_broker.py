@@ -239,7 +239,7 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
     assert stderr == b""
 
 
-def test_prepare_launch_leaves_askpass_disabled_without_saved_secret(
+def test_prepare_launch_brokers_interactions_without_saved_secret(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
@@ -258,8 +258,11 @@ def test_prepare_launch_leaves_askpass_disabled_without_saved_secret(
             {"PATH": os.environ.get("PATH", "")},
         ),
     )
-    assert "SSH_ASKPASS" not in environment
-    assert "SSH_ASKPASS_REQUIRE" not in environment
+    assert environment["SSH_ASKPASS"] == str(broker._askpass_helper_path)
+    assert environment["SSH_ASKPASS_REQUIRE"] == "prefer"
+    assert environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] == str(
+        broker._askpass_socket_path
+    )
 
 
 def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
@@ -340,8 +343,10 @@ def test_prepare_launch_does_not_modify_pythonpath(
         assert "PYTHONPATH" not in environment
     else:
         assert environment["PYTHONPATH"] == original
-    assert "SSHPILOT_DAEMON_ASKPASS_SOCKET" not in environment
-    assert "SSHPILOT_DAEMON_ASKPASS_TOKEN" not in environment
+    assert environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] == str(
+        broker._askpass_socket_path
+    )
+    assert environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] != "stale-token"
 
 
 def test_presence_rejects_submit_and_has_dedicated_lifetime() -> None:

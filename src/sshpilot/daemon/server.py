@@ -609,6 +609,7 @@ class DaemonServer:
                 broker = self._interaction_broker
                 runtime._auth_failure_classifier = broker.classify_startup_failure
                 runtime.enable_connection_evidence_gate()
+                runtime.set_authenticated_callback(broker.mark_authenticated)
             self._dispatcher = RequestDispatcher(
                 self._connection_service,
                 self._session_runtime,

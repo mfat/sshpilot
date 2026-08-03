@@ -802,7 +802,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** CreateConnectionRequest(nickname: str, hostname: str, username: str = '', port: int = 22, protocol: str = 'ssh', config_patch: Mapping[str, Any] = <factory>)
+**Purpose:** CreateConnectionRequest(nickname: str, hostname: str, username: str = '', port: int = 22, protocol: str = 'ssh', config_patch: Mapping[str, Any] = <factory>, plugin_data: Mapping[str, Any] = <factory>)
 
 **Related methods:** `create_connection`
 **Related events:** None
@@ -815,6 +815,7 @@ Synthetic representation:
 | `port` | `int` | No | `22` | No |
 | `protocol` | `str` | No | `ssh` | No |
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
+| `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 
 Synthetic representation:
 
@@ -823,6 +824,7 @@ Synthetic representation:
   "config_patch": {},
   "hostname": "example.invalid",
   "nickname": "example",
+  "plugin_data": {},
   "port": 22,
   "protocol": "ssh",
   "username": ""
@@ -3130,6 +3132,7 @@ first-generation value and is enforced like any other.
 | `username` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `port` | `int | None | UNSET` | No | ``UNSET`` | No |
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
+| `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 | `expected_generation` | `int | None` | No | `null` | No |
 
 Synthetic representation:
@@ -3140,6 +3143,7 @@ Synthetic representation:
   "expected_generation": null,
   "hostname": "`UNSET`",
   "nickname": "`UNSET`",
+  "plugin_data": {},
   "port": "`UNSET`",
   "username": "`UNSET`"
 }

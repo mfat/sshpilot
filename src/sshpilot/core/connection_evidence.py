@@ -104,25 +104,22 @@ def classify_connection_evidence(text: str) -> ConnectionEvidence:
     if not normalized:
         return ConnectionEvidence("pending")
 
-    for marker in SSH_FAILURE_MARKERS:
-        if marker not in normalized:
-            continue
-        reason = next(
-            (line.strip() for line in normalized.splitlines() if marker in line),
-            "",
-        )
-        return ConnectionEvidence("failed", reason)
-
-    if any(marker in normalized for marker in SSH_SUCCESS_MARKERS):
-        return ConnectionEvidence("connected")
-
-    # A trailing password/passphrase/MFA/FIDO/host-key prompt is pre-login.
-    if classify_prompt(normalized) is not None:
-        return ConnectionEvidence("pending")
-
+    evidence = ConnectionEvidence("pending")
     for line in normalized.splitlines():
         stripped = line.strip()
         if not stripped:
+            continue
+        if any(marker in stripped for marker in SSH_FAILURE_MARKERS):
+            evidence = ConnectionEvidence("failed", stripped)
+            continue
+        if any(marker in stripped for marker in SSH_SUCCESS_MARKERS):
+            evidence = ConnectionEvidence("connected")
+            continue
+        # Authentication may legitimately retry. A prompt following a failure
+        # means SSH is still trying, while later remote output supersedes both.
+        if classify_prompt(stripped) is not None:
+            if evidence.verdict != "connected":
+                evidence = ConnectionEvidence("pending")
             continue
         if stripped.startswith(SSH_NOISE_PREFIXES):
             continue
@@ -130,8 +127,6 @@ def classify_connection_evidence(text: str) -> ConnectionEvidence:
             continue
         if stripped in {"yes", "no"}:
             continue
-        if classify_prompt(stripped) is not None:
-            continue
-        return ConnectionEvidence("connected")
+        evidence = ConnectionEvidence("connected")
 
-    return ConnectionEvidence("pending")
+    return evidence

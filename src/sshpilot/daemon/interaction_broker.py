@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from time import monotonic, sleep
+from time import monotonic
 from typing import Callable, Deque, Dict, Iterable, List, Optional, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -116,6 +116,17 @@ class _InteractionRecord:
 
 
 @dataclass
+class _PendingRemember:
+    interaction_type: InteractionType
+    key: str
+    secret: bytearray
+
+    def clear(self) -> None:
+        self.secret[:] = b"\0" * len(self.secret)
+        self.secret.clear()
+
+
+@dataclass
 class _AskpassContext:
     token: str
     session_id: SessionId
@@ -128,6 +139,8 @@ class _AskpassContext:
     control_argv: tuple[str, ...]
     attempts: Dict[str, int]
     stored_attempted: set[str]
+    pending_remember: list[_PendingRemember]
+    user_known_hosts_paths: tuple[Path, ...]
     closed: bool = False
 
 
@@ -272,14 +285,14 @@ class InteractionBroker:
             control_argv=(),
             attempts={},
             stored_attempted=set(),
+            pending_remember=[],
+            user_known_hosts_paths=self._known_hosts_paths(effective),
         )
         with self._condition:
             self._require_open_locked()
             self._askpass_contexts[token] = context
             self._condition.notify_all()
-        resolver_askpass_active = (
-            environment.pop("SSHPILOT_DAEMON_ASKPASS_ACTIVE", "") == "1"
-        )
+        environment.pop("SSHPILOT_DAEMON_ASKPASS_ACTIVE", None)
         for name in tuple(environment):
             if (
                 name in {"SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"}
@@ -289,7 +302,11 @@ class InteractionBroker:
 
             ):
                 environment.pop(name, None)
-        askpass_active = headless or resolver_askpass_active
+        # Every daemon-owned SSH child must have a broker. Even when the auth
+        # resolver found no stored secret, OpenSSH can still need an unknown
+        # host decision, an unstored password/passphrase, MFA/PIN, or hardware
+        # presence. The daemon PTY has no frontend able to answer those prompts.
+        askpass_active = True
         if askpass_active:
             environment["SSH_ASKPASS"] = str(self._askpass_helper_path)
             environment["SSH_ASKPASS_REQUIRE"] = "force" if headless else "prefer"
@@ -767,6 +784,38 @@ class InteractionBroker:
                     return ErrorCode.SESSION_STARTUP_FAILED
         return ErrorCode.SESSION_STARTUP_FAILED
 
+    def mark_authenticated(self, session_id: SessionId) -> None:
+        """Commit credentials explicitly marked for storage after login."""
+
+        context = self._context_for_session(session_id)
+        if context is not None:
+            self._store_authenticated_secrets(context.token)
+            self._harden_known_hosts_permissions(context)
+
+    @staticmethod
+    def _known_hosts_paths(effective: dict[str, str]) -> tuple[Path, ...]:
+        raw = effective.get("userknownhostsfile", "~/.ssh/known_hosts")
+        paths = tuple(
+            Path(item).expanduser()
+            for item in raw.split()
+            if item and item.lower() != "none"
+        )
+        return paths or (Path("~/.ssh/known_hosts").expanduser(),)
+
+    @staticmethod
+    def _harden_known_hosts_permissions(context: _AskpassContext) -> None:
+        """Keep OpenSSH-owned known_hosts files private after acceptance."""
+
+        for path in context.user_known_hosts_paths:
+            try:
+                if path.is_file() and not path.is_symlink():
+                    path.chmod(0o600)
+            except OSError:
+                logger.warning(
+                    "Could not harden OpenSSH known_hosts permissions path=%s",
+                    path,
+                )
+
     def _context_for_session(self, session_id: SessionId) -> Optional[_AskpassContext]:
         with self._condition:
             for context in self._askpass_contexts.values():
@@ -903,6 +952,9 @@ class InteractionBroker:
 
     def _clear_context_locked(self, context: _AskpassContext) -> None:
         context.closed = True
+        for pending in context.pending_remember:
+            pending.clear()
+        context.pending_remember.clear()
         for name in (
             context.control_path,
             str(self._private_dir / f"k-{context.session_id[-12:]}"),
@@ -1264,7 +1316,7 @@ class InteractionBroker:
                 hostname=hostname,
                 port=port,
                 attempt=attempt,
-                can_remember=False,
+                can_remember=self._password_store is not None,
                 stored_secret_available=bool(stored),
             )
             append_askpass_log(
@@ -1275,7 +1327,7 @@ class InteractionBroker:
                 key_display_name=Path(key_path).name if key_path else "SSH key",
                 key_fingerprint=None,
                 attempt=attempt,
-                can_remember=False,
+                can_remember=self._passphrase_store is not None and bool(key_path),
                 stored_secret_available=bool(stored),
             )
             append_askpass_log(
@@ -1308,8 +1360,59 @@ class InteractionBroker:
         secret = result.secret
         result.secret = None
         append_askpass_log("ASKPASS: Returning secret from user dialog")
+        if result.remember_policy in {
+            RememberPolicy.STORE_AFTER_SUCCESS,
+            RememberPolicy.REPLACE_STORED_AFTER_SUCCESS,
+        }:
+            with self._condition:
+                current = self._askpass_contexts.get(token)
+                if current is not None and not current.closed:
+                    # A repeated prompt proves the previous password failed.
+                    if interaction_type is InteractionType.PASSWORD:
+                        retained = []
+                        for pending in current.pending_remember:
+                            if pending.interaction_type is InteractionType.PASSWORD:
+                                pending.clear()
+                            else:
+                                retained.append(pending)
+                        current.pending_remember.clear()
+                        current.pending_remember.extend(retained)
+                    current.pending_remember.append(
+                        _PendingRemember(
+                            interaction_type=interaction_type,
+                            key=key_path,
+                            secret=bytearray(secret),
+                        )
+                    )
         result.clear()
         return secret
+
+    def _store_authenticated_secrets(self, token: str) -> None:
+        with self._condition:
+            context = self._askpass_contexts.get(token)
+            if context is None or context.closed:
+                return
+            pending = tuple(context.pending_remember)
+            context.pending_remember.clear()
+            connection_id = context.connection_id
+        for item in pending:
+            try:
+                value = item.secret.decode("utf-8")
+                stored = False
+                if item.interaction_type is InteractionType.PASSWORD:
+                    if self._password_store is not None:
+                        stored = bool(self._password_store(connection_id, value))
+                elif self._passphrase_store is not None and item.key:
+                    stored = bool(self._passphrase_store(item.key, value))
+                if not stored:
+                    raise RuntimeError("credential storage did not commit")
+            except Exception:
+                logger.warning(
+                    "Remembered SSH credential could not be stored type=%s",
+                    item.interaction_type.value,
+                )
+            finally:
+                item.clear()
 
     def _resolve_nonstored_askpass(
         self,

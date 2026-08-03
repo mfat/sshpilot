@@ -45,6 +45,7 @@ from gettext import gettext as _
 
 from .connection_manager import Connection, ConnectionState
 from .gtk.connection_store import ConnectionPresentationStore
+from .gtk.daemon_connection_services import DaemonConnectionServices
 from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
 from .key_manager import KeyManager
@@ -244,6 +245,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 lambda: (callback(), GLib.SOURCE_REMOVE)[1]
             )
         )
+        self.plugin_connection_services = DaemonConnectionServices(
+            self.connection_manager
+        )
         self.connection_runtime_status = ConnectionRuntimeStatusStore(
             dispatch=lambda callback: GLib.idle_add(
                 lambda: (callback(), GLib.SOURCE_REMOVE)[1]
@@ -282,7 +286,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             from .plugins.host import PluginHost
             host = getattr(app, 'plugin_host', None) if app else None
             if host is None:
-                host = PluginHost(connection_manager=self.connection_manager)
+                host = PluginHost(
+                    connection_manager=self.plugin_connection_services
+                )
                 if app is not None:
                     setattr(app, 'plugin_host', host)
             self.plugin_host = host
@@ -292,7 +298,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if loaded_plugins is None:
                 loaded_plugins = load_plugins(
                     app_config=self.config,
-                    connection_manager=self.connection_manager,
+                    connection_manager=self.plugin_connection_services,
                     plugin_host=host,
                 )
                 if app is not None:
@@ -327,6 +333,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if self.client is not None:
             self.connection_manager.attach_client(self.client)
             self.connection_runtime_status.attach_client(self.client)
+            self.plugin_connection_services.attach_client(self.client)
 
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -441,6 +448,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.client = selection.client
         self.connection_manager.attach_client(self.client)
         self.connection_runtime_status.attach_client(self.client)
+        self.plugin_connection_services.attach_client(self.client)
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         app = self.get_application()
@@ -457,6 +465,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         self.client = None
+        self.plugin_connection_services.detach_client()
         self.connection_runtime_status.close()
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
         logger.error(
@@ -2297,30 +2306,55 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
 
-    def duplicate_connection(self, connection: Optional[Connection]) -> Optional[Connection]:
-        """Duplicate an existing connection, persist it, and select the new entry."""
-        if connection is None:
-            return None
-        try:
-            duplicated = self.connection_manager.duplicate_connection(connection, self.group_manager)
-        except Exception as error:
-            self._show_duplicate_connection_error(connection, error)
-            logger.error(f"Failed to duplicate connection: {error}", exc_info=True)
-            return None
+    def duplicate_connection(self, connection: Optional[Connection]) -> None:
+        """Duplicate through the daemon and select its refreshed projection."""
+        if connection is None or self.client_bridge is None or self.client is None:
+            return
 
-        self.rebuild_connection_list()
-        row = self._primary_row_for_connection(duplicated)
-        if row is not None:
+        def _select_duplicate(result):
+            duplicated = self.connection_manager.get_connection_by_id(
+                result.connection_id
+            )
+            self.rebuild_connection_list()
+            row = self._primary_row_for_connection(duplicated)
+            if row is None:
+                return
             self._select_only_row(row)
             try:
                 self.connection_list.scroll_to_row(row)
-            except Exception:
-                pass
-            try:
                 self.connection_list.grab_focus()
             except Exception:
                 pass
-        return duplicated
+
+        def _refresh_after_duplicate(result):
+            try:
+                self.client_bridge.submit(
+                    self.connection_manager.refresh,
+                    on_success=lambda _snapshot: _select_duplicate(result),
+                    on_error=lambda error: self._show_duplicate_connection_error(
+                        connection, error
+                    ),
+                )
+            except RuntimeError as error:
+                self._show_duplicate_connection_error(connection, error)
+
+        def _failed(error):
+            self._show_duplicate_connection_error(connection, error)
+            logger.error(
+                "Failed to duplicate connection type=%s",
+                type(error).__name__,
+            )
+
+        try:
+            self.client_bridge.submit(
+                lambda: self.client.duplicate_connection(
+                    connection_id_for(connection)
+                ),
+                on_success=_refresh_after_duplicate,
+                on_error=_failed,
+            )
+        except RuntimeError as error:
+            _failed(error)
 
     def setup_sidebar(self):
         """Build the sidebar UI (implementation in sidebar.build_sidebar)."""
@@ -3341,13 +3375,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         in_tag_section: bool = False,
     ):
         """Add a connection row to the list with optional indentation"""
+        runtime_status = getattr(self, 'connection_runtime_status', None)
+        status_resolver = (
+            runtime_status.status_for if runtime_status is not None else None
+        )
         row = ConnectionRow(
             connection,
             self.group_manager,
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
             effective_warning_callback=self._request_effective_warning,
-            status_resolver=self.connection_runtime_status.status_for,
+            status_resolver=status_resolver,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
         )
@@ -6211,7 +6249,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if dialog.is_editing and dialog.connection is not None:
             old_connection = dialog.connection
             original_nickname = old_connection.nickname
-            if not self.connection_manager.update_connection(old_connection, connection_data):
+            if not self.plugin_connection_services.update_connection(
+                old_connection, connection_data
+            ):
                 logger.error("Failed to update plugin connection")
                 _done(False)
                 return
@@ -6248,8 +6288,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.info(f"Updated plugin connection: {old_connection.nickname}")
             _done(True)
         else:
-            connection = Connection(connection_data)
-            if self.connection_manager.update_connection(connection, connection_data):
+            if self.plugin_connection_services.add_connection_from_data(
+                connection_data
+            ):
                 self._apply_saved_connection_meta(
                     connection_data.get('nickname'), pending_meta)
                 self.rebuild_connection_list()

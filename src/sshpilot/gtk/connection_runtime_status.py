@@ -190,31 +190,23 @@ class ConnectionRuntimeStatusStore:
         # outcome. Daemon summaries retain failure/exit metadata after cleanup,
         # so keep projecting that final result instead of flashing FAILED and
         # immediately reverting the sidebar to UNKNOWN.
-        failed = [
-            session
-            for session in sessions
-            if session.state is SessionState.FAILED
+        terminal_outcomes = [
+            session for session in sessions
+            if session.state in {
+                SessionState.FAILED,
+                SessionState.CLOSING,
+                SessionState.EXITED,
+            }
             or (
                 session.state is SessionState.CLOSED
-                and session.failure is not None
+                and (session.failure is not None or session.exit_info is not None)
             )
         ]
-        if failed:
-            latest = max(failed, key=lambda session: session.created_at)
-            reason = latest.failure.message if latest.failure is not None else ""
-            return ConnectionRuntimeStatus(ConnectionState.FAILED, reason)
-
-        disconnected = [
-            session
-            for session in sessions
-            if session.state in {SessionState.CLOSING, SessionState.EXITED}
-            or (
-                session.state is SessionState.CLOSED
-                and session.exit_info is not None
-            )
-        ]
-        if disconnected:
-            latest = max(disconnected, key=lambda session: session.created_at)
+        if terminal_outcomes:
+            latest = max(terminal_outcomes, key=lambda session: session.created_at)
+            if latest.state is SessionState.FAILED or latest.failure is not None:
+                reason = latest.failure.message if latest.failure is not None else ""
+                return ConnectionRuntimeStatus(ConnectionState.FAILED, reason)
             reason = latest.exit_info.reason if latest.exit_info is not None else ""
             return ConnectionRuntimeStatus(ConnectionState.DISCONNECTED, reason)
         return UNKNOWN_RUNTIME_STATUS

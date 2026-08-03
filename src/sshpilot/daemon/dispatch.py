@@ -104,10 +104,12 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get": Capability.CONNECTIONS_READ,
     "connections.list": Capability.CONNECTIONS_READ,
     "connections.create": Capability.CONNECTIONS_WRITE,
+    "connections.duplicate": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.lookup_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.store_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.get_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.delete_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -174,6 +176,7 @@ DAEMON_METHOD_CAPABILITIES = {
 DRAIN_REJECTED_METHODS = frozenset(
     {
         "connections.create",
+        "connections.duplicate",
         "connections.update",
         "connections.delete",
         "sessions.open",
@@ -194,10 +197,12 @@ DRAIN_REJECTED_METHODS = frozenset(
 DEFERRED_DAEMON_METHODS = frozenset(
     {
         "connections.create",
+        "connections.duplicate",
         "connections.update",
         "connections.delete",
         "connections.get_editor",
         "connections.store_password",
+        "connections.lookup_password",
         "connections.store_plugin_secret",
         "connections.get_plugin_secret",
         "connections.delete_plugin_secret",
@@ -330,10 +335,12 @@ class RequestDispatcher:
             "connections.list": self._handle_list_connections,
             "connections.get": self._handle_get_connection,
             "connections.create": self._handle_create_connection,
+            "connections.duplicate": self._handle_duplicate_connection,
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
             "connections.get_editor": self._handle_get_connection_editor,
             "connections.store_password": self._handle_store_connection_password,
+            "connections.lookup_password": self._handle_lookup_connection_password,
             "connections.store_plugin_secret": self._handle_store_plugin_secret,
             "connections.get_plugin_secret": self._handle_get_plugin_secret,
             "connections.delete_plugin_secret": self._handle_delete_plugin_secret,
@@ -685,6 +692,25 @@ class RequestDispatcher:
             connection_id=typed_id,
         )
 
+    def _handle_duplicate_connection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"connection_id"}:
+            raise ValueError("connections.duplicate requires connection_id")
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        typed_id = ConnectionId(connection_id)
+        return DeferredResult(
+            operation=lambda: connection_mutation_result_to_wire(
+                self._connections.duplicate_connection(typed_id)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
     def _handle_delete_connection(
         self,
         request: RequestEnvelope,
@@ -741,6 +767,24 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_request.connection_id,
+        )
+
+    def _handle_lookup_connection_password(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"connection_id"}:
+            raise ValueError("connections.lookup_password requires connection_id")
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        typed_id = ConnectionId(connection_id)
+        return DeferredResult(
+            operation=lambda: self._connections.lookup_daemon_password(typed_id),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_id,
         )
 
     def _handle_store_plugin_secret(

@@ -100,6 +100,51 @@ def test_requesting_and_observing_clients_receive_one_created_event(
     observing.close()
 
 
+def test_plugin_connection_payload_round_trips_through_daemon(daemon_factory):
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+
+    created = client.create_connection(
+        CreateConnectionRequest(
+            nickname="serial-demo",
+            hostname="/dev/ttyUSB0",
+            protocol="serial",
+            plugin_data={"baudrate": 115200},
+        )
+    )
+
+    connection = manager.find_connection_by_nickname("serial-demo")
+    assert created.connection_id == "serial-demo"
+    assert connection.protocol == "serial"
+    assert connection.data["baudrate"] == 115200
+    client.close()
+
+
+def test_duplicate_connection_routes_through_daemon_owner(daemon_factory):
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+
+    duplicated = client.duplicate_connection("demo")
+
+    assert duplicated.connection_id != "demo"
+    assert manager.find_connection_by_nickname(duplicated.nickname) is not None
+    client.close()
+
+
+def test_saved_connection_password_lookup_routes_through_daemon_owner(
+    daemon_factory,
+):
+    server, manager = daemon_factory(start=False)
+    manager.get_connection_password = lambda connection: (
+        "stored-password" if connection.nickname == "demo" else None
+    )
+    server.start_in_thread()
+    client = DaemonClient(socket_path=server.socket_path)
+
+    assert client.lookup_connection_password("demo") == "stored-password"
+    client.close()
+
+
 def test_malformed_secret_bearing_mutation_is_rejected_without_logging_payload(
     daemon_factory,
     caplog,
@@ -261,4 +306,3 @@ def test_daemon_update_stale_editor_rejected_when_generation_mismatches(
     assert caught.value.code is ErrorCode.STALE_EDITOR
     assert manager.find_connection_by_nickname("demo").data["remote_command"] == "echo hi"
     client.close()
-

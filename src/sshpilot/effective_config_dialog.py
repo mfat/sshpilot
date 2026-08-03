@@ -106,9 +106,16 @@ def saved_connection_block(connection_manager, connection, *,
     try:
         # Every concrete stanza for the alias (ssh merges repeated Host blocks),
         # not just the first — otherwise later directives read as global additions.
-        from .ssh_config_utils import collect_host_block_lines
-        root_config = getattr(connection, '_resolve_config_override_path', lambda: None)()
-        lines = collect_host_block_lines(nickname, root_config)
+        collector = getattr(connection_manager, 'collect_host_block_lines', None)
+        if callable(collector):
+            lines = collector(nickname)
+        else:
+            from .ssh_config_utils import collect_host_block_lines
+
+            root_config = getattr(
+                connection, '_resolve_config_override_path', lambda: None
+            )()
+            lines = collect_host_block_lines(nickname, root_config)
         if lines:
             return '\n'.join(lines)
     except Exception:
@@ -120,6 +127,9 @@ def saved_connection_block(connection_manager, connection, *,
         if fallback_data is not None
         else connection_config_data(connection)
     )
+    formatter = getattr(connection_manager, 'format_ssh_config_entry', None)
+    if callable(formatter):
+        return formatter(data)
     from .ssh_config_formatter import format_ssh_config_entry
     return format_ssh_config_entry(data)
 

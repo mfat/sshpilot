@@ -187,6 +187,12 @@ def test_encrypted_key_and_unknown_host_use_typed_interactions(tmp_path) -> None
 
         output = bytearray()
         exited = threading.Event()
+
+        def collect_output(data):
+            output.extend(data)
+            if b"PHASE8_TYPED_AUTH_OK" in output:
+                broker.mark_authenticated(session_id)
+
         runner = PtySessionProcessRunner(
             lambda spec: broker.prepare_launch(
                 spec,
@@ -213,7 +219,7 @@ def test_encrypted_key_and_unknown_host_use_typed_interactions(tmp_path) -> None
                 port=port,
             ),
             lambda _info: exited.set(),
-            output.extend,
+            collect_output,
             lambda: None,
         )
         assert exited.wait(8)
@@ -532,6 +538,12 @@ def test_accept_persists_known_hosts_according_to_openssh(tmp_path) -> None:
             pytest.skip("Temporary sshd cannot run in this environment")
         output = bytearray()
         exited = threading.Event()
+
+        def collect_output(data):
+            output.extend(data)
+            if b"PHASE8_STORE_OK" in output:
+                broker.mark_authenticated(session_id)
+
         runner = PtySessionProcessRunner(
             lambda spec: broker.prepare_launch(
                 spec,
@@ -558,7 +570,7 @@ def test_accept_persists_known_hosts_according_to_openssh(tmp_path) -> None:
                 port=port,
             ),
             lambda _info: exited.set(),
-            output.extend,
+            collect_output,
             lambda: None,
         )
         assert exited.wait(8)

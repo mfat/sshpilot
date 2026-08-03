@@ -464,6 +464,7 @@ class CreateConnectionRequest:
     port: int = 22
     protocol: str = "ssh"
     config_patch: Mapping[str, Any] = field(default_factory=dict)
+    plugin_data: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if type(self.nickname) is not str or not self.nickname.strip():
@@ -480,6 +481,8 @@ class CreateConnectionRequest:
             normalized_patch = dict(self.config_patch)
             object.__setattr__(self, "config_patch", normalized_patch)
             validate_config_patch(self.config_patch)
+        if type(self.plugin_data) is not dict:
+            object.__setattr__(self, "plugin_data", dict(self.plugin_data))
 
 
 
@@ -504,6 +507,7 @@ class UpdateConnectionRequest:
     username: Union[str, None, _UNSET_TYPE] = UNSET
     port: Union[int, None, _UNSET_TYPE] = UNSET
     config_patch: Mapping[str, Any] = field(default_factory=dict)
+    plugin_data: Mapping[str, Any] = field(default_factory=dict)
     expected_generation: Optional[int] = None  # stale-editor detection
 
     def __post_init__(self) -> None:
@@ -511,7 +515,7 @@ class UpdateConnectionRequest:
             v is not None and v is not UNSET
             for v in (self.nickname, self.hostname, self.username, self.port)
         )
-        has_patch = bool(self.config_patch)
+        has_patch = bool(self.config_patch) or bool(self.plugin_data)
         if not has_core and not has_patch:
             raise ValueError("connection update must contain at least one field")
         if self.nickname is not None and self.nickname is not UNSET and (
@@ -535,6 +539,8 @@ class UpdateConnectionRequest:
                     normalized_patch[k] = [f.strip() for f in re.split(r'[\r\n,]+', v) if f.strip()]
             object.__setattr__(self, "config_patch", normalized_patch)
             validate_config_patch(self.config_patch)
+        if type(self.plugin_data) is not dict:
+            object.__setattr__(self, "plugin_data", dict(self.plugin_data))
 
 
 

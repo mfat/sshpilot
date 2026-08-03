@@ -25,8 +25,11 @@ def test_mutation_codec_round_trips_all_public_models():
         hostname="demo.example",
         username="alice",
         port=2202,
+        plugin_data={"baudrate": 115200},
     )
-    update = UpdateConnectionRequest(username="", port=22)
+    update = UpdateConnectionRequest(
+        username="", port=22, plugin_data={"baudrate": 9600}
+    )
     delete = DeleteConnectionRequest(
         connection_id=ConnectionId("demo")
     )

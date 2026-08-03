@@ -20,6 +20,20 @@ from .askpass_utils import (
     lookup_passphrase,
 )
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
+from .platform_utils import get_config_dir
+
+
+def frontend_ssh_config_override(app_config: Optional[any]) -> Optional[str]:
+    """Return the isolated root config for DTO-based frontend command paths."""
+
+    try:
+        if app_config is not None and app_config.get_setting(
+            "ssh.use_isolated_config", False
+        ):
+            return os.path.join(get_config_dir(), "ssh_config")
+    except Exception:
+        pass
+    return None
 
 
 def _askpass_env_for_connection(
@@ -27,6 +41,7 @@ def _askpass_env_for_connection(
     *,
     require: str = "prefer",
     session_password: Optional[str] = None,
+    session_passphrase: Optional[str] = None,
 ) -> Dict[str, str]:
     """Build askpass env, advertising login-password host/user when known."""
     try:
@@ -61,6 +76,7 @@ def _askpass_env_for_connection(
         password_user=user or None,
         password_hosts=hosts or None,
         session_password=session_password,
+        session_passphrase=session_passphrase,
     )
 
 
@@ -214,7 +230,12 @@ def resolve_native_auth(
         env["COLORTERM"] = "truecolor"
         return NativeAuth(env=env, extra_opts=[], use_askpass=False)
 
-    auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+    raw_auth_method = getattr(connection, 'auth_method', None)
+    if raw_auth_method is None:
+        raw_auth_method = getattr(connection, 'authentication_method', 0)
+        raw_auth_method = getattr(raw_auth_method, 'value', raw_auth_method)
+        raw_auth_method = 1 if raw_auth_method == 'password' else 0
+    auth_method = int(raw_auth_method or 0)
     password_mode = (auth_method == 1)
 
     askpass_enabled = True
@@ -260,6 +281,8 @@ def resolve_native_auth(
     # passphrase probe and the agent preload). Probe is best-effort: on any
     # error, fall back to askpass-on (never regress the saved-passphrase autofill).
     candidates = getattr(connection, 'resolved_identity_files', None)
+    if not candidates:
+        candidates = getattr(connection, 'identity_files', None)
     if not candidates and hasattr(connection, 'collect_identity_file_candidates'):
         try:
             candidates = connection.collect_identity_file_candidates()
@@ -267,11 +290,21 @@ def resolve_native_auth(
             candidates = None
     candidates = list(candidates or [])
     probe_failed = False
+    passphrase_values = {}
     try:
-        passphrase_keys = [p for p in candidates if lookup_passphrase(p)]
+        passphrase_values = {
+            p: _get_stored_passphrase(
+                p, connection_manager, suppress_errors=False
+            )
+            for p in candidates
+        }
+        passphrase_keys = [p for p, value in passphrase_values.items() if value]
     except Exception:
         passphrase_keys, probe_failed = [], True
     has_stored_passphrase = bool(passphrase_keys) or probe_failed
+    session_passphrase = (
+        passphrase_values.get(passphrase_keys[0]) if passphrase_keys else None
+    )
     stored_password = _get_stored_password(connection, connection_manager)
 
     if has_stored_passphrase:
@@ -283,7 +316,9 @@ def resolve_native_auth(
                 and any(_load_key_into_agent(p, connection_manager)
                         for p in passphrase_keys)):
             env = _askpass_env_for_connection(
-                connection, session_password=stored_password,
+                connection,
+                session_password=stored_password,
+                session_passphrase=session_passphrase,
             )
             logger.debug(
                 "resolve_native_auth: combined auth -> agent key + askpass "
@@ -295,10 +330,15 @@ def resolve_native_auth(
             )
         if stored_password:
             env = _askpass_env_for_connection(
-                connection, session_password=stored_password,
+                connection,
+                session_password=stored_password,
+                session_passphrase=session_passphrase,
             )
         else:
-            env = get_ssh_env_with_askpass(require="prefer")
+            env = get_ssh_env_with_askpass(
+                require="prefer",
+                session_passphrase=session_passphrase,
+            )
         logger.debug("resolve_native_auth: key auth, askpass autofill (saved passphrase)")
         return NativeAuth(
             env=env, extra_opts=[], use_sshpass=False,
@@ -329,6 +369,7 @@ def build_native_command(
     command_type: str = 'ssh',
     remote_command: Optional[str] = None,
     extra_args: Optional[List[str]] = None,
+    config_file: Optional[str] = None,
 ) -> List[str]:
     """Build the plain native SSH-family command, with NO authentication applied.
 
@@ -342,12 +383,12 @@ def build_native_command(
     binary = {'scp': 'scp', 'sftp': 'sftp', 'ssh-copy-id': 'ssh-copy-id'}.get(command_type, 'ssh')
     cmd = [binary]
 
-    config_override = None
-    if hasattr(connection, '_resolve_config_override_path'):
+    config_override = config_file or frontend_ssh_config_override(app_config)
+    if config_override is None and hasattr(connection, '_resolve_config_override_path'):
         try:
             config_override = connection._resolve_config_override_path()
         except Exception:
-            config_override = None
+            pass
     if config_override:
         cmd.extend(['-F', config_override])
 
@@ -553,7 +594,9 @@ def _load_key_into_agent(key_path: str, connection_manager: Optional[any] = None
 
 def _get_stored_passphrase(
     key_path: str,
-    connection_manager: Optional[any] = None
+    connection_manager: Optional[any] = None,
+    *,
+    suppress_errors: bool = True,
 ) -> Optional[str]:
     """Get stored passphrase for key."""
     if not key_path:
@@ -562,12 +605,20 @@ def _get_stored_passphrase(
     # Try connection_manager first if available
     if connection_manager:
         try:
-            if hasattr(connection_manager, 'get_key_passphrase'):
-                result = connection_manager.get_key_passphrase(key_path)
+            getter = getattr(connection_manager, 'get_key_passphrase', None)
+            if getter is None:
+                getter = getattr(connection_manager, 'lookup_key_passphrase', None)
+            if callable(getter):
+                result = getter(key_path)
                 if result:
                     return result
+                if getattr(
+                    connection_manager, 'secret_lookup_authoritative', False
+                ):
+                    return None
         except Exception:
-            pass
+            if not suppress_errors:
+                raise
     
     # Fallback to direct lookup (works even without connection_manager)
     try:
@@ -575,7 +626,8 @@ def _get_stored_passphrase(
         if result:
             return result
     except Exception:
-        pass
+        if not suppress_errors:
+            raise
     
     return None
 
@@ -660,7 +712,9 @@ def _build_base_ssh_command(
     connection: any,
     config: Dict[str, Union[str, List[str]]],
     app_config: Optional[any] = None,
-    command_type: str = 'ssh'
+    command_type: str = 'ssh',
+    *,
+    config_file: Optional[str] = None,
 ) -> List[str]:
     """
     Build base SSH command from SSH config and connection settings.
@@ -674,6 +728,9 @@ def _build_base_ssh_command(
         cmd = ['ssh-copy-id']
     else:
         cmd = ['ssh']
+
+    if config_file:
+        cmd.extend(['-F', config_file])
 
     # ssh-copy-id is a shell script with a restricted option set (-i/-p/-o/-f/
     # -n/-s/-x): it rejects flags ssh/scp/sftp share (-v, -C, -A), its -i names

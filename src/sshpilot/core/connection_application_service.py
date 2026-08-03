@@ -108,8 +108,10 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
+    "duplicate_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "lookup_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -515,11 +517,18 @@ class ConnectionApplicationService:
             )
         return (executable, *argv[1:]), environment
 
-    def lookup_daemon_password(self, connection_id: ConnectionId) -> Optional[str]:
+    def lookup_connection_password(
+        self, connection_id: ConnectionId
+    ) -> Optional[str]:
         connection = self._find_connection(connection_id)
         if connection is None:
             return None
         return self._connection_manager.get_connection_password(connection)
+
+    def lookup_daemon_password(self, connection_id: ConnectionId) -> Optional[str]:
+        """Compatibility alias for the daemon dispatch layer."""
+
+        return self.lookup_connection_password(connection_id)
 
     def store_daemon_password(
         self,
@@ -848,11 +857,17 @@ class ConnectionApplicationService:
                 ErrorCode.INVALID_REQUEST,
                 "A create connection request is required",
             )
-        if request.protocol != "ssh":
+        if request.protocol == "ssh" and request.plugin_data:
             raise SshPilotError(
                 ErrorCode.VALIDATION_FAILED,
-                "The requested connection protocol is not supported",
-                details={"field": "protocol"},
+                "SSH connections cannot contain plugin data",
+                details={"field": "plugin_data"},
+            )
+        if request.protocol != "ssh" and request.config_patch:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "Plugin connections cannot contain SSH configuration",
+                details={"field": "config_patch"},
             )
         if self._connection_with_nickname(request.nickname) is not None:
             raise SshPilotError(
@@ -890,6 +905,8 @@ class ConnectionApplicationService:
                         )
                 else:
                     data[key] = value
+        if request.plugin_data:
+            data.update(dict(request.plugin_data))
         try:
             connection = creator(data)
         except ValueError:
@@ -911,6 +928,59 @@ class ConnectionApplicationService:
             connection_id=self.connection_id_for(connection),
             nickname=connection.nickname,
             generation=getattr(connection, "generation", 0),
+        )
+
+    def duplicate_connection(
+        self, connection_id: ConnectionId
+    ) -> ConnectionMutationResult:
+        """Duplicate a daemon-owned connection through its sole persistence owner."""
+
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        connection = self._find_connection(connection_id)
+        if connection is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=connection_id,
+            )
+        duplicate = getattr(self._connection_manager, "duplicate_connection", None)
+        try:
+            if callable(duplicate):
+                created = duplicate(connection, self._group_manager)
+            else:
+                import copy
+                from .connections.models import generate_duplicate_nickname
+
+                creator = getattr(self._connection_manager, "create_connection", None)
+                if not callable(creator):
+                    raise self._persistence_error(connection_id)
+                names = {
+                    str(getattr(item, "nickname", "") or "")
+                    for item in self._connection_manager.get_connections()
+                }
+                data = copy.deepcopy(
+                    getattr(connection, "data", None) or {}
+                )
+                data.pop("uuid", None)
+                data.pop("aliases", None)
+                data["nickname"] = generate_duplicate_nickname(
+                    str(getattr(connection, "nickname", "") or "Connection"),
+                    names,
+                )
+                created = creator(data)
+        except SshPilotError:
+            raise
+        except Exception as error:
+            logger.error(
+                "Connection manager duplicate failed (%s)",
+                type(error).__name__,
+            )
+            raise self._persistence_error(connection_id) from None
+        return ConnectionMutationResult(
+            connection_id=self.connection_id_for(created),
+            nickname=created.nickname,
+            generation=getattr(created, "generation", 0),
         )
 
     def update_connection(
@@ -935,10 +1005,17 @@ class ConnectionApplicationService:
                 "The requested connection does not exist",
                 connection_id=connection_id,
             )
-        if getattr(connection, "protocol", "ssh") != "ssh":
+        protocol = getattr(connection, "protocol", "ssh")
+        if protocol == "ssh" and request.plugin_data:
             raise SshPilotError(
                 ErrorCode.VALIDATION_FAILED,
-                "The requested connection protocol is not supported",
+                "SSH connections cannot contain plugin data",
+                connection_id=connection_id,
+            )
+        if protocol != "ssh" and request.config_patch:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "Plugin connections cannot contain SSH configuration",
                 connection_id=connection_id,
             )
         # Stale-editor guard: if the caller provides an expected generation,
@@ -992,6 +1069,8 @@ class ConnectionApplicationService:
                         )
                 else:
                     data[key] = value
+        if request.plugin_data:
+            data.update(dict(request.plugin_data))
         updater = getattr(self._connection_manager, "update_connection", None)
         if not callable(updater):
             raise self._persistence_error(connection_id)

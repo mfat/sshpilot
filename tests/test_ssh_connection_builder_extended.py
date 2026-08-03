@@ -15,6 +15,7 @@ from typing import List, Optional
 
 
 from sshpilot.connection_manager import Connection, ConnectionManager
+from sshpilot.api.models import AuthenticationMethod, ConnectionDetails
 from sshpilot.ssh_connection_builder import (
     ConnectionContext,
     NativeAuth,
@@ -319,6 +320,29 @@ def test_resolve_native_auth_key_mode_probe_error_failsafe_askpass(monkeypatch):
     assert auth.use_askpass is True
 
 
+def test_resolve_native_auth_understands_daemon_authentication_method():
+    class Credentials:
+        @staticmethod
+        def get_connection_password(_connection):
+            return "stored-password"
+
+    connection = ConnectionDetails(
+        id="demo",
+        nickname="demo",
+        host="demo.example",
+        hostname="demo.example",
+        username="alice",
+        port=22,
+        authentication_method=AuthenticationMethod.PASSWORD,
+    )
+
+    auth = resolve_native_auth(connection, Credentials())
+
+    assert auth.password_mode is True
+    assert auth.password == "stored-password"
+    assert auth.use_askpass is True
+
+
 # --- proxy / agent: now sourced from ~/.ssh/config, not the command ---
 
 
@@ -379,6 +403,28 @@ def test_build_native_command_plain_ssh():
     cmd = build_native_command(conn)
     assert cmd == ['ssh', 'plain.example']
     assert 'IdentityAgent=none' not in cmd
+
+
+def test_build_native_command_uses_isolated_config_for_daemon_dto(monkeypatch):
+    import sshpilot.ssh_connection_builder as scb
+
+    monkeypatch.setattr(scb, "get_config_dir", lambda: "/tmp/sshpilot-config")
+    connection = ConnectionDetails(
+        id="demo",
+        nickname="demo",
+        host="demo.example",
+        hostname="demo.example",
+        username="alice",
+        port=22,
+    )
+    config = _ConfigStub(settings={"ssh.use_isolated_config": True})
+
+    assert build_native_command(connection, config) == [
+        "ssh",
+        "-F",
+        "/tmp/sshpilot-config/ssh_config",
+        "demo",
+    ]
 
 
 def test_build_native_command_binary_selection():
@@ -537,6 +583,24 @@ def test_base_command_scp_and_copy_id_clear_forwardings():
     assert _has_o_option(_base_cmd('ssh-copy-id'), 'ClearAllForwardings=yes')
     assert not _has_o_option(_base_cmd('ssh'), 'ClearAllForwardings')
     assert not _has_o_option(_base_cmd('sftp'), 'ClearAllForwardings')
+
+
+def test_base_copy_id_command_uses_explicit_isolated_config():
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    connection = Connection({'host': 'demo', 'hostname': 'demo'})
+    command = _build_base_ssh_command(
+        connection,
+        {},
+        command_type='ssh-copy-id',
+        config_file='/tmp/sshpilot-config/ssh_config',
+    )
+
+    assert command[:3] == [
+        'ssh-copy-id',
+        '-F',
+        '/tmp/sshpilot-config/ssh_config',
+    ]
 
 
 def test_base_command_limits_password_prompts_for_transfers_only():

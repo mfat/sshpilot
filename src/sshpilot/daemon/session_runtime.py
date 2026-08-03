@@ -401,6 +401,7 @@ class SessionRuntime:
         # Optional auth gate: (session_id, is_alive) -> bool. When set,
         # RUNNING is deferred until ControlMaster proves authentication.
         self._auth_gate: Optional[Callable[..., bool]] = None
+        self._authenticated_callback: Optional[Callable[[SessionId], None]] = None
         self._auth_gate_timeout_seconds = 60.0
         self._connection_evidence_gate = False
         self._lock = threading.RLock()
@@ -541,6 +542,13 @@ class SessionRuntime:
 
         self._connection_evidence_gate = True
 
+    def set_authenticated_callback(
+        self, callback: Optional[Callable[[SessionId], None]]
+    ) -> None:
+        """Notify the owner once terminal evidence confirms authentication."""
+
+        self._authenticated_callback = callback
+
     @staticmethod
     def _recent_terminal_text_locked(
         record: _SessionRecord,
@@ -658,6 +666,8 @@ class SessionRuntime:
                     record.deferred_live_output.clear()
                     terminate_after_start = False
             self._publish(events)
+            if events and self._authenticated_callback is not None:
+                self._authenticated_callback(session_id)
             for output in deferred_outputs:
                 for callback in deferred_callbacks:
                     try:
@@ -887,7 +897,7 @@ class SessionRuntime:
                 record is not None
                 and (
                     client_id == record.originating_client_id
-                    or client_id in record.attachments
+                    or bool(record.client_attachments.get(client_id))
                 )
             )
 
@@ -1410,6 +1420,8 @@ class SessionRuntime:
             else:
                 callbacks = tuple(self._terminal_callbacks.values())
         self._publish(events)
+        if events and self._authenticated_callback is not None:
+            self._authenticated_callback(session_id)
         for callback in callbacks:
             try:
                 callback(output)
