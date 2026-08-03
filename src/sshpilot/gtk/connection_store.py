@@ -5,6 +5,7 @@ from __future__ import annotations
 from threading import RLock
 from typing import Callable, Dict, Iterable, Optional, Tuple
 import logging
+import os
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.connections import ConnectionSummary
@@ -245,6 +246,76 @@ class ConnectionPresentationStore:
                         if self._generation != gen: return
                     cb(self, c)
                 self._dispatch(wrapped)
+
+    def load_ssh_keys(self):
+        """Auto-detect SSH keys in the configured SSH directories.
+
+        Read-only filesystem discovery (no daemon RPC): scans the isolated
+        config dir (when set) and ``~/.ssh`` for private key files, matching
+        the legacy ``ConnectionManager.load_ssh_keys`` behaviour so the
+        connection dialog's key chooser sees keys in daemon mode too.
+        """
+        from pathlib import Path
+        from ..platform_utils import get_config_dir, get_ssh_dir
+        from ..key_utils import _is_private_key
+
+        search_dirs = []
+        if getattr(self, 'isolated_mode', False):
+            search_dirs.append(get_config_dir())
+        search_dirs.append(get_ssh_dir())
+
+        keys = []
+        seen = set()
+        validation_cache = {}
+        fallback_to_pub = False
+        for ssh_dir in search_dirs:
+            if not ssh_dir or not os.path.exists(ssh_dir):
+                continue
+            try:
+                for filename in os.listdir(ssh_dir):
+                    file_path = Path(ssh_dir) / filename
+                    if filename.endswith('.pub'):
+                        if fallback_to_pub:
+                            private_key_path = file_path.with_suffix('')
+                            key_path = str(private_key_path)
+                            if private_key_path.exists() and key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                        continue
+                    if fallback_to_pub:
+                        pub_candidate = file_path.with_suffix(file_path.suffix + '.pub')
+                        if pub_candidate.exists() and str(file_path) not in seen:
+                            keys.append(str(file_path))
+                            seen.add(str(file_path))
+                        continue
+                    try:
+                        if _is_private_key(file_path, cache=validation_cache):
+                            key_path = str(file_path)
+                            if key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                    except FileNotFoundError:
+                        fallback_to_pub = True
+                        pub_candidate = file_path.with_suffix(file_path.suffix + '.pub')
+                        if pub_candidate.exists() and str(file_path) not in seen:
+                            keys.append(str(file_path))
+                            seen.add(str(file_path))
+                    except Exception as exc:
+                        logging.getLogger(__name__).debug(
+                            "Failed to validate potential key %s: %s",
+                            file_path,
+                            exc,
+                            exc_info=True,
+                        )
+            except Exception as exc:
+                logging.getLogger(__name__).debug(
+                    "Failed to load SSH keys from %s: %s",
+                    ssh_dir,
+                    exc,
+                    exc_info=True,
+                )
+        logging.getLogger(__name__).info(f"Found {len(keys)} SSH keys: {keys}")
+        return keys
 
     def store_password(self, host: str, username: str, password: str):
         """Store a password via the selected secret backend (see secret_storage)."""

@@ -163,3 +163,29 @@ def test_gtk_window_does_not_create_or_reload_backend_manager():
     assert "ConnectionManager(" not in source
     assert ".load_ssh_config(" not in source
     assert "self._setup_ssh_config_monitor()" not in source
+
+
+def test_load_ssh_keys_discovers_private_keys(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    import sshpilot.platform_utils as platform_utils
+
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir(mode=0o700, exist_ok=True)
+    (ssh_dir / "id_ed25519").write_text(
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
+        encoding="utf-8",
+    )
+    (ssh_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC fake\n", encoding="utf-8")
+    (ssh_dir / "config").write_text("Host x\n", encoding="utf-8")
+    (ssh_dir / "known_hosts").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(platform_utils, "get_ssh_dir", lambda: str(ssh_dir))
+    monkeypatch.setattr(platform_utils, "get_config_dir", lambda: str(tmp_path))
+
+    store = ConnectionPresentationStore()
+    keys = store.load_ssh_keys()
+    assert str(ssh_dir / "id_ed25519") in keys
+    assert str(ssh_dir / "id_ed25519.pub") not in keys
+    assert str(ssh_dir / "config") not in keys
+    assert str(ssh_dir / "known_hosts") not in keys
