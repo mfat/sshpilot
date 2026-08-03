@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 
 
-from sshpilot.api import InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.models.common import ClientId
 from sshpilot.api.models.sessions import (
     AttachSessionRequest,
@@ -114,7 +114,7 @@ class _GatedTerminalRunner:
 
 def test_starting_input_is_dropped_and_output_deferred_until_running():
     manager = _Manager()
-    core = InProcessClient(manager, client_name="starting-race")
+    core = ConnectionApplicationService(manager, client_name="starting-race")
     runner = _GatedTerminalRunner()
     runtime = SessionRuntime(core, runner=runner)
     outputs: list[bytes] = []

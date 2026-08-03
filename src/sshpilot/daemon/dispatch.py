@@ -12,7 +12,7 @@ from sshpilot.runtime_identity import new_server_instance_id
 
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.api.capabilities import Capabilities, Capability
-from sshpilot.api.client import SshPilotClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import (
     ClientId,
@@ -265,7 +265,7 @@ class RequestDispatcher:
 
     def __init__(
         self,
-        core_client: SshPilotClient,
+        connection_service: ConnectionApplicationService,
         session_runtime: Optional[SessionRuntime] = None,
         interaction_broker: Optional[InteractionBroker] = None,
         sftp_runtime: Optional[SftpServiceRuntime] = None,
@@ -275,8 +275,8 @@ class RequestDispatcher:
         lifecycle_controller: Any = None,
         diagnostics_provider: Optional[Callable[[], Any]] = None,
     ) -> None:
-        self._core_client = core_client
-        self._session_runtime = session_runtime or SessionRuntime(core_client)
+        self._connections = connection_service
+        self._session_runtime = session_runtime or SessionRuntime(connection_service)
         self._interaction_broker = interaction_broker
         self._sftp_runtime = sftp_runtime
         self._transfer_runtime = transfer_runtime
@@ -488,7 +488,7 @@ class RequestDispatcher:
         state.client_id = ClientId(request.client_id)
         state.client_info = metadata
         state.selected_protocol_version = PROTOCOL_VERSION
-        core_capabilities = self._core_client.get_capabilities()
+        core_capabilities = self._connections.get_capabilities()
         result = HandshakeResult(
             daemon_version=sshpilot_version,
             core_version=core_capabilities.core.version,
@@ -601,7 +601,7 @@ class RequestDispatcher:
         self._require_empty_params(request)
         return [
             connection_summary_to_wire(item)
-            for item in self._core_client.list_connections()
+            for item in self._connections.list_connections()
         ]
 
     def _handle_get_connection(
@@ -615,7 +615,7 @@ class RequestDispatcher:
         if type(connection_id) is not str or not connection_id.strip():
             raise ValueError("connection_id must be a non-empty string")
         return connection_details_to_wire(
-            self._core_client.get_connection(ConnectionId(connection_id))
+            self._connections.get_connection(ConnectionId(connection_id))
         )
 
     def _require_capability(
@@ -640,7 +640,7 @@ class RequestDispatcher:
             self._require_capability(state, Capability.CONNECTIONS_CONFIG_WRITE)
         return DeferredResult(
             operation=lambda: connection_mutation_result_to_wire(
-                self._core_client.create_connection(mutation)
+                self._connections.create_connection(mutation)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
@@ -664,7 +664,7 @@ class RequestDispatcher:
         typed_id = ConnectionId(connection_id)
         return DeferredResult(
             operation=lambda: connection_mutation_result_to_wire(
-                self._core_client.update_connection(typed_id, mutation)
+                self._connections.update_connection(typed_id, mutation)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
@@ -679,7 +679,7 @@ class RequestDispatcher:
         mutation = delete_connection_request_from_wire(request.params)
         return DeferredResult(
             operation=lambda: delete_connection_result_to_wire(
-                self._core_client.delete_connection(mutation)
+                self._connections.delete_connection(mutation)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
@@ -699,7 +699,7 @@ class RequestDispatcher:
         typed_id = ConnectionId(connection_id)
         return DeferredResult(
             operation=lambda: connection_editor_details_to_wire(
-                self._core_client.get_connection_editor(typed_id)
+                self._connections.get_connection_editor(typed_id)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
@@ -717,7 +717,7 @@ class RequestDispatcher:
             raise ValueError("connections.store_password requires password")
         typed_request = store_connection_password_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._core_client.store_daemon_password(
+            operation=lambda: self._connections.store_daemon_password(
                 typed_request.connection_id,
                 typed_request.password,
                 previous_hostname=typed_request.previous_hostname,
@@ -738,7 +738,7 @@ class RequestDispatcher:
             raise ValueError("connections.delete_password requires connection_id")
         typed_request = delete_connection_password_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._core_client.delete_daemon_password(
+            operation=lambda: self._connections.delete_daemon_password(
                 typed_request.connection_id,
                 previous_hostname=typed_request.previous_hostname,
                 previous_host=typed_request.previous_host,
@@ -756,7 +756,7 @@ class RequestDispatcher:
     ) -> DeferredResult:
         typed_request = store_key_passphrase_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._core_client.store_daemon_passphrase(
+            operation=lambda: self._connections.store_daemon_passphrase(
                 typed_request.key_path,
                 typed_request.passphrase,
             ),
@@ -771,7 +771,7 @@ class RequestDispatcher:
     ) -> DeferredResult:
         typed_request = delete_key_passphrase_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._core_client.delete_daemon_passphrase(
+            operation=lambda: self._connections.delete_daemon_passphrase(
                 typed_request.key_path,
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
@@ -784,7 +784,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> Optional[str]:
         typed_request = lookup_key_passphrase_request_from_wire(request.params)
-        return self._core_client.lookup_daemon_passphrase(typed_request.key_path)
+        return self._connections.lookup_daemon_passphrase(typed_request.key_path)
 
     def _handle_update_connection_metadata(
         self,
@@ -793,7 +793,7 @@ class RequestDispatcher:
     ) -> DeferredResult:
         typed_request = update_connection_metadata_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._core_client.update_connection_metadata(
+            operation=lambda: self._connections.update_connection_metadata(
                 typed_request.connection_id,
                 dict(typed_request.meta),
             ),
@@ -809,7 +809,7 @@ class RequestDispatcher:
     ) -> DeferredResult:
         typed_request = assign_connection_to_group_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._core_client.assign_connection_to_group(
+            operation=lambda: self._connections.assign_connection_to_group(
                 typed_request.connection_id,
                 typed_request.group_id,
             ),
@@ -824,7 +824,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> Optional[str]:
         typed_request = create_group_request_from_wire(request.params)
-        return self._core_client.create_group_rpc(
+        return self._connections.create_group_rpc(
             typed_request.name,
             parent_id=typed_request.parent_id,
             color=typed_request.color,
@@ -836,7 +836,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> bool:
         typed_request = delete_group_request_from_wire(request.params)
-        return self._core_client.delete_group_rpc(typed_request.group_id)
+        return self._connections.delete_group_rpc(typed_request.group_id)
 
     def _handle_rename_group(
         self,
@@ -844,7 +844,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> bool:
         typed_request = rename_group_request_from_wire(request.params)
-        return self._core_client.rename_group_rpc(
+        return self._connections.rename_group_rpc(
             typed_request.group_id, typed_request.new_name
         )
 
@@ -854,7 +854,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> dict:
         typed_request = split_connection_request_from_wire(request.params)
-        result = self._core_client.split_connection(typed_request)
+        result = self._connections.split_connection(typed_request)
         return connection_mutation_result_to_wire(result)
 
     def _handle_list_sessions(
@@ -1549,7 +1549,7 @@ class RequestDispatcher:
                 ErrorCode.HANDSHAKE_REQUIRED,
                 "A protocol handshake is required before capability discovery",
             )
-        core = self._core_client.get_capabilities()
+        core = self._connections.get_capabilities()
         return Capabilities(
             protocol_version=PROTOCOL_VERSION,
             api_implementation_version=API_IMPLEMENTATION_VERSION,

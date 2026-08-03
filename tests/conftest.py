@@ -281,7 +281,7 @@ def _gui_app_session(tmp_path_factory):
     os.environ['XDG_RUNTIME_DIR'] = str(runtime)
     # Default GUI harness stays in-process so tests never attach to a user
     # daemon that happens to be listening on the real runtime socket.
-    os.environ['SSHPILOT_CLIENT_MODE'] = 'in_process'
+    os.environ['SSHPILOT_CLIENT_MODE'] = 'core_service'
 
     app = GuiApp()
     app.boot()
@@ -291,7 +291,7 @@ def _gui_app_session(tmp_path_factory):
     from sshpilot.api.client_factory import ClientMode
 
     selection = getattr(app.app, '_api_client_selection', None)
-    assert selection is None or selection.mode is ClientMode.IN_PROCESS, (
+    assert selection is None or selection.mode is None, (
         f"GUI harness must boot in-process, got {selection!r}"
     )
     assert not isinstance(getattr(app.window, 'client', None), DaemonClient), (

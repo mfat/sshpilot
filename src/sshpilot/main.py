@@ -739,13 +739,12 @@ class SshPilotApplication(Adw.Application):
             )
             return False
 
-        from .api.client_factory import ClientMode, ClientSelection
+        from .api.client_factory import ClientSelection
 
         launched = getattr(result, "launched", None)
         process = getattr(launched, "process", None) if launched is not None else None
         selection = ClientSelection(
             client=result.client,
-            mode=ClientMode.DAEMON,
             daemon_process=process,
         )
         previous = None

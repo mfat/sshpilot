@@ -7,7 +7,6 @@
     "DaemonClient",
     "ErrorCode",
     "EventType",
-    "InProcessClient",
     "PROTOCOL_VERSION",
     "SshPilotClient",
     "SshPilotError",

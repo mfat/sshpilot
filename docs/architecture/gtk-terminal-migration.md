@@ -246,7 +246,7 @@ handshake status, or daemon startup progress.
 
 1. Local shell tab / non-SSH protocol / missing connection → not an SSH route
 2. External-terminal preference active and not policy-hidden → `EXTERNAL`
-3. Explicit `terminal.legacy_local_ssh_fallback` → `LEGACY_LOCAL`
+3. Explicit `terminal.removed_local_ssh_setting` → `LEGACY_LOCAL`
 4. `terminal.daemon_backed_ssh` enabled (Stage C default) → `DAEMON`
 5. Daemon-backed setting disabled → `LEGACY_LOCAL`
 
@@ -304,7 +304,7 @@ typed daemon interactions — never to silent local SSH.
 Legacy local SSH is **explicit user choice only**:
 
 - **Default behavior**: `terminal.daemon_backed_ssh = True` (Stage C rollout)
-- **Explicit legacy**: `terminal.legacy_local_ssh_fallback = True` selects
+- **Explicit legacy**: `terminal.removed_local_ssh_setting = True` selects
   GTK-owned local SSH (`Use legacy local SSH terminals` in Preferences)
 - **Never silent**: Daemon unavailability/incompatibility never switches route
 - **Clear error**: Readiness failures show an actionable dialog with optional
@@ -318,7 +318,7 @@ def resolve_ssh_terminal_route(config, connection, *, is_local=False):
         return None
     if use_external and not should_hide_external_terminal_options():
         return SshTerminalRoute.EXTERNAL
-    if config.get_setting("terminal.legacy_local_ssh_fallback", False):
+    if config.get_setting("terminal.removed_local_ssh_setting", False):
         return SshTerminalRoute.LEGACY_LOCAL
     if config.get_setting("terminal.daemon_backed_ssh", True):
         return SshTerminalRoute.DAEMON

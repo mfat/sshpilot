@@ -1,7 +1,7 @@
 # Client methods
 
 `SshPilotClient` is synchronous. Both clients implement connection CRUD.
-Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
+Phase 6 session lifecycle methods are daemon-only; `retired frontend backend` returns
 `unsupported_capability` for the corresponding `sessions.*` capability.
 
 ## Runtime summary
@@ -318,7 +318,7 @@ if capabilities.supports(Capability.CONNECTIONS_READ):
 - **Cancellation / ordering:** Not cancellable; preserves manager order. The
   GTK bridge cannot cancel a wire request already in progress, but its request
   token suppresses stale or destroyed-widget delivery.
-- **Threading:** `InProcessClient` requires its owner thread. `DaemonClient`
+- **Threading:** `retired frontend backend` requires its owner thread. `DaemonClient`
   serializes synchronous requests and uses a finite timeout. Experimental GTK
   daemon mode invokes this method through one application-scoped worker and
   posts presentation updates with `GLib.idle_add`; normal in-process GTK calls
@@ -810,7 +810,7 @@ Requests bounded closure of one runtime forward.
 - **Status / introduced:** Daemon-only / Protocol v1, API 0.11.
 - **Capability / purpose:** `daemon.status`; return lifecycle state, versions,
   resource counts, and idle/shutdown diagnostics without secrets.
-- **Errors:** `unsupported_capability` from `InProcessClient`; transport errors.
+- **Errors:** `unsupported_capability` from `retired frontend backend`; transport errors.
 
 <!-- api-method: get_daemon_diagnostics -->
 ## `get_daemon_diagnostics`
@@ -840,7 +840,7 @@ Requests bounded closure of one runtime forward.
 - **Capability / purpose:** `sessions.read`; return one creation-ordered,
   secret-free snapshot including retained closed records.
 - **Parameters / return:** None; returns `list[SessionSummary]`.
-- **Errors:** `unsupported_capability` from `InProcessClient`; daemon
+- **Errors:** `unsupported_capability` from `retired frontend backend`; daemon
   transport/protocol lifecycle errors.
 - **Threading:** Synchronous; GTK diagnostics submit it through
   `GtkClientBridge`.
@@ -1071,7 +1071,7 @@ client.respond_to_interaction(response)
 <!-- api-method: subscribe_events -->
 ## `subscribe_events`
 
-- **Status / introduced:** Implemented across `InProcessClient` and
+- **Status / introduced:** Implemented across `retired frontend backend` and
   `DaemonClient` / Protocol v1
 - **Capability / purpose:** `connections.events` for the implemented
   connection lifecycle stream; subscribe to events that the provider can emit.

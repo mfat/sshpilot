@@ -47,7 +47,7 @@ def test_handshake_without_optional_build_metadata_still_parses():
 
 
 def test_dispatcher_includes_dev_revision(monkeypatch):
-    from sshpilot.api import InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
     from sshpilot.daemon.dispatch import RequestDispatcher
     from sshpilot.api.transport.envelopes import RequestEnvelope
     from sshpilot.daemon.dispatch import ClientProtocolState
@@ -64,7 +64,7 @@ def test_dispatcher_includes_dev_revision(monkeypatch):
         def disconnect(self, *_a, **_k):
             return None
 
-    dispatcher = RequestDispatcher(InProcessClient(_Manager(), client_name="t"))
+    dispatcher = RequestDispatcher(ConnectionApplicationService(_Manager(), client_name="t"))
     assert dispatcher._development_revision == "phase93-test"
     state = ClientProtocolState()
     request = RequestEnvelope(

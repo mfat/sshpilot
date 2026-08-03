@@ -62,7 +62,7 @@ clears all.
 Production file-manager routing (`sshpilot.extended_service_policy`) selects
 daemon ownership when a `DaemonClient` advertises SFTP capabilities. There is
 **no silent fallback** to `OpenSSHSFTPManager`. Explicit
-`file_manager.legacy_local_sftp` (or in-process client mode) is required for
+`file_manager.removed_local_sftp` (or in-process client mode) is required for
 GTK-owned `ssh -s sftp`. Ordinary SCP UI requires `file_manager.legacy_scp`.
 
 ## Phase 10.1 validation (exercised)

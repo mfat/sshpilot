@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, FrozenSet, Optional, Protocol
 
-from sshpilot.api.in_process_client import InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.models.connections import ConnectionSummary
 from sshpilot.ssh_config_utils import discover_ssh_config_paths
 
@@ -159,7 +159,7 @@ class AuthoritativeConfigurationBackend:
 
     def __init__(
         self,
-        client: InProcessClient,
+        client: ConnectionApplicationService,
         connection_manager: object,
         group_manager: object,
         config: object,

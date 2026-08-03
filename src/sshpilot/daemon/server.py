@@ -19,7 +19,7 @@ from typing import Any, Callable, Deque, Dict, Optional, Set, Tuple, Union
 from sshpilot.runtime_identity import new_server_instance_id
 
 from sshpilot import __version__ as sshpilot_version
-from sshpilot.api.client import SshPilotClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
 from sshpilot.api.models.common import ForwardId, RequestId, SessionId, SftpServiceId
@@ -155,10 +155,10 @@ class _OutboundFrame:
 
 
 @dataclass(frozen=True)
-class DaemonCore:
-    """Concrete core plus optional daemon-only persistence coordination."""
+class CoreServices:
+    """Daemon-owned application services injected directly into API dispatch."""
 
-    client: SshPilotClient
+    connections: ConnectionApplicationService
     configuration_backend: Optional[AuthoritativeConfigurationBackend] = None
 
 
@@ -194,14 +194,14 @@ class DaemonServer:
 
     def __init__(
         self,
-        core_factory: Callable[[], Union[SshPilotClient, DaemonCore]],
+        core_factory: Callable[[], Union[ConnectionApplicationService, CoreServices]],
         *,
         socket_path: Optional[os.PathLike] = None,
         client_event_queue_limit: int = DEFAULT_CLIENT_EVENT_QUEUE_LIMIT,
         max_client_outbound_bytes: int = DEFAULT_MAX_CLIENT_OUTBOUND_BYTES,
         max_client_terminal_bytes: int = DEFAULT_MAX_CLIENT_TERMINAL_BYTES,
         session_runtime_factory: Optional[
-            Callable[[SshPilotClient], SessionRuntime]
+            Callable[[ConnectionApplicationService], SessionRuntime]
         ] = None,
         session_command_workers: int = DEFAULT_SESSION_COMMAND_WORKERS,
         session_command_queue_limit: int = DEFAULT_SESSION_COMMAND_QUEUE_LIMIT,
@@ -271,7 +271,7 @@ class DaemonServer:
         self._listener: Optional[socket.socket] = None
         self._wakeup_read: Optional[socket.socket] = None
         self._wakeup_write: Optional[socket.socket] = None
-        self._core_client: Optional[SshPilotClient] = None
+        self._connection_service: Optional[ConnectionApplicationService] = None
         self._session_runtime: Optional[SessionRuntime] = None
         self._sftp_runtime: Optional[SftpServiceRuntime] = None
         self._transfer_runtime: Optional[TransferRuntime] = None
@@ -499,13 +499,13 @@ class DaemonServer:
             # Own the single-instance socket before loading/migrating the core.
             # Readiness remains false until construction and migration finish.
             core = self._core_factory()
-            if isinstance(core, DaemonCore):
-                self._core_client = core.client
+            if isinstance(core, CoreServices):
+                self._connection_service = core.connections
                 configuration_backend = core.configuration_backend
             else:
-                self._core_client = core
+                self._connection_service = core
             enable_workers = getattr(
-                self._core_client,
+                self._connection_service,
                 "enable_serialized_command_threads",
                 None,
             )
@@ -513,7 +513,7 @@ class DaemonServer:
                 enable_workers()
             if self._session_runtime_factory is None:
                 launch_builder = getattr(
-                    self._core_client,
+                    self._connection_service,
                     "prepare_daemon_terminal_launch",
                     None,
                 )
@@ -527,69 +527,69 @@ class DaemonServer:
                         )
                     )
                     self._session_runtime = SessionRuntime(
-                        self._core_client,
+                        self._connection_service,
                         runner=runner,
                     )
                 else:
-                    self._session_runtime = SessionRuntime(self._core_client)
+                    self._session_runtime = SessionRuntime(self._connection_service)
             else:
                 self._session_runtime = self._session_runtime_factory(
-                    self._core_client
+                    self._connection_service
                 )
             sftp_builder = getattr(
-                self._core_client, "prepare_daemon_sftp_launch", None
+                self._connection_service, "prepare_daemon_sftp_launch", None
             )
             if callable(sftp_builder):
                 sftp_runner = SubprocessSftpProcessRunner(
                     lambda spec: self._prepare_sftp_launch(spec, sftp_builder)
                 )
                 self._sftp_runtime = SftpServiceRuntime(
-                    self._core_client, runner=sftp_runner
+                    self._connection_service, runner=sftp_runner
                 )
             else:
-                self._sftp_runtime = SftpServiceRuntime(self._core_client)
+                self._sftp_runtime = SftpServiceRuntime(self._connection_service)
             self._transfer_runtime = TransferRuntime(self._sftp_runtime)
             forward_builder = getattr(
-                self._core_client, "prepare_daemon_forward_launch", None
+                self._connection_service, "prepare_daemon_forward_launch", None
             )
             if callable(forward_builder):
                 forward_runner = SubprocessForwardProcessRunner(
                     lambda spec: self._prepare_forward_launch(spec, forward_builder)
                 )
                 self._forward_runtime = ForwardRuntime(
-                    self._core_client, runner=forward_runner
+                    self._connection_service, runner=forward_runner
                 )
             else:
-                self._forward_runtime = ForwardRuntime(self._core_client)
+                self._forward_runtime = ForwardRuntime(self._connection_service)
             self._interaction_broker = (
                 self._interaction_broker_factory(self._session_runtime)
                 if self._interaction_broker_factory is not None
                 else InteractionBroker(
                     client_is_eligible=self._client_can_interact,
                     password_lookup=getattr(
-                        self._core_client,
+                        self._connection_service,
                         "lookup_daemon_password",
                         None,
                     ),
                     password_store=getattr(
-                        self._core_client,
+                        self._connection_service,
                         "store_daemon_password",
                         None,
                     ),
                     passphrase_lookup=getattr(
-                        self._core_client,
+                        self._connection_service,
                         "lookup_daemon_passphrase",
                         None,
                     ),
                     passphrase_store=getattr(
-                        self._core_client,
+                        self._connection_service,
                         "store_daemon_passphrase",
                         None,
                     ),
                 )
             )
             self._dispatcher = RequestDispatcher(
-                self._core_client,
+                self._connection_service,
                 self._session_runtime,
                 self._interaction_broker,
                 sftp_runtime=self._sftp_runtime,
@@ -615,7 +615,7 @@ class DaemonServer:
         self._listener = listener
         self._wakeup_read = wakeup_read
         self._wakeup_write = wakeup_write
-        subscribe_events = getattr(self._core_client, "subscribe_events", None)
+        subscribe_events = getattr(self._connection_service, "subscribe_events", None)
         if callable(subscribe_events):
             self._core_subscription = subscribe_events(self._on_core_event)
         self._session_subscription = self._session_runtime.subscribe_events(
@@ -1568,15 +1568,15 @@ class DaemonServer:
         self._listener = None
         self._wakeup_read = None
         self._wakeup_write = None
-        core_client = self._core_client
-        self._core_client = None
+        connection_service = self._connection_service
+        self._connection_service = None
         self._session_runtime = None
         self._sftp_runtime = None
         self._transfer_runtime = None
         self._forward_runtime = None
         try:
-            if core_client is not None:
-                core_client.close()
+            if connection_service is not None:
+                connection_service.close()
         except Exception as error:
             logger.error(
                 "Daemon core cleanup failed (%s)",

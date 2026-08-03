@@ -4,12 +4,12 @@ from dataclasses import replace
 
 import pytest
 
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api import (
     Capability,
     DaemonClient,
     ErrorCode,
     EventType,
-    InProcessClient,
     SshPilotError,
 )
 from sshpilot.api.models import CreateConnectionRequest
@@ -142,7 +142,7 @@ def test_older_daemon_without_write_capability_fails_locally(
 
     class _ReadOnlyCore:
         def __init__(self):
-            self._base = InProcessClient(manager, client_name="read-only")
+            self._base = ConnectionApplicationService(manager, client_name="read-only")
 
         def get_capabilities(self):
             return replace(

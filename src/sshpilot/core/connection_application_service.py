@@ -1,4 +1,7 @@
-"""In-process adapter from the public client contract to existing managers."""
+"""Daemon-owned application services over persistent connection managers.
+
+This module is GTK-free and is instantiated only by the daemon composition root.
+"""
 
 import logging
 import re
@@ -8,10 +11,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sshpilot import __version__ as sshpilot_version
 
-from .capabilities import Capabilities, Capability
-from .errors import ErrorCode, SshPilotError, unsupported_capability
-from .events import CoreEventCallback, EventPublisher, EventType, Subscription
-from .models.common import (
+from sshpilot.api.connection_identity import connection_id_for
+from sshpilot.api.capabilities import Capabilities, Capability
+from sshpilot.api.errors import ErrorCode, SshPilotError, unsupported_capability
+from sshpilot.api.events import CoreEventCallback, EventPublisher, EventType, Subscription
+from sshpilot.api.models.common import (
     ClientInfo,
     CompatibilityResult,
     ConnectionId,
@@ -21,7 +25,7 @@ from .models.common import (
     SftpServiceId,
     TransferId,
 )
-from .models.connections import (
+from sshpilot.api.models.connections import (
     AuthenticationMethod,
     ConnectionDetails,
     ConnectionEditorDetails,
@@ -42,13 +46,13 @@ from .models.connections import (
     UpdateConnectionRequest,
     forwarding_rule_from_dict,
 )
-from .models.interactions import (
+from sshpilot.api.models.interactions import (
     InteractionClaim,
     InteractionDecisionRequest,
     InteractionId,
     InteractionSummary,
 )
-from .models.operations import (
+from sshpilot.api.models.operations import (
     AttachSftpRequest,
     ClaimForwardRequest,
     CloseForwardRequest,
@@ -65,7 +69,7 @@ from .models.operations import (
     SftpServiceSummary,
     SftpSymlinkRequest,
 )
-from .models.sessions import (
+from sshpilot.api.models.sessions import (
     AttachSessionRequest,
     AttachSessionResult,
     CloseSessionRequest,
@@ -73,7 +77,7 @@ from .models.sessions import (
     OpenSessionRequest,
     SessionSummary,
 )
-from .models.terminal import (
+from sshpilot.api.models.terminal import (
     ClaimTerminalInputRequest,
     ReleaseTerminalInputRequest,
     ReplayRequest,
@@ -81,19 +85,19 @@ from .models.terminal import (
     ResizeTerminalRequest,
     TerminalInput,
 )
-from .models.transfers import (
+from sshpilot.api.models.transfers import (
     CancelTransferRequest,
     StartTransferRequest,
     TransferSummary,
 )
-from .terminal_events import (
+from sshpilot.api.terminal_events import (
     TerminalContinuityCallback,
     TerminalEofCallback,
     TerminalErrorCallback,
     TerminalOutputCallback,
     TerminalSubscription,
 )
-from .version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
+from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -120,63 +124,13 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "update_connection": Capability.CONNECTIONS_WRITE,
 }
 
-UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
-    "attach_session": Capability.SESSIONS_WRITE,
-    "claim_terminal_input": Capability.TERMINAL_INPUT,
-    "close_session": Capability.SESSIONS_WRITE,
-    "detach_session": Capability.SESSIONS_WRITE,
-    "get_daemon_diagnostics": Capability.DAEMON_STATUS,
-    "get_daemon_status": Capability.DAEMON_STATUS,
-    "get_session": Capability.SESSIONS_READ,
-    "get_interaction": Capability.INTERACTIONS_READ,
-    "claim_interaction": Capability.INTERACTIONS_RESPOND,
-    "cancel_interaction": Capability.INTERACTIONS_RESPOND,
-    "list_interactions": Capability.INTERACTIONS_READ,
-    "list_sessions": Capability.SESSIONS_READ,
-    "open_session": Capability.SESSIONS_WRITE,
-    "release_terminal_input": Capability.TERMINAL_INPUT,
-    "replay_terminal": Capability.TERMINAL_REPLAY,
-    "resize_terminal": Capability.TERMINAL_RESIZE,
-    "release_interaction": Capability.INTERACTIONS_RESPOND,
-    "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
-    "restart_daemon": Capability.DAEMON_CONTROL,
-    "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
-    "send_terminal_input": Capability.TERMINAL_INPUT,
-    "stop_daemon": Capability.DAEMON_CONTROL,
-    "subscribe_terminal": Capability.TERMINAL_OUTPUT,
-    "list_sftp_services": Capability.SFTP_READ,
-    "get_sftp_service": Capability.SFTP_READ,
-    "open_sftp": Capability.SFTP_WRITE,
-    "attach_sftp": Capability.SFTP_WRITE,
-    "detach_sftp": Capability.SFTP_WRITE,
-    "close_sftp": Capability.SFTP_WRITE,
-    "sftp_list_directory": Capability.SFTP_READ,
-    "sftp_stat": Capability.SFTP_METADATA,
-    "sftp_lstat": Capability.SFTP_METADATA,
-    "sftp_realpath": Capability.SFTP_METADATA,
-    "sftp_readlink": Capability.SFTP_METADATA,
-    "sftp_mkdir": Capability.SFTP_MUTATE,
-    "sftp_rmdir": Capability.SFTP_MUTATE,
-    "sftp_remove": Capability.SFTP_MUTATE,
-    "sftp_rename": Capability.SFTP_MUTATE,
-    "sftp_chmod": Capability.SFTP_MUTATE,
-    "sftp_symlink": Capability.SFTP_MUTATE,
-    "list_transfers": Capability.TRANSFERS_READ,
-    "get_transfer": Capability.TRANSFERS_READ,
-    "start_transfer": Capability.TRANSFERS_WRITE,
-    "cancel_transfer": Capability.TRANSFERS_WRITE,
-    "list_forwards": Capability.FORWARDS_READ,
-    "get_forward": Capability.FORWARDS_READ,
-    "open_forward": Capability.FORWARDS_WRITE,
-    "claim_forward": Capability.FORWARDS_WRITE,
-    "close_forward": Capability.FORWARDS_WRITE,
-}
 
 
-class InProcessClient:
-    """Expose existing connection-manager reads through ``SshPilotClient``.
 
-    Command methods must be invoked on the thread that constructed the adapter,
+class ConnectionApplicationService:
+    """Provide daemon application operations over configuration managers.
+
+    Command methods must be invoked on the thread that constructed the service,
     matching the current GObject manager's GTK-main-thread ownership. Event
     subscription itself is thread-safe. The first active publisher thread
     serially drains concurrent/re-entrant events, so callbacks must marshal when
@@ -188,7 +142,7 @@ class InProcessClient:
         connection_manager: Any,
         *,
         group_manager: Any = None,
-        client_name: str = "gtk",
+        client_name: str = "sshpilotd",
         client_version: str = sshpilot_version,
         allow_cross_thread_commands: bool = False,
     ) -> None:
@@ -227,7 +181,7 @@ class InProcessClient:
             core=CoreInfo(
                 name="sshPilot Core",
                 version=sshpilot_version,
-                implementation="in-process",
+                implementation="daemon-core",
             ),
             supported=frozenset(supported),
             compatibility=CompatibilityResult(
@@ -265,7 +219,7 @@ class InProcessClient:
             )
         # Classic VTE preload unlocks stored-passphrase keys in ssh-agent
         # (including gnome-keyring/gcr identities that advertise locked keys).
-        # Broker policy strips in-process askpass, so without this OpenSSH falls
+        # Broker policy strips frontend askpass, so without this OpenSSH falls
         # back to the on-disk encrypted key and the user gets a passphrase dialog.
         self._preload_connection_keys(connection)
         argv = tuple(getattr(command, "command", ()) or ())
@@ -277,7 +231,7 @@ class InProcessClient:
                 connection_id=connection_id,
             )
         # Preserve the normal resolver's askpass activation decision, but never
-        # pass the in-process helper endpoint (or its staged secrets) to the
+        # pass the frontend helper endpoint (or its staged secrets) to the
         # daemon.  The broker replaces the transport with its private helper.
         askpass_active = bool(
             getattr(command, "use_askpass", False)
@@ -292,7 +246,7 @@ class InProcessClient:
             environment["SSHPILOT_DAEMON_ASKPASS_ACTIVE"] = "1"
 
         # Keep daemon launches on the canonical ``ssh Host`` path, but carry the
-        # parsed LocalCommand explicitly.  Unlike the in-process terminal, the
+        # parsed LocalCommand explicitly.  Unlike the frontend terminal, the
         # daemon owns a separately prepared process and must not depend on a
         # frontend-side Connection object retaining this directive indirectly.
         # Command-line options precede ssh_config, so PermitLocalCommand cannot
@@ -767,7 +721,7 @@ class InProcessClient:
                 # but usually it should be found by nickname.
                 raise SshPilotError(ErrorCode.CONNECTION_NOT_FOUND, "Failed to locate split connection")
 
-            from .models.connections import ConnectionMutationResult
+            from sshpilot.api.models.connections import ConnectionMutationResult
             return ConnectionMutationResult(
                 connection_id=getattr(new_conn, "id", new_conn.nickname),
                 nickname=new_conn.nickname,
@@ -780,7 +734,7 @@ class InProcessClient:
             raise SshPilotError(ErrorCode.PERSISTENCE_FAILED, "Failed to split host block")
 
     def enable_serialized_command_threads(self) -> None:
-        """Allow daemon-owned serialized workers to invoke this adapter."""
+        """Allow daemon-owned serialized workers to invoke this service."""
 
         self._allow_cross_thread_commands = True
 
@@ -855,7 +809,7 @@ class InProcessClient:
                     else:
                         data[key] = list(value) if value else []
                 elif key == "forwarding_rules":
-                    from .models.connections import forwarding_rule_to_dict
+                    from sshpilot.api.models.connections import forwarding_rule_to_dict
                     try:
                         data[key] = [forwarding_rule_to_dict(r) for r in value]
                     except ValueError as e:
@@ -956,7 +910,7 @@ class InProcessClient:
                         data[key] = list(value) if value else []
 
                 elif key == "forwarding_rules":
-                    from .models.connections import forwarding_rule_to_dict
+                    from sshpilot.api.models.connections import forwarding_rule_to_dict
                     try:
                         data[key] = [forwarding_rule_to_dict(r) for r in value]
                     except ValueError as e:
@@ -1046,221 +1000,17 @@ class InProcessClient:
             deleted=True,
         )
 
-    def open_session(self, request: OpenSessionRequest) -> SessionSummary:
-        del request
-        raise self._unsupported("open_session")
-
-    def list_sessions(self) -> List[SessionSummary]:
-        raise self._unsupported("list_sessions")
-
-    def get_daemon_status(self):
-        raise self._unsupported("get_daemon_status")
-
-    def get_daemon_diagnostics(self):
-        raise self._unsupported("get_daemon_diagnostics")
-
-    def stop_daemon(self, request=None):
-        del request
-        raise self._unsupported("stop_daemon")
-
-    def restart_daemon(self, request=None):
-        del request
-        raise self._unsupported("restart_daemon")
-
-    def get_session(self, session_id: SessionId) -> SessionSummary:
-        del session_id
-        raise self._unsupported("get_session")
-
-    def attach_session(self, request: AttachSessionRequest) -> AttachSessionResult:
-        del request
-        raise self._unsupported("attach_session")
-
-    def detach_session(self, request: DetachSessionRequest) -> None:
-        del request
-        raise self._unsupported("detach_session")
-
-    def close_session(self, request: CloseSessionRequest) -> None:
-        del request
-        raise self._unsupported("close_session")
-
-    def send_terminal_input(self, request: TerminalInput) -> None:
-        del request
-        raise self._unsupported("send_terminal_input")
-
-    def resize_terminal(self, request: ResizeTerminalRequest) -> None:
-        del request
-        raise self._unsupported("resize_terminal")
-
-    def claim_terminal_input(self, request: ClaimTerminalInputRequest) -> None:
-        del request
-        raise self._unsupported("claim_terminal_input")
-
-    def release_terminal_input(self, request: ReleaseTerminalInputRequest) -> None:
-        del request
-        raise self._unsupported("release_terminal_input")
-
-    def replay_terminal(self, request: ReplayRequest) -> ReplayResult:
-        del request
-        raise self._unsupported("replay_terminal")
-
-    def subscribe_terminal(
-        self,
-        session_id: SessionId,
-        on_output: TerminalOutputCallback,
-        *,
-        on_continuity_lost: Optional[TerminalContinuityCallback] = None,
-        on_eof: Optional[TerminalEofCallback] = None,
-        on_error: Optional[TerminalErrorCallback] = None,
-    ) -> TerminalSubscription:
-        del session_id, on_output, on_continuity_lost, on_eof, on_error
-        raise self._unsupported("subscribe_terminal")
-
-    def list_interactions(self) -> List[InteractionSummary]:
-        raise self._unsupported("list_interactions")
-
-    def get_interaction(self, interaction_id: InteractionId) -> InteractionSummary:
-        del interaction_id
-        raise self._unsupported("get_interaction")
-
-    def claim_interaction(self, interaction_id: InteractionId) -> InteractionClaim:
-        del interaction_id
-        raise self._unsupported("claim_interaction")
-
-    def release_interaction(self, interaction_id: InteractionId) -> None:
-        del interaction_id
-        raise self._unsupported("release_interaction")
-
-    def respond_to_interaction(
-        self,
-        response: InteractionDecisionRequest,
-    ) -> None:
-        del response
-        raise self._unsupported("respond_to_interaction")
-
-    def cancel_interaction(self, interaction_id: InteractionId) -> None:
-        del interaction_id
-        raise self._unsupported("cancel_interaction")
-
-    def send_interaction_secret(
-        self,
-        interaction_id: InteractionId,
-        nonce: str,
-        secret: bytearray,
-    ) -> None:
-        del interaction_id, nonce, secret
-        raise self._unsupported("send_interaction_secret")
-
-    def list_sftp_services(self) -> List[SftpServiceSummary]:
-        raise self._unsupported("list_sftp_services")
-
-    def get_sftp_service(self, service_id: SftpServiceId) -> SftpServiceSummary:
-        del service_id
-        raise self._unsupported("get_sftp_service")
-
-    def open_sftp(self, request: OpenSftpRequest) -> SftpServiceSummary:
-        del request
-        raise self._unsupported("open_sftp")
-
-    def attach_sftp(self, request: AttachSftpRequest) -> SftpServiceSummary:
-        del request
-        raise self._unsupported("attach_sftp")
-
-    def detach_sftp(self, service_id: SftpServiceId) -> None:
-        del service_id
-        raise self._unsupported("detach_sftp")
-
-    def close_sftp(self, request: CloseSftpRequest) -> None:
-        del request
-        raise self._unsupported("close_sftp")
-
-    def sftp_list_directory(self, request: ListDirectoryRequest) -> ListDirectoryResult:
-        del request
-        raise self._unsupported("sftp_list_directory")
-
-    def sftp_stat(self, request: SftpPathRequest) -> RemoteFileEntry:
-        del request
-        raise self._unsupported("sftp_stat")
-
-    def sftp_lstat(self, request: SftpPathRequest) -> RemoteFileEntry:
-        del request
-        raise self._unsupported("sftp_lstat")
-
-    def sftp_realpath(self, request: SftpPathRequest) -> str:
-        del request
-        raise self._unsupported("sftp_realpath")
-
-    def sftp_readlink(self, request: SftpPathRequest) -> str:
-        del request
-        raise self._unsupported("sftp_readlink")
-
-    def sftp_mkdir(self, request: SftpPathRequest) -> None:
-        del request
-        raise self._unsupported("sftp_mkdir")
-
-    def sftp_rmdir(self, request: SftpPathRequest) -> None:
-        del request
-        raise self._unsupported("sftp_rmdir")
-
-    def sftp_remove(self, request: SftpPathRequest) -> None:
-        del request
-        raise self._unsupported("sftp_remove")
-
-    def sftp_rename(self, request: SftpRenameRequest) -> None:
-        del request
-        raise self._unsupported("sftp_rename")
-
-    def sftp_chmod(self, request: SftpChmodRequest) -> None:
-        del request
-        raise self._unsupported("sftp_chmod")
-
-    def sftp_symlink(self, request: SftpSymlinkRequest) -> None:
-        del request
-        raise self._unsupported("sftp_symlink")
-
-    def list_transfers(self) -> List[TransferSummary]:
-        raise self._unsupported("list_transfers")
-
-    def get_transfer(self, transfer_id: TransferId) -> TransferSummary:
-        del transfer_id
-        raise self._unsupported("get_transfer")
-
-    def start_transfer(self, request: StartTransferRequest) -> TransferSummary:
-        del request
-        raise self._unsupported("start_transfer")
-
-    def cancel_transfer(self, request: CancelTransferRequest) -> None:
-        del request
-        raise self._unsupported("cancel_transfer")
-
-    def list_forwards(self) -> List[ForwardSummary]:
-        raise self._unsupported("list_forwards")
-
-    def get_forward(self, forward_id: ForwardId) -> ForwardSummary:
-        del forward_id
-        raise self._unsupported("get_forward")
-
-    def open_forward(self, request: OpenForwardRequest) -> ForwardSummary:
-        del request
-        raise self._unsupported("open_forward")
-
-    def claim_forward(self, request: ClaimForwardRequest) -> ForwardSummary:
-        del request
-        raise self._unsupported("claim_forward")
-
-    def close_forward(self, request: CloseForwardRequest) -> None:
-        del request
-        raise self._unsupported("close_forward")
-
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
+        """Subscribe the daemon event bridge to connection mutations."""
         if self._closed:
-            raise SshPilotError(ErrorCode.INVALID_REQUEST, "The client is closed")
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST, "The application service is closed"
+            )
         try:
             return self._publisher.subscribe(callback)
         except RuntimeError:
-            # A concurrent close may win after the optimistic lifecycle check.
             raise SshPilotError(
-                ErrorCode.INVALID_REQUEST,
-                "The client is closed",
+                ErrorCode.INVALID_REQUEST, "The application service is closed"
             ) from None
 
     def close(self) -> None:
@@ -1281,32 +1031,22 @@ class InProcessClient:
         self._signal_handlers.clear()
         self._publisher.close()
 
-    @staticmethod
-    def connection_id_for(connection: Any) -> ConnectionId:
-        """Return the stable opaque ID equal to the SSH Host alias."""
-
-        nick = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "").strip()
-        if not nick:
-            raise SshPilotError(
-                ErrorCode.INTERNAL_ERROR,
-                "A stored connection has no durable identity",
-            )
-        return ConnectionId(nick)
+    connection_id_for = staticmethod(connection_id_for)
 
     def _assert_command_thread(self) -> None:
         if self._closed:
-            raise SshPilotError(ErrorCode.INVALID_REQUEST, "The client is closed")
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "The application service is closed")
         if (
             not self._allow_cross_thread_commands
             and threading.get_ident() != self._owner_thread_id
         ):
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
-                "In-process client commands must run on their owner thread",
+                "Application service commands must run on their owner thread",
             )
 
     def snapshot_connection_summaries(self) -> Tuple[ConnectionSummary, ...]:
-        """Return an immutable concrete-adapter snapshot for daemon reloads."""
+        """Return an immutable application-service snapshot for daemon reloads."""
 
         if self._closed:
             return ()
@@ -1344,11 +1084,6 @@ class InProcessClient:
         if not self._capabilities.supports(capability):
             raise unsupported_capability(capability)
 
-    @staticmethod
-    def _unsupported(method_name: str) -> SshPilotError:
-        return unsupported_capability(
-            UNSUPPORTED_CLIENT_METHOD_CAPABILITIES[method_name]
-        )
 
     def _manager_connections(self) -> List[Any]:
         getter = getattr(self._connection_manager, "get_connections", None)
@@ -1441,7 +1176,7 @@ class InProcessClient:
                 "nickname": str(getattr(connection, "nickname", "") or ""),
                 "hostname": str(getattr(connection, "hostname", "") or ""),
                 "username": str(getattr(connection, "username", "") or ""),
-                "port": InProcessClient._port(connection),
+                "port": ConnectionApplicationService._port(connection),
                 "protocol": str(getattr(connection, "protocol", "ssh") or "ssh"),
             }
         )

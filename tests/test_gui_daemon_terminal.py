@@ -76,7 +76,8 @@ def _pump_until(gui, predicate, timeout=3.0):
 
 
 def test_daemon_terminal_streams_without_blocking_gtk(gui, tmp_path):
-    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.api import DaemonClient
     from sshpilot.api.models import (
         InteractionState,
         InteractionType,
@@ -103,7 +104,7 @@ def test_daemon_terminal_streams_without_blocking_gtk(gui, tmp_path):
     socket_path = tmp_path / "runtime" / "sshpilotd.sock"
     socket_path.parent.mkdir(mode=0o700)
     server = DaemonServer(
-        lambda: InProcessClient(manager, client_name="sshpilotd"),
+        lambda: ConnectionApplicationService(manager, client_name="sshpilotd"),
         socket_path=socket_path,
         session_runtime_factory=lambda core: SessionRuntime(
             core,

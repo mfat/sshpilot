@@ -622,7 +622,7 @@ def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
 
 def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     """Daemon launch must preload keys like the classic VTE path."""
-    from sshpilot.api.in_process_client import InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
     from tests.daemon.conftest import TestConnection, TestConnectionManager
 
     preloads = []
@@ -650,7 +650,7 @@ def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     manager = TestConnectionManager()
     connection = PreloadConnection()
     manager.connections = [connection]
-    client = InProcessClient(manager, allow_cross_thread_commands=True)
+    client = ConnectionApplicationService(manager, allow_cross_thread_commands=True)
     cid = ConnectionId("preload")
     monkeypatch.setattr(
         "shutil.which",
@@ -665,7 +665,7 @@ def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
 
 def test_prepare_daemon_terminal_launch_carries_local_command(monkeypatch) -> None:
     """Daemon SSH argv must preserve the host's parsed LocalCommand."""
-    from sshpilot.api.in_process_client import InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
     from tests.daemon.conftest import TestConnection, TestConnectionManager
 
     class LocalCommandConnection(TestConnection):
@@ -691,7 +691,7 @@ def test_prepare_daemon_terminal_launch_carries_local_command(monkeypatch) -> No
 
     manager = TestConnectionManager()
     manager.connections = [LocalCommandConnection()]
-    client = InProcessClient(manager, allow_cross_thread_commands=True)
+    client = ConnectionApplicationService(manager, allow_cross_thread_commands=True)
     monkeypatch.setattr("shutil.which", lambda name, path=None: "/usr/bin/ssh")
 
     argv, _env = client.prepare_daemon_terminal_launch(

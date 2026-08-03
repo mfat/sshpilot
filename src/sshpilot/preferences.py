@@ -774,19 +774,6 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Configure daemon-backed SSH terminals for better session management")
         )
 
-        # Enable daemon-backed SSH terminals
-        self.daemon_backed_ssh_switch = Adw.SwitchRow()
-        self.daemon_backed_ssh_switch.set_title(_("Use daemon-backed SSH terminals"))
-        self.daemon_backed_ssh_switch.set_subtitle(
-            _("Enable enhanced SSH terminal management through daemon sessions")
-        )
-        daemon_backed_ssh_active = bool(self.config.get_setting('terminal.daemon_backed_ssh', True))
-        self.daemon_backed_ssh_switch.set_active(daemon_backed_ssh_active)
-        self.daemon_backed_ssh_switch.connect(
-            'notify::active', self.on_daemon_backed_ssh_toggled
-        )
-        daemon_group.add(self.daemon_backed_ssh_switch)
-
         # Tab close policy
         self.tab_close_policy_row = Adw.ComboRow()
         self.tab_close_policy_row.set_title(_("Tab close policy"))
@@ -841,22 +828,6 @@ class PreferencesWindow(Adw.NavigationPage):
             'notify::active', self.on_restore_sessions_toggled
         )
         daemon_group.add(self.restore_sessions_switch)
-
-        # Explicit legacy local SSH (never an automatic failure fallback)
-        self.legacy_fallback_switch = Adw.SwitchRow()
-        self.legacy_fallback_switch.set_title(_("Use legacy local SSH terminals"))
-        self.legacy_fallback_switch.set_subtitle(
-            _(
-                "Force GTK-owned local SSH instead of daemon-backed sessions. "
-                "Daemon failures never fall back automatically."
-            )
-        )
-        legacy_fallback_active = bool(self.config.get_setting('terminal.legacy_local_ssh_fallback', False))
-        self.legacy_fallback_switch.set_active(legacy_fallback_active)
-        self.legacy_fallback_switch.connect(
-            'notify::active', self.on_legacy_fallback_toggled
-        )
-        daemon_group.add(self.legacy_fallback_switch)
 
         # Idle shutdown (seconds); 0 disables.
         self.daemon_idle_timeout_row = Adw.SpinRow(
@@ -3423,13 +3394,6 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update paste-on-right-click mode: %s", exc)
 
-    def on_daemon_backed_ssh_toggled(self, switch, _pspec):
-        """Persist the daemon-backed SSH preference."""
-        try:
-            self.config.set_setting('terminal.daemon_backed_ssh', bool(switch.get_active()))
-        except Exception as exc:
-            logger.error("Failed to update daemon-backed SSH setting: %s", exc)
-
     def on_tab_close_policy_changed(self, row, _pspec):
         """Persist the tab close policy preference."""
         try:
@@ -3454,13 +3418,6 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('terminal.daemon_restore_sessions', bool(switch.get_active()))
         except Exception as exc:
             logger.error("Failed to update restore sessions setting: %s", exc)
-
-    def on_legacy_fallback_toggled(self, switch, _pspec):
-        """Persist the legacy fallback preference."""
-        try:
-            self.config.set_setting('terminal.legacy_local_ssh_fallback', bool(switch.get_active()))
-        except Exception as exc:
-            logger.error("Failed to update legacy fallback setting: %s", exc)
 
     def on_daemon_idle_timeout_changed(self, row, _pspec):
         try:

@@ -983,7 +983,7 @@ class ConnectionManager(GObject.Object):
 
         # Defer slower operations to idle to avoid blocking GTK startup.
         # Daemon callers without a GLib loop must invoke ``_post_init_slow_path``
-        # themselves (see ``daemon.cli._production_core_client``).
+        # themselves (see ``daemon.cli._production_core_services``).
         GLib.idle_add(self._post_init_slow_path)
 
     @property

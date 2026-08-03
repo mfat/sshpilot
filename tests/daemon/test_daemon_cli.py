@@ -106,7 +106,7 @@ def test_cli_server_start_uses_environment_idle_default_when_unset(monkeypatch, 
     monkeypatch.setattr("sshpilot.config.Config", _FakeConfig)
     monkeypatch.setattr("sshpilot.daemon.server.DaemonServer", _FakeServer)
     monkeypatch.setattr(
-        "sshpilot.daemon.cli._production_core_client",
+        "sshpilot.daemon.cli._production_core_services",
         lambda: None,
     )
     monkeypatch.setattr(

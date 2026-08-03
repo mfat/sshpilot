@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from sshpilot.api import InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.session_runtime import SessionRuntime
 
@@ -151,7 +151,7 @@ def daemon_factory(tmp_path):
         path = Path(socket_path or tmp_path / f"daemon-{len(servers)}" / "sshpilotd.sock")
         path.parent.mkdir(mode=0o700, exist_ok=True)
         server = DaemonServer(
-            lambda: InProcessClient(manager, client_name="sshpilotd"),
+            lambda: ConnectionApplicationService(manager, client_name="sshpilotd"),
             socket_path=path,
             client_event_queue_limit=client_event_queue_limit,
             max_client_outbound_bytes=max_client_outbound_bytes,

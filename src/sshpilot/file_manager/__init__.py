@@ -61,21 +61,7 @@ def create_file_manager_backend(
     prefer_daemon=None,
     **kwargs,
 ):
-    """Construct the file-manager backend.
-
-    Prefers the daemon-backed SFTP manager (no local ``ssh -s sftp``
-    subprocess) when ``daemon_client`` is a real out-of-process
-    ``DaemonClient`` with bridge + connection_id and the required
-    SFTP/transfer capabilities.
-
-    Daemon mode (``SSHPILOT_CLIENT_MODE=daemon``, Stage C promotion, or
-    ``prefer_daemon=True``) never silently falls back to
-    ``OpenSSHSFTPManager``. Missing client/capabilities raise
-    ``RuntimeError``. Legacy OpenSSH SFTP is only used when:
-
-    * ``file_manager.legacy_local_sftp = True``, or
-    * in-process client mode (no daemon preference).
-    """
+    """Construct the daemon-backed file-manager presentation backend."""
 
     from ..api.daemon_client import DaemonClient
     from ..extended_service_policy import (

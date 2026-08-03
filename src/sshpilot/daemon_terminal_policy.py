@@ -1,8 +1,6 @@
 """Close policies, SSH terminal routing, and daemon readiness helpers.
 
-Emulator decision: VTE is the production daemon SSH emulator (``feed`` +
-``commit``). PyXtermJS remains available via ``terminal.backend`` for local
-terminals; daemon SSH uses one VTE-feed production path.
+VTE and PyXtermJS both render sessions owned by the daemon.
 
 Local terminals remain GTK-owned. External terminals remain
 external-process-owned. Rollout Stage C defaults daemon-backed SSH on, with
@@ -46,7 +44,6 @@ class SshTerminalRoute(str, Enum):
     """
 
     DAEMON = "daemon"
-    LEGACY_LOCAL = "legacy_local"
     EXTERNAL = "external"
 
 
@@ -75,18 +72,15 @@ class DaemonTerminalReadiness:
     missing_capabilities: tuple[Capability, ...] = ()
 
 
-DAEMON_BACKED_SSH_SETTING = "terminal.daemon_backed_ssh"
 TAB_CLOSE_POLICY_SETTING = "terminal.daemon_tab_close_policy"
 APP_CLOSE_POLICY_SETTING = "terminal.daemon_app_close_policy"
 RESTORE_SESSIONS_SETTING = "terminal.daemon_restore_sessions"
 AUTO_ATTACH_SETTING = "terminal.daemon_auto_attach"
 # Explicit user choice to use GTK-owned local SSH — never an automatic fallback.
-LEGACY_LOCAL_SSH_FALLBACK_SETTING = "terminal.legacy_local_ssh_fallback"
 PREFERRED_EMULATOR_SETTING = "terminal.daemon_emulator"
 SESSION_RESTORE_STATE_SETTING = "terminal.daemon_session_restore_state"
 
 # Stage C: default on for supported installs; legacy local SSH stays explicit.
-DEFAULT_DAEMON_BACKED_SSH = True
 
 _TERMINAL_TRANSPORT_CAPS = frozenset(
     {
@@ -128,38 +122,14 @@ def resolve_ssh_terminal_route(
     *,
     is_local: bool = False,
 ) -> Optional[SshTerminalRoute]:
-    """Resolve user/product SSH terminal routing policy only.
-
-    Precedence (first match wins):
-
-    1. ``is_local`` or non-SSH / missing connection → ``None`` (not an SSH route)
-    2. External-terminal preference active and not policy-hidden → ``EXTERNAL``
-    3. Explicit legacy-local setting → ``LEGACY_LOCAL``
-    4. Daemon-backed setting enabled → ``DAEMON``
-    5. Daemon-backed setting disabled → ``LEGACY_LOCAL``
-
-    This function intentionally ignores daemon client existence, capabilities,
-    bridge state, handshake status, and startup progress.
-    """
-
-    if is_local:
+    """Select external integration or the mandatory daemon session route."""
+    if connection is None:
         return None
-    if connection is None or getattr(connection, "protocol", "ssh") != "ssh":
-        return None
-
     config = _config_of(window_or_config)
     use_external = bool(_get_setting(config, "use-external-terminal", False))
     if use_external and not should_hide_external_terminal_options():
         return SshTerminalRoute.EXTERNAL
-
-    if bool(_get_setting(config, LEGACY_LOCAL_SSH_FALLBACK_SETTING, False)):
-        return SshTerminalRoute.LEGACY_LOCAL
-
-    if bool(_get_setting(config, DAEMON_BACKED_SSH_SETTING, DEFAULT_DAEMON_BACKED_SSH)):
-        return SshTerminalRoute.DAEMON
-
-    return SshTerminalRoute.LEGACY_LOCAL
-
+    return SshTerminalRoute.DAEMON
 
 def should_use_daemon_ssh_terminal(
     window_or_config,

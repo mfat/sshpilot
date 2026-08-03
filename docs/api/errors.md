@@ -85,7 +85,7 @@ the validated internal envelope.
 ## `unsupported_capability`
 
 The requested feature group is unavailable. Safe details contain only the
-stable `capability` string. `InProcessClient` uses this for all declared but
+stable `capability` string. `retired frontend backend` uses this for all declared but
 unsupported commands.
 
 <!-- api-error: invalid_request -->

@@ -25,8 +25,8 @@ def test_open_local_tabs(gui):
     assert len(gui.user_pages()) == 2
 
 
-def test_real_window_composes_welcome_page_with_in_process_client(gui):
-    from sshpilot.api import InProcessClient
+def test_real_window_composes_welcome_page_with_application_services(gui):
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
 
     window = gui.window
     client = window.client
@@ -53,7 +53,7 @@ def test_real_window_composes_welcome_page_with_in_process_client(gui):
         client.list_connections = original_client_list
         window.connection_manager.get_connections = original_manager_list
 
-    assert isinstance(client, InProcessClient)
+    assert isinstance(client, ConnectionApplicationService)
     assert welcome.client is client
     assert client_calls == [True]
     assert manager_calls == []
@@ -107,7 +107,8 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
     tmp_path,
     _repeat,
 ):
-    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.api import DaemonClient
     from sshpilot.api.client_factory import ClientMode, ClientSelection
     from sshpilot.daemon import DaemonServer
     from sshpilot.gtk_client_bridge import GtkClientBridge
@@ -128,7 +129,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
     socket_dir = tmp_path / "daemon-gui"
     socket_dir.mkdir(mode=0o700)
     server = DaemonServer(
-        lambda: InProcessClient(_DelayedManager(), client_name="gtk-test-daemon"),
+        lambda: ConnectionApplicationService(_DelayedManager(), client_name="gtk-test-daemon"),
         socket_path=socket_dir / "sshpilotd.sock",
     )
     server.start_in_thread()
@@ -188,7 +189,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
         app.clear_api_event_subscription()
         daemon_client.close()
         bridge.shutdown()
-        replacement = InProcessClient(
+        replacement = ConnectionApplicationService(
             window.connection_manager,
             group_manager=window.group_manager,
         )
@@ -198,7 +199,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
         welcome.set_client(replacement)
         app._api_client_selection = ClientSelection(
             client=replacement,
-            mode=ClientMode.IN_PROCESS,
+            mode=None,
         )
         app._api_client_bridge = old_bridge
         server.shutdown()
@@ -213,7 +214,8 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
 ):
     from types import SimpleNamespace
 
-    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.api import DaemonClient
     from sshpilot.api.client_factory import ClientMode, ClientSelection
     from sshpilot.daemon import DaemonServer
     from sshpilot.gtk_client_bridge import GtkClientBridge
@@ -263,7 +265,7 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
     socket_dir = tmp_path / f"daemon-event-gui-{_repeat}"
     socket_dir.mkdir(mode=0o700)
     server = DaemonServer(
-        lambda: InProcessClient(manager, client_name="gtk-event-daemon"),
+        lambda: ConnectionApplicationService(manager, client_name="gtk-event-daemon"),
         socket_path=socket_dir / "sshpilotd.sock",
     )
     server.start_in_thread()
@@ -326,7 +328,7 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
         app.clear_api_event_subscription()
         daemon_client.close()
         bridge.shutdown()
-        replacement = InProcessClient(
+        replacement = ConnectionApplicationService(
             window.connection_manager,
             group_manager=window.group_manager,
         )
@@ -337,7 +339,7 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
         welcome.set_client(replacement)
         app._api_client_selection = ClientSelection(
             client=replacement,
-            mode=ClientMode.IN_PROCESS,
+            mode=None,
         )
         app._api_client_bridge = old_bridge
         server.shutdown()
@@ -353,13 +355,14 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
     import os
     from pathlib import Path
 
-    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.api import DaemonClient
     from sshpilot.api.client_factory import ClientMode, ClientSelection
     from sshpilot.config import Config
     import sshpilot.connection_manager as connection_manager_module
     from sshpilot.connection_manager import ConnectionManager
     from sshpilot.daemon.config_reload import AuthoritativeConfigurationBackend
-    from sshpilot.daemon.server import DaemonCore, DaemonServer
+    from sshpilot.daemon.server import CoreServices, DaemonServer
     from sshpilot.groups import GroupManager
     from sshpilot.gtk_client_bridge import GtkClientBridge
 
@@ -437,7 +440,7 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
     config = _FileConfig(tmp_path / "daemon-config.json")
     manager = ConnectionManager(config)
     groups = GroupManager(config, connection_manager=manager)
-    core = InProcessClient(
+    core = ConnectionApplicationService(
         manager,
         group_manager=groups,
         client_name="gtk-external-reload",
@@ -447,7 +450,7 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
     socket_dir = tmp_path / "daemon-external-reload"
     socket_dir.mkdir(mode=0o700)
     server = DaemonServer(
-        lambda: DaemonCore(core, backend),
+        lambda: CoreServices(core, backend),
         socket_path=socket_dir / "sshpilotd.sock",
         configuration_reload_debounce=0.02,
         configuration_poll_interval=0.02,
@@ -486,7 +489,7 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
         daemon_client.close()
         bridge.shutdown()
         window.connection_manager.identity_migration_enabled = True
-        replacement = InProcessClient(
+        replacement = ConnectionApplicationService(
             window.connection_manager,
             group_manager=window.group_manager,
         )
@@ -497,7 +500,7 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
         welcome.set_client(replacement)
         app._api_client_selection = ClientSelection(
             client=replacement,
-            mode=ClientMode.IN_PROCESS,
+            mode=None,
         )
         app._api_client_bridge = old_bridge
         server.shutdown()
@@ -512,7 +515,8 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
 ):
     from types import SimpleNamespace
 
-    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.api import DaemonClient
     from sshpilot.api.client_factory import ClientMode, ClientSelection
     from sshpilot.api.models.sessions import SessionExitInfo, SessionState
     from sshpilot.daemon import DaemonServer
@@ -589,7 +593,7 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
     socket_dir = tmp_path / f"daemon-session-gui-{_repeat}"
     socket_dir.mkdir(mode=0o700)
     server = DaemonServer(
-        lambda: InProcessClient(manager, client_name="gtk-session-daemon"),
+        lambda: ConnectionApplicationService(manager, client_name="gtk-session-daemon"),
         socket_path=socket_dir / "sshpilotd.sock",
         session_runtime_factory=lambda core: SessionRuntime(
             core,
@@ -664,7 +668,7 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
         probe_client.close()
         daemon_client.close()
         bridge.shutdown()
-        replacement = InProcessClient(
+        replacement = ConnectionApplicationService(
             window.connection_manager,
             group_manager=window.group_manager,
         )
@@ -674,7 +678,7 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
         welcome.set_client(replacement)
         app._api_client_selection = ClientSelection(
             client=replacement,
-            mode=ClientMode.IN_PROCESS,
+            mode=None,
         )
         app._api_client_bridge = old_bridge
         server.shutdown()

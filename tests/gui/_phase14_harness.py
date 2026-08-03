@@ -58,7 +58,8 @@ class Phase14Harness:
         from tests._gui_harness import GuiApp, requires_gui
         from tests.fixtures.temporary_openssh import start_temporary_openssh
 
-        from sshpilot.api import DaemonClient, InProcessClient
+        from sshpilot.core.connection_application_service import ConnectionApplicationService
+        from sshpilot.api import DaemonClient
         from sshpilot.api.client_factory import ClientMode, ClientSelection
         from sshpilot.daemon import DaemonServer
         from sshpilot.gtk_client_bridge import GtkClientBridge
@@ -78,7 +79,7 @@ class Phase14Harness:
         self.gui.pump(400)
 
         win.config.set_setting("terminal.daemon_backed_ssh", True)
-        win.config.set_setting("terminal.legacy_local_ssh_fallback", False)
+        win.config.set_setting("terminal.removed_local_ssh_setting", False)
         win.config.set_setting("terminal.daemon_tab_close_policy", "detach")
         win.config.set_setting("terminal.daemon_app_close_policy", "ask")
         win.config.set_setting("terminal.daemon_restore_sessions", True)
@@ -99,7 +100,7 @@ class Phase14Harness:
         cm = win.connection_manager
         gm = win.group_manager
         self.daemon_server = DaemonServer(
-            lambda: InProcessClient(
+            lambda: ConnectionApplicationService(
                 cm,
                 group_manager=gm,
                 client_name="sshpilotd-phase14",
@@ -117,7 +118,7 @@ class Phase14Harness:
             timeout=60,
         )
         # Cancel the window's async daemon auto-select so it cannot overwrite
-        # the ephemeral client mid-test (InProcessClient demotion race).
+        # the ephemeral client mid-test (ConnectionApplicationService demotion race).
         pending = getattr(win, "_api_client_selection_request", None)
         if pending is not None:
             cancel = getattr(pending, "cancel", None) or getattr(pending, "discard", None)
@@ -210,7 +211,7 @@ class Phase14Harness:
         win = self.gui.window
         self.gui.pump(400)
         win.config.set_setting("terminal.daemon_backed_ssh", True)
-        win.config.set_setting("terminal.legacy_local_ssh_fallback", False)
+        win.config.set_setting("terminal.removed_local_ssh_setting", False)
         win.config.set_setting("terminal.daemon_restore_sessions", True)
         win.config.set_setting("terminal.daemon_auto_attach", True)
         bridge = GtkClientBridge()
@@ -789,7 +790,7 @@ class Phase14Harness:
             return
         win = self.gui.window
         tm = win.terminal_manager
-        original_legacy = tm._open_legacy_local_ssh
+        original_legacy = tm._open_removed_local_ssh
 
         def _spy_legacy(*args, **kwargs):
             self.legacy_open_calls.append((args, kwargs))
@@ -797,7 +798,7 @@ class Phase14Harness:
                 "legacy local SSH path invoked during Phase 14 daemon gate"
             )
 
-        tm._open_legacy_local_ssh = _spy_legacy  # type: ignore[method-assign]
+        tm._open_removed_local_ssh = _spy_legacy  # type: ignore[method-assign]
 
         try:
             from gi.repository import Vte

@@ -1,3 +1,4 @@
+from .api.connection_identity import connection_id_for
 import os
 import asyncio
 import logging
@@ -179,24 +180,11 @@ class TerminalManager:
 
         route = resolve_ssh_terminal_route(window, connection)
         if route is None:
-            # Non-SSH protocols still use the internal widget path (plugin spawn).
-            route = SshTerminalRoute.LEGACY_LOCAL
+            route = SshTerminalRoute.DAEMON
 
         if route is SshTerminalRoute.EXTERNAL:
             self._open_external_ssh(
                 connection,
-                _secret_unlock_attempted=_secret_unlock_attempted,
-            )
-            return
-
-        if route is SshTerminalRoute.LEGACY_LOCAL:
-            self._open_legacy_local_ssh(
-                connection,
-                remote_command=remote_command,
-                tab_title=tab_title,
-                force_tty=force_tty,
-                pty_prompt=pty_prompt,
-                pty_response=pty_response,
                 _secret_unlock_attempted=_secret_unlock_attempted,
             )
             return
@@ -229,84 +217,6 @@ class TerminalManager:
         ):
             return
         _launch()
-
-    def _open_legacy_local_ssh(
-        self,
-        connection,
-        *,
-        remote_command: Optional[str] = None,
-        tab_title: Optional[str] = None,
-        force_tty: bool = False,
-        pty_prompt: Optional[str] = None,
-        pty_response: Optional[str] = None,
-        _secret_unlock_attempted: bool = False,
-    ):
-        """GTK-owned local SSH — native_connect + VTE spawn + local askpass."""
-
-        window = self.window
-
-        # Legacy path owns SSH secret preparation (askpass / vault unlock).
-        if not _secret_unlock_attempted and self._maybe_unlock_secrets_then(
-            lambda: self._open_legacy_local_ssh(
-                connection,
-                remote_command=remote_command,
-                tab_title=tab_title,
-                force_tty=force_tty,
-                pty_prompt=pty_prompt,
-                pty_response=pty_response,
-                _secret_unlock_attempted=True,
-            )
-        ):
-            return
-
-        terminal, page = self._create_internal_terminal_tab(
-            connection,
-            tab_title=tab_title,
-            pty_prompt=pty_prompt,
-            pty_response=pty_response,
-        )
-
-        def _cleanup_failed_terminal():
-            connection.is_connected = False
-            window.tab_view.close_page(page)
-            self._unregister_terminal(connection, terminal)
-
-        def _set_terminal_colors():
-            if getattr(window, '_is_quitting', False):
-                return
-            try:
-                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
-                        and not getattr(connection, 'ssh_cmd', None)):
-                    prepare = (
-                        connection.native_connect(
-                            remote_command=remote_command,
-                            force_tty=force_tty,
-                        )
-                        if hasattr(connection, 'native_connect')
-                        else connection.connect()
-                    )
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
-                            fut.result()
-                        else:
-                            loop.run_until_complete(prepare)
-                    except Exception as prep_err:
-                        logger.error(f"Failed to prepare SSH command: {prep_err}")
-
-                terminal.apply_theme()
-                terminal.queue_terminal_draw()
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection')
-                    _cleanup_failed_terminal()
-            except Exception as exc:
-                logger.error(f"Error setting terminal colors: {exc}")
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection')
-                    _cleanup_failed_terminal()
-
-        GLib.idle_add(_set_terminal_colors)
 
     def _open_daemon_ssh(
         self,
@@ -378,9 +288,8 @@ class TerminalManager:
         )
 
         try:
-            from .api.in_process_client import InProcessClient
 
-            connection_id = InProcessClient.connection_id_for(connection)
+            connection_id = connection_id_for(connection)
             terminal.start_daemon_session(
                 window.client,
                 window.client_bridge,
@@ -505,11 +414,10 @@ class TerminalManager:
         previous = getattr(window, "client", None)
         window.client = launched.client
         if app is not None:
-            from .api.client_factory import ClientMode, ClientSelection
+            from .api.client_factory import ClientSelection
 
             app._api_client_selection = ClientSelection(
                 client=launched.client,
-                mode=ClientMode.DAEMON,
                 daemon_process=launched.process,
             )
             if hasattr(app, "install_api_event_subscription"):
@@ -605,14 +513,9 @@ class TerminalManager:
 
         window = self.window
         route = resolve_ssh_terminal_route(window, connection)
-        if route is None:
-            route = SshTerminalRoute.LEGACY_LOCAL
-        # External preference does not apply to split panes — they need an
-        # embeddable widget. Fall back to legacy local for that edge case.
-        if route is SshTerminalRoute.EXTERNAL:
-            route = SshTerminalRoute.LEGACY_LOCAL
-
-        use_daemon = route is SshTerminalRoute.DAEMON
+        # Split panes are internal renderers, so external preference still uses
+        # the daemon rather than creating a second process-owning path.
+        use_daemon = True
         if use_daemon:
             readiness = self._ensure_daemon_terminal_ready()
             if not readiness.ready:
@@ -661,9 +564,8 @@ class TerminalManager:
             try:
                 if use_daemon:
                     try:
-                        from .api.in_process_client import InProcessClient
 
-                        connection_id = InProcessClient.connection_id_for(
+                        connection_id = connection_id_for(
                             connection
                         )
                         terminal.start_daemon_session(
@@ -682,44 +584,13 @@ class TerminalManager:
                         self._unregister_terminal(connection, terminal)
                     return
 
-                # Legacy pane ownership: GTK native_connect + VTE spawn.
-                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
-                        and not getattr(connection, 'ssh_cmd', None)):
-                    prepare = (
-                        connection.native_connect()
-                        if hasattr(connection, 'native_connect')
-                        else connection.connect()
-                    )
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
-                            fut.result()
-                        else:
-                            loop.run_until_complete(prepare)
-                    except Exception as prep_err:
-                        logger.error(
-                            f"Failed to prepare SSH command for pane: {prep_err}"
-                        )
-
-                terminal.apply_theme()
-                terminal.queue_terminal_draw()
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection for pane')
-                    connection.is_connected = False
-                    self._unregister_terminal(connection, terminal)
             except Exception as exc:
                 logger.error(f"Error initialising pane terminal: {exc}")
 
         def _start_pane_connect():
             GLib.idle_add(_set_terminal_colors)
 
-        # Secret unlock only for legacy pane ownership. Daemon panes rely on the
-        # interaction broker after readiness (vault unlock happens in tab path).
-        if use_daemon:
-            _start_pane_connect()
-        elif not self._maybe_unlock_secrets_then(_start_pane_connect):
-            _start_pane_connect()
+        _start_pane_connect()
         return terminal
 
     def _on_pane_terminal_title_changed(self, terminal, title):

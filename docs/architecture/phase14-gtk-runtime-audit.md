@@ -86,9 +86,9 @@ VTE char-size-changed signal
 
 ### Legacy Fallback Path
 
-`TerminalManager._open_legacy_local_ssh()` (line 233) launches OpenSSH directly
+`TerminalManager._open_removed_local_ssh()` (line 233) launches OpenSSH directly
 via `Vte.Terminal.spawn_async()` with askpass environment. This path is retained
-**ONLY** behind the explicit setting `terminal.legacy_local_ssh_fallback=True`.
+**ONLY** behind the explicit setting `terminal.removed_local_ssh_setting=True`.
 It is never an automatic fallback from the daemon path.
 
 ### External Terminals
@@ -132,7 +132,7 @@ User clicks "Manage Files" in sidebar/context/tab menu
 ### Legacy Path
 
 Legacy `OpenSSHSFTPManager` runs `ssh -s sftp` subprocess. Retained only when
-`file_manager.legacy_local_sftp=True` or when client mode is strictly in-process.
+`file_manager.removed_local_sftp=True` or when client mode is strictly in-process.
 
 ---
 

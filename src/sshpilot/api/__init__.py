@@ -5,7 +5,6 @@ from .client import SshPilotClient
 from .daemon_client import DaemonClient
 from .errors import ErrorCode, SshPilotError
 from .events import CoreEvent, EventType, Subscription
-from .in_process_client import InProcessClient
 from .terminal_events import TerminalSubscription
 from .version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 
@@ -18,7 +17,6 @@ __all__ = [
     "DaemonClient",
     "ErrorCode",
     "EventType",
-    "InProcessClient",
     "SshPilotClient",
     "SshPilotError",
     "Subscription",

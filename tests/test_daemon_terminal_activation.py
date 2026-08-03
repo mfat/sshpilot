@@ -52,7 +52,7 @@ class TestDaemonTerminalActivation:
             {
                 "use-external-terminal": False,
                 "terminal.daemon_backed_ssh": True,
-                "terminal.legacy_local_ssh_fallback": False,
+                "terminal.removed_local_ssh_setting": False,
             }
         )
         window.client = Mock()

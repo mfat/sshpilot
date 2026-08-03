@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sshpilot.api import DaemonClient, InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
+from sshpilot.api import DaemonClient
 from sshpilot.daemon import DaemonServer
 
 
@@ -138,7 +139,7 @@ def client_factory(client_backend, tmp_path):
 
     def _factory(manager, **kwargs):
         if client_backend == "in-process":
-            client = InProcessClient(manager, **kwargs)
+            client = ConnectionApplicationService(manager, **kwargs)
         else:
             socket_dir = tmp_path / f"daemon-{len(servers)}"
             socket_dir.mkdir(mode=0o700)
@@ -146,7 +147,7 @@ def client_factory(client_backend, tmp_path):
             group_manager = kwargs.pop("group_manager", None)
 
             def _core_factory():
-                return InProcessClient(
+                return ConnectionApplicationService(
                     manager,
                     group_manager=group_manager,
                     client_name="sshpilotd",
@@ -168,11 +169,11 @@ def client_factory(client_backend, tmp_path):
 
 
 @pytest.fixture
-def in_process_client_factory():
+def application_services_factory():
     clients = []
 
     def _factory(manager, **kwargs):
-        client = InProcessClient(manager, **kwargs)
+        client = ConnectionApplicationService(manager, **kwargs)
         clients.append(client)
         return client
 
