@@ -149,6 +149,32 @@ def test_closed_only_sessions_return_to_unknown():
     assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
 
 
+def test_closed_failed_session_retains_its_authoritative_failure():
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [
+                session(
+                    "closed",
+                    "connection-1",
+                    SessionState.CLOSED,
+                    failure=SessionFailure(
+                        "session_startup_failed",
+                        "permission denied (publickey,password).",
+                    ),
+                    exit_info=SessionExitInfo(exit_code=255, reason="process_exit"),
+                )
+            ],
+        )
+    )
+
+    assert store.status_for("connection-1") == ConnectionRuntimeStatus(
+        ConnectionState.FAILED,
+        "permission denied (publickey,password).",
+    )
+
+
 def test_reconnect_replaces_status_and_ignores_old_daemon_events():
     old = Client(
         "daemon-old",

@@ -478,6 +478,7 @@ class DaemonServer:
         prepare_socket_path(self.socket_path)
         selector = selectors.DefaultSelector()
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        gate_terminal_evidence = False
         try:
             old_umask = os.umask(0o177)
             try:
@@ -544,6 +545,7 @@ class DaemonServer:
                         self._connection_service,
                         runner=runner,
                     )
+                    gate_terminal_evidence = True
                 else:
                     self._session_runtime = SessionRuntime(self._connection_service)
             else:
@@ -602,6 +604,11 @@ class DaemonServer:
                     ),
                 )
             )
+            if gate_terminal_evidence:
+                runtime = self._session_runtime
+                broker = self._interaction_broker
+                runtime._auth_failure_classifier = broker.classify_startup_failure
+                runtime.enable_connection_evidence_gate()
             self._dispatcher = RequestDispatcher(
                 self._connection_service,
                 self._session_runtime,

@@ -112,6 +112,29 @@ class _GatedTerminalRunner:
         self.release_auth.set()
 
 
+class _EvidenceTerminalRunner:
+    """Return the PTY immediately; tests drive its raw output afterward."""
+
+    terminal_capable = True
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.handle: _Handle | None = None
+
+    def start(self, spec, on_exit, on_output=None, on_eof=None):
+        del spec
+        self.handle = _Handle(on_exit, on_output, on_eof)
+        self.started.set()
+        return self.handle
+
+    def emit(self, data: bytes):
+        assert self.handle is not None
+        self.handle._on_output(data)
+
+    def close(self):
+        return None
+
+
 def test_starting_input_is_dropped_and_output_deferred_until_running():
     manager = _Manager()
     core = ConnectionApplicationService(manager, client_name="starting-race")
@@ -182,6 +205,99 @@ def test_starting_input_is_dropped_and_output_deferred_until_running():
         client_id=ClientId("client:a"),
     )
     assert b"live\n" in runner.handle.writes
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_connection_evidence_gate_does_not_equate_spawn_with_connected():
+    manager = _Manager()
+    core = ConnectionApplicationService(manager, client_name="evidence-gate")
+    runner = _EvidenceTerminalRunner()
+    runtime = SessionRuntime(core, runner=runner)
+    runtime.enable_connection_evidence_gate()
+    outputs: list[bytes] = []
+    runtime.subscribe_terminal(lambda item: outputs.append(item.data))
+
+    prepared = runtime.prepare_open_session(
+        OpenSessionRequest(
+            connection_id=core.list_connections()[0].id,
+            dimensions=TerminalDimensions(rows=24, columns=80),
+        ),
+        client_id=ClientId("client:a"),
+    )
+    attached = runtime.attach_session(
+        AttachSessionRequest(
+            session_id=prepared.id,
+            request_input=True,
+            want_terminal_output=True,
+        ),
+        client_id=ClientId("client:a"),
+    )
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+
+    # A live SSH process and its local diagnostics are not a live connection.
+    assert runtime.get_session(prepared.id).state is SessionState.STARTING
+    runner.emit(b"debug1: Connecting to example.test port 22.\r\n")
+    assert runtime.get_session(prepared.id).state is SessionState.STARTING
+    runner.emit(b"alice@example.test's password: ")
+    assert runtime.get_session(prepared.id).state is SessionState.STARTING
+    assert outputs[-1] == b"alice@example.test's password: "
+
+    # STARTING output and input remain live for native PTY auth while the
+    # status waits for genuine post-login evidence.
+    runtime.send_terminal_input(
+        TerminalInput(
+            session_id=prepared.id,
+            attachment_id=attached.attachment.id,
+            data=b"typed-secret\n",
+        ),
+        client_id=ClientId("client:a"),
+    )
+    assert runner.handle is not None
+    assert runner.handle.writes == [b"typed-secret\n"]
+
+    # Raw, coloured remote prompt output is real login evidence.
+    runner.emit(b"\r\n\x1b[32malice@host\x1b[0m:\x1b[34m~\x1b[0m$ ")
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_connection_evidence_gate_turns_unconfirmed_failure_into_failed_state():
+    manager = _Manager()
+    core = ConnectionApplicationService(manager, client_name="evidence-failure")
+    runner = _EvidenceTerminalRunner()
+    runtime = SessionRuntime(core, runner=runner)
+    runtime.enable_connection_evidence_gate()
+    states = []
+    runtime.subscribe_events(
+        lambda event: states.append(getattr(event.payload, "state", None))
+    )
+
+    prepared = runtime.prepare_open_session(
+        OpenSessionRequest(
+            connection_id=core.list_connections()[0].id,
+            dimensions=TerminalDimensions(rows=24, columns=80),
+        ),
+        client_id=ClientId("client:a"),
+    )
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    runner.emit(b"Permission denied (publickey,password).\r\n")
+    assert runner.handle is not None
+    runner.handle.exit(SessionExitInfo(exit_code=255, reason="process_exit"))
+    runner.handle._on_eof()
+    failed = runtime.get_session(prepared.id)
+    # Cleanup closes the failed process immediately, but the authoritative
+    # lifecycle must publish FAILED and must never claim it was RUNNING.
+    assert SessionState.FAILED in states
+    assert SessionState.RUNNING not in states
+    assert failed.state is SessionState.CLOSED
+    assert failed.failure is not None
+    assert failed.failure.message == "permission denied (publickey,password)."
 
     runtime.shutdown()
     core.close()

@@ -186,8 +186,18 @@ class ConnectionRuntimeStatusStore:
         ):
             return ConnectionRuntimeStatus(ConnectionState.CONNECTING, "Connecting")
 
+        # CLOSED is a retention/lifecycle state, not a loss of the terminal
+        # outcome. Daemon summaries retain failure/exit metadata after cleanup,
+        # so keep projecting that final result instead of flashing FAILED and
+        # immediately reverting the sidebar to UNKNOWN.
         failed = [
-            session for session in sessions if session.state is SessionState.FAILED
+            session
+            for session in sessions
+            if session.state is SessionState.FAILED
+            or (
+                session.state is SessionState.CLOSED
+                and session.failure is not None
+            )
         ]
         if failed:
             latest = max(failed, key=lambda session: session.created_at)
@@ -198,6 +208,10 @@ class ConnectionRuntimeStatusStore:
             session
             for session in sessions
             if session.state in {SessionState.CLOSING, SessionState.EXITED}
+            or (
+                session.state is SessionState.CLOSED
+                and session.exit_info is not None
+            )
         ]
         if disconnected:
             latest = max(disconnected, key=lambda session: session.created_at)

@@ -41,68 +41,7 @@ logger = logging.getLogger(__name__)
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
 from .terminal_search import TerminalSearch
 from .terminal_fullscreen import FullscreenController
-
-
-# Substrings (lowercased) in terminal output that mean an ssh attempt is failing.
-# Used to gate CONNECTING→CONNECTED promotion (never promote while one is present)
-# and to recover a precise failure reason at exit time.
-_SSH_FAILURE_MARKERS = (
-    'permission denied',
-    'connection refused',
-    'no route to host',
-    'network is unreachable',
-    'could not resolve',
-    'name or service not known',
-    'nodename nor servname',
-    'host key verification failed',
-    'connection timed out',
-    'operation timed out',
-    'too many authentication failures',
-    'connection reset',
-    'connection closed',
-    'broken pipe',
-    # telnet's connect failure ("telnet: Unable to connect to remote host")
-    'unable to connect',
-)
-
-# Positive login evidence — appears in ssh -v output or login banners once the
-# session is actually established.
-_SSH_SUCCESS_MARKERS = (
-    'authenticated to',
-    'entering interactive session',
-    'last login:',
-    'pseudo-terminal will',
-)
-
-# Line-start prefixes that are ssh's own chatter (not remote shell output). A
-# line that doesn't start with one of these is treated as real remote output.
-_SSH_NOISE_PREFIXES = (
-    'debug',
-    'ssh:',
-    'warning:',
-    'openssh',
-    'kex',
-    'channel ',
-    'authenticated',
-    'connecting to',
-    'pledge',
-    # telnet's pre-connect chatter ("Trying 10.0.0.5...")
-    'trying ',
-    # First line of ssh's host-key banner, drawn a moment before the
-    # "(yes/no/[fingerprint])?" question it belongs to.
-    'the authenticity of',
-)
-
-# The rest of ssh's host-key banner, which is drawn line by line while the user
-# has not answered anything yet. Matched anywhere in the line, not as a prefix:
-# the fingerprint line starts with the key type ("ED25519 key fingerprint is").
-_SSH_HOSTKEY_BANNER_MARKERS = (
-    'key fingerprint is',
-    'key is not known by any other names',
-    'known by the following other names',
-    # ...and the "<known_hosts file>:<line>: <name>" entries that banner lists.
-    'known_hosts:',
-)
+from .core.connection_evidence import classify_connection_evidence
 
 
 # Installed once per process. Inner padding for the terminal text so the
@@ -2072,59 +2011,12 @@ class TerminalWidget(Gtk.Box):
         the old "process is alive" heuristic — a socket stuck in the TCP connect
         phase is alive but produces no remote output, so it stays 'pending'.
         """
-        text = (self._scrape_recent_terminal_text(4000) or '').lower()
-        if not text:
-            return 'pending'
-
-        # A visible ssh failure means the attempt is dying — never promote.
-        for marker in _SSH_FAILURE_MARKERS:
-            if marker in text:
-                # Remember the matching line so the exit reason is precise even
-                # if the final bytes aren't in the buffer when ssh exits.
-                for line in text.splitlines():
-                    if marker in line:
-                        self._connect_failure_hint = line.strip()
-                        break
-                return 'failed'
-
-        # Explicit positive evidence (ssh -v progress / login banner).
-        if any(marker in text for marker in _SSH_SUCCESS_MARKERS):
-            return 'connected'
-
-        # Auth prompts (password, passphrase, OTP/PIN, FIDO touch, host-key
-        # yes/no) are drawn *before* the session is authenticated — the local
-        # client prints the passphrase one before a single packet goes out. The
-        # same classifier the PTY autofill uses decides what is a prompt, so
-        # connect gating and askpass can't drift apart.
-        from .askpass_utils import classify_prompt
-
-        # Waiting on the trailing prompt: nobody has logged in yet, whatever
-        # came before it. This also covers multi-line prompts whose first line
-        # ("The authenticity of host … can't be established.") reads like
-        # remote output on its own.
-        if classify_prompt(text) is not None:
-            return 'pending'
-
-        # Any line that isn't ssh's own chatter is remote output (a shell prompt
-        # or MOTD) — strong evidence the session is live. A prompt that is no
-        # longer the trailing line (ssh printed after it) is still not evidence.
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped.startswith(_SSH_NOISE_PREFIXES):
-                continue
-            if any(marker in stripped for marker in _SSH_HOSTKEY_BANNER_MARKERS):
-                continue
-            # The user's own echoed answer to the host-key question, when the
-            # terminal puts it on its own line.
-            if stripped in ('yes', 'no'):
-                continue
-            if classify_prompt(stripped) is not None:
-                continue
-            return 'connected'
-
-        return 'pending'
+        evidence = classify_connection_evidence(
+            self._scrape_recent_terminal_text(4000) or ''
+        )
+        if evidence.failure_reason:
+            self._connect_failure_hint = evidence.failure_reason
+        return evidence.verdict
 
     def _start_connect_grace(self):
         """Start the evidence poller that promotes CONNECTING→CONNECTED once the

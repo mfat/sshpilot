@@ -52,6 +52,7 @@ from sshpilot.api.models.terminal import (
     TerminalOutput,
 )
 from sshpilot.api.session_identity import new_session_id
+from sshpilot.core.connection_evidence import classify_connection_evidence
 
 from .terminal_stream import (
     DEFAULT_GLOBAL_REPLAY_BYTES,
@@ -322,8 +323,8 @@ class _SessionRecord:
     input_owner_attachment_id: Optional[AttachmentId] = None
     output_clients: Set[ClientId] = field(default_factory=set)
     originating_client_id: Optional[ClientId] = None
-    # Output produced before RUNNING (auth gate) — delivered on transition so
-    # clients do not mark connected / send input against a STARTING session.
+    # Output produced before RUNNING by the legacy blocking auth gate. The
+    # event-driven connection-evidence gate streams STARTING output directly.
     deferred_live_output: List[TerminalOutput] = field(default_factory=list)
 
 
@@ -401,6 +402,7 @@ class SessionRuntime:
         # RUNNING is deferred until ControlMaster proves authentication.
         self._auth_gate: Optional[Callable[..., bool]] = None
         self._auth_gate_timeout_seconds = 60.0
+        self._connection_evidence_gate = False
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[SessionId, _SessionRecord] = {}
@@ -529,6 +531,28 @@ class SessionRuntime:
         self._auth_gate = gate
         self._auth_gate_timeout_seconds = float(timeout_seconds)
 
+    def enable_connection_evidence_gate(self) -> None:
+        """Require real terminal evidence before STARTING becomes RUNNING.
+
+        Unlike the older blocking auth-gate hook, this mode is output-driven:
+        the startup worker returns after spawning the PTY, authentication UI and
+        terminal I/O remain live, and ``_terminal_output`` promotes the session.
+        """
+
+        self._connection_evidence_gate = True
+
+    @staticmethod
+    def _recent_terminal_text_locked(
+        record: _SessionRecord,
+        maximum_bytes: int = 4000,
+    ) -> str:
+        end = record.replay.end_sequence
+        start = max(record.replay.start_sequence, end - maximum_bytes)
+        replay = record.replay.replay(start, maximum_bytes)
+        return b"".join(chunk for _sequence, chunk in replay.chunks).decode(
+            "utf-8", errors="replace"
+        )
+
     def start_session(self, session_id: SessionId) -> None:
         """Run the potentially blocking startup step on a command worker."""
 
@@ -581,7 +605,10 @@ class SessionRuntime:
             )
         else:
             authenticated = True
-            gate = self._auth_gate
+            evidence_gated = bool(
+                self._connection_evidence_gate and record.terminal_capable
+            )
+            gate = None if evidence_gated else self._auth_gate
             if gate is not None:
                 authenticated = bool(
                     gate(
@@ -614,10 +641,17 @@ class SessionRuntime:
                 if record.state is SessionState.STARTING:
                     record.process_handle = handle
                     record.started_at = self._clock()
-                    events.append(self._transition_locked(record, SessionState.RUNNING))
-                    deferred_outputs = list(record.deferred_live_output)
-                    record.deferred_live_output.clear()
-                    deferred_callbacks = tuple(self._terminal_callbacks.values())
+                    if (
+                        not evidence_gated
+                        or self._connection_evidence_locked(record).verdict
+                        == "connected"
+                    ):
+                        events.append(
+                            self._transition_locked(record, SessionState.RUNNING)
+                        )
+                        deferred_outputs = list(record.deferred_live_output)
+                        record.deferred_live_output.clear()
+                        deferred_callbacks = tuple(self._terminal_callbacks.values())
                     terminate_after_start = False
                 elif record.state is SessionState.CLOSING:
                     record.process_handle = handle
@@ -881,13 +915,22 @@ class SessionRuntime:
                     "The attachment does not own terminal input",
                     session_id=request.session_id,
                 )
-            # Auth-gated startup: the PTY may already exist and emit banner
-            # bytes while the session is still STARTING. Drop early keystrokes
-            # quietly — askpass owns secrets, and clients must not see a hard
-            # input rejection that tears down the attachment.
+            # A blocking auth gate has not assigned its handle yet, so early
+            # input cannot be delivered. The output-driven evidence gate does
+            # assign it while STARTING and permits native PTY authentication.
             if record.state is SessionState.STARTING:
-                return
-            if record.state is not SessionState.RUNNING or record.process_handle is None:
+                if not (
+                    self._connection_evidence_gate
+                    and record.process_handle is not None
+                ):
+                    return
+            elif record.state is not SessionState.RUNNING:
+                raise SshPilotError(
+                    ErrorCode.SESSION_INVALID_STATE,
+                    "The session is not accepting terminal input",
+                    session_id=request.session_id,
+                )
+            if record.process_handle is None:
                 raise SshPilotError(
                     ErrorCode.SESSION_INVALID_STATE,
                     "The session is not accepting terminal input",
@@ -1336,6 +1379,7 @@ class SessionRuntime:
     def _terminal_output(self, session_id: SessionId, data: bytes) -> None:
         if not data:
             return
+        events: List[CoreEvent] = []
         with self._lock:
             record = self._records.get(session_id)
             if record is None or record.pty_eof:
@@ -1347,10 +1391,25 @@ class SessionRuntime:
                 sequence=start,
                 data=data,
             )
-            if record.state is not SessionState.RUNNING:
+            if (
+                record.state is SessionState.STARTING
+                and self._connection_evidence_gate
+            ):
+                if (
+                    record.process_handle is not None
+                    and self._connection_evidence_locked(record).verdict
+                    == "connected"
+                ):
+                    events.append(
+                        self._transition_locked(record, SessionState.RUNNING)
+                    )
+                callbacks = tuple(self._terminal_callbacks.values())
+            elif record.state is not SessionState.RUNNING:
                 record.deferred_live_output.append(output)
                 return
-            callbacks = tuple(self._terminal_callbacks.values())
+            else:
+                callbacks = tuple(self._terminal_callbacks.values())
+        self._publish(events)
         for callback in callbacks:
             try:
                 callback(output)
@@ -1420,6 +1479,26 @@ class SessionRuntime:
         if record.state in {SessionState.EXITED, SessionState.CLOSED}:
             return events
         exit_info = record.exit_info or SessionExitInfo(reason="process_exit")
+        if (
+            record.state is SessionState.STARTING
+            and self._connection_evidence_gate
+        ):
+            evidence = self._connection_evidence_locked(record)
+            if evidence.verdict == "failed" or exit_info.exit_code not in {None, 0}:
+                failure_code = self._startup_failure_code(record.session_id)
+                record.failure = SessionFailure(
+                    code=failure_code.value,
+                    message=(
+                        evidence.failure_reason
+                        or (
+                            "The session authentication was cancelled"
+                            if failure_code is ErrorCode.OPERATION_CANCELLED
+                            else ""
+                        )
+                        or "The session did not complete authentication"
+                    ),
+                )
+                events.append(self._transition_locked(record, SessionState.FAILED))
         record.process_handle = None
         if record.state is SessionState.FAILED:
             events.append(
@@ -1434,6 +1513,13 @@ class SessionRuntime:
             events.append(self._transition_locked(record, SessionState.EXITED))
             events.append(self._transition_locked(record, SessionState.CLOSED))
         return events
+
+    @classmethod
+    def _connection_evidence_locked(
+        cls,
+        record: _SessionRecord,
+    ):
+        return classify_connection_evidence(cls._recent_terminal_text_locked(record))
 
     def _startup_failed(
         self,
