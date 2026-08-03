@@ -43,19 +43,26 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     ("daemon/cli.py", "sshpilot.config"): "M4",  # Config -> daemon settings
     ("daemon/cli.py", "sshpilot.connection_manager"): "M3",  # ConnectionManager
     ("daemon/cli.py", "sshpilot.groups"): "M3",  # GroupManager
-    ("daemon/cli.py", "sshpilot.plugins"): "M8",  # load_plugins -> daemon host
+    ("daemon/cli.py", "sshpilot.plugins.loader"): "M8",  # load_plugins -> daemon host
     # get_state_dir is used for the daemon log. platform_utils imports GI, so the
     # daemon runtime depends on GI for its log path; switch to the GI-free
     # sshpilot.platform.paths.get_state_dir helper when the log lands behind it.
     ("daemon/cli.py", "sshpilot.platform_utils"): "M4",
     ("daemon/launcher.py", "sshpilot.platform_utils"): "M4",
+    # These edges were hidden by the old broken _module_files (double-dot names);
+    # the fixed scanner reveals them. They are pre-existing coupling, not new debt.
+    ("askpass_utils.py", "sshpilot.secret_storage"): "M5",
+    ("connection_manager.py", "sshpilot.secret_storage"): "M5",
+    ("credential_model.py", "sshpilot.secret_storage"): "M5",
+    ("plugins/api.py", "sshpilot.plugins.host"): "M8",
 }
 
 # core is the bottom layer, but ConnectionApplicationService still couples to
 # frontend modules for command building, plugin capability and config. Each
 # entry is removed as the owning migration replaces that coupling.
 CORE_DEBT: dict[tuple[str, str], str] = {
-    ("core/connection_application_service.py", "sshpilot.plugins"): "M8",
+    ("core/connection_application_service.py", "sshpilot.plugins.api"): "M8",
+    ("core/connection_application_service.py", "sshpilot.plugins.registry"): "M8",
     ("core/connection_application_service.py", "sshpilot.ssh_connection_builder"): "M7",
     ("core/connection_application_service.py", "sshpilot.config"): "M4",
 }
@@ -64,6 +71,10 @@ CORE_DEBT: dict[tuple[str, str], str] = {
 def _iter_py_files(package: str):
     base = ROOT / package
     yield from sorted(base.rglob("*.py"))
+
+
+def _has_triple_dot(mod: str) -> bool:
+    return "..." in mod or ".." in mod
 
 
 def _resolve_from(node: ast.ImportFrom, path: Path) -> str:
@@ -77,11 +88,21 @@ def _resolve_from(node: ast.ImportFrom, path: Path) -> str:
     return node.module or ""
 
 
-def _collect_imports(path: Path) -> list[tuple[str, str]]:
+def _collect_imports(
+    path: Path,
+    module_files: "dict[str, Path] | None" = None,
+) -> list[tuple[str, str]]:
     """Absolute module names for Import/ImportFrom/dynamic-import calls.
 
     Handles ``import X``, ``from pkg import X``, ``from . import X``,
     ``from .. import X`` and ``from .mod import X``.
+
+    When *module_files* is supplied, each alias name in an absolute
+    ``from sshpilot[.sub] import name`` is also emitted as the candidate
+    ``sshpilot[.sub].name`` **only if** it resolves to an existing module via
+    :func:`_deepest_existing`.  This lets the closure and boundary tests
+    detect ``from sshpilot import config`` as an edge to ``sshpilot.config``
+    while ignoring pure-symbol names like ``__version__``.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     hits: list[tuple[str, str]] = []
@@ -99,6 +120,14 @@ def _collect_imports(path: Path) -> list[tuple[str, str]]:
                 continue
             if base:
                 hits.append(("from", base))
+                # Also probe base.alias as a potential sub-module import
+                # (e.g. ``from sshpilot import config`` or
+                # ``from sshpilot.plugins import loader``).
+                if module_files is not None and base.startswith("sshpilot"):
+                    for alias in node.names:
+                        cand = f"{base}.{alias.name}"
+                        if _deepest_existing(cand, module_files) is not None:
+                            hits.append(("from", cand))
         elif isinstance(node, ast.Call):
             func = node.func
             name = None
@@ -146,15 +175,23 @@ def _matches(prefix: str, name: str) -> bool:
 # Project import-graph closure (for the daemon runtime)
 # ---------------------------------------------------------------------------
 def _module_files() -> dict[str, Path]:
+    """Map every sshpilot Python source file to its dotted module name.
+
+    Builds the name from a list of parts rather than string concatenation so
+    top-level files (e.g. ``config.py``) produce ``sshpilot.config`` and not
+    the double-dot form ``sshpilot..config`` that the old concatenation yielded
+    when ``parts[:-1]`` was empty.
+    """
     mapping: dict[str, Path] = {}
     for path in ROOT.rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
         parts = path.relative_to(ROOT).parts
         if parts[-1] == "__init__.py":
-            mod = "sshpilot" if len(parts) == 1 else "sshpilot." + ".".join(parts[:-1])
+            name_parts = ["sshpilot"] + list(parts[:-1])
         else:
-            mod = "sshpilot." + ".".join(parts[:-1]) + "." + parts[-1][:-3]
+            name_parts = ["sshpilot"] + list(parts[:-1]) + [parts[-1][:-3]]
+        mod = ".".join(name_parts)
         mapping[mod] = path
     return mapping
 
@@ -186,7 +223,7 @@ def _project_closure(roots: list[str], module_files: dict[str, Path]):
         path = module_files.get(mod)
         if path is None:
             continue
-        for _kind, name in sorted(set(_collect_imports(path))):
+        for _kind, name in sorted(set(_collect_imports(path, module_files))):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue
             target = _deepest_existing(name, module_files)
@@ -222,9 +259,15 @@ def test_package_graph_manifest_lists_boundary_packages():
     assert "sshpilot.gtk" in FORBIDDEN_UI_PREFIXES
 
 
-def _importer_edges(rel: str) -> list[str]:
-    """All absolute module names imported by one file."""
-    return [name for _kind, name in _collect_imports(ROOT / rel)]
+def _importer_edges(rel: str, module_files: "dict[str, Path] | None" = None) -> list[str]:
+    """All absolute module names imported by one file.
+
+    Pass *module_files* to also detect sub-module aliases such as
+    ``from sshpilot import config`` while still ignoring pure symbol names
+    like ``__version__``.
+    """
+    mf = module_files if module_files is not None else _module_files()
+    return [name for _kind, name in _collect_imports(ROOT / rel, mf)]
 
 
 def _allowed_or_debt(name: str, allowed: tuple, debt: dict, importer: str) -> bool:
@@ -239,10 +282,11 @@ def _allowed_or_debt(name: str, allowed: tuple, debt: dict, importer: str) -> bo
 def test_daemon_imports_only_allowed_edges():
     """The daemon must not reach GObject/GTK adapters; new edges are rejected."""
     allowed = ALLOWED_EDGES["daemon"]
+    module_files = _module_files()
     failures: list[str] = []
     for path in sorted((ROOT / "daemon").rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
-        for name in _importer_edges(rel):
+        for name in _importer_edges(rel, module_files):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue  # bare package ``__version__`` import is GI-free
             if not _allowed_or_debt(name, allowed, DAEMON_DEBT, rel):
@@ -257,12 +301,13 @@ def test_daemon_imports_only_allowed_edges():
 
 def test_daemon_debt_edges_are_importer_specific_and_exact():
     """Registered debt is per-importer; stale/phantom edges fail."""
+    module_files = _module_files()
     failures: list[str] = []
     for (imp, prefix), _tag in sorted(DAEMON_DEBT.items()):
         if not (ROOT / imp).exists():
             failures.append(f"deleted importer: {imp}")
             continue
-        seen = [n for n in _importer_edges(imp) if n.startswith("sshpilot")]
+        seen = [n for n in _importer_edges(imp, module_files) if n.startswith("sshpilot")]
         if not any(_matches(prefix, n) for n in seen):
             failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
     assert not failures, "\n".join(failures)
@@ -310,10 +355,11 @@ def test_daemon_closure_has_no_cycle_beyond_scc():
 def test_core_imports_only_allowed_edges():
     """core is the bottom layer; it may only link core + shared model leaves."""
     allowed = ALLOWED_EDGES["core"]
+    module_files = _module_files()
     failures: list[str] = []
     for path in sorted((ROOT / "core").rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
-        for name in _importer_edges(rel):
+        for name in _importer_edges(rel, module_files):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue
             if not _allowed_or_debt(name, allowed, CORE_DEBT, rel):
@@ -327,12 +373,85 @@ def test_core_imports_only_allowed_edges():
 
 
 def test_core_debt_edges_are_importer_specific_and_exact():
+    module_files = _module_files()
     failures: list[str] = []
     for (imp, prefix), _tag in sorted(CORE_DEBT.items()):
         if not (ROOT / imp).exists():
             failures.append(f"deleted importer: {imp}")
             continue
-        seen = [n for n in _importer_edges(imp) if n.startswith("sshpilot")]
+        seen = [n for n in _importer_edges(imp, module_files) if n.startswith("sshpilot")]
         if not any(_matches(prefix, n) for n in seen):
             failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
     assert not failures, "\n".join(failures)
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for the scanner helpers themselves
+# ---------------------------------------------------------------------------
+def test_module_files_maps_top_level_files():
+    """sshpilot.config and sshpilot.askpass_utils must be present (no double-dot)."""
+    mf = _module_files()
+    assert "sshpilot.config" in mf, "sshpilot.config missing from _module_files()"
+    assert "sshpilot.askpass_utils" in mf, "sshpilot.askpass_utils missing from _module_files()"
+
+
+def test_module_files_no_double_dot():
+    """No generated module name may contain a double (or triple) dot."""
+    bad = [mod for mod in _module_files() if ".." in mod]
+    assert not bad, f"module names with '..' in _module_files(): {bad[:5]}"
+
+
+def test_collect_imports_resolves_from_package_alias():
+    """``from sshpilot import config`` must produce a 'sshpilot.config' hit."""
+    import tempfile, textwrap
+
+    src = textwrap.dedent("""
+        from sshpilot import config
+        from sshpilot.plugins import loader
+    """)
+    mf = _module_files()
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False, dir=ROOT) as f:
+        f.write(src)
+        tmp = Path(f.name)
+    try:
+        names = {n for _k, n in _collect_imports(tmp, mf)}
+    finally:
+        tmp.unlink()
+    assert "sshpilot.config" in names, "sshpilot.config not found in import hits"
+    assert "sshpilot.plugins.loader" in names, "sshpilot.plugins.loader not found in import hits"
+
+
+def test_collect_imports_ignores_dunder_attributes():
+    """``from sshpilot import __version__`` must not create a project-module edge."""
+    import tempfile, textwrap
+
+    src = "from sshpilot import __version__\n"
+    mf = _module_files()
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False, dir=ROOT) as f:
+        f.write(src)
+        tmp = Path(f.name)
+    try:
+        names = {n for _k, n in _collect_imports(tmp, mf)}
+    finally:
+        tmp.unlink()
+    project_names = {n for n in names if n.startswith("sshpilot.")}
+    assert "sshpilot.__version__" not in project_names, (
+        "__version__ was treated as a project module"
+    )
+
+
+def test_stale_exact_debt_entry_is_detected():
+    """A debt entry for a non-existent import must be reported as stale."""
+    phantom_debt: dict[tuple[str, str], str] = {
+        ("core/connection_application_service.py", "sshpilot.nonexistent.module"): "M8",
+    }
+    module_files = _module_files()
+    failures = []
+    for (imp, prefix), _tag in phantom_debt.items():
+        if not (ROOT / imp).exists():
+            failures.append(f"deleted importer: {imp}")
+            continue
+        seen = [n for n in _importer_edges(imp, module_files) if n.startswith("sshpilot")]
+        if not any(_matches(prefix, n) for n in seen):
+            failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
+    assert failures, "Expected stale-debt detection to fail for a phantom entry"

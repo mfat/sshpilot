@@ -463,7 +463,7 @@ def test_frontend_backend_operations_are_registered():
 
 
 def test_backend_op_tags_are_known():
-    unknown = {t for (_, _), tag in BACKEND_OPS.items() if tag not in KNOWN_TAGS}
+    unknown = {tag for (_, _), tag in BACKEND_OPS.items() if tag not in KNOWN_TAGS}
     assert not unknown, f"unknown BACKEND_OPS tags: {sorted(unknown)}"
 
 
@@ -482,15 +482,6 @@ def test_backend_ops_debt_matches_exact_baseline():
         "Only remove rows as the owning migration lands."
     )
 
-
-def test_backend_ops_migration_can_reach_zero():
-    """The per-tag baseline permits debt to reach zero as migrations complete."""
-    from collections import Counter
-
-    debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
-    # No tag is hard-required to stay positive; M7 is large and still migrating,
-    # but nothing asserts debt must remain.
-    assert all(v >= 0 for v in debt.values())
 
 
 def test_core_api_daemon_are_gi_free():
