@@ -159,7 +159,7 @@ class TestDaemonActivationOwnership:
             connection.native_connect.assert_not_called()
             unlock.assert_not_called()
 
-    def test_explicit_legacy_uses_local_ssh_and_unlock(self):
+    def test_retired_legacy_setting_cannot_bypass_daemon_ownership(self):
         window = self._window(
             ready=True,
             settings={
@@ -193,14 +193,11 @@ class TestDaemonActivationOwnership:
 
             manager.connect_to_host(connection)
 
-            terminal.start_daemon_session.assert_not_called()
+            terminal.start_daemon_session.assert_called_once()
             show_error.assert_not_called()
             unlock.assert_called()
-            mock_glib.idle_add.assert_called()
-            callback = mock_glib.idle_add.call_args[0][0]
-            callback()
-            connection.native_connect.assert_called()
-            terminal._connect_ssh.assert_called()
+            connection.native_connect.assert_not_called()
+            terminal._connect_ssh.assert_not_called()
 
     def test_external_route_no_internal_tab(self):
         window = self._window(

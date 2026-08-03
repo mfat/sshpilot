@@ -1,5 +1,10 @@
 # Phase 14 — GTK Runtime Audit
 
+> **Historical migration record.** This document describes an earlier phase and
+> names components/settings as they existed then. It is not the current runtime
+> contract; production GTK now requires the daemon and has no local SSH fallback.
+
+
 Audit of all GTK application execution paths connecting to the daemon runtime.
 Covers terminal, file manager, port forwarding, session restore, quit policy,
 crash recovery, and protocol compatibility.
@@ -88,7 +93,7 @@ VTE char-size-changed signal
 
 `TerminalManager._open_removed_local_ssh()` (line 233) launches OpenSSH directly
 via `Vte.Terminal.spawn_async()` with askpass environment. This path is retained
-**ONLY** behind the explicit setting `terminal.removed_local_ssh_setting=True`.
+**ONLY** behind the explicit setting `terminal.legacy_local_ssh_fallback=True`.
 It is never an automatic fallback from the daemon path.
 
 ### External Terminals

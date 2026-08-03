@@ -1,19 +1,16 @@
-"""The file-manager backend factory selects OpenSSH for in-process / legacy."""
+"""The file-manager factory enforces daemon ownership."""
+
+import pytest
 
 from tests._fm_harness import _load_file_manager_module
 
 
-def test_factory_returns_openssh_backend(monkeypatch):
+def test_factory_rejects_missing_daemon_backend(monkeypatch):
     monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "core_service")
     _load_file_manager_module(monkeypatch)
     import sshpilot.file_manager as fm
-    from sshpilot.file_manager.openssh_backend import OpenSSHSFTPManager
-
-    backend = fm.create_file_manager_backend("host", "user", 22)
-    try:
-        assert isinstance(backend, OpenSSHSFTPManager)
-    finally:
-        backend.close()
+    with pytest.raises(RuntimeError, match="daemon SFTP service is required"):
+        fm.create_file_manager_backend("host", "user", 22)
 
 
 def test_config_has_no_backend_key():

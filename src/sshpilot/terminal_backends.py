@@ -216,6 +216,7 @@ class VTETerminalBackend:
     """VTE based terminal backend."""
 
     def __init__(self, owner: "TerminalWidget") -> None:
+        import codecs
         self.owner = owner
         self.vte = Vte.Terminal()
         self.widget = self.vte
@@ -1706,6 +1707,9 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._fc_safety_id = None
         self._commit_cb: Optional[Callable[..., None]] = None
         self._size_changed_cb: Optional[Callable[..., None]] = None
+        # Daemon frames have arbitrary boundaries.  Keep decoder state across
+        # feed() calls so a split UTF-8 code point is never replaced.
+        self._daemon_decoder = codecs.getincrementaldecoder("utf-8")("replace")
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -2187,10 +2191,16 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if not data:
             return
         if isinstance(data, bytes):
-            text = data.decode("utf-8", "replace")
+            decoder = getattr(self, "_daemon_decoder", None)
+            if decoder is None:  # also supports lightweight backend test doubles
+                import codecs
+                decoder = codecs.getincrementaldecoder("utf-8")("replace")
+                self._daemon_decoder = decoder
+            text = decoder.decode(data, final=False)
         else:
             text = str(data)
-        self._on_pty_output(text)
+        if text:
+            self._on_pty_output(text)
 
     def get_size(self) -> tuple:
         rows, cols = self._last_size

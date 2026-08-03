@@ -4,7 +4,7 @@ Capabilities report implemented runtime support. The existence of a method,
 event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
-`retired frontend backend` advertises exactly the three connection capabilities. The
+`InProcessClient` advertises exactly the three connection capabilities. The
 daemon additionally advertises session lifecycle, narrow terminal/interaction
 capabilities, and Phase 10 SFTP/transfer/forward capabilities when the
 corresponding runtimes are available and the client negotiated the required
@@ -74,9 +74,9 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 
 | Identifier | Meaning | Provider/status | Related methods | Related events | Dependencies | Introduced |
 | --- | --- | --- | --- | --- | --- | --- |
-| `connections.read` | Read saved connection DTO snapshots | `retired frontend backend` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | Existing `ConnectionManager` through `retired frontend backend` | v1 |
-| `connections.events` | Subscribe to live connection lifecycle events | `retired frontend backend` and daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
-| `connections.write` | Create, update, and delete basic saved connection metadata | `retired frontend backend` and daemon: Implemented | `create_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | Existing `ConnectionManager` through `retired frontend backend` | v1 |
+| `connections.read` | Read saved connection DTO snapshots | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | Existing `ConnectionManager` through `InProcessClient` | v1 |
+| `connections.events` | Subscribe to live connection lifecycle events | `InProcessClient` and daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
+| `connections.write` | Create, update, and delete basic saved connection metadata | `InProcessClient` and daemon: Implemented | `create_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | Existing `ConnectionManager` through `InProcessClient` | v1 |
 | `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented; in-process unsupported | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
 | `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented; in-process unsupported | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
 | `sessions.events` | Receive daemon session lifecycle events | Daemon: Implemented | `subscribe_events` | `session.created`, `session.state_changed`, `session.exited`, `session.closed` | Existing bounded event multiplexing | v1 / API 0.6 |
@@ -118,16 +118,16 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `secrets` | Core-mediated secret operations/interactions | Schema only; no client method | None | No dedicated event; interaction schemas may be used later | Secret service and permissions | v1 |
 | `connections.config.read` | Read full editor state including filesystem paths | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_READ` capability | v1 |
 | `connections.config.write` | Write connection config fields beyond nickname/host/user/port | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_WRITE` capability | v1 |
-| `connections.secrets.write` | Write passwords and passphrases through daemon RPCs | `retired frontend backend` and daemon: Implemented | `store_connection_password`, `delete_connection_password`, `store_key_passphrase`, `lookup_key_passphrase`; wire `connections.store_password`, `connections.delete_password`, `connections.store_passphrase`, `connections.lookup_passphrase` | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
-| `connections.metadata.write` | Write non-SSH metadata (tags, aliases, WoL settings) | `retired frontend backend` and daemon: Implemented | `update_connection_metadata`; wire `connections.update_metadata` | None defined | Gated by `CONNECTIONS_METADATA_WRITE` capability | v1 |
-| `connections.groups` | Assign and reorder connections within groups | `retired frontend backend` and daemon: Implemented | `assign_connection_to_group`, `create_group`, `delete_group`, `rename_group`; wire `connections.assign_to_group`, `connections.create_group`, `connections.delete_group`, `connections.rename_group` | None defined | Gated by `CONNECTIONS_GROUPS` capability | v1 |
-| `connections.split` | Split a connection block from a multi-host group | `retired frontend backend` and daemon: Implemented | `split_connection`; wire `connections.split` | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
+| `connections.secrets.write` | Write passwords and passphrases through daemon RPCs | `InProcessClient` and daemon: Implemented | `store_connection_password`, `delete_connection_password`, `store_key_passphrase`, `lookup_key_passphrase`; wire `connections.store_password`, `connections.delete_password`, `connections.store_passphrase`, `connections.lookup_passphrase` | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
+| `connections.metadata.write` | Write non-SSH metadata (tags, aliases, WoL settings) | `InProcessClient` and daemon: Implemented | `update_connection_metadata`; wire `connections.update_metadata` | None defined | Gated by `CONNECTIONS_METADATA_WRITE` capability | v1 |
+| `connections.groups` | Assign and reorder connections within groups | `InProcessClient` and daemon: Implemented | `assign_connection_to_group`, `create_group`, `delete_group`, `rename_group`; wire `connections.assign_to_group`, `connections.create_group`, `connections.delete_group`, `connections.rename_group` | None defined | Gated by `CONNECTIONS_GROUPS` capability | v1 |
+| `connections.split` | Split a connection block from a multi-host group | `InProcessClient` and daemon: Implemented | `split_connection`; wire `connections.split` | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
 
 <!-- api-capability: connections.read -->
 ## `connections.read`
 
 Implemented and contract-tested across both clients. The providers return
-equivalent secret-free connection summaries/details. `retired frontend backend` also
+equivalent secret-free connection summaries/details. `InProcessClient` also
 translates manager connection signals into frontend-neutral events.
 
 <!-- api-capability: connections.events -->
@@ -208,7 +208,7 @@ strictly limited to 1–1000.
 
 Daemon-only bounded replay. The JSON response carries retained-range and
 truncation metadata; replay bytes use the same binary output frames as live
-data. `retired frontend backend` remains unsupported.
+data. `InProcessClient` remains unsupported.
 
 <!-- api-capability: interactions -->
 ## `interactions`
@@ -263,7 +263,7 @@ the narrow `sftp.read` / `sftp.write` / `sftp.events` / `sftp.metadata` /
 ## `sftp.read`
 
 Daemon-only listing of SFTP services and remote directories when the SFTP
-runtime is present. `retired frontend backend` returns `unsupported_capability`.
+runtime is present. `InProcessClient` returns `unsupported_capability`.
 
 <!-- api-capability: sftp.write -->
 ## `sftp.write`

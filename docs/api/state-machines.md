@@ -14,7 +14,7 @@ diagrams below asserts that current GTK terminal state has moved into the API.
 | `unreachable` | A future check could not reach the host | Schema only |
 
 There is no runtime health monitor, transition engine, persistence, event, or
-reconnection behaviour. `retired frontend backend` intentionally does not map legacy
+reconnection behaviour. `InProcessClient` intentionally does not map legacy
 terminal-derived `ConnectionState` into health. A future monitor may define
 `connection.health_changed`; that event does not exist today.
 

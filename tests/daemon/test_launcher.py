@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -90,6 +91,13 @@ def test_launcher_keeps_request_timeout_separate_from_probe(daemon_factory):
 
 
 def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
+    probe = subprocess.run(
+        [sys.executable, "-c", "import gi"],
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode:
+        pytest.skip("production daemon dependencies unavailable to subprocess")
     socket_path = tmp_path / "runtime" / "sshpilotd.sock"
     environment = dict(os.environ)
     environment.update(

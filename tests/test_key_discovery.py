@@ -20,7 +20,10 @@ def _generate_test_key(path):
     except ImportError:  # pragma: no cover - handled via ssh-keygen fallback
         paramiko = None  # type: ignore
 
-    if paramiko is not None:
+    if paramiko is not None and (
+        hasattr(getattr(paramiko, "Ed25519Key", None), "generate")
+        or hasattr(getattr(paramiko, "RSAKey", None), "generate")
+    ):
         if hasattr(paramiko, "Ed25519Key") and hasattr(paramiko.Ed25519Key, "generate"):
             key = paramiko.Ed25519Key.generate()
         else:
@@ -74,7 +77,9 @@ def test_discover_keys_recurses(tmp_path):
     )
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.getcwd()
+    env["PYTHONPATH"] = os.pathsep.join(
+        (os.path.join(os.getcwd(), "src"), env.get("PYTHONPATH", ""))
+    )
     proc = subprocess.run(
         ["/usr/bin/python3", "-c", script, str(ssh_dir)],
         capture_output=True,
@@ -120,4 +125,3 @@ def test_connection_manager_loads_keys_isolated(tmp_path, monkeypatch):
     )
     keys = ConnectionManager.load_ssh_keys(cm)
     assert sorted(keys) == sorted([str(config_key), str(home_key)])
-

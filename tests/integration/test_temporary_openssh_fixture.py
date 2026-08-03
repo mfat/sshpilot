@@ -368,6 +368,8 @@ def test_cleanup_orphaned_removes_detached_fixture(tmp_path):
         start_temporary_openssh,
     )
 
+    if not (shutil.which("podman") or shutil.which("docker")):
+        pytest.skip("container runtime unavailable")
     env = start_temporary_openssh(tmp_path, auto_cleanup=False)
     name = env.container_name
     # Simulate starter process dropping the object without destroy.
@@ -391,6 +393,8 @@ def test_destroy_from_meta_removes_container(tmp_path):
         start_temporary_openssh,
     )
 
+    if not (shutil.which("podman") or shutil.which("docker")):
+        pytest.skip("container runtime unavailable")
     env = start_temporary_openssh(tmp_path, auto_cleanup=False)
     meta = env.to_json()
     name = env.container_name
