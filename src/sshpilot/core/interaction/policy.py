@@ -37,8 +37,7 @@ class ResponseType(str, Enum):
     SECRET = "secret"
     CONFIRM_YES = "confirm_yes"
     CONFIRM_NO = "confirm_no"
-    ACCEPT_ONCE = "accept_once"
-    ACCEPT_STORE = "accept_store"
+    ACCEPT = "accept"
     REJECT = "reject"
     USERNAME = "username"
     CANCEL = "cancel"
@@ -155,8 +154,7 @@ class InteractionRequest:
 def _default_responses(kind: PromptKind) -> Tuple[ResponseType, ...]:
     if kind == PromptKind.HOST_KEY:
         return (
-            ResponseType.ACCEPT_ONCE,
-            ResponseType.ACCEPT_STORE,
+            ResponseType.ACCEPT,
             ResponseType.REJECT,
             ResponseType.CANCEL,
         )

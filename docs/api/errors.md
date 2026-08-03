@@ -62,7 +62,7 @@ the validated internal envelope.
 | `askpass_helper_unavailable` | Implemented | Explicit retry only | Helper or host-key verification tooling unavailable | Repair the installation before retry |
 | `secret_backend_unavailable` | Implemented | Explicit retry or direct entry | Stored-secret lookup | Enter once or unlock/configure the selected backend |
 | `secret_storage_failed` | Implemented | Explicit retry only | Remember-after-success commit | Authentication may succeed; report that saving failed |
-| `host_key_persistence_failed` | Implemented | No automatic retry | Accept-and-store host key | Reject the launch; repair known-hosts permissions |
+| `host_key_persistence_failed` | Reserved | No automatic retry | Legacy clients only | No daemon host-key persistence operation emits this code |
 | `authentication_attempts_exhausted` | Implemented | No automatic retry | Repeated password/passphrase failure | Start a fresh explicit session attempt |
 | `permission_denied` | Implemented | Depends on policy change | Attachment ownership and future protected operations | Explain denied action without exposing policy internals |
 | `operation_cancelled` | Schema only | Caller-dependent | Future cancellable operations | Return UI to idle; retry only on explicit user action |
@@ -304,8 +304,9 @@ not included in the envelope.
 <!-- api-error: host_key_persistence_failed -->
 ## `host_key_persistence_failed`
 
-The accepted key could not be atomically and securely written to the configured
-known-hosts file. The connection is not weakened to bypass verification.
+Reserved for compatibility with older clients. The daemon does not write
+known-hosts files and does not emit this error for host-key prompts; OpenSSH
+reports persistence failures through its normal process output and exit status.
 
 <!-- api-error: authentication_attempts_exhausted -->
 ## `authentication_attempts_exhausted`

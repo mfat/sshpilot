@@ -588,11 +588,6 @@ class DaemonServer:
                     ),
                 )
             )
-            set_authenticated_callback = getattr(
-                self._session_runtime, "set_authenticated_callback", None
-            )
-            if callable(set_authenticated_callback):
-                set_authenticated_callback(self._interaction_broker.mark_authenticated)
             self._dispatcher = RequestDispatcher(
                 self._core_client,
                 self._session_runtime,

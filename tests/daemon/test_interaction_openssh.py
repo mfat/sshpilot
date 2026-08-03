@@ -146,7 +146,7 @@ def test_encrypted_key_and_unknown_host_use_typed_interactions(tmp_path) -> None
             broker.respond(
                 InteractionDecisionRequest(
                     interaction_id=summary.id,
-                    host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+                    host_key_decision=HostKeyDecision.ACCEPT,
                 ),
                 client_id,
             )
@@ -224,7 +224,7 @@ def test_encrypted_key_and_unknown_host_use_typed_interactions(tmp_path) -> None
             InteractionType.PRIVATE_KEY_PASSPHRASE,
         ]
         assert stored_passphrases == [(str(client_key), passphrase)]
-        assert not known_hosts.exists()
+        assert known_hosts.is_file()
     finally:
         if runner is not None:
             runner.close()
@@ -366,7 +366,7 @@ def test_stored_passphrase_autofills_without_pythonpath(tmp_path) -> None:
             broker.respond(
                 InteractionDecisionRequest(
                     interaction_id=summary.id,
-                    host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+                    host_key_decision=HostKeyDecision.ACCEPT,
                 ),
                 client_id,
             )
@@ -434,7 +434,7 @@ def test_stored_passphrase_autofills_without_pythonpath(tmp_path) -> None:
             daemon.wait(timeout=1)
 
 
-def test_accept_and_store_persists_known_hosts(tmp_path) -> None:
+def test_accept_persists_known_hosts_according_to_openssh(tmp_path) -> None:
     tools = {
         name: shutil.which(name)
         for name in ("ssh", "sshd", "ssh-keygen", "ssh-keyscan")
@@ -521,7 +521,7 @@ def test_accept_and_store_persists_known_hosts(tmp_path) -> None:
             broker.respond(
                 InteractionDecisionRequest(
                     interaction_id=summary.id,
-                    host_key_decision=HostKeyDecision.ACCEPT_AND_STORE,
+                    host_key_decision=HostKeyDecision.ACCEPT,
                 ),
                 client_id,
             )
@@ -580,13 +580,8 @@ def test_accept_and_store_persists_known_hosts(tmp_path) -> None:
             daemon.wait(timeout=1)
 
 
-def test_accept_once_does_not_persist_user_known_hosts(tmp_path) -> None:
-    """ACCEPT_ONCE trusts only for this session; user known_hosts stays untouched.
-
-    OpenSSH verifies the live host key via askpass. Session-first
-    UserKnownHostsFile receives the accepted key; ACCEPT_ONCE does not merge
-    it into the user known_hosts file.
-    """
+def test_accept_allows_openssh_to_persist_user_known_hosts(tmp_path) -> None:
+    """Accept returns yes and leaves persistence to OpenSSH configuration."""
     tools = {
         name: shutil.which(name)
         for name in ("ssh", "sshd", "ssh-keygen")
@@ -674,7 +669,7 @@ def test_accept_once_does_not_persist_user_known_hosts(tmp_path) -> None:
         broker.respond(
             InteractionDecisionRequest(
                 interaction_id=summary.id,
-                host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+                host_key_decision=HostKeyDecision.ACCEPT,
             ),
             client_id,
         )
@@ -716,7 +711,7 @@ def test_accept_once_does_not_persist_user_known_hosts(tmp_path) -> None:
         )
         assert exited.wait(8)
         assert b"PHASE8_ONCE_OK" in output
-        assert not known_hosts.exists()
+        assert known_hosts.is_file()
     finally:
         if runner is not None:
             runner.close()

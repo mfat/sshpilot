@@ -9,7 +9,7 @@ Stability: **stable**.
 
 ## Types
 
-* `HOST_KEY_CONFIRMATION` — accept once / accept+store / reject
+* `HOST_KEY_CONFIRMATION` — accept / reject
 * `PASSWORD` / `PRIVATE_KEY_PASSPHRASE` — submit secret or cancel
 
 ## Eligibility
@@ -41,6 +41,6 @@ for item in client.list_interactions():
         claim = client.claim_interaction(item.id)
         client.respond_to_interaction(InteractionDecisionRequest(
             interaction_id=item.id,
-            host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+            host_key_decision=HostKeyDecision.ACCEPT,
         ))
 ```

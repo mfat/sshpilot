@@ -400,7 +400,6 @@ class SessionRuntime:
         # Optional auth gate: (session_id, is_alive) -> bool. When set,
         # RUNNING is deferred until ControlMaster proves authentication.
         self._auth_gate: Optional[Callable[..., bool]] = None
-        self._authenticated_callback: Optional[Callable[[SessionId], None]] = None
         self._auth_gate_timeout_seconds = 60.0
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
@@ -536,13 +535,6 @@ class SessionRuntime:
         self._auth_gate = gate
         self._auth_gate_timeout_seconds = float(timeout_seconds)
 
-    def set_authenticated_callback(
-        self, callback: Optional[Callable[[SessionId], None]]
-    ) -> None:
-        """Notify the owner when the PTY runtime reaches authenticated RUNNING."""
-
-        self._authenticated_callback = callback
-
     def start_session(self, session_id: SessionId) -> None:
         """Run the potentially blocking startup step on a command worker."""
 
@@ -638,8 +630,6 @@ class SessionRuntime:
                     record.deferred_live_output.clear()
                     terminate_after_start = False
             self._publish(events)
-            if events and self._authenticated_callback is not None:
-                self._authenticated_callback(session_id)
             for output in deferred_outputs:
                 for callback in deferred_callbacks:
                     try:

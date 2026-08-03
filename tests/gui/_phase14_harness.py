@@ -421,7 +421,7 @@ class Phase14Harness:
                                     InteractionDecisionRequest(
                                         interaction_id=summary.id,
                                         host_key_decision=(
-                                            HostKeyDecision.ACCEPT_ONCE
+                                            HostKeyDecision.ACCEPT
                                             if accept_host_key
                                             else HostKeyDecision.REJECT
                                         ),

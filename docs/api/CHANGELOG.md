@@ -143,8 +143,8 @@ notes remain separate.
 - Added a private same-user daemon askpass helper channel, conservative prompt
   classification, bounded attempts, existing selected-backend lookup, and
   remember-after-authentication-success storage.
-- Added strict unknown-host accept-once/accept-and-store handling through an
-  exact session key pin. Changed/revoked keys remain blocking failures.
+- Added unknown-host accept/reject handling by routing OpenSSH askpass prompts
+  through the typed interaction API. OpenSSH remains responsible for policy.
 - Added experimental daemon-mode GTK interaction dialogs on an independent
   bridge lane so authentication UI does not block terminal streaming.
 - Added daemon-owned Unix PTYs with exact child/process-group ownership, one

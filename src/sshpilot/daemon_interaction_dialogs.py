@@ -127,9 +127,9 @@ class DaemonInteractionDialogs:
         dialog = Adw.AlertDialog(heading=heading, body=body)
         dialog.add_response("reject", "Reject")
         if not changed:
-            dialog.add_response("store", "Accept")
+            dialog.add_response("accept", "Accept")
             dialog.set_response_appearance(
-                "store",
+                "accept",
                 Adw.ResponseAppearance.SUGGESTED,
             )
         dialog.set_default_response("reject")
@@ -148,7 +148,7 @@ class DaemonInteractionDialogs:
     def _host_key_response(self, summary, dialog, response: str) -> None:
         self._dialogs.pop(summary.id, None)
         decision = {
-            "store": HostKeyDecision.ACCEPT_AND_STORE,
+            "accept": HostKeyDecision.ACCEPT,
         }.get(response, HostKeyDecision.REJECT)
         self._bridge.submit_interaction(
             lambda: self._client.respond_to_interaction(

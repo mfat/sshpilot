@@ -127,12 +127,12 @@ def test_host_key_decision_never_uses_secret_frame(daemon_factory) -> None:
     client.respond_to_interaction(
         InteractionDecisionRequest(
             interaction_id=summary.id,
-            host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+            host_key_decision=HostKeyDecision.ACCEPT,
         )
     )
     result = server._interaction_broker.wait_for_result(summary.id)
     assert result is not None
-    assert result.decision is HostKeyDecision.ACCEPT_ONCE
+    assert result.decision is HostKeyDecision.ACCEPT
     client.close()
 
 

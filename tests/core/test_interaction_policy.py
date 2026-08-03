@@ -65,7 +65,7 @@ def test_timeout_retry_remember_headless_malformed():
         host,
         InteractionResponse(
             outcome=InteractionOutcome.ACCEPTED,
-            response_type=ResponseType.ACCEPT_ONCE,
+            response_type=ResponseType.ACCEPT,
             remember=True,
         ),
     )

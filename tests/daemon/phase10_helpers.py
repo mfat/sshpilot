@@ -327,7 +327,7 @@ class Phase10Stack:
                 InteractionDecisionRequest(
                     interaction_id=summary.id,
                     host_key_decision=(
-                        HostKeyDecision.ACCEPT_ONCE
+                        HostKeyDecision.ACCEPT
                         if accept
                         else HostKeyDecision.REJECT
                     ),
