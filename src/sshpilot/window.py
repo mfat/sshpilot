@@ -3383,6 +3383,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Connection manager signals - use connect_after to avoid conflict with GObject.connect
         self.connection_manager.connect_after('connection-added', self.on_connection_added)
         self.connection_manager.connect_after('connection-removed', self.on_connection_removed)
+        self.connection_manager.connect_after('projection-reset', self.on_projection_reset)
         self.connection_manager.connect_after('connection-status-changed', self.on_connection_status_changed)
 
         # Config signals
@@ -5686,12 +5687,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 ssh_config = None
 
         initial_password = getattr(connection, 'password', None) or None
-        if not initial_password and self.connection_manager is not None:
-            try:
-                initial_password = self.connection_manager.get_password(host_value, username)
-            except Exception as exc:
-                logger.debug("Password lookup failed for authorized_keys editor: %s", exc)
-                initial_password = None
 
         connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
 

@@ -811,7 +811,7 @@ class SshCopyIdRunner:
             auth_method = int(getattr(connection, 'auth_method', 0) or 0)
             username = getattr(connection, 'username', '')
             manager = getattr(self.window, 'connection_manager', None)
-            has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
+            has_saved_password = False
             # Password delivery is via askpass (REQUIRE=force); graphical prompts.
             if auth_method == 1 and has_saved_password:
                 logger.debug(
@@ -1300,7 +1300,7 @@ class SshCopyIdRunner:
                 logger.debug(f"Main window: Error getting auth method from connection object: {e2}")
                 auth_method = 0
             prefer_password = (auth_method == 1)
-            has_saved_password = bool(self.window.connection_manager.get_password(host_value, connection.username))
+            has_saved_password = False
             combined_auth = (auth_method == 0 and has_saved_password)
 
         try:

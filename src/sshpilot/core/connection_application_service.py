@@ -628,6 +628,20 @@ class ConnectionApplicationService:
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         return self.store_daemon_passphrase(request.key_path, request.passphrase)
 
+    def store_plugin_secret_rpc(self, request) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self._connection_manager.store_plugin_secret(request.plugin_id, request.key, request.value)
+
+    def get_plugin_secret_rpc(self, request):
+        self._assert_command_thread()
+        return self._connection_manager.get_plugin_secret(request.plugin_id, request.key)
+
+    def delete_plugin_secret_rpc(self, request) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self._connection_manager.delete_plugin_secret(request.plugin_id, request.key)
+
     def delete_key_passphrase_rpc(
         self, request: DeleteKeyPassphraseRequest
     ) -> bool:

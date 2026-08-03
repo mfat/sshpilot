@@ -2016,3 +2016,34 @@ class DaemonClient:
         return unsupported_capability(
             UNSUPPORTED_CLIENT_METHOD_CAPABILITIES[method_name]
         )
+
+    def store_plugin_secret(self, plugin_id: str, key: str, value: str) -> bool:
+        from .models.connections import store_plugin_secret_request_to_wire, StorePluginSecretRequest
+        self._require_write_compatibility("store plugin secret")
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        req = StorePluginSecretRequest(plugin_id=plugin_id, key=key, value=value)
+        result = self._request(
+            "connections.store_plugin_secret",
+            store_plugin_secret_request_to_wire(req),
+        )
+        return bool(result)
+
+    def get_plugin_secret(self, plugin_id: str, key: str):
+        from .models.connections import get_plugin_secret_request_to_wire, GetPluginSecretRequest
+        req = GetPluginSecretRequest(plugin_id=plugin_id, key=key)
+        result = self._request(
+            "connections.get_plugin_secret",
+            get_plugin_secret_request_to_wire(req),
+        )
+        return result
+
+    def delete_plugin_secret(self, plugin_id: str, key: str) -> bool:
+        from .models.connections import delete_plugin_secret_request_to_wire, DeletePluginSecretRequest
+        self._require_write_compatibility("delete plugin secret")
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        req = DeletePluginSecretRequest(plugin_id=plugin_id, key=key)
+        result = self._request(
+            "connections.delete_plugin_secret",
+            delete_plugin_secret_request_to_wire(req),
+        )
+        return bool(result)

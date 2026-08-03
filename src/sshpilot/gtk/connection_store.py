@@ -29,6 +29,7 @@ class ConnectionPresentationStore:
         self._subscription = None
         self._generation = 0
         self._last_sequence = -1
+        self._refresh_token = 0
         self._refresh_generation = 0
         self._pending_events = []
         self._on_changed = on_changed
@@ -105,7 +106,7 @@ class ConnectionPresentationStore:
             lambda event: self._accept_event(event, generation, instance_id)
         )
         try:
-            snapshot = self._resynchronize(client, generation, instance_id)
+            snapshot = self._resynchronize(client, generation, instance_id, None)
         except BaseException:
             subscription.unsubscribe()
             raise
@@ -123,26 +124,28 @@ class ConnectionPresentationStore:
             instance_id = getattr(client, "server_instance_id", None)
             if client is not None:
                 self._refresh_generation = generation
+                self._refresh_token += 1
+                token = self._refresh_token
                 self._pending_events = []
-        if client is not None:
-            try:
-                return self._resynchronize(client, generation, instance_id)
-            except BaseException:
-                # A failed snapshot must not strand the store in buffering
-                # mode. Resume from the still-valid live projection and apply
-                # everything received while the request was in flight.
-                with self._lock:
-                    pending = tuple(self._pending_events)
+            else:
+                return self.snapshot()
+
+        try:
+            return self._resynchronize(client, generation, instance_id, token)
+        except BaseException:
+            # A failed snapshot must not strand the store in buffering mode.
+            with self._lock:
+                pending = tuple(self._pending_events)
+                if self._refresh_generation == generation and self._refresh_token == token:
                     self._pending_events = []
-                    if self._refresh_generation == generation:
-                        self._refresh_generation = 0
-                for event in sorted(pending, key=lambda item: item.sequence):
-                    self._accept_event(event, generation, instance_id)
-                raise
-        return self.snapshot()
+                    self._refresh_generation = 0
+            for event in sorted(pending, key=lambda item: item.sequence):
+                self._accept_event(event, generation, instance_id)
+            raise
 
     def _resynchronize(self, client, generation: int,
-                       instance_id: Optional[str]) -> Tuple[ConnectionSummary, ...]:
+                       instance_id: Optional[str],
+                       token: Optional[int] = None) -> Tuple[ConnectionSummary, ...]:
         """Replace a snapshot and buffered events without a live-mode gap."""
         connections = client.list_connections()
         replacement: Dict[str, ConnectionSummary] = {}
@@ -153,6 +156,8 @@ class ConnectionPresentationStore:
 
         with self._lock:
             if generation != self._generation or client is not self._client:
+                return tuple(self._by_id.values())
+            if token is not None and self._refresh_token != token:
                 return tuple(self._by_id.values())
             previous = self._by_id
             self._by_id = replacement
@@ -166,11 +171,14 @@ class ConnectionPresentationStore:
             current = dict(self._by_id)
             snapshot = tuple(current.values())
 
-        self._publish_projection_change(previous, current, snapshot)
+        self._publish_projection_change(previous, current, snapshot, is_resync=True)
         return snapshot
 
-    def _publish_projection_change(self, previous, replacement, snapshot) -> None:
+    def _publish_projection_change(self, previous, replacement, snapshot, is_resync=False) -> None:
         self._notify(snapshot)
+        if is_resync:
+            self._emit("projection-reset", None)
+            return
         for connection_id in previous.keys() - replacement.keys():
             self._emit("connection-removed", previous[connection_id])
         for connection_id in replacement.keys() - previous.keys():
@@ -218,14 +226,25 @@ class ConnectionPresentationStore:
 
     def _notify(self, snapshot: Tuple[ConnectionSummary, ...]) -> None:
         if self._on_changed is not None:
-            self._dispatch(lambda: self._on_changed(snapshot))
+            with self._lock:
+                gen = self._generation
+            def wrapped():
+                with self._lock:
+                    if self._generation != gen: return
+                self._on_changed(snapshot)
+            self._dispatch(wrapped)
 
-    def _emit(self, signal_name: str, connection: ConnectionSummary) -> None:
+    def _emit(self, signal_name: str, connection: Optional[ConnectionSummary]) -> None:
         with self._lock:
             handlers = tuple(self._handlers.values())
+            gen = self._generation
         for registered_name, callback in handlers:
             if registered_name == signal_name:
-                self._dispatch(lambda callback=callback: callback(self, connection))
+                def wrapped(cb=callback, c=connection):
+                    with self._lock:
+                        if self._generation != gen: return
+                    cb(self, c)
+                self._dispatch(wrapped)
 
     def store_password(self, host: str, username: str, password: str):
         """Store a password via the selected secret backend (see secret_storage)."""

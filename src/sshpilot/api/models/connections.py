@@ -606,3 +606,47 @@ class ConnectionValidationResult:
     def __post_init__(self) -> None:
         if self.valid and self.errors:
             raise ValueError("a valid result cannot contain validation errors")
+
+@dataclass(frozen=True)
+class StorePluginSecretRequest:
+    plugin_id: str
+    key: str
+    value: str
+
+@dataclass(frozen=True)
+class GetPluginSecretRequest:
+    plugin_id: str
+    key: str
+
+@dataclass(frozen=True)
+class DeletePluginSecretRequest:
+    plugin_id: str
+    key: str
+
+def store_plugin_secret_request_to_wire(request: StorePluginSecretRequest) -> dict:
+    return {"plugin_id": request.plugin_id, "key": request.key, "value": request.value}
+
+def store_plugin_secret_request_from_wire(payload: dict) -> StorePluginSecretRequest:
+    return StorePluginSecretRequest(
+        plugin_id=payload["plugin_id"],
+        key=payload["key"],
+        value=payload["value"],
+    )
+
+def get_plugin_secret_request_to_wire(request: GetPluginSecretRequest) -> dict:
+    return {"plugin_id": request.plugin_id, "key": request.key}
+
+def get_plugin_secret_request_from_wire(payload: dict) -> GetPluginSecretRequest:
+    return GetPluginSecretRequest(
+        plugin_id=payload["plugin_id"],
+        key=payload["key"],
+    )
+
+def delete_plugin_secret_request_to_wire(request: DeletePluginSecretRequest) -> dict:
+    return {"plugin_id": request.plugin_id, "key": request.key}
+
+def delete_plugin_secret_request_from_wire(payload: dict) -> DeletePluginSecretRequest:
+    return DeletePluginSecretRequest(
+        plugin_id=payload["plugin_id"],
+        key=payload["key"],
+    )
