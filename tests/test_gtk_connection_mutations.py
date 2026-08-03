@@ -124,6 +124,13 @@ class _MutationWindow:
         self.errors.append((title, message))
 
 
+def test_daemon_mode_detection_matches_current_mode_less_selection():
+    window = _MutationWindow()
+    window._app._api_client_selection = SimpleNamespace(client=window.client)
+
+    assert window._daemon_mode_active() is True
+
+
 def _basic_data(**overrides):
     data = {
         "protocol": "ssh",

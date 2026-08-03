@@ -6301,6 +6301,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 _done(False)
 
     def _daemon_mode_active(self) -> bool:
+        """Return whether this window is attached to the daemon client.
+
+        ``ClientSelection`` is daemon-only now and intentionally no longer
+        carries the former ``mode`` enum.  Checking that removed field made
+        every real selection look like local/legacy mode, routing edits into
+        the read-only presentation store.
+        """
         get_application = getattr(self, 'get_application', None)
         app = get_application() if callable(get_application) else None
         selection = (
@@ -6310,8 +6317,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
         return (
             selection is not None
-            and getattr(getattr(selection, 'mode', None), 'value', None)
-            == 'daemon'
             and getattr(selection, 'client', None) is self.client
         )
 

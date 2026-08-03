@@ -227,7 +227,9 @@ class DaemonInteractionDialogs:
             margin_end=12,
         )
         entry = Gtk.PasswordEntry(show_peek_icon=True)
-        entry.connect("activate", lambda _entry: dialog.response("submit"))
+        # AlertDialog exposes the response signal and virtual handler, but not
+        # the Adw.MessageDialog-style ``response()`` convenience method.
+        entry.connect("activate", lambda _entry: dialog.do_response("submit"))
         content.append(entry)
         dialog.set_extra_child(content)
         dialog.add_response("cancel", "Cancel")
