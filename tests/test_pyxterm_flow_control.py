@@ -1,7 +1,7 @@
 """xterm.js-style pending-callback flow control for PyXtermBridgeBackend."""
 import codecs
 
-from sshpilot.terminal_backends import PyXtermBridgeBackend
+from sshpilot.terminal_backends import PyXtermBridgeBackend, PyXtermTerminalBackend
 
 
 class _FakeBridge:
@@ -42,6 +42,20 @@ def _make_backend():
     b._scripts = []
     b._run_javascript = b._scripts.append
     return b
+
+
+def test_normal_construction_initializes_daemon_decoder(monkeypatch):
+    """The public constructor must create the stateful daemon decoder itself."""
+    monkeypatch.setattr(
+        PyXtermTerminalBackend,
+        "__init__",
+        lambda self, owner: setattr(self, "owner", owner),
+    )
+
+    backend = PyXtermBridgeBackend(object())
+
+    assert backend._daemon_decoder.decode(b"\xc3", final=False) == ""
+    assert backend._daemon_decoder.decode(b"\xa9", final=False) == "é"
 
 
 def test_small_chunks_use_fast_path_without_ack():
@@ -124,7 +138,7 @@ def test_daemon_feed_preserves_utf8_split_across_frames():
     b._daemon_decoder = codecs.getincrementaldecoder("utf-8")("replace")
     displayed = []
     b._on_pty_output = displayed.append
-    encoded = "سلام".encode("utf-8")
+    encoded = "سلام".encode()
 
     # Deliberately split every two-byte Persian code point in half.
     for byte in encoded:

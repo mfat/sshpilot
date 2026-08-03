@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import logging
 import os
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
@@ -216,7 +217,6 @@ class VTETerminalBackend:
     """VTE based terminal backend."""
 
     def __init__(self, owner: "TerminalWidget") -> None:
-        import codecs
         self.owner = owner
         self.vte = Vte.Terminal()
         self.widget = self.vte
