@@ -5,6 +5,21 @@ notes remain separate.
 
 ## Unreleased
 
+- Implemented `DaemonClient.list_known_hosts` and
+  `DaemonClient.remove_known_host_entries` over the `known_hosts.list` and
+  `known_hosts.remove` RPCs. Removal uses an optimistic revision check and
+  surfaces `stale_editor` when the file changed since the snapshot.
+- Published the `list_known_hosts` and `remove_known_host_entries` client
+  contract methods plus their models (`KnownHostsSnapshot`,
+  `KnownHostEntrySummary`, `RemoveKnownHostEntriesRequest`,
+  `KnownHostsMutationResult`, `KnownHostEntryId`). Both methods are daemon-only;
+  local clients keep reporting them as unsupported.
+- Declared `known_hosts.read` and `known_hosts.write` capability enum values.
+  Runtime support depends on daemon capability negotiation: a daemon advertises
+  them only when its known-hosts service is installed and its RPC handlers are
+  wired. Until then clients must treat them as unavailable.
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.14`; `PROTOCOL_VERSION` stays `1.0`.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.13` for the expanded interaction
   API, including typed generic confirmations.
 

@@ -20,9 +20,7 @@ mean GTK should own an instance of it.
 | `key_manager.py` | `core.keys.KeyService`, `KeyGenerateSpec`, `SSHKeyInfo` | `DAEMON_STATE_REQUIRED` | Instantiates `KeyService`, runs `ssh-keygen`, scans `~/.ssh` | API adapter; daemon owns key files and `ssh-keygen` |
 | `key_manager.py` | `core.errors.CoreError`, `ErrorCode` | `PURE_FRONTEND_SAFE` | Maps structured errors to legacy exception types | Keep local (error mapping is presentation) |
 | `key_utils.py` | `core.keys` (`looks_like_private_key`, `is_private_key`, `SKIPPED_FILENAMES`) | `MIXED_NEEDS_SPLIT` | Headless key discovery used by connection dialog key chooser | Pure sniffing may stay local; discovery over the SSH dir moves to daemon |
-| `known_hosts_editor.py` | `core.known_hosts.load_known_hosts` | `DAEMON_STATE_REQUIRED` | Reads the known-hosts file from GTK | Daemon API list; GTK renders entries |
-| `known_hosts_editor.py` | `core.known_hosts.save_known_hosts` | `DAEMON_STATE_REQUIRED` | Writes the known-hosts file from GTK | Daemon API remove/apply with revision token |
-| `known_hosts_editor.py` | `core.known_hosts.KnownHostEntry`, `filter_entries` | `PURE_FRONTEND_SAFE` | Local parse/filter for rendering | Keep local |
+| `known_hosts_editor.py` | `sshpilot.api.models.known_hosts` (+ `KnownHostsController`) | `DAEMON_STATE_REQUIRED` | **Complete (M2)** — renders daemon API summaries; stages IDs; batched revision-checked removal | Daemon API list/remove with revision token; GTK renders entries |
 | `ssh_connection_validator.py` | `core.validation.connection` | `PURE_FRONTEND_SAFE` | Field validation, hostname/port/username rules | Keep local (form validation stays local) |
 | `config.py` | `core.settings` (defaults, migration, store) | `MIXED_NEEDS_SPLIT` | GTK preference store loads/writes the config JSON | GTK keeps visual keys; daemon-owned keys via API |
 | `preferences.py` | `core.settings.compose_ssh_overrides` | `PURE_FRONTEND_SAFE` | Pure SSH-overrides composition | Keep local (pure formatting) |
@@ -70,8 +68,6 @@ These stay local and are **not** routed through IPC:
 
 - `core.validation.connection` — field validation.
 - `core.forwards` — forwarding-rule validation and defaults.
-- `core.known_hosts.KnownHostEntry.parse` and `filter_entries` — known-host
-  parsing/filtering for rendering.
 - `core.interaction.classify_prompt` / `build_request_from_prompt` — prompt
   classification.
 - `core.transfers` conflict-policy mapping (`ui_conflict_response_to_policy`,

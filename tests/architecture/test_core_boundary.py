@@ -69,9 +69,6 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # -- transfer conflict-policy mapping ---------------------------
         ("file_manager_window.py", "transfers", "OverwritePolicy"),
         ("file_manager_window.py", "transfers", "ui_conflict_response_to_policy"),
-        # -- known-hosts parse/filter for rendering (NOT load/save) -----
-        ("known_hosts_editor.py", "known_hosts", "KnownHostEntry"),
-        ("known_hosts_editor.py", "known_hosts", "filter_entries"),
         # -- prompt classification policy (pure) ------------------------
         ("askpass_utils.py", "interaction", "classify_prompt"),
         ("askpass_utils.py", "interaction", "PromptKind"),
@@ -119,9 +116,6 @@ PENDING: dict[tuple[str, str, str], tuple[str, str]] = {
     ("key_manager.py", "keys", "KeyGenerateSpec"): ("M1", "key generation spec -> daemon"),
     ("key_manager.py", "keys", "KeyService"): ("M1", "instantiate key service -> daemon"),
     ("key_manager.py", "keys", "SSHKeyInfo"): ("M1", "key listing result -> daemon"),
-    # === M2 — known-hosts: GTK must read/write the file on the daemon ===
-    ("known_hosts_editor.py", "known_hosts", "load_known_hosts"): ("M2", "reads file -> daemon"),
-    ("known_hosts_editor.py", "known_hosts", "save_known_hosts"): ("M2", "writes file -> daemon"),
     # === M3 — connections store ========================================
     ("connection_manager.py", "connections", "ConnectionService"): ("M3", "in-GTK store -> daemon"),
     # === M4 — settings / config JSON ownership ==========================
@@ -181,8 +175,6 @@ SERVICE_CLASSES = {"SecretManager", "ConnectionService", "KeyService", "BackupMa
 BACKEND_OPS: dict[tuple[str, str], str] = {
     # -- M1 keys ---------------------------------------------------------
     ("key_manager.py", "KeyService"): "M1",
-    # -- M2 known-hosts ------------------------------------------------
-    ("known_hosts_editor.py", "known_hosts_io"): "M2",
     # -- M3 connections --------------------------------------------------
     ("connection_manager.py", "ConnectionService"): "M3",
     # -- M5 secrets ------------------------------------------------------
@@ -358,7 +350,6 @@ def test_frontend_core_imports_are_categorised():
 # Baseline diag for macros below.
 _PENDING_EXPECTED = {
     "M1": 3,
-    "M2": 2,  # load_known_hosts + save_known_hosts (removed by M2)
     "M3": 1,
     "M4": 3,
     "M5": 4,
@@ -476,7 +467,7 @@ def test_backend_ops_debt_matches_exact_baseline():
     from collections import Counter
 
     debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
-    expected = {"M1": 1, "M2": 1, "M3": 1, "M5": 4, "M6": 1, "M7": 19, "M8": 1}
+    expected = {"M1": 1, "M3": 1, "M5": 4, "M6": 1, "M7": 19, "M8": 1}
     assert dict(debt) == expected, (
         f"BACKEND_OPS debt changed; expected {expected}, got {dict(debt)}. "
         "Only remove rows as the owning migration lands."
@@ -516,3 +507,37 @@ def test_core_does_not_import_daemon():
         rel = _rel(path)
         hits = _daemon_imports(tree, rel)
         assert not hits, f"{path}: core imports daemon: {hits}"
+
+
+def test_known_hosts_editor_has_no_local_file_io():
+    """M2: the editor must render API data and never touch the file directly.
+
+    Enumerated AST check for the exact legacy I/O surface: no path helper, no
+    local load/save functions, and no direct ``open`` / ``Path.read_text`` /
+    ``Path.write_text`` calls.
+    """
+    path = SOURCE / "known_hosts_editor.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    used: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            used.add(node.attr)
+        elif isinstance(node, ast.Import):
+            used.update(a.asname or a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            used.update(a.asname or a.name for a in node.names)
+    forbidden = {
+        "get_ssh_dir",
+        "load_known_hosts",
+        "save_known_hosts",
+        "read_text",
+        "write_text",
+        "open",
+    }
+    hits = sorted(forbidden & used)
+    assert not hits, (
+        "known_hosts_editor.py performs local known-hosts I/O (M2 incomplete): "
+        + ", ".join(hits)
+    )

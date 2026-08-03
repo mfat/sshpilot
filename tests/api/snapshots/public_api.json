@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.13",
+  "api_implementation_version": "0.14",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -40,6 +40,8 @@
     "interactions.password",
     "interactions.read",
     "interactions.respond",
+    "known_hosts.read",
+    "known_hosts.write",
     "plugins",
     "port_forwarding",
     "secrets",
@@ -385,6 +387,7 @@
     "list_connections",
     "list_forwards",
     "list_interactions",
+    "list_known_hosts",
     "list_sessions",
     "list_sftp_services",
     "list_transfers",
@@ -395,6 +398,7 @@
     "open_sftp",
     "release_interaction",
     "release_terminal_input",
+    "remove_known_host_entries",
     "rename_group",
     "replay_terminal",
     "resize_terminal",
@@ -737,6 +741,10 @@
       "parameters": [],
       "return": "list[InteractionSummary]"
     },
+    "list_known_hosts": {
+      "parameters": [],
+      "return": "KnownHostsSnapshot"
+    },
     "list_sessions": {
       "parameters": [],
       "return": "list[SessionSummary]"
@@ -818,6 +826,16 @@
         }
       ],
       "return": "None"
+    },
+    "remove_known_host_entries": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "RemoveKnownHostEntriesRequest"
+        }
+      ],
+      "return": "KnownHostsMutationResult"
     },
     "rename_group": {
       "parameters": [
@@ -1244,6 +1262,12 @@
     "interactions.respond": {
       "capability": "interactions.respond"
     },
+    "known_hosts.list": {
+      "capability": "known_hosts.read"
+    },
+    "known_hosts.remove": {
+      "capability": "known_hosts.write"
+    },
     "sessions.attach": {
       "capability": "sessions.write"
     },
@@ -1544,6 +1568,10 @@
     "InteractionSummary",
     "InteractionTimeout",
     "InteractionType",
+    "KnownHostEntryId",
+    "KnownHostEntrySummary",
+    "KnownHostsMutationResult",
+    "KnownHostsSnapshot",
     "ListDirectoryRequest",
     "ListDirectoryResult",
     "LookupKeyPassphraseRequest",
@@ -1561,6 +1589,7 @@
     "RememberPolicy",
     "RemoteFileEntry",
     "RemoteFileType",
+    "RemoveKnownHostEntriesRequest",
     "RenameGroupRequest",
     "ReplayBounds",
     "ReplayRequest",
@@ -2022,6 +2051,21 @@
       "interaction_id",
       "expired_at"
     ],
+    "KnownHostEntrySummary": [
+      "entry_id",
+      "hostname",
+      "key_type",
+      "display_line"
+    ],
+    "KnownHostsMutationResult": [
+      "revision",
+      "removed_count",
+      "entries"
+    ],
+    "KnownHostsSnapshot": [
+      "revision",
+      "entries"
+    ],
     "ListDirectoryRequest": [
       "connection_id",
       "path",
@@ -2111,6 +2155,10 @@
       "gid",
       "modified_at",
       "link_target"
+    ],
+    "RemoveKnownHostEntriesRequest": [
+      "revision",
+      "entry_ids"
     ],
     "RenameGroupRequest": [
       "group_id",
@@ -2364,6 +2412,8 @@
       "daemon.status",
       "daemon.control",
       "daemon.events",
+      "known_hosts.read",
+      "known_hosts.write",
       "plugins",
       "secrets"
     ],

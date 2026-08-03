@@ -39,6 +39,13 @@ from ..models.interactions import (
     RememberPolicy,
     SecretDecision,
 )
+from ..models.known_hosts import (
+    KnownHostEntryId,
+    KnownHostEntrySummary,
+    KnownHostsMutationResult,
+    KnownHostsSnapshot,
+    RemoveKnownHostEntriesRequest,
+)
 from ..models.connections import (
     EDITABLE_CONFIG_FIELDS,
     AuthenticationMethod,
@@ -624,6 +631,136 @@ def connection_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
         raise ValueError("daemon event name is unsupported")
     event = public_event_from_envelope(envelope)
     return event
+
+
+def known_host_entry_summary_to_wire(
+    summary: KnownHostEntrySummary,
+) -> Dict[str, Any]:
+    if type(summary) is not KnownHostEntrySummary:
+        raise TypeError("known-hosts entry summary is required")
+    return {
+        "entry_id": summary.entry_id,
+        "hostname": summary.hostname,
+        "key_type": summary.key_type,
+        "display_line": summary.display_line,
+    }
+
+
+def known_host_entry_summary_from_wire(value: Any) -> KnownHostEntrySummary:
+    data = _strict_fields(
+        value,
+        required={"entry_id", "hostname", "key_type", "display_line"},
+        context="known-hosts entry summary",
+    )
+    return KnownHostEntrySummary(
+        entry_id=KnownHostEntryId(
+            _identifier(data["entry_id"], "known-hosts entry id")
+        ),
+        hostname=_text(
+            data["hostname"], "known-hosts hostname", allow_empty=True
+        ),
+        key_type=_text(
+            data["key_type"], "known-hosts key type", allow_empty=True
+        ),
+        display_line=_text(data["display_line"], "known-hosts display line"),
+    )
+
+
+def known_hosts_snapshot_to_wire(
+    snapshot: KnownHostsSnapshot,
+) -> Dict[str, Any]:
+    if type(snapshot) is not KnownHostsSnapshot:
+        raise TypeError("known-hosts snapshot is required")
+    return {
+        "revision": snapshot.revision,
+        "entries": [
+            known_host_entry_summary_to_wire(item) for item in snapshot.entries
+        ],
+    }
+
+
+def known_hosts_snapshot_from_wire(value: Any) -> KnownHostsSnapshot:
+    data = _strict_fields(
+        value,
+        required={"revision", "entries"},
+        context="known-hosts snapshot",
+    )
+    entries = data["entries"]
+    if type(entries) is not list:
+        raise ValueError("known-hosts entries must be an array")
+    return KnownHostsSnapshot(
+        revision=_identifier(data["revision"], "known-hosts revision"),
+        entries=tuple(
+            known_host_entry_summary_from_wire(item) for item in entries
+        ),
+    )
+
+
+def remove_known_host_entries_request_to_wire(
+    request: RemoveKnownHostEntriesRequest,
+) -> Dict[str, Any]:
+    if type(request) is not RemoveKnownHostEntriesRequest:
+        raise TypeError("remove known-hosts entries request is required")
+    return {
+        "revision": request.revision,
+        "entry_ids": list(request.entry_ids),
+    }
+
+
+def remove_known_host_entries_request_from_wire(
+    value: Any,
+) -> RemoveKnownHostEntriesRequest:
+    data = _strict_fields(
+        value,
+        required={"revision", "entry_ids"},
+        context="remove known-hosts entries request",
+    )
+    entry_ids = data["entry_ids"]
+    if type(entry_ids) is not list:
+        raise ValueError("known-hosts entry ids must be an array")
+    return RemoveKnownHostEntriesRequest(
+        revision=_identifier(data["revision"], "known-hosts revision"),
+        entry_ids=tuple(
+            KnownHostEntryId(_identifier(item, "known-hosts entry id"))
+            for item in entry_ids
+        ),
+    )
+
+
+def known_hosts_mutation_result_to_wire(
+    result: KnownHostsMutationResult,
+) -> Dict[str, Any]:
+    if type(result) is not KnownHostsMutationResult:
+        raise TypeError("known-hosts mutation result is required")
+    return {
+        "revision": result.revision,
+        "removed_count": result.removed_count,
+        "entries": [
+            known_host_entry_summary_to_wire(item) for item in result.entries
+        ],
+    }
+
+
+def known_hosts_mutation_result_from_wire(
+    value: Any,
+) -> KnownHostsMutationResult:
+    data = _strict_fields(
+        value,
+        required={"revision", "removed_count", "entries"},
+        context="known-hosts mutation result",
+    )
+    entries = data["entries"]
+    if type(entries) is not list:
+        raise ValueError("known-hosts entries must be an array")
+    return KnownHostsMutationResult(
+        revision=_identifier(data["revision"], "known-hosts revision"),
+        removed_count=_integer(
+            data["removed_count"], "known-hosts removed count"
+        ),
+        entries=tuple(
+            known_host_entry_summary_from_wire(item) for item in entries
+        ),
+    )
 
 
 def handshake_request_to_wire(request: HandshakeRequest) -> Dict[str, Any]:

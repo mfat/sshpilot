@@ -19,6 +19,7 @@ from sshpilot.api.transport.codec import (
     daemon_status_to_wire,
     daemon_stop_result_to_wire,
 )
+from sshpilot.platform.paths import get_ssh_dir
 
 from .lifecycle import resolve_socket_path
 
@@ -268,6 +269,7 @@ def _production_core_services():
     from sshpilot.groups import GroupManager
 
     from .config_reload import AuthoritativeConfigurationBackend
+    from .known_hosts_service import KnownHostsService
     from .server import CoreServices
 
     config = Config()
@@ -309,6 +311,7 @@ def _production_core_services():
             group_manager,
             config,
         ),
+        known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
     )
 
 

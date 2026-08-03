@@ -42,6 +42,7 @@ ALLOWED_EDGES = {
         "sshpilot.api",
         "sshpilot.core",
         "sshpilot.runtime_identity",
+        "sshpilot.platform.paths",  # GI-free path helpers (headless composition)
         # Daemon may import selected top-level headless helpers; GTK and
         # GObject adapters are forbidden. Registered GObject-adapter debt is
         # tracked in tests/core/test_dependency_boundary.py::DAEMON_DEBT.

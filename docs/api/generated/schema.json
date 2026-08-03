@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.13",
+  "api_implementation_version": "0.14",
   "client_method_contract": {
     "assign_connection_to_group": {
       "capability": "connections.groups",
@@ -395,6 +395,12 @@
     "interactions.respond": {
       "capability": "interactions.respond"
     },
+    "known_hosts.list": {
+      "capability": "known_hosts.read"
+    },
+    "known_hosts.remove": {
+      "capability": "known_hosts.write"
+    },
     "sessions.attach": {
       "capability": "sessions.write"
     },
@@ -547,6 +553,8 @@
       "daemon.status",
       "daemon.control",
       "daemon.events",
+      "known_hosts.read",
+      "known_hosts.write",
       "plugins",
       "secrets"
     ],
@@ -3195,6 +3203,84 @@
       ],
       "status": "Schema only"
     },
+    "KnownHostEntrySummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "entry_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KnownHostEntryId"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key_type",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "display_line",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "KnownHostsMutationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "removed_count",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "entries",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[KnownHostEntrySummary, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "KnownHostsSnapshot": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "entries",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[KnownHostEntrySummary, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ListDirectoryRequest": {
       "fields": [
         {
@@ -3686,6 +3772,25 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "RemoveKnownHostEntriesRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "entry_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[KnownHostEntryId, ...]"
         }
       ],
       "status": "Implemented"

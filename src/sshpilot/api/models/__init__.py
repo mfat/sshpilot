@@ -89,6 +89,13 @@ from .interactions import (
     RememberPolicy,
     SecretDecision,
 )
+from .known_hosts import (
+    KnownHostEntryId,
+    KnownHostEntrySummary,
+    KnownHostsMutationResult,
+    KnownHostsSnapshot,
+    RemoveKnownHostEntriesRequest,
+)
 from .operations import (
     AttachSftpRequest,
     ClaimForwardRequest,
@@ -228,6 +235,10 @@ __all__ = [
     "InteractionSummary",
     "InteractionTimeout",
     "InteractionType",
+    "KnownHostEntryId",
+    "KnownHostEntrySummary",
+    "KnownHostsMutationResult",
+    "KnownHostsSnapshot",
     "ListDirectoryRequest",
     "ListDirectoryResult",
     "LookupKeyPassphraseRequest",
@@ -243,6 +254,7 @@ __all__ = [
     "PresencePrompt",
     "ReleaseTerminalInputRequest",
     "RememberPolicy",
+    "RemoveKnownHostEntriesRequest",
     "RemoteFileEntry",
     "RemoteFileType",
     "RenameGroupRequest",

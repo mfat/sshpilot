@@ -22,7 +22,7 @@ service is not a shim — it is a violation (see
 | --- | --- | --- |
 | `sshpilot.ssh_connection_validator` | `core.validation` | Re-export / thin wrapper (pure; allowed) |
 | `sshpilot.key_manager.KeyManager` | `core.keys.KeyService` | GObject shell → API adapter (M1) |
-| `sshpilot.known_hosts_editor` I/O | `core.known_hosts` | GTK view + core I/O → daemon API (M2) |
+| `sshpilot.known_hosts_editor` I/O | `core.known_hosts` | **Complete (M2)** — editor renders daemon API data; no local I/O |
 | `sshpilot.config.Config` | `core.settings` | GObject/GSettings shell; daemon owns persistent keys (M4) |
 | `sshpilot.preferences.save_advanced_ssh_settings` | `core.settings.compose_ssh_overrides` | Composition in core (pure; allowed) |
 | `sshpilot.askpass_utils.classify_prompt` | `core.interaction.classify_prompt` | **Shim** — remove when callers migrate |

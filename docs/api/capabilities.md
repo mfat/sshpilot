@@ -426,6 +426,20 @@ Implemented. Splits a connection block from a multi-host group into its own
 standalone entry. Removes the host token from the original block and appends a
 new standalone `Host` block. Gated behind `CONNECTIONS_SPLIT`.
 
+<!-- api-capability: known_hosts.read -->
+## `known_hosts.read`
+
+Schema only. Lists known-host entries from the daemon-owned known-hosts file
+as a revisioned snapshot. Gated behind `KNOWN_HOSTS_READ`. Runtime support
+depends on daemon capability negotiation; providers do not advertise it yet.
+
+<!-- api-capability: known_hosts.write -->
+## `known_hosts.write`
+
+Schema only. Removes known-host entries through the daemon with an optimistic
+revision check. Gated behind `KNOWN_HOSTS_WRITE`. Runtime support depends on
+daemon capability negotiation; providers do not advertise it yet.
+
 ## Frontend behaviour
 
 Check capabilities before displaying or enabling optional actions. A frontend

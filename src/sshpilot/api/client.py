@@ -32,6 +32,11 @@ from .models.interactions import (
     InteractionId,
     InteractionSummary,
 )
+from .models.known_hosts import (
+    KnownHostsMutationResult,
+    KnownHostsSnapshot,
+    RemoveKnownHostEntriesRequest,
+)
 from .models.sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -331,6 +336,15 @@ class SshPilotClient(Protocol):
         ...
 
     def close_forward(self, request: CloseForwardRequest) -> None:
+        ...
+
+    def list_known_hosts(self) -> KnownHostsSnapshot:
+        ...
+
+    def remove_known_host_entries(
+        self,
+        request: RemoveKnownHostEntriesRequest,
+    ) -> KnownHostsMutationResult:
         ...
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:

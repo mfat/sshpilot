@@ -60,6 +60,12 @@ from .models.interactions import (
     InteractionId,
     InteractionSummary,
 )
+from .models.known_hosts import (
+    KnownHostEntryId,
+    KnownHostsMutationResult,
+    KnownHostsSnapshot,
+    RemoveKnownHostEntriesRequest,
+)
 from .models.operations import (
     AttachSftpRequest,
     ClaimForwardRequest,
@@ -141,6 +147,8 @@ from .transport.codec import (
     interaction_claim_from_wire,
     interaction_decision_to_wire,
     interaction_summary_from_wire,
+    known_hosts_mutation_result_from_wire,
+    known_hosts_snapshot_from_wire,
     list_directory_request_to_wire,
     list_directory_result_from_wire,
     open_forward_request_to_wire,
@@ -149,6 +157,7 @@ from .transport.codec import (
     public_event_from_envelope,
     release_terminal_input_request_to_wire,
     remote_file_entry_from_wire,
+    remove_known_host_entries_request_to_wire,
     rename_group_request_to_wire,
     split_connection_request_to_wire,
     replay_request_to_wire,
@@ -252,6 +261,8 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_forward": Capability.FORWARDS_READ,
     "open_forward": Capability.FORWARDS_WRITE,
     "close_forward": Capability.FORWARDS_WRITE,
+    "list_known_hosts": Capability.KNOWN_HOSTS_READ,
+    "remove_known_host_entries": Capability.KNOWN_HOSTS_WRITE,
 }
 
 
@@ -1068,6 +1079,32 @@ class DaemonClient:
             return forward_summary_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid forward claim result")
+
+    # -- known hosts ---------------------------------------------------
+    def list_known_hosts(self) -> KnownHostsSnapshot:
+        self._require_capability(Capability.KNOWN_HOSTS_READ)
+        result = self._request("known_hosts.list", {})
+        try:
+            return known_hosts_snapshot_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid known-hosts snapshot")
+
+    def remove_known_host_entries(
+        self,
+        request: RemoveKnownHostEntriesRequest,
+    ) -> KnownHostsMutationResult:
+        self._require_capability(Capability.KNOWN_HOSTS_WRITE)
+        self._require_write_compatibility("remove known hosts")
+        result = self._request(
+            "known_hosts.remove",
+            remove_known_host_entries_request_to_wire(request),
+        )
+        try:
+            return known_hosts_mutation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned an invalid known-hosts mutation result"
+            )
 
     def send_terminal_input(self, request: TerminalInput) -> None:
         self._require_capability(Capability.TERMINAL_INPUT)

@@ -168,6 +168,8 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.FORWARDS_LOCAL,
                 Capability.FORWARDS_REMOTE,
                 Capability.FORWARDS_DYNAMIC,
+                Capability.KNOWN_HOSTS_READ,
+                Capability.KNOWN_HOSTS_WRITE,
                 Capability.DAEMON_STATUS,
                 Capability.DAEMON_CONTROL,
                 Capability.DAEMON_EVENTS,

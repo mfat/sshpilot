@@ -502,9 +502,17 @@ class WindowConfigDialogsMixin:
     def show_known_hosts_editor(self):
         """Show known hosts editor window"""
         logger.info("Show known hosts editor window")
+        client = getattr(self, "client", None)
+        if client is None:
+            logger.error("Known hosts editor requires a daemon-backed client")
+            self._simple_dialog(
+                _("Known hosts unavailable"),
+                _("Connect to the sshPilot daemon before editing known hosts."),
+            )
+            return
         try:
             from .known_hosts_editor import KnownHostsEditorWindow
-            editor = KnownHostsEditorWindow(self, self.connection_manager)
+            editor = KnownHostsEditorWindow(self, client)
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")

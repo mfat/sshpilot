@@ -34,6 +34,9 @@ from sshpilot.api.models.connections import (
 )
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
+    known_hosts_mutation_result_to_wire,
+    known_hosts_snapshot_to_wire,
+    remove_known_host_entries_request_from_wire,
     attach_session_request_from_wire,
     attach_session_result_to_wire,
     attach_sftp_request_from_wire,
@@ -93,6 +96,7 @@ from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
 from sshpilot.daemon.forward_runtime import ForwardRuntime
 from sshpilot.daemon.interaction_broker import InteractionBroker
+from sshpilot.daemon.known_hosts_service import KnownHostsService
 from sshpilot.daemon.session_runtime import SessionRuntime
 from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
 from sshpilot.daemon.terminal_stream import ReplaySlice
@@ -168,6 +172,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "forwards.open": Capability.FORWARDS_WRITE,
     "forwards.close": Capability.FORWARDS_WRITE,
     "forwards.claim": Capability.FORWARDS_WRITE,
+    "known_hosts.list": Capability.KNOWN_HOSTS_READ,
+    "known_hosts.remove": Capability.KNOWN_HOSTS_WRITE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -191,6 +197,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "sftp.symlink",
         "transfers.start",
         "forwards.open",
+        "known_hosts.remove",
     }
 )
 
@@ -229,6 +236,8 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "transfers.cancel",
         "forwards.open",
         "forwards.close",
+        "known_hosts.list",
+        "known_hosts.remove",
     }
 )
 
@@ -287,6 +296,7 @@ class RequestDispatcher:
         sftp_runtime: Optional[SftpServiceRuntime] = None,
         transfer_runtime: Optional[TransferRuntime] = None,
         forward_runtime: Optional[ForwardRuntime] = None,
+        known_hosts_service: Optional[KnownHostsService] = None,
         *,
         lifecycle_controller: Any = None,
         diagnostics_provider: Optional[Callable[[], Any]] = None,
@@ -297,6 +307,7 @@ class RequestDispatcher:
         self._sftp_runtime = sftp_runtime
         self._transfer_runtime = transfer_runtime
         self._forward_runtime = forward_runtime
+        self._known_hosts_service = known_hosts_service
         self._lifecycle = lifecycle_controller
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
@@ -396,6 +407,8 @@ class RequestDispatcher:
             "forwards.open": self._handle_open_forward,
             "forwards.close": self._handle_close_forward,
             "forwards.claim": self._handle_claim_forward,
+            "known_hosts.list": self._handle_list_known_hosts,
+            "known_hosts.remove": self._handle_remove_known_host_entries,
         }
 
     def begin_shutdown(self) -> None:
@@ -527,6 +540,7 @@ class RequestDispatcher:
                 sftp=self._sftp_runtime is not None,
                 transfers=self._transfer_runtime is not None,
                 forwards=self._forward_runtime is not None,
+                known_hosts=self._known_hosts_service is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -1640,6 +1654,37 @@ class RequestDispatcher:
         summary = runtime.claim_forward(claim_request.forward_id, client_id=client_id)
         return forward_summary_to_wire(summary)
 
+    # -- known hosts ---------------------------------------------------
+    def _handle_list_known_hosts(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        self._require_empty_params(request)
+        service = self._required_known_hosts_service()
+        return DeferredResult(
+            operation=lambda: known_hosts_snapshot_to_wire(
+                service.list_known_hosts()
+            ),
+            command_key="known_hosts",
+            on_rejected=lambda: None,
+        )
+
+    def _handle_remove_known_host_entries(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = remove_known_host_entries_request_from_wire(request.params)
+        service = self._required_known_hosts_service()
+        return DeferredResult(
+            operation=lambda: known_hosts_mutation_result_to_wire(
+                service.remove_known_host_entries(typed_request)
+            ),
+            command_key="known_hosts",
+            on_rejected=lambda: None,
+        )
+
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
         if metadata is None or state.client_id is None:
@@ -1674,6 +1719,7 @@ class RequestDispatcher:
                 sftp=self._sftp_runtime is not None,
                 transfers=self._transfer_runtime is not None,
                 forwards=self._forward_runtime is not None,
+                known_hosts=self._known_hosts_service is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -1690,6 +1736,7 @@ class RequestDispatcher:
         sftp: bool = False,
         transfers: bool = False,
         forwards: bool = False,
+        known_hosts: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -1769,7 +1816,22 @@ class RequestDispatcher:
                     Capability.FORWARDS_DYNAMIC,
                 }
             )
+        if known_hosts:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.KNOWN_HOSTS_READ,
+                    Capability.KNOWN_HOSTS_WRITE,
+                }
+            )
         return daemon_capabilities
+
+    def _required_known_hosts_service(self) -> KnownHostsService:
+        if self._known_hosts_service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Known-hosts management is unavailable",
+            )
+        return self._known_hosts_service
 
     def _required_interaction_broker(self) -> InteractionBroker:
         if self._interaction_broker is None:

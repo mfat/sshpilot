@@ -47,7 +47,7 @@ The workstream is complete when every row below is `Complete`:
 | Tag | Migration | Frontend today | Daemon target | Status | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | M1 | Key generation + directory discovery | `key_manager.py` instantiates `core.keys.KeyService`, runs `ssh-keygen`, scans `~/.ssh` | Daemon owns key files and `ssh-keygen`; API lists/generates/deletes keys | **Deferred** | See M1 deferral |
-| M2 | Known-hosts file ownership | `known_hosts_editor.py` calls `core.known_hosts.load/save_known_hosts` from GTK | Daemon API list/remove/apply with a revision token; GTK renders entries and sends mutations | **Deferred** | See M2 deferral |
+| M2 | Known-hosts file ownership | `known_hosts_editor.py` calls `core.known_hosts.load/save_known_hosts` from GTK | Daemon API list/remove with a revision token; GTK renders entries and sends batched mutations | **Complete** | API cycle landed; editor routed through `KnownHostsController` |
 | M3 | Connection store ownership | `connection_manager.py` instantiates `core.connections.ConnectionService` (`_domain`) and writes `~/.ssh/config` | Daemon is the authoritative store; GTK uses `ConnectionApplicationService` through the client | **Deferred** | See M3 deferral |
 | M4 | Settings / config JSON ownership | `config.py` (GTK `Config`) loads/saves the config JSON via `core.settings` | Daemon owns persistent `ssh.*`/preferences keys; GTK keeps visual keys | **Deferred** | See M4 deferral |
 | M5 | Secrets backend selection + vault state | `secret_storage.py` owns `SecretManager` + backend selection via `core.secrets` | Daemon owns backend/lookup/store; GTK is an interaction presenter | **Deferred** | See M5 deferral |
@@ -78,9 +78,10 @@ instantiation are identified as the single migration point.
 codec functions, capability entries, client + `DaemonClient` methods, dispatch
 handlers, and a daemon-side `KeyService` instance — plus regeneration of the
 strict `tests/api/snapshots/public_api.json` and the exact capability/error
-marker sets asserted by `tests/api/test_api_documentation.py`. That is the M2
-reference-migration scope, done once, then mirrored. It is deliberately the
-*next* increment, not this one.
+marker sets asserted by `tests/api/test_api_documentation.py`. That is exactly
+the reference-migration scope M2 established (known-hosts: models → codecs →
+capabilities → RPCs → daemon service → client methods → controller → editor);
+M1 mirrors that pattern.
 
 **Exit condition:** no `KeyService` instantiation or `ssh-keygen` invocation
 remains in GTK; key generation/listing/deletion go through `client.*`; the three
@@ -88,24 +89,37 @@ M1 rows leave `PENDING_MIGRATIONS`.
 
 ### M2 — Known-hosts
 
+**Status: Complete.**
+
 **Registered in `PENDING_MIGRATIONS`:** `known_hosts_editor.py` ×
-`core.known_hosts.{load_known_hosts, save_known_hosts}`.
+`core.known_hosts.{load_known_hosts, save_known_hosts}` — **removed**.
 
-`KnownHostEntry.parse` and `filter_entries` are `ALLOWED` (pure parse/filter for
-rendering), matching the matrix row `PURE_FRONTEND_SAFE`.
+**What landed:** the full reference API cycle the stream's later migrations
+reuse — revision/generation token + structured-conflict pattern:
 
-**Done now:** classification captured; the editor's read (list) and write (save)
-touch points are identified.
+- API models (`KnownHostEntrySummary`, `KnownHostsSnapshot`,
+  `RemoveKnownHostEntriesRequest`, `KnownHostsMutationResult`, `KnownHostEntryId`)
+  with tuple-strict validation.
+- Lossless document parsing (`core.known_hosts.document`: SHA-256 revision,
+  per-revision deterministic entry IDs, comment/blank preservation) and atomic
+  byte storage (`core.known_hosts.file_io`: symlink refusal, mode
+  preservation, temp-file + parent-dir `fsync`).
+- Wire codecs, `KNOWN_HOSTS_READ`/`KNOWN_HOSTS_WRITE` capabilities,
+  `known_hosts.list` / `known_hosts.remove` RPCs with capability-gated
+  advertisement, and the daemon `KnownHostsService` (one `RLock`, optimistic
+  revision check, `stale_editor` on conflict).
+- `DaemonClient.list_known_hosts` / `remove_known_host_entries`.
+- `KnownHostsController` (GTK-free) + `known_hosts_editor.py` routed through it:
+  rows store entry IDs (duplicates stay distinguishable), removals are staged
+  and applied in one batched call, stale edits reload without retrying, and the
+  editor never calls `load_known_hosts`/`save_known_hosts`, `get_ssh_dir`, or
+  performs direct `open`/`Path` I/O.
 
-**Deferred because:** this is the *reference migration* for the whole stream —
-it establishes the revision/generation token + structured-conflict pattern that
-M3–M8 reuse, so it must be done carefully with a full API cycle and docs
-updates in the same change. The same generated-artifact regeneration applies as
-for M1.
-
-**Exit condition:** `known_hosts_editor.py` renders entries received from the
-daemon and sends remove/apply mutations with a revision token; it never calls
-`load_known_hosts`/`save_known_hosts`; the two M2 rows leave `PENDING_MIGRATIONS`.
+**Exit condition (met):** `known_hosts_editor.py` renders entries received
+from the daemon and sends batched revision-checked removals; it never calls
+`load_known_hosts`/`save_known_hosts`; the M2 rows are gone from
+`PENDING_MIGRATIONS` and `BACKEND_OPS`, and `KNOWN_HOSTS_*` capabilities are
+advertised only when the daemon service is installed.
 
 ### M3 — Connections
 
@@ -227,11 +241,11 @@ the daemon. The M8 tag then has no debt.
 are green on the baseline tree:
 
 ```text
-ALLOWED (pure, stays local) ........ 40 symbols
+ALLOWED (pure, stays local) ........ 38 symbols
 PENDING_MIGRATIONS (frontend core imports to route to daemon)
-  M1=3  M2=2  M3=1  M4=3  M5=4  M6=4  M7=6           (M8 = 0: contracts are allowed)
+  M1=3  M3=1  M4=3  M5=4  M6=4  M7=6           (M2=0, M8=0: contracts are allowed)
 BACKEND_OPS (frontend backend operations)
-  M1=1  M2=1  M3=1  M5=4  M6=1  M7=18  M8=1  frontend=7
+  M1=1  M3=1  M5=4  M6=1  M7=19  M8=1  frontend=6
 DAEMON_ALLOWLIST ................... 7 app-side daemon bootstrap/diagnostic utilities
 DAEMON_DEBT ....................... 5 daemon -> GObject-adapter imports (M3/M4/M8)
 CORE_DEBT ......................... 3 core -> frontend-helper imports (M4/M7/M8)

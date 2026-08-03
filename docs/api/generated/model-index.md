@@ -1810,6 +1810,84 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: KnownHostEntrySummary -->
+## `KnownHostEntrySummary`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One displayed known-hosts line (never the raw file handle).
+
+**Related methods:** `list_known_hosts`, `remove_known_host_entries`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `entry_id` | `KnownHostEntryId` | Yes | — | No |
+| `hostname` | `str` | Yes | — | No |
+| `key_type` | `str` | Yes | — | No |
+| `display_line` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "display_line": "example",
+  "entry_id": "id:example",
+  "hostname": "example.invalid",
+  "key_type": "example"
+}
+```
+
+<!-- api-model: KnownHostsMutationResult -->
+## `KnownHostsMutationResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Result of a committed removal, re-read from the authoritative file.
+
+**Related methods:** `remove_known_host_entries`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `revision` | `str` | Yes | — | No |
+| `removed_count` | `int` | Yes | — | No |
+| `entries` | `tuple[KnownHostEntrySummary, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "entries": [],
+  "removed_count": 0,
+  "revision": "example"
+}
+```
+
+<!-- api-model: KnownHostsSnapshot -->
+## `KnownHostsSnapshot`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** The full known-hosts document projected for display.
+
+**Related methods:** `list_known_hosts`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `revision` | `str` | Yes | — | No |
+| `entries` | `tuple[KnownHostEntrySummary, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "entries": [],
+  "revision": "example"
+}
+```
+
 <!-- api-model: ListDirectoryRequest -->
 ## `ListDirectoryRequest`
 
@@ -2227,6 +2305,30 @@ Synthetic representation:
   "path": "/remote/example",
   "size": null,
   "uid": null
+}
+```
+
+<!-- api-model: RemoveKnownHostEntriesRequest -->
+## `RemoveKnownHostEntriesRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Batch removal against one loaded revision of the document.
+
+**Related methods:** `remove_known_host_entries`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `revision` | `str` | Yes | — | No |
+| `entry_ids` | `tuple[KnownHostEntryId, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "entry_ids": [],
+  "revision": "example"
 }
 ```
 
