@@ -2231,7 +2231,7 @@ class PreferencesWindow(Adw.NavigationPage):
             "value is set here or in ~/.ssh/config. Explicit values always win.")
         )
         self.apply_default_keepalive_row.set_active(
-            bool(self.config.get_setting('ssh.apply_default_keepalive', True))
+            bool(self.config.get_setting('ssh.apply_default_keepalive', False))
         )
         advanced_group.add(self.apply_default_keepalive_row)
 
@@ -5239,7 +5239,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.config.set_setting('ssh.connection_attempts', None)
                 self.connection_attempts_row.set_value(0)
             if hasattr(self, 'apply_default_keepalive_row'):
-                default_apply = bool(defaults.get('apply_default_keepalive', True))
+                default_apply = bool(defaults.get('apply_default_keepalive', False))
                 self.config.set_setting('ssh.apply_default_keepalive', default_apply)
                 self.apply_default_keepalive_row.set_active(default_apply)
             if hasattr(self, 'keepalive_interval_row'):

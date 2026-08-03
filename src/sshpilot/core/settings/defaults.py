@@ -122,11 +122,9 @@ def get_default_config() -> Dict[str, Any]:
             'use_isolated_config': False,
             'ssh_overrides': [],
             'strict_host_key_checking': 'accept-new',
-            # When the user hasn't configured keepalive (here or in
-            # ~/.ssh/config), apply a sane default ServerAlive* so a dead
-            # link is detected (~interval*count seconds) instead of the
-            # indicator staying green forever. User/per-host values win.
-            'apply_default_keepalive': True,
+            # Opt-in application policy. Disabled by default so OpenSSH's
+            # effective Host/Include/Match configuration remains authoritative.
+            'apply_default_keepalive': False,
             'default_keepalive_interval': 15,
             'default_keepalive_count': 3,
             # Preload a host's keyring-backed key(s) into ssh-agent on

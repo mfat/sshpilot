@@ -21,6 +21,7 @@ from sshpilot.api.models import (
     InteractionState,
     InteractionType,
     PasswordPrompt,
+    PresencePrompt,
     RememberPolicy,
     SecretDecision,
     SessionId,
@@ -175,7 +176,7 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
     _argv, environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -242,7 +243,7 @@ def test_prepare_launch_leaves_askpass_disabled_without_saved_secret(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
     _argv, environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -265,7 +266,7 @@ def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
     policies = []
 
     def builder(_connection_id, *, interaction_policy):
@@ -277,6 +278,8 @@ def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
             "SSH_ASKPASS_REQUIRE": "prefer",
             "SSHPILOT_ASKPASS_SOCKET": "/old/socket",
             "SSHPILOT_SESSION_PASSWORD": "staged-secret",
+            "SSHPILOT_DAEMON_ASKPASS_SOCKET": "/stale/socket",
+            "SSHPILOT_DAEMON_ASKPASS_TOKEN": "stale-token",
         }
 
     _argv, environment = broker.prepare_launch(
@@ -303,6 +306,75 @@ def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
     assert "SSHPILOT_SESSION_PASSWORD" not in environment
 
 
+@pytest.mark.parametrize("original", ["/user/custom/modules", None])
+def test_prepare_launch_does_not_modify_pythonpath(
+    broker: InteractionBroker,
+    monkeypatch,
+    original: str | None,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
+    prepared_environment = {
+        "PATH": "/usr/bin",
+        "SSHPILOT_DAEMON_ASKPASS_SOCKET": "/stale/socket",
+        "SSHPILOT_DAEMON_ASKPASS_TOKEN": "stale-token",
+    }
+    if original is not None:
+        prepared_environment["PYTHONPATH"] = original
+
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda *_args, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            prepared_environment,
+        ),
+    )
+
+    if original is None:
+        assert "PYTHONPATH" not in environment
+    else:
+        assert environment["PYTHONPATH"] == original
+    assert "SSHPILOT_DAEMON_ASKPASS_SOCKET" not in environment
+    assert "SSHPILOT_DAEMON_ASKPASS_TOKEN" not in environment
+
+
+def test_presence_rejects_submit_and_has_dedicated_lifetime() -> None:
+    instance = InteractionBroker(
+        secret_timeout=0.03,
+        host_key_timeout=0.03,
+        presence_timeout=10,
+    )
+    try:
+        summary = instance.create(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            interaction_type=InteractionType.SECURITY_KEY_PRESENCE,
+            prompt=PresencePrompt(text="Touch your security key"),
+        )
+        instance.claim(summary.id, CLIENT_A)
+        with pytest.raises(SshPilotError):
+            instance.respond(
+                InteractionDecisionRequest(
+                    interaction_id=summary.id,
+                    secret_decision=SecretDecision.SUBMIT,
+                ),
+                CLIENT_A,
+            )
+        assert (
+            instance.get(summary.id, CLIENT_A).expires_at
+            - instance.get(summary.id, CLIENT_A).created_at
+        ).total_seconds() == 10
+        assert instance.get(summary.id, CLIENT_A).state is InteractionState.CLAIMED
+    finally:
+        instance.close()
+
+
 @pytest.mark.parametrize(
     ("prompt", "expected_type"),
     [
@@ -318,7 +390,7 @@ def test_daemon_routes_interactive_and_presence_prompts(
     prompt: str,
     expected_type: InteractionType,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
     _argv, environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -346,7 +418,7 @@ def test_askpass_helper_disconnect_cancels_pending_interaction(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
     _argv, environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -409,7 +481,7 @@ def test_stored_password_is_used_once_without_public_secret_metadata(
             lookups.append(connection_id) or "stored-value"
         ),
     )
-    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv, _environment=None: {})
     try:
         _argv, environment = instance.prepare_launch(
             SessionLaunchSpec(
@@ -454,7 +526,7 @@ def test_stored_passphrase_autofills_unquoted_openssh_prompt(monkeypatch) -> Non
             lookups.append(key_path) or "stored-passphrase"
         ),
     )
-    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv, _environment=None: {})
     try:
         _argv, environment = instance.prepare_launch(
             SessionLaunchSpec(
@@ -502,7 +574,7 @@ def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
         host_key_timeout=1,
         passphrase_lookup=lookup,
     )
-    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv, _environment=None: {})
     prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519': "
     prompt_waits = []
 
@@ -647,7 +719,7 @@ def test_daemon_entered_password_is_never_implicitly_stored(
             stored.append((connection_id, value)) or True
         ),
     )
-    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(instance, "_effective_ssh_config", lambda _argv, _environment=None: {})
     try:
         _argv, environment = instance.prepare_launch(
             SessionLaunchSpec(
@@ -712,51 +784,11 @@ def test_daemon_entered_password_is_never_implicitly_stored(
         instance.close()
 
 
-def test_persistent_host_key_write_is_atomic_private_and_hashable(
-    broker: InteractionBroker,
-    tmp_path,
-) -> None:
-    path = tmp_path / "known_hosts"
-    broker._persist_host_key(
-        path,
-        "[example.test]:2222",
-        ("ssh-ed25519", "QUJDRA=="),
-        hash_host=True,
-    )
-
-    content = path.read_text()
-    assert content.startswith("|1|")
-    assert "example.test" not in content
-    assert content.endswith(" ssh-ed25519 QUJDRA==\n")
-    assert path.stat().st_mode & 0o777 == 0o600
-
-
-def test_persistent_host_key_rejects_symlink(
-    broker: InteractionBroker,
-    tmp_path,
-) -> None:
-    target = tmp_path / "target"
-    target.write_text("")
-    path = tmp_path / "known_hosts"
-    path.symlink_to(target)
-
-    with pytest.raises(SshPilotError) as caught:
-        broker._persist_host_key(
-            path,
-            "example.test",
-            ("ssh-ed25519", "QUJDRA=="),
-            hash_host=False,
-        )
-
-    assert caught.value.code is ErrorCode.HOST_KEY_PERSISTENCE_FAILED
-    assert target.read_text() == ""
-
-
 def test_prepare_launch_preserves_canonical_ssh_options(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
     argv, _environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -784,27 +816,29 @@ def test_prepare_launch_preserves_canonical_ssh_options(
             {"PATH": os.environ.get("PATH", ""), "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1"},
         ),
     )
-    assert argv == (
+    assert argv[:3] == (
         "/usr/bin/ssh",
         "-F",
         "/tmp/config",
+    )
+    assert argv[-7:] == (
         "-o",
         "BatchMode=yes",
         "-o",
         "StrictHostKeyChecking=accept-new",
         "-o",
-        "UserKnownHostsFile=/tmp/user-known-hosts",
-        "-o",
         "ConnectTimeout=5",
         "example",
     )
+    assert sum(value.startswith("UserKnownHostsFile=") for value in argv) == 1
+    assert "UserKnownHostsFile=/tmp/user-known-hosts" not in argv
 
 
 def test_prepare_launch_does_not_add_ssh_option_defaults(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
 
     argv, _environment = broker.prepare_launch(
         SessionLaunchSpec(
@@ -821,7 +855,10 @@ def test_prepare_launch_does_not_add_ssh_option_defaults(
         ),
     )
 
-    assert argv == ("/usr/bin/ssh", "example")
+    assert argv[0] == "/usr/bin/ssh"
+    assert argv[-1] == "example"
+    assert argv[1] == "-o"
+    assert argv[2].startswith("UserKnownHostsFile=")
 
 
 def test_strict_host_key_mode_selects_first_occurrence() -> None:
@@ -860,11 +897,11 @@ def test_strict_host_key_mode_selects_first_occurrence() -> None:
     ) == "yes"
 
 
-def test_prepare_launch_ask_preserves_user_known_hosts(
+def test_prepare_launch_ask_uses_private_session_known_hosts(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
     argv, _environment = broker.prepare_launch(
         SessionLaunchSpec(
             session_id=SESSION_ID,
@@ -887,7 +924,12 @@ def test_prepare_launch_ask_preserves_user_known_hosts(
         ),
     )
     assert "StrictHostKeyChecking=ask" in argv
-    assert "UserKnownHostsFile=/tmp/user-known-hosts" in argv
+    known_hosts_options = [
+        value for value in argv if value.startswith("UserKnownHostsFile=")
+    ]
+    assert len(known_hosts_options) == 1
+    assert "sshpilot-interaction-" in known_hosts_options[0]
+    assert "/tmp/user-known-hosts" not in known_hosts_options[0]
 
 
 def test_parse_openssh_host_key_askpass_prompt(broker: InteractionBroker) -> None:
@@ -913,7 +955,7 @@ def test_prepare_launch_does_not_invoke_keyscan(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
 
     def _forbid_remote(*_args, **_kwargs):
         cmd = _args[0] if _args else ()

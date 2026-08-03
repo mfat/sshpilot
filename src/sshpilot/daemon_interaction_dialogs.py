@@ -201,6 +201,22 @@ class DaemonInteractionDialogs:
             self._dialogs[summary.id] = dialog
             dialog.present(parent)
             return
+        if isinstance(prompt, ConfirmationPrompt):
+            dialog.add_response("no", "No")
+            dialog.add_response("yes", "Yes")
+            dialog.set_response_appearance("yes", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("yes")
+            dialog.set_close_response("no")
+            dialog.connect(
+                "response",
+                lambda item, response: self._confirmation_response(
+                    summary, item, response
+                ),
+            )
+            self._dialogs[summary.id] = dialog
+            dialog.present(parent)
+            return
+
 
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -246,6 +262,27 @@ class DaemonInteractionDialogs:
         )
         dialog.close()
 
+    def _confirmation_response(self, summary, dialog, response: str) -> None:
+        self._dialogs.pop(summary.id, None)
+        if response != "yes":
+            self._cancel_secret(summary)
+        else:
+            self._submit_secret(summary, bytearray(b"yes"))
+        dialog.close()
+
+    def _cancel_secret(self, summary) -> None:
+        self._bridge.submit_interaction(
+            lambda: self._client.respond_to_interaction(
+                InteractionDecisionRequest(
+                    interaction_id=summary.id,
+                    secret_decision=SecretDecision.CANCEL,
+                )
+            ),
+            on_success=lambda _value: None,
+            on_error=lambda _error: None,
+        )
+
+
     def _secret_response(
         self,
         summary,
@@ -255,21 +292,15 @@ class DaemonInteractionDialogs:
     ) -> None:
         self._dialogs.pop(summary.id, None)
         if response != "submit":
-            self._bridge.submit_interaction(
-                lambda: self._client.respond_to_interaction(
-                    InteractionDecisionRequest(
-                        interaction_id=summary.id,
-                        secret_decision=SecretDecision.CANCEL,
-                    )
-                ),
-                on_success=lambda _value: None,
-                on_error=lambda _error: None,
-            )
+            self._cancel_secret(summary)
             dialog.close()
             return
-        value = "yes" if isinstance(summary.prompt, ConfirmationPrompt) else entry.get_text()
-        secret = bytearray(value.encode("utf-8"))
+        secret = bytearray(entry.get_text().encode("utf-8"))
         entry.set_text("")
+        self._submit_secret(summary, secret)
+        dialog.close()
+
+    def _submit_secret(self, summary, secret: bytearray) -> None:
         self._pending_secrets[summary.id] = secret
 
         def _send() -> None:
@@ -296,7 +327,6 @@ class DaemonInteractionDialogs:
             on_success=lambda _value: self._finish_secret(summary.id, secret),
             on_error=lambda _error: self._finish_secret(summary.id, secret),
         )
-        dialog.close()
 
     def _finish_secret(self, interaction_id, secret: bytearray) -> None:
         self._pending_secrets.pop(interaction_id, None)
