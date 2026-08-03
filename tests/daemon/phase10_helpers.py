@@ -20,7 +20,8 @@ from typing import Callable, List, Optional
 
 import pytest
 
-from sshpilot.api import DaemonClient, InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
+from sshpilot.api import DaemonClient
 from sshpilot.api.models import (
     HostKeyDecision,
     InteractionDecisionRequest,
@@ -135,7 +136,7 @@ class Phase10Connection(TestConnection):
 
 
 class Phase10ConnectionManager(TestConnectionManager):
-    """In-memory manager with password/passphrase APIs for InProcessClient."""
+    """In-memory manager with password/passphrase APIs for ConnectionApplicationService."""
 
     def __init__(self):
         super().__init__()
@@ -458,7 +459,7 @@ def start_phase10_stack(
     )
     socket_path = socket_root / "sshpilotd.sock"
     server = DaemonServer(
-        lambda: InProcessClient(manager, client_name="sshpilotd"),
+        lambda: ConnectionApplicationService(manager, client_name="sshpilotd"),
         socket_path=socket_path,
     )
     server.start_in_thread()

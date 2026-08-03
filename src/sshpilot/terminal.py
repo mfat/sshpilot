@@ -3,6 +3,7 @@ Terminal Widget for sshPilot
 Integrated VTE terminal with SSH connection handling using system SSH client
 """
 
+from .api.connection_identity import connection_id_for
 import os
 import logging
 import signal
@@ -1159,9 +1160,8 @@ class TerminalWidget(Gtk.Box):
             if resolved_connection_id is None and self._daemon_tab_state is not None:
                 resolved_connection_id = self._daemon_tab_state.connection_id
             if resolved_connection_id is None:
-                from .api.in_process_client import InProcessClient
 
-                resolved_connection_id = InProcessClient.connection_id_for(
+                resolved_connection_id = connection_id_for(
                     self.connection
                 )
 

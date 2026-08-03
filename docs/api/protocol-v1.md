@@ -10,7 +10,7 @@ DTOs, capabilities, events, structured errors, and the local wire envelope.
 
 ## Scope
 
-`InProcessClient` implements connection reads and in-process connection events.
+`retired frontend backend` implements connection reads and in-process connection events.
 `DaemonClient` additionally implements daemon-lifetime session control,
 lifecycle events, SFTP services, transfers, and port forwards over the same
 secure per-user Unix-domain socket. Capability-gated clients may also use

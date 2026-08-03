@@ -236,7 +236,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 exc_info=True,
             )
         server = DaemonServer(
-            _production_core_client,
+            _production_core_services,
             socket_path=args.socket,
             idle_shutdown_seconds=idle_shutdown_seconds,
             service_mode=service_mode,
@@ -259,16 +259,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return _run_management(args)
 
 
-def _production_core_client():
+def _production_core_services():
     # Imports stay here so transport modules remain frontend-neutral and tests
     # can inject a headless core without importing PyGObject.
-    from sshpilot.api.in_process_client import InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
     from sshpilot.config import Config
     from sshpilot.connection_manager import ConnectionManager
     from sshpilot.groups import GroupManager
 
     from .config_reload import AuthoritativeConfigurationBackend
-    from .server import DaemonCore
+    from .server import CoreServices
 
     config = Config()
     connection_manager = ConnectionManager(config)
@@ -287,16 +287,16 @@ def _production_core_client():
         config,
         connection_manager=connection_manager,
     )
-    client = InProcessClient(
+    connections = ConnectionApplicationService(
         connection_manager,
         group_manager=group_manager,
         client_name="sshpilotd",
         allow_cross_thread_commands=True,
     )
-    return DaemonCore(
-        client=client,
+    return CoreServices(
+        connections=connections,
         configuration_backend=AuthoritativeConfigurationBackend(
-            client,
+            connections,
             connection_manager,
             group_manager,
             config,

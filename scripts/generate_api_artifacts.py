@@ -34,8 +34,10 @@ from sshpilot.api.daemon_client import (  # noqa: E402
     DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES,
 )
 from sshpilot.api.events import CoreEvent  # noqa: E402
-from sshpilot.api.in_process_client import (  # noqa: E402
+from sshpilot.core.connection_application_service import (  # noqa: E402
     IMPLEMENTED_CLIENT_METHOD_CAPABILITIES,
+)
+from sshpilot.api.method_capabilities import (  # noqa: E402
     UNSUPPORTED_CLIENT_METHOD_CAPABILITIES,
 )
 from sshpilot.api.models import __all__ as MODEL_EXPORTS  # noqa: E402

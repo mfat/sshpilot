@@ -1,7 +1,7 @@
 # SshPilotClient API
 
 `SshPilotClient` is the stable frontend/core seam for sshPilot. GTK uses
-`InProcessClient` by default and can explicitly opt into `DaemonClient` for
+`retired frontend backend` by default and can explicitly opt into `DaemonClient` for
 connection-read development through `SSHPILOT_CLIENT_MODE=daemon`.
 The experimental daemon slice covers connection CRUD/events, session control,
 PTY terminal streaming, and typed authentication/trust interactions.
@@ -16,7 +16,7 @@ sshpilot/api/
   events.py
   client.py
   client_factory.py
-  in_process_client.py
+  retired_backend_client.py
   daemon_client.py
   transport/
   models/
@@ -30,7 +30,7 @@ sshpilot/api/
 ```
 
 All model, contract, and envelope files are implementation-neutral.
-`in_process_client.py` accepts existing managers by dependency injection and
+`retired_backend_client.py` accepts existing managers by dependency injection and
 does not import GTK, GObject, VTE or a transport. `daemon_client.py` depends on
 Unix sockets but not frontend or manager types.
 
@@ -65,7 +65,7 @@ The initial contract is synchronous commands plus event subscription. This
 matches the current GTK/GLib runtime, where blocking work already uses worker
 threads and UI results return through GLib.
 
-`InProcessClient` command methods must run on the thread that constructed the
+`retired frontend backend` command methods must run on the thread that constructed the
 client. In GTK that is the main thread. Cross-thread command attempts return a
 structured `invalid_request`. Event registration is thread-safe, while event
 delivery runs through the first active publisher thread's serial FIFO
@@ -88,7 +88,7 @@ queue depths, thread liveness) and closes the transport. It creates no event
 loop or thread per call. In daemon mode, the application-scoped GTK bridge uses
 one bounded worker and returns snapshots and mutation results through
 `GLib.idle_add`. Request tokens suppress stale results after refresh/window
-destruction. GLib remains outside `DaemonClient`, and `InProcessClient` stays
+destruction. GLib remains outside `DaemonClient`, and `retired frontend backend` stays
 on its construction/main thread. Session restore listing also runs on the
 bridge worker so it cannot stall GTK behind welcome connection reads.
 
@@ -145,7 +145,7 @@ interactions.password
 interactions.passphrase
 ```
 
-`InProcessClient` deliberately returns `unsupported_capability` for session,
+`retired frontend backend` deliberately returns `unsupported_capability` for session,
 terminal, and interaction control because current production GTK terminal
 ownership has not moved. Daemon terminal capabilities require
 `binary-terminal-v1`; responder/secret capabilities require
@@ -186,7 +186,7 @@ host/user/port/protocol updates preserve the alias.
 
 `ConnectionHealth` is separate from `SessionState`. The current
 terminal-derived `ConnectionState` is not converted into reachability;
-`InProcessClient` reports connection health as `unknown`.
+`retired frontend backend` reports connection health as `unknown`.
 
 ## Session DTOs and IDs
 
@@ -300,7 +300,7 @@ Phase 9 introduces production daemon-backed SSH terminals with VTE emulation:
 - **Input ownership**: Exclusive input ownership with claim/release API
 - **Session persistence**: Sessions survive GTK restart with detach/reattach
 - **VTE emulation**: Unified VTE-based production emulator for daemon SSH
-- **Legacy local SSH**: Explicit `terminal.legacy_local_ssh_fallback` only —
+- **Legacy local SSH**: Explicit `terminal.removed_local_ssh_setting` only —
   never selected because daemon readiness failed
 - **Route model**: `SshTerminalRoute` (`daemon` / `legacy_local` / `external`)
   resolved before readiness or secret unlock

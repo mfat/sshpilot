@@ -37,7 +37,7 @@ class TestDaemonActivationOwnership:
             or {
                 "use-external-terminal": False,
                 "terminal.daemon_backed_ssh": True,
-                "terminal.legacy_local_ssh_fallback": False,
+                "terminal.removed_local_ssh_setting": False,
             }
         )
         window.client = Mock()
@@ -165,7 +165,7 @@ class TestDaemonActivationOwnership:
             settings={
                 "use-external-terminal": False,
                 "terminal.daemon_backed_ssh": True,
-                "terminal.legacy_local_ssh_fallback": True,
+                "terminal.removed_local_ssh_setting": True,
             },
         )
         connection = self._connection()
@@ -208,7 +208,7 @@ class TestDaemonActivationOwnership:
             settings={
                 "use-external-terminal": True,
                 "terminal.daemon_backed_ssh": True,
-                "terminal.legacy_local_ssh_fallback": False,
+                "terminal.removed_local_ssh_setting": False,
             },
         )
         connection = self._connection()

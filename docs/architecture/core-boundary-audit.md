@@ -15,7 +15,7 @@ The first migration slice is:
 ```text
 WelcomePage Recent list
     -> SshPilotClient.list_connections()
-    -> InProcessClient
+    -> retired frontend backend
     -> ConnectionManager.get_connections()
 ```
 
@@ -24,7 +24,7 @@ Terminal activation still resolves the selected DTO back to the existing
 terminal execution out of the milestone.
 
 New implementation files live under `src/sshpilot/api/`. The GTK composition
-root creates one `InProcessClient` beside its existing managers. Contract tests
+root creates one `retired frontend backend` beside its existing managers. Contract tests
 live under `tests/api/`.
 
 ## Responsibility inventory
@@ -52,7 +52,7 @@ Classification uses `CORE`, `FRONTEND`, `TRANSPORT`, and
 | `groups.GroupManager` | Persistent groups and connection membership/order | No widget dependency, but stores presentation ordering/color/expanded state together | Synchronous config writes | `MIXED_NEEDS_SPLIT`: membership/name core; expanded/color/order ownership must be explicitly versioned | Group service plus frontend presentation metadata | Medium |
 | `plugins.api.PluginContext` | Scoped connection, secret, settings, UI, command, and spawn capabilities | Intentionally avoids exposing raw windows, but includes registered UI abilities and frontend callbacks | Threads/locks for streams and commands | `MIXED_NEEDS_SPLIT`: core plugin execution versus frontend contribution API | Core plugin service and separate frontend extension host | High: existing plugin compatibility |
 | `plugins.host.PluginHost` / `UiHost` | Event bus, UI contribution host, opens tabs/terminals, dispatches session events with terminal objects | Bound to the first live window; exposes frontend objects internally | GObject/GTK callbacks and GLib dispatch | `MIXED_NEEDS_SPLIT` | Core plugin event service plus GTK UI host | High |
-| `main.SshPilotApplication` | Process composition, resources, logging, actions, shutdown | GTK/Adwaita application root | GTK main loop and GLib timers | `FRONTEND` composition root today | Compose `InProcessClient`; later choose `DaemonClient` | Medium |
+| `main.SshPilotApplication` | Process composition, resources, logging, actions, shutdown | GTK/Adwaita application root | GTK main loop and GLib timers | `FRONTEND` composition root today | Compose `retired frontend backend`; later choose `DaemonClient` | Medium |
 | `window.MainWindow` and window mixins | Own managers, tabs, sidebar, dialogs, session-layout capture, terminal maps, config monitors | Entirely GTK/Adwaita/VTE-facing | GTK main loop, worker callbacks via GLib, file monitors | `FRONTEND`, while remaining direct manager access is migration debt | GTK controllers consuming `SshPilotClient` | High but incremental |
 | `sidebar.ConnectionRow` / `GroupRow` | Connection/group presentation, status, DnD, filters, context menus | GTK/GObject | GTK signals and timers | `FRONTEND` | DTO-based sidebar controller | Medium |
 | `welcome_page.WelcomePage` | Start-page presentation, Recent/Pinned shortcuts | GTK/Adwaita | GTK signal callbacks | `FRONTEND` | First DTO consumer | Low; Recent read slice migrated |
@@ -163,7 +163,7 @@ GTK vault action
 
 ## Concurrency bridge decision
 
-`InProcessClient` has synchronous command methods and a synchronous,
+`retired frontend backend` has synchronous command methods and a synchronous,
 frontend-neutral publisher.
 
 - Commands must run on the thread that constructed the client. This reflects
@@ -179,7 +179,7 @@ frontend-neutral publisher.
 - Re-entrant publication is queued behind the current subscriber snapshot and
   does not recurse.
 - `Subscription.unsubscribe()` is idempotent and thread-safe.
-- `InProcessClient.close()` disconnects manager signal handlers and closes all
+- `retired frontend backend.close()` disconnects manager signal handlers and closes all
   subscriptions. The window calls it only when close is actually accepted.
 - There is no per-call event loop, `asyncio.run()`, or GTK wait on a future.
 - Slow subscribers currently delay subsequent subscribers and events without

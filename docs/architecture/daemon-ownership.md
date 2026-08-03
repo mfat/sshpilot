@@ -29,7 +29,7 @@ it does not advertise runtime capabilities.
 ```text
 GTK / Tauri / CLI
        -> SshPilotClient
-       -> InProcessClient by default
+       -> retired frontend backend by default
        -> DaemonClient in experimental opt-in mode
        -> sshpilotd for connection CRUD/events and session lifecycle
 ```
@@ -152,7 +152,7 @@ binary framing, replay, and slow-peer isolation are defined in
 
 ## Protocol v1 contract decisions
 
-- Commands are synchronous for `InProcessClient`, with a frontend-neutral event
+- Commands are synchronous for `retired frontend backend`, with a frontend-neutral event
   subscription. Calling convention and wire protocol are separate decisions.
 - In-process advertises only the three connection capabilities. The daemon
   additionally advertises `sessions.read`, `sessions.write`, and
@@ -172,7 +172,7 @@ binary framing, replay, and slow-peer isolation are defined in
 
 ## Event guarantees in this phase
 
-- `InProcessClient` adapts existing `connection-added`,
+- `retired frontend backend` adapts existing `connection-added`,
   `connection-updated`, and `connection-removed` GObject signals.
 - Events have a process-local monotonically increasing sequence.
 - Delivery uses a publisher-global serial FIFO in sequence order. The first

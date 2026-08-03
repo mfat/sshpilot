@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sshpilot.api import ErrorCode, InProcessClient, SshPilotError
+from sshpilot.core.connection_application_service import ConnectionApplicationService
+from sshpilot.api import ErrorCode, SshPilotError
 from sshpilot.api.events import EventType
 from sshpilot.api.models.common import ClientId
 from sshpilot.api.models.sessions import (
@@ -147,7 +148,7 @@ class RetryableTerminationRunner(ControlledRunner):
 @pytest.fixture
 def runtime_parts():
     manager = _Manager()
-    core = InProcessClient(manager, client_name="runtime-test")
+    core = ConnectionApplicationService(manager, client_name="runtime-test")
     runner = ControlledRunner()
     runtime = SessionRuntime(core, runner=runner)
     yield runtime, core, runner
@@ -271,7 +272,7 @@ def test_prepare_and_finish_close_keep_runner_work_out_of_prepare(runtime_parts)
 
 def test_startup_failure_is_a_real_failed_session_without_sensitive_details():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runtime = SessionRuntime(core, runner=ControlledRunner(fail=True))
     try:
         opened = runtime.open_session(
@@ -289,7 +290,7 @@ def test_startup_failure_is_a_real_failed_session_without_sensitive_details():
 
 def test_open_rejects_missing_connection_and_unsupported_protocol():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runtime = SessionRuntime(core, runner=ControlledRunner())
     try:
         with pytest.raises(SshPilotError) as missing:
@@ -314,7 +315,7 @@ def test_open_rejects_missing_connection_and_unsupported_protocol():
 
 def test_process_exit_before_runner_returns_does_not_retain_a_stale_handle():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runner = SynchronousExitRunner()
     runtime = SessionRuntime(core, runner=runner)
     try:
@@ -412,7 +413,7 @@ def test_close_is_idempotent_and_terminates_only_owned_handle(runtime_parts):
 
 def test_failed_termination_retains_owned_handle_for_explicit_retry():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runner = RetryableTerminationRunner()
     runtime = SessionRuntime(core, runner=runner, close_grace_seconds=0)
     events = []
@@ -477,7 +478,7 @@ def test_concurrent_close_and_process_exit_emit_one_final_pair(
 
 def test_shutdown_from_session_subscriber_does_not_deadlock():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runner = ControlledRunner()
     runtime = SessionRuntime(core, runner=runner)
     runtime.subscribe_events(
@@ -497,7 +498,7 @@ def test_shutdown_from_session_subscriber_does_not_deadlock():
 @pytest.mark.parametrize("_repeat", range(5))
 def test_shutdown_kills_stubborn_owned_handle_within_runtime_policy(_repeat):
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runner = ControlledRunner(exit_on_terminate=False)
     runtime = SessionRuntime(
         core,
@@ -523,7 +524,7 @@ def test_shutdown_kills_stubborn_owned_handle_within_runtime_policy(_repeat):
 
 def test_closed_session_retention_is_bounded():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runtime = SessionRuntime(
         core,
         runner=ControlledRunner(),
@@ -550,7 +551,7 @@ def test_closed_session_retention_is_bounded():
 
 def test_global_replay_budget_trims_oldest_sessions_first():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runtime = SessionRuntime(
         core,
         runner=ControlledRunner(),
@@ -582,7 +583,7 @@ def test_global_replay_budget_trims_oldest_sessions_first():
 
 def test_timestamps_are_monotonic_across_transitions():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     moments = iter(
         datetime(2030, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=index) for index in range(20)
     )
@@ -603,7 +604,7 @@ def test_timestamps_are_monotonic_across_transitions():
 
 def test_owned_subprocess_runner_uses_one_reaper_and_leaves_no_child():
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runner = SubprocessSessionProcessRunner(
         lambda _spec: (
             sys.executable,

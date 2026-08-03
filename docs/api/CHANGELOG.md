@@ -72,8 +72,8 @@ notes remain separate.
   (`SSHPILOT_DEV_REVISION`), and `api_implementation_version`. Mismatch is
   surfaced as a safe warning; active sessions are never killed automatically.
 - GUI tests isolate `XDG_RUNTIME_DIR` and force
-  `SSHPILOT_CLIENT_MODE=in_process` so the suite cannot attach to a developer
-  user daemon. Explicit env `in_process` wins over Stage C
+  `SSHPILOT_CLIENT_MODE=retired_backend` so the suite cannot attach to a developer
+  user daemon. Explicit env `retired_backend` wins over Stage C
   `terminal.daemon_backed_ssh` auto-promotion.
 - Daemon session restore lists sessions through `GtkClientBridge` so a blocked
   control RPC cannot stall the GTK main loop behind welcome
@@ -120,7 +120,7 @@ notes remain separate.
 - Added live daemon sessions dialog for developer session discovery and reattachment
 - Added continuity loss detection with local GTK markers (never sent to daemon)
 - Added Stage C rollout: `terminal.daemon_backed_ssh` defaults to `True`
-- Added explicit legacy fallback via `terminal.legacy_local_ssh_fallback` setting
+- Added explicit legacy fallback via `terminal.removed_local_ssh_setting` setting
 - Added daemon terminal close policies: detach (default), terminate, or ask
 - Added broadcast command integration limited to input-owning terminals
 - Added VTE as unified daemon SSH emulator (PyXtermJS remains for local terminals)
@@ -170,7 +170,7 @@ notes remain separate.
 
 - Added explicit daemon methods `system.handshake`,
   `system.get_capabilities`, `connections.list`, and `connections.get`.
-- Added shared connection contracts across `InProcessClient` and
+- Added shared connection contracts across `retired frontend backend` and
   `DaemonClient`, plus framing, handshake, socket-security, and lifecycle tests.
 - Added the experimental `SSHPILOT_CLIENT_MODE=daemon` GTK composition path,
   bounded on-demand daemon launcher, application-scoped GTK worker bridge, and
@@ -302,7 +302,7 @@ notes remain separate.
 
 - Protocol version `1.0` and API implementation version `0.1`.
 - Synchronous `SshPilotClient` protocol.
-- `InProcessClient` adapter.
+- `retired frontend backend` adapter.
 - Capability discovery with stable capability identifiers.
 - Implemented `connections.read` operations: connection list and retrieval.
 - Secret-free `ConnectionSummary` and `ConnectionDetails` projections.

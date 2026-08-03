@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .api.connection_identity import connection_id_for
 import logging
 import time
 from dataclasses import asdict, dataclass
@@ -127,7 +128,6 @@ class DaemonSessionRestoreManager:
         """Create a tab and attach to a retained live daemon session."""
 
         try:
-            from .api.in_process_client import InProcessClient
             from .terminal import TerminalWidget
             from sshpilot import icon_utils
 
@@ -135,7 +135,7 @@ class DaemonSessionRestoreManager:
             for candidate in window.connection_manager.get_connections():
                 try:
                     if (
-                        InProcessClient.connection_id_for(candidate)
+                        connection_id_for(candidate)
                         == ConnectionId(metadata.connection_id)
                     ):
                         connection = candidate

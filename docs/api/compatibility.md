@@ -26,7 +26,7 @@ Phase 9 introduces a default behavior change while maintaining compatibility.
 Phase 9.1 hardens routing so readiness never silently selects legacy SSH:
 
 - **Default change**: `terminal.daemon_backed_ssh` now defaults to `True` (Stage C rollout)
-- **Explicit override**: Users can set `terminal.legacy_local_ssh_fallback = True`
+- **Explicit override**: Users can set `terminal.removed_local_ssh_setting = True`
   to force GTK-owned local SSH (`Use legacy local SSH terminals`)
 - **Route vs readiness**: `resolve_ssh_terminal_route` is pure policy;
   `resolve_daemon_terminal_readiness` never changes the selected route
@@ -134,7 +134,7 @@ tests pass. A schema alone is not support. Clients:
 ## `DaemonClient` compatibility
 
 The reusable connection contract suite runs against both `DaemonClient` and
-`InProcessClient`. It compares:
+`retired frontend backend`. It compares:
 
 - connection reads and writes, capabilities, mutation/not-found errors, and DTO values;
 - secret exclusion and Host-alias connection identity;
@@ -148,7 +148,7 @@ Connection event parity is covered under `connections.events`. Typed
 authentication/trust interactions are daemon-only and capability-gated in API
 0.9; unrestricted prompt parity remains out of scope. Terminal byte/replay
 contracts are daemon-only and capability-gated in API 0.8. Session lifecycle is intentionally
-daemon-only: `InProcessClient` continues to return
+daemon-only: `retired frontend backend` continues to return
 `unsupported_capability`, while daemon integration contracts cover lifecycle,
 attachment, multi-client event, shutdown, and process-ownership semantics.
 API 0.8 adds optional terminal DTO fields and a negotiated binary frame while

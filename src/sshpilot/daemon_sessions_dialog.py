@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+from .api.connection_identity import connection_id_for
 import logging
 from gettext import gettext as _
 
 from gi.repository import Adw, Gtk
-
-from .api.in_process_client import InProcessClient
 from .api.models.sessions import CloseSessionRequest, SessionState
 
 logger = logging.getLogger(__name__)
@@ -143,7 +142,7 @@ class DaemonSessionsDialog:
             return ""
         for connection in manager.get_connections():
             try:
-                if InProcessClient.connection_id_for(connection) == connection_id:
+                if connection_id_for(connection) == connection_id:
                     return getattr(connection, "nickname", "") or ""
             except Exception:
                 continue
@@ -157,7 +156,7 @@ class DaemonSessionsDialog:
         connection = None
         for candidate in connection_manager.get_connections():
             try:
-                if InProcessClient.connection_id_for(candidate) == session.connection_id:
+                if connection_id_for(candidate) == session.connection_id:
                     connection = candidate
                     break
             except Exception:

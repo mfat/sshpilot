@@ -23,7 +23,7 @@ from .events import (
     EventType,
     Subscription,
 )
-from .in_process_client import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
+from .method_capabilities import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 from .models.common import (
     ClientId,
     ConnectionId,

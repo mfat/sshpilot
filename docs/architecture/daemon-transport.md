@@ -14,14 +14,14 @@ DaemonClient
     -> one persistent AF_UNIX socket
     -> sshpilot.daemon selector loop
     -> explicit RequestDispatcher
-       -> InProcessClient -> existing ConnectionManager
+       -> retired frontend backend -> existing ConnectionManager
        -> SessionRuntime -> owned session records/process-runner boundary
 ```
 
 ## Ownership and threading
 
 `DaemonServer` constructs its injected core client on the same thread that runs
-the selector and dispatches requests. This preserves `InProcessClient` and
+the selector and dispatches requests. This preserves `retired frontend backend` and
 GObject manager owner-thread rules. One selector loop handles multiple client
 sockets without a thread per client, a thread per request, `asyncio.run()`, or a
 per-call event loop.
@@ -70,13 +70,13 @@ Production Stage C enables daemon-backed SSH via
 
 ```bash
 SSHPILOT_CLIENT_MODE=daemon python3 run.py
-SSHPILOT_CLIENT_MODE=in_process python3 run.py   # explicit; wins over Stage C
+SSHPILOT_CLIENT_MODE=retired_backend python3 run.py   # explicit; wins over Stage C
 ```
 
 The parser ignores surrounding whitespace and case. Missing or blank values
-mean `in_process` before Stage C promotion; invalid values retain in-process
+mean `retired_backend` before Stage C promotion; invalid values retain in-process
 mode and produce the same safe compatibility warning as a failed daemon
-selection. An explicit `SSHPILOT_CLIENT_MODE=in_process` is never auto-promoted
+selection. An explicit `SSHPILOT_CLIENT_MODE=retired_backend` is never auto-promoted
 to daemon mode (GUI tests rely on this). The environment value is not persisted
 as an application preference.
 
@@ -124,7 +124,7 @@ Logs record only a stable local failure category. The UI shows:
 
 ```text
 The local SSH Pilot service could not be used. SSH Pilot is running in
-compatibility mode.
+daemon recovery state.
 ```
 
 Raw exceptions, socket paths, commands, environment values, and protocol data
@@ -138,13 +138,13 @@ command works before installation.
 ## Core construction
 
 `python -m sshpilot.daemon` lazily constructs `Config`, `ConnectionManager`,
-`GroupManager`, and one `InProcessClient`. Transport and envelope modules do not
+`GroupManager`, and one `retired frontend backend`. Transport and envelope modules do not
 import those managers or PyGObject. Tests inject a headless manager through the
 same server factory and use a real Unix socket.
 
 Daemon handlers never read persistence directly. Connection ordering, DTO
 mapping, stable identifiers, mutations, safe errors, and secret exclusion
-continue to come from `InProcessClient`, which delegates writes to the existing
+continue to come from `retired frontend backend`, which delegates writes to the existing
 `ConnectionManager`.
 
 The server binds and secures its socket before constructing the authoritative
@@ -199,7 +199,7 @@ race-hardened activation path.
 
 ## Connection event forwarding
 
-The daemon subscribes once to the existing `InProcessClient` event publisher,
+The daemon subscribes once to the existing `retired frontend backend` event publisher,
 which already maps manager signals into typed, secret-free
 `ConnectionSummary` payloads. The transport does not subscribe to persistence
 or duplicate DTO mapping.

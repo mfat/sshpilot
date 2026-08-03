@@ -7,13 +7,13 @@ from pathlib import Path
 
 from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.events import EventType
-from sshpilot.api.in_process_client import InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.models.connections import CreateConnectionRequest
 from sshpilot.config import Config
 import sshpilot.connection_manager as connection_manager_module
 from sshpilot.connection_manager import ConnectionManager
 from sshpilot.daemon.config_reload import AuthoritativeConfigurationBackend
-from sshpilot.daemon.server import DaemonCore, DaemonServer
+from sshpilot.daemon.server import CoreServices, DaemonServer
 from sshpilot.groups import GroupManager
 
 
@@ -103,7 +103,7 @@ def _build_server(tmp_path, monkeypatch, ssh_text):
     manager.disconnect = _disconnect
     manager.emit = _emit
     groups = GroupManager(config, connection_manager=manager)
-    core = InProcessClient(
+    core = ConnectionApplicationService(
         manager,
         group_manager=groups,
         client_name="reload-test",
@@ -116,7 +116,7 @@ def _build_server(tmp_path, monkeypatch, ssh_text):
         config,
     )
     server = DaemonServer(
-        lambda: DaemonCore(core, backend),
+        lambda: CoreServices(core, backend),
         socket_path=tmp_path / "runtime" / "sshpilotd.sock",
         configuration_reload_debounce=0.02,
         configuration_poll_interval=0.02,

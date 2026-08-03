@@ -239,7 +239,7 @@ def main() -> int:
         print("[info] opening file manager…", flush=True)
 
         # --- File manager ---
-        # Reuse a connection the daemon's InProcessClient already knows
+        # Reuse a connection the daemon's ConnectionApplicationService already knows
         # (ephemeral daemon keeps the first window's ConnectionManager).
         # Adding a brand-new nickname here only updates the restarted GTK CM.
         conn_fm = None

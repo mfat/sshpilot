@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api import (
     Capability,
     ErrorCode,
-    InProcessClient,
     SshPilotError,
 )
 from sshpilot.daemon import DaemonServer
@@ -373,7 +373,7 @@ def test_daemon_without_required_gtk_connection_capabilities_is_rejected(
                 (),
                 {"get_connections": lambda self: []},
             )()
-            self._base = InProcessClient(manager)
+            self._base = ConnectionApplicationService(manager)
 
         def get_capabilities(self):
             return replace(

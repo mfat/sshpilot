@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from sshpilot.api import ErrorCode, SshPilotError
 from sshpilot.window import MainWindow
-from sshpilot.api.in_process_client import InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 
 
 class _ControlledBridge:
@@ -295,7 +295,7 @@ def test_changed_metadata_invalidates_only_metadata_checkpoint():
 
 
 def test_daemon_delete_absent_password_is_idempotent():
-    client = InProcessClient.__new__(InProcessClient)
+    client = ConnectionApplicationService.__new__(ConnectionApplicationService)
     client._find_connection = lambda _connection_id: SimpleNamespace(
         hostname="demo.example", host="demo", username="alice"
     )
@@ -307,7 +307,7 @@ def test_daemon_delete_absent_password_is_idempotent():
 
 
 def test_daemon_delete_absent_passphrase_is_idempotent():
-    client = InProcessClient.__new__(InProcessClient)
+    client = ConnectionApplicationService.__new__(ConnectionApplicationService)
     client._connection_manager = SimpleNamespace(
         delete_key_passphrase=lambda _path: False
     )
@@ -852,7 +852,7 @@ def test_daemon_editor_close_with_retry_scheduled_submits_nothing(monkeypatch):
 
 def test_daemon_editor_fetch_not_run_outside_daemon_mode():
     window = _MutationWindow()
-    window._app._api_client_selection.mode = SimpleNamespace(value="in_process")
+    window._app._api_client_selection.mode = SimpleNamespace(value="core_service")
     window.client.editor = SimpleNamespace(generation=7)
     dialog = _EditorDialog()
 

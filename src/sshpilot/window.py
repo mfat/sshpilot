@@ -5,6 +5,7 @@ Primary UI with connection list, tabs, and terminal management
 
 from __future__ import annotations
 
+from .api.connection_identity import connection_id_for
 import copy
 import os
 import logging
@@ -233,29 +234,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._config_changed_handler = None
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
-        daemon_requested = False
-        existing_selection = (
-            getattr(app, '_api_client_selection', None)
-            if app is not None
-            else None
-        )
-        if (
-            existing_selection is not None
-            and getattr(
-                getattr(existing_selection, 'mode', None),
-                'value',
-                None,
-            ) == 'daemon'
-        ):
-            daemon_requested = True
-        try:
-            from .api.client_factory import ClientMode, requested_client_mode
-            daemon_requested = (
-                daemon_requested
-                or requested_client_mode() is ClientMode.DAEMON
-            )
-        except ValueError:
-            pass
+        # GTK managers are presentation snapshots; daemon owns identity migration.
+        daemon_requested = True
         self.connection_manager = ConnectionManager(
             self.config,
             isolated_mode=effective_isolated,
@@ -415,159 +395,81 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         logger.info("Main window initialized")
 
     def _compose_api_client(self, app) -> None:
-        """Create or reuse the application-scoped frontend-neutral client."""
-
-        from .api import InProcessClient
-        from .api.client_factory import (
-            ClientFallbackReason,
-            ClientMode,
-            in_process_selection,
-            requested_client_mode,
-        )
-
+        """Reuse a validated daemon client or begin daemon-only startup."""
         existing = getattr(app, '_api_client_selection', None) if app else None
         if existing is not None:
             self.client = existing.client
             self.client_bridge = getattr(app, '_api_client_bridge', None)
             return
-
-        fallback = InProcessClient(
-            self.connection_manager,
-            group_manager=self.group_manager,
-        )
-        self.client = fallback
-        try:
-            mode = requested_client_mode()
-            # Stage C defaults ``terminal.daemon_backed_ssh`` to True, which
-            # promotes an unset environment to daemon mode. An explicit
-            # ``SSHPILOT_CLIENT_MODE=in_process`` (GUI harness, debugging)
-            # must win so tests never attach to a user daemon by accident.
-            from .api.client_factory import CLIENT_MODE_ENVIRONMENT
-
-            explicit_mode = (os.environ.get(CLIENT_MODE_ENVIRONMENT) or "").strip()
-            if (
-                mode is ClientMode.IN_PROCESS
-                and not explicit_mode
-                and self.config.get_setting('terminal.daemon_backed_ssh', True)
-            ):
-                mode = ClientMode.DAEMON
-        except ValueError:
-            selection = in_process_selection(
-                self.connection_manager,
-                group_manager=self.group_manager,
-                existing_client=fallback,
-                fallback_reason=ClientFallbackReason.INVALID_MODE,
-            )
-            self._client_mode_warning = selection.warning
-            if app is not None:
-                app._api_client_selection = selection
-            return
-
-        if mode is ClientMode.IN_PROCESS:
-            selection = in_process_selection(
-                self.connection_manager,
-                group_manager=self.group_manager,
-                existing_client=fallback,
-            )
-            if app is not None:
-                app._api_client_selection = selection
-            return
-
         from .gtk_client_bridge import GtkClientBridge
-
-        bridge = (
-            getattr(app, '_api_client_bridge', None) if app is not None else None
-        )
-        if bridge is None:
-            bridge = GtkClientBridge()
-            if app is not None:
-                app._api_client_bridge = bridge
-        self.client_bridge = bridge
+        self.client = None
+        self.client_bridge = GtkClientBridge()
+        if app is not None:
+            app._api_client_bridge = self.client_bridge
         self._api_client_selection_pending = True
 
     def _begin_daemon_client_selection(self) -> None:
-        """Select/start the daemon off the GTK thread, then atomically inject it."""
-
-        from .api.client_factory import ClientMode, select_client
-
+        """Locate/start and validate the sole backend away from the GTK thread."""
+        from .api.client_factory import select_client
         app = self.get_application()
         launcher = getattr(app, '_api_daemon_launcher', None) if app else None
-        fallback = self.client
-
-        def _select():
-            return select_client(
-                self.connection_manager,
-                group_manager=self.group_manager,
-                mode=ClientMode.DAEMON,
-                in_process_client=fallback,
-                launcher=launcher,
-            )
-
-        def _discard(selection):
-            if selection.client is not fallback:
-                selection.client.close()
-
         self._api_client_selection_request = self.client_bridge.submit(
-            _select,
+            lambda: select_client(launcher=launcher),
             on_success=self._apply_client_selection,
             on_error=self._handle_client_selection_error,
-            on_discard=_discard,
+            on_discard=lambda selection: selection.client.close(),
         )
 
     def _apply_client_selection(self, selection) -> None:
         if self._is_quitting:
-            if selection.client is not self.client:
-                selection.client.close()
+            selection.client.close()
             return
-        previous = self.client
         self.client = selection.client
-        daemon_active = selection.mode.value == 'daemon'
-        self.connection_manager.identity_migration_enabled = not daemon_active
-        try:
-            self.connection_manager.load_ssh_config()
-            if self.connection_manager.identity_migration_error is not None:
-                raise RuntimeError("connection identity load failed")
-            self.group_manager.bind_connections(
-                self.connection_manager.get_connections()
-            )
-            self.session_manager.migrate_connection_references(
-                self.connection_manager
-            )
-        except Exception:
-            logger.error(
-                "Local connection identity refresh failed after client selection"
-            )
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         app = self.get_application()
         if app is not None:
             app._api_client_selection = selection
-            if daemon_active and hasattr(
-                app,
-                'install_api_event_subscription',
-            ):
+            if hasattr(app, 'install_api_event_subscription'):
                 app.install_api_event_subscription(self.client)
-        if not daemon_active:
-            bridge = self.client_bridge
-            self.client_bridge = None
-            if app is not None:
-                if hasattr(app, 'clear_api_event_subscription'):
-                    app.clear_api_event_subscription()
-                app._api_client_bridge = None
-            if bridge is not None:
-                bridge.shutdown()
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
-            self.welcome_view.set_client(
-                self.client,
-                bridge=self.client_bridge,
-            )
-        if previous is not self.client:
-            previous.close()
-        if selection.warning:
-            self._client_mode_warning = selection.warning
-            self._show_client_mode_warning()
-        if daemon_active:
-            self._maybe_restore_daemon_sessions()
+            self.welcome_view.set_client(self.client, bridge=self.client_bridge)
+        self._maybe_restore_daemon_sessions()
+
+    def _handle_client_selection_error(self, error) -> None:
+        """Keep the backend unavailable and expose retry/diagnostic recovery."""
+        self._api_client_selection_pending = False
+        self._api_client_selection_request = None
+        self.client = None
+        reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
+        self._client_mode_warning = _(
+            "SSH Pilot requires its background service. "
+            "The service could not be started (%s). Retry, restart the service, "
+            "inspect diagnostics, or exit."
+        ) % reason
+        if hasattr(self, 'welcome_view') and self.welcome_view is not None:
+            self.welcome_view.set_client(None)
+        self._show_client_mode_warning()
+
+    def retry_daemon_connection(self) -> None:
+        """Explicit recovery action; never changes backend ownership."""
+        if self._api_client_selection_pending:
+            return
+        self._api_client_selection_pending = True
+        self._begin_daemon_client_selection()
+
+    def _show_client_mode_warning(self) -> bool:
+        message = self._client_mode_warning
+        self._client_mode_warning = None
+        if not message or self._is_quitting:
+            return False
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(0)
+            self.toast_overlay.add_toast(toast)
+        except Exception:
+            logger.warning("Unable to display daemon recovery diagnostics")
+        return False
 
     def _maybe_restore_daemon_sessions(self) -> None:
         """Offer or auto-reattach retained daemon sessions after GTK restart.
@@ -651,54 +553,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
         except Exception:
             logger.error("Daemon session restore failed", exc_info=True)
-
-    def _handle_client_selection_error(self, error) -> None:
-        """Defensive fallback for failures outside the factory's policy."""
-
-        logger.error(
-            "Client selection worker failed unexpectedly type=%s",
-            type(error).__name__,
-        )
-        from .api.client_factory import (
-            DAEMON_FALLBACK_MESSAGE,
-            ClientFallbackReason,
-            in_process_selection,
-        )
-
-        self._api_client_selection_pending = False
-        self._api_client_selection_request = None
-        bridge = self.client_bridge
-        self.client_bridge = None
-        app = self.get_application()
-        if app is not None:
-            if hasattr(app, 'clear_api_event_subscription'):
-                app.clear_api_event_subscription()
-            app._api_client_bridge = None
-            app._api_client_selection = in_process_selection(
-                self.connection_manager,
-                group_manager=self.group_manager,
-                existing_client=self.client,
-                fallback_reason=ClientFallbackReason.UNEXPECTED_ERROR,
-            )
-        if bridge is not None:
-            bridge.shutdown()
-        if hasattr(self, 'welcome_view') and self.welcome_view is not None:
-            self.welcome_view.set_client(self.client)
-        self._client_mode_warning = DAEMON_FALLBACK_MESSAGE
-        self._show_client_mode_warning()
-
-    def _show_client_mode_warning(self) -> bool:
-        message = self._client_mode_warning
-        self._client_mode_warning = None
-        if not message or self._is_quitting:
-            return False
-        try:
-            toast = Adw.Toast.new(message)
-            toast.set_timeout(5)
-            self.toast_overlay.add_toast(toast)
-        except Exception:
-            logger.warning("Unable to show the safe daemon fallback notification")
-        return False
 
     @property
     def sshcopyid_runner(self):
@@ -5259,7 +5113,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Delete daemon-owned connections serially without optimistic rows."""
 
         from .api import SshPilotError
-        from .api.in_process_client import InProcessClient
         from .api.models import DeleteConnectionRequest
 
         bridge = self.client_bridge
@@ -5291,7 +5144,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 _finish()
                 return
             request = DeleteConnectionRequest(
-                connection_id=InProcessClient.connection_id_for(connection)
+                connection_id=connection_id_for(connection)
             )
 
             def _success(_result):
@@ -6233,10 +6086,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _find_connection_id_for_nickname(self, nickname: str):
         """Find the daemon connection ID for a connection by nickname."""
-        from .api.in_process_client import InProcessClient
         for conn in self.connection_manager.connections:
             if getattr(conn, 'nickname', '') == nickname:
-                return InProcessClient.connection_id_for(conn)
+                return connection_id_for(conn)
         return None
 
     def get_available_groups(self) -> List[Dict]:
@@ -6614,7 +6466,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         pending_meta=None,
     ) -> None:
         from .api import SshPilotError
-        from .api.in_process_client import InProcessClient
         from .api.models.connections import (
             EDITABLE_CONFIG_FIELDS,
             ForwardingRule,
@@ -6703,7 +6554,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if dialog.is_editing:
                 connection_id = getattr(dialog, '_saved_connection_id', None)
                 if not connection_id:
-                    connection_id = InProcessClient.connection_id_for(dialog.connection)
+                    connection_id = connection_id_for(dialog.connection)
                 config_patch = _build_config_patch()
 
                 # In daemon mode, use the generation loaded from the daemon

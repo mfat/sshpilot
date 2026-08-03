@@ -118,7 +118,8 @@ def run_smoke() -> int:
     from tests.fixtures.temporary_openssh import start_temporary_openssh
     from tests._gui_harness import GuiApp, requires_gui
 
-    from sshpilot.api import DaemonClient, InProcessClient
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.api import DaemonClient
     from sshpilot.api.client_factory import ClientMode, ClientSelection
     from sshpilot.api.models import (
         CancelTransferRequest,
@@ -198,7 +199,7 @@ def run_smoke() -> int:
         )
         socket_path = ctx.daemon_socket_root / "sshpilotd.sock"
         ctx.daemon_server = DaemonServer(
-            lambda: InProcessClient(
+            lambda: ConnectionApplicationService(
                 cm,
                 group_manager=gm,
                 client_name="sshpilotd-phase13-smoke",

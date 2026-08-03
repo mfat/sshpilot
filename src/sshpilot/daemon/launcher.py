@@ -216,10 +216,42 @@ class DaemonLauncher:
             frontend_type="gtk",
         )
         capabilities = client.get_capabilities()
+        # Normal UI initialization requires the complete production baseline.
+        # Optional renderer features may add their own gates, but none of these
+        # backend domains may disappear behind a partial/legacy daemon.
         required = {
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_EVENTS,
             Capability.CONNECTIONS_WRITE,
+            Capability.CONNECTIONS_CONFIG_READ,
+            Capability.CONNECTIONS_CONFIG_WRITE,
+            Capability.CONNECTIONS_SECRETS_WRITE,
+            Capability.CONNECTIONS_METADATA_WRITE,
+            Capability.CONNECTIONS_GROUPS,
+            Capability.SESSIONS_READ,
+            Capability.SESSIONS_WRITE,
+            Capability.SESSIONS_EVENTS,
+            Capability.TERMINAL_OUTPUT,
+            Capability.TERMINAL_INPUT,
+            Capability.TERMINAL_RESIZE,
+            Capability.TERMINAL_REPLAY,
+            Capability.INTERACTIONS_READ,
+            Capability.INTERACTIONS_RESPOND,
+            Capability.INTERACTIONS_EVENTS,
+            Capability.SFTP_READ,
+            Capability.SFTP_WRITE,
+            Capability.SFTP_EVENTS,
+            Capability.SFTP_METADATA,
+            Capability.SFTP_MUTATE,
+            Capability.TRANSFERS_READ,
+            Capability.TRANSFERS_WRITE,
+            Capability.TRANSFERS_EVENTS,
+            Capability.FORWARDS_READ,
+            Capability.FORWARDS_WRITE,
+            Capability.FORWARDS_EVENTS,
+            Capability.DAEMON_STATUS,
+            Capability.DAEMON_CONTROL,
+            Capability.DAEMON_EVENTS,
         }
         if not required <= capabilities.supported:
             client.close()

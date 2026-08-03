@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from sshpilot.api import InProcessClient
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId
 from sshpilot.api.models.sessions import AttachSessionRequest, OpenSessionRequest, SessionExitInfo, SessionState
@@ -107,7 +107,7 @@ class ControlledRunner:
 def session_runtime():
     """Create a session runtime for testing."""
     manager = _Manager()
-    core = InProcessClient(manager)
+    core = ConnectionApplicationService(manager)
     runner = ControlledRunner()
     runtime = SessionRuntime(core, runner=runner)
     yield runtime, core

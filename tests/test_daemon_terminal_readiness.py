@@ -166,7 +166,7 @@ def test_readiness_failure_does_not_change_route():
     config = SimpleNamespace(
         get_setting=lambda key, default=None: {
             "use-external-terminal": False,
-            "terminal.legacy_local_ssh_fallback": False,
+            "terminal.removed_local_ssh_setting": False,
             "terminal.daemon_backed_ssh": True,
         }.get(key, default)
     )
