@@ -60,6 +60,25 @@ class _Manager:
         self.reloads += 1
 
 
+class _ProjectionGroupManager:
+    def __init__(self):
+        self.bound = []
+
+    def bind_connections(self, connections):
+        self.bound.append(connections)
+
+
+class _ProjectionWindow:
+    on_projection_reset = MainWindow.on_projection_reset
+
+    def __init__(self):
+        self.group_manager = _ProjectionGroupManager()
+        self.rebuilds = 0
+
+    def rebuild_connection_list(self):
+        self.rebuilds += 1
+
+
 class _MutationWindow:
     _daemon_mode_active = MainWindow._daemon_mode_active
     _normalise_daemon_editor_value = staticmethod(
@@ -142,6 +161,17 @@ def _basic_data(**overrides):
     }
     data.update(overrides)
     return data
+
+
+def test_projection_reset_rebinds_groups_and_rebuilds_sidebar_once():
+    window = _ProjectionWindow()
+    connections = (SimpleNamespace(id="one"), SimpleNamespace(id="two"))
+    manager = SimpleNamespace(connections=connections)
+
+    window.on_projection_reset(manager, None)
+
+    assert window.group_manager.bound == [connections]
+    assert window.rebuilds == 1
 
 
 def test_daemon_create_waits_for_success_and_sends_create_dto_with_config_patch():

@@ -5003,6 +5003,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.group_manager._save_groups()
         self.rebuild_connection_list()
 
+    def on_projection_reset(self, manager, _connection=None):
+        """Rebuild presentation state after an authoritative store refresh."""
+        self.group_manager.bind_connections(manager.connections)
+        self.rebuild_connection_list()
+
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
         logger.info(f"Connection removed: {connection.nickname}")

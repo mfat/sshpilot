@@ -134,6 +134,30 @@ def test_refresh_replays_event_arriving_while_snapshot_is_in_flight():
     assert store.snapshot() == (summary("new"),)
 
 
+def test_refresh_emits_one_projection_reset_instead_of_item_signals():
+    client = Client("daemon-a", [summary("old")])
+    store = ConnectionPresentationStore()
+    store.attach_client(client)
+    emitted = []
+    for signal_name in (
+        "connection-added",
+        "connection-removed",
+        "connection-updated",
+        "projection-reset",
+    ):
+        store.connect_after(
+            signal_name,
+            lambda _store, connection, name=signal_name: emitted.append(
+                (name, connection)
+            ),
+        )
+
+    client.connections = [summary("new")]
+    store.refresh()
+
+    assert emitted == [("projection-reset", None)]
+
+
 def test_gtk_window_does_not_create_or_reload_backend_manager():
     source = open("src/sshpilot/window.py", encoding="utf-8").read()
     assert "ConnectionManager(" not in source
