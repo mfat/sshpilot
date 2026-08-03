@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from queue import Queue
+from threading import Barrier, Thread
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.connections import ConnectionSummary
@@ -78,6 +80,57 @@ def test_reconnect_refreshes_and_ignores_old_daemon_events():
 
     assert old.subscription.closed
     assert new.list_calls == 1
+    assert store.snapshot() == (summary("new"),)
+
+
+def test_observers_are_marshaled_through_injected_dispatcher():
+    scheduled = Queue()
+    delivered = []
+    client = Client("daemon-a", [])
+    store = ConnectionPresentationStore(
+        dispatch=scheduled.put,
+        on_changed=delivered.append,
+    )
+
+    store.attach_client(client)
+    assert delivered == []
+    scheduled.get_nowait()()
+    assert delivered == [()]
+
+    worker = Thread(target=client.emit, args=(
+        EventType.CONNECTION_CREATED, summary("worker"), 1,
+    ))
+    worker.start()
+    worker.join()
+
+    assert delivered == [()]
+    scheduled.get_nowait()()
+    assert delivered[-1] == (summary("worker"),)
+
+
+def test_refresh_replays_event_arriving_while_snapshot_is_in_flight():
+    entered = Barrier(2)
+    release = Barrier(2)
+    client = Client("daemon-a", [summary("old")])
+    store = ConnectionPresentationStore()
+    store.attach_client(client)
+    original_list = client.list_connections
+
+    def blocked_list():
+        result = original_list()
+        entered.wait()
+        release.wait()
+        return result
+
+    client.list_connections = blocked_list
+    refresh_thread = Thread(target=store.refresh)
+    refresh_thread.start()
+    entered.wait()
+    client.emit(EventType.CONNECTION_DELETED, summary("old"), 10)
+    client.emit(EventType.CONNECTION_CREATED, summary("new"), 11)
+    release.wait()
+    refresh_thread.join()
+
     assert store.snapshot() == (summary("new"),)
 
 

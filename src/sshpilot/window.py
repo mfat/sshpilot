@@ -237,7 +237,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         key_dir = Path(get_config_dir()) if effective_isolated else None
         # Compatibility attribute while call sites migrate terminology. This is
         # a DTO projection, never a persistence-capable backend manager.
-        self.connection_manager = ConnectionPresentationStore()
+        self.connection_manager = ConnectionPresentationStore(
+            dispatch=lambda callback: GLib.idle_add(
+                lambda: (callback(), GLib.SOURCE_REMOVE)[1]
+            )
+        )
 
         # Wire GTK interaction provider for core.interaction requests.
         try:
