@@ -5,13 +5,40 @@ import ast
 from pathlib import Path
 
 from sshpilot.core.package_graph import (
+    ALLOWED_EDGES,
     BOUNDARY_PACKAGES,
     FORBIDDEN_GI_MODULES,
     FORBIDDEN_GI_NAMES,
+    FORBIDDEN_GOBJECT_ADAPTERS,
     FORBIDDEN_UI_PREFIXES,
 )
 
 ROOT = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
+
+# Registered GObject-adapter imports in the daemon runtime composition. These
+# pull GI transitively, so the daemon *runtime* is not yet GI-free. Each row is
+# removed when the owning migration replaces the adapter with a headless
+# daemon service. Any *new* daemon -> adapter edge fails the suite below.
+DAEMON_DEBT: dict[str, str] = {
+    "sshpilot.config": "M4",  # Config (GTK preference store) -> daemon settings
+    "sshpilot.connection_manager": "M3",  # ConnectionManager -> daemon connections
+    "sshpilot.groups": "M3",  # GroupManager -> daemon connections/groups
+    "sshpilot.plugins": "M8",  # load_plugins (frontend plugin host) -> daemon host
+    # get_state_dir is used for the daemon log. platform_utils imports GI
+    # (plan_utils is GTK-facing), so the daemon runtime depends on GI for its
+    # log path; switch to sshpilot.platform.paths.get_state_dir when the daemon
+    # log lands behind a dedicated path helper.
+    "sshpilot.platform_utils": "M4",
+}
+
+# core is the bottom layer, but ConnectionApplicationService still couples to
+# frontend modules for command building, plugin capability and config. Each
+# entry is removed as the owning migration replaces that coupling.
+CORE_DEBT: dict[str, str] = {
+    "sshpilot.plugins": "M8",  # plugins.api/registry (plugin capability)
+    "sshpilot.ssh_connection_builder": "M7",  # builds ssh argv/env
+    "sshpilot.config": "M4",  # instantiates Config for command building
+}
 
 
 def _iter_py_files(package: str):
@@ -99,3 +126,82 @@ def test_dependency_direction_core_api_daemon_do_not_import_gtk():
 def test_package_graph_manifest_lists_boundary_packages():
     assert set(BOUNDARY_PACKAGES) == {"core", "api", "daemon"}
     assert "sshpilot.gtk" in FORBIDDEN_UI_PREFIXES
+
+
+def _imports(module_rel: str) -> list[str]:
+    """All dotted module names a source module imports (absolute + relative)."""
+    path = ROOT / module_rel
+    hits: list[str] = []
+    for _kind, name in _collect_imports(path):
+        hits.append(name)
+    return hits
+
+
+def _matches(prefix: str, name: str) -> bool:
+    return name == prefix or name.startswith(prefix + ".")
+
+
+def test_daemon_imports_only_allowed_edges():
+    """The daemon must not reach GObject/GTK adapters; new edges are rejected."""
+    allowed = ALLOWED_EDGES["daemon"]
+    debt_prefixes = tuple(DAEMON_DEBT)
+    failures: list[str] = []
+    for path in sorted((ROOT / "daemon").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        for name in _imports(rel):
+            if not name.startswith("sshpilot") or name == "sshpilot":
+                continue  # bare package ``__version__`` import is GI-free
+            ok = any(_matches(p, name) for p in allowed) or any(
+                _matches(p, name) for p in debt_prefixes
+            )
+            if not ok:
+                failures.append(f"{rel} imports {name}")
+    assert not failures, (
+        "daemon imports a module outside its allowed dependency (add headless "
+        "helpers to ALLOWED_EDGES['daemon']; route GObject adapters through the "
+        "daemon instead of importing them):\n"
+        + "\n".join(failures)
+    )
+
+
+def test_daemon_does_not_import_unregistered_goobject_adapters():
+    """GObject adapters may be used by the daemon only via registered debt."""
+    for prefix in DAEMON_DEBT:
+        assert prefix in FORBIDDEN_GOBJECT_ADAPTERS, prefix
+    allowed_debt = frozenset(DAEMON_DEBT)
+    failures: list[str] = []
+    for path in sorted((ROOT / "daemon").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        for name in _imports(rel):
+            for adapter in FORBIDDEN_GOBJECT_ADAPTERS:
+                if _matches(adapter, name) and not any(
+                    _matches(d, name) for d in allowed_debt
+                ):
+                    failures.append(f"{rel}: {name} -> {adapter}")
+    assert not failures, (
+        "daemon imports a GObject adapter outside the registered debt; move "
+        "it behind a headless daemon service instead:\n" + "\n".join(failures)
+    )
+
+
+def test_core_imports_only_allowed_edges():
+    """core is the bottom layer; it may only link core + shared model leaves."""
+    allowed = ALLOWED_EDGES["core"]
+    debt_prefixes = tuple(CORE_DEBT)
+    failures: list[str] = []
+    for path in sorted((ROOT / "core").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        for name in _imports(rel):
+            if not name.startswith("sshpilot") or name == "sshpilot":
+                continue
+            ok = any(_matches(p, name) for p in allowed) or any(
+                _matches(p, name) for p in debt_prefixes
+            )
+            if not ok:
+                failures.append(f"{rel} imports {name}")
+    assert not failures, (
+        "core imports outside its allowed edges (core/api/runtime_identity/"
+        "platform.paths). Registered coupling to frontend helpers lives in "
+        "CORE_DEBT and must be removed by its migration:\n"
+        + "\n".join(failures)
+    )

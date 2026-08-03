@@ -28,6 +28,7 @@ FORBIDDEN_UI_PREFIXES = (
 ALLOWED_EDGES = {
     "core": (
         "sshpilot.core",
+        "sshpilot.api",  # API model layer is shared language (GTK-free leaf)
         "sshpilot.runtime_identity",
         "sshpilot.platform.paths",  # path helpers used by CLI
     ),
@@ -41,9 +42,32 @@ ALLOWED_EDGES = {
         "sshpilot.api",
         "sshpilot.core",
         "sshpilot.runtime_identity",
-        # Daemon may import selected top-level pure helpers; GTK is forbidden.
+        # Daemon may import selected top-level headless helpers; GTK and
+        # GObject adapters are forbidden. Registered GObject-adapter debt is
+        # tracked in tests/core/test_dependency_boundary.py::DAEMON_DEBT.
+        "sshpilot.askpass_utils",
+        "sshpilot.ssh_config_utils",
+        "sshpilot.sftp",
     ),
 }
+
+# Top-level modules that are GObject/GTK-facing adapters. The daemon must not
+# import them (they pull GI transitively); current violations are registered as
+# debt in tests/core/test_dependency_boundary.py::DAEMON_DEBT.
+FORBIDDEN_GOBJECT_ADAPTERS = frozenset(
+    {
+        "sshpilot.config",
+        "sshpilot.connection_manager",
+        "sshpilot.groups",
+        "sshpilot.plugins",
+        "sshpilot.secret_storage",
+        "sshpilot.terminal_manager",
+        "sshpilot.key_manager",
+        "sshpilot.known_hosts_editor",
+        "sshpilot.backup_manager",
+        "sshpilot.platform_utils",
+    }
+)
 
 FORBIDDEN_GI_MODULES = frozenset({"gi", "gi.repository"})
 FORBIDDEN_GI_NAMES = frozenset({"Gtk", "Gdk", "Adw", "Vte", "GLib", "Gio", "GObject"})
