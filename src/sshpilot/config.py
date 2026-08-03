@@ -782,7 +782,7 @@ class Config(GObject.Object):
             'use_isolated_config': False,
             'verbosity': 0,
             'ssh_overrides': [],
-            'apply_default_keepalive': True,
+            'apply_default_keepalive': False,
             'default_keepalive_interval': 15,
             'default_keepalive_count': 3,
         }

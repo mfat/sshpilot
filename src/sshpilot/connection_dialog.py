@@ -2054,7 +2054,6 @@ class ConnectionDialog(
             if hasattr(self, 'remote_command_row') and self.remote_command_row.get_text().strip():
                 remote_cmd = self.remote_command_row.get_text().strip()
                 config_lines.append(f"    RemoteCommand {remote_cmd}")
-                config_lines.append("    RequestTTY yes")
             
             return '\n'.join(config_lines)
             
@@ -2844,7 +2843,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 "Run a command automatically on connect.\n\n"
                 "• Pre-Connection Command: Runs locally before connecting.\n"
                 "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
-                "• Remote Command: Runs on the remote host (uses RequestTTY for interactive shell)."
+                "• Remote Command: Runs on the remote host (RequestTTY is configured separately)."
             )
         )
         self.pre_command_row = Adw.EntryRow(title=_("Pre-Connection Command"))

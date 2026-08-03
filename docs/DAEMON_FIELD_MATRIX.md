@@ -63,7 +63,7 @@ migration. Every phase of the implementation references it by row number.
 |---|--------|----------|-----------|---------------|-----------|--------|--------|---------|
 | 21 | `pre_command_row` | `pre_command` | `pre_command` | `# sshpilot:PreCommand <value>` (comment) | `f"    # sshpilot:PreCommand {pre_cmd}"` | Comment prefix parsed in loader | config (comment) | **Yes** |
 | 22 | `local_command_row` | `local_command` | `local_command` | `PermitLocalCommand yes` + `LocalCommand <value>` | Both emitted when non-empty | `config.get('localcommand')` | config | **Yes** |
-| 23 | `remote_command_row` | `remote_command` | `remote_command` | `RemoteCommand <value>` + `RequestTTY <token>` | Appends `; exec $SHELL -l` if missing | `config.get('remotecommand')` + `config.get('requesttty')` | config | **Yes** |
+| 23 | `remote_command_row` | `remote_command` | `remote_command` | `RemoteCommand <value>`; `RequestTTY <token>` only when explicitly selected/authored | Preserved exactly as entered | `config.get('remotecommand')` + `config.get('requesttty')` | config | **Yes** |
 
 ## Advanced
 
@@ -132,7 +132,7 @@ via `_preserve_multivalue_on_update` when the save payload omits them.
 | # | data key | Conn attr | SSH directive | Formatter | Parser | Domain |
 |---|----------|-----------|---------------|-----------|--------|--------|
 | 38 | `proxy_command` | `proxy_command` | `ProxyCommand <value>` | `f"    ProxyCommand {proxy_command}"` | `config['proxycommand']` | config |
-| 39 | `request_tty` | `request_tty` | `RequestTTY <token>` | Emitted with `RemoteCommand` or standalone | `config.get('requesttty')` → normalized token | config |
+| 39 | `request_tty` | `request_tty` | `RequestTTY <token>` | Emitted only when explicitly selected/authored | `config.get('requesttty')` → normalized token | config |
 | 40 | `forward_agent_target` | `forward_agent_target` | Part of `ForwardAgent` value | `f"    ForwardAgent {target}"` | Extracted from `forwardagent` when not plain yes/no | config |
 | 41 | `identity_file_none` | `identity_file_none` | `IdentityFile none` | `_clean_list` filters `none` | Detected as `identity_suppressed` flag | config (derived) |
 | 42 | `preferred_authentications` | *(none)* | `PreferredAuthentications <list>` | Derived from `auth_method`, not read from data | `parsed['preferred_authentications']` | config (derived) |

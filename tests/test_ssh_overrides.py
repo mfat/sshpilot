@@ -174,10 +174,9 @@ def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch)
         asyncio.set_event_loop(None)
 
     assert result is True
-    # ssh_overrides are appended verbatim; default keepalive is injected after.
+    # Explicit overrides are appended verbatim; implicit keepalive is opt-in.
     assert connection.ssh_cmd == [
         'ssh', '-o', 'ConnectTimeout=10', '-C',
-        '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
         'example.com',
     ]
 
