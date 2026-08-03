@@ -43,7 +43,7 @@ these documents describe the concrete contract.
 
 ## Current runtime baseline
 
-`retired frontend backend` advertises connection read/event/write support.
+`InProcessClient` advertises connection read/event/write support.
 `DaemonClient` additionally negotiates daemon-lifetime session lifecycle,
 binary PTY terminal streaming, typed authentication/trust interactions, SFTP,
 transfers, and port forwarding over a secure per-user Unix socket.

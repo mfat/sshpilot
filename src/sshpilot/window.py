@@ -466,6 +466,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             toast = Adw.Toast.new(message)
             toast.set_timeout(0)
+            toast.set_button_label(_("Retry"))
+            toast.connect("button-clicked", lambda *_args: self.retry_daemon_connection())
             self.toast_overlay.add_toast(toast)
         except Exception:
             logger.warning("Unable to display daemon recovery diagnostics")

@@ -55,7 +55,7 @@ name/field/value surface is protected by
 
 No advertised capability lacks runtime operations or contract tests. The
 daemon filters its negotiated set to the three connection capabilities and
-adds the three daemon-session lifecycle capabilities. `retired frontend backend`
+adds the three daemon-session lifecycle capabilities. `InProcessClient`
 truthfully leaves all session lifecycle operations unsupported.
 
 ## Daemon transport
@@ -66,7 +66,7 @@ truthfully leaves all session lifecycle operations unsupported.
 | Length-prefixed JSON framing | Yes | Yes | 4-byte big-endian length; 1 MiB maximum |
 | `system.handshake` | Yes | Yes | Required once; exact Protocol `1.0` selection |
 | `system.get_capabilities` | Yes | Yes | Negotiated daemon result |
-| Connection read/write methods | Yes | Shared parity | Delegates to `retired frontend backend` |
+| Connection read/write methods | Yes | Shared parity | Delegates to `InProcessClient` |
 | Six `sessions.*` methods | Daemon only | Codec, lifecycle, multi-client, ambiguity | Delegates to daemon-owned `SessionRuntime` |
 | Unix socket lifecycle/security | Yes | Yes | Owned 0700 directory, 0600 socket, safe stale cleanup |
 | Daemon runtime event forwarding | Yes | Codec, multi-client, ordering, interleaving, backpressure, shutdown | Connection and session lifecycle events; bounded queue disconnects on overflow |
@@ -75,7 +75,7 @@ truthfully leaves all session lifecycle operations unsupported.
 
 | Public element | Location | Implemented at runtime | Advertised capability | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |
-| `connection.created` | `api/events.py`, `api/retired_backend_client.py`, daemon transport | Yes | `connections.events` | Both clients + codec | Yes | Translated from `connection-added` |
+| `connection.created` | `api/events.py`, `api/in_process_client.py`, daemon transport | Yes | `connections.events` | Both clients + codec | Yes | Translated from `connection-added` |
 | `connection.updated` | same | Yes | `connections.events` | Both clients + codec | Yes | Translated from `connection-updated` |
 | `connection.deleted` | same | Yes | `connections.events` | Both clients + codec | Yes | Translated from `connection-removed` |
 | `session.created` | `api/events.py`, `daemon/session_runtime.py` | Daemon only | `sessions.events` | Runtime, codec, multi-client | Yes | `SessionSummary` at allocation |
@@ -193,7 +193,7 @@ All field lists, defaults, types, and synthetic examples are documented in the
 ```text
 WelcomePage._populate_recent_box
     -> MainWindow.client
-    -> retired frontend backend or GtkClientBridge + DaemonClient.list_connections()
+    -> InProcessClient or GtkClientBridge + DaemonClient.list_connections()
     -> ConnectionSummary
 
 application-scoped client subscription
@@ -217,7 +217,7 @@ API, but terminal execution and most of the core remain GTK/GObject-coupled.
 5. Behavioural contract coverage is intentionally thin for schema-only models,
     proposed errors, and state transitions. The snapshot protects shape, not
     semantics.
-6. The API contract is GTK-free, but `retired frontend backend` wraps
+6. The API contract is GTK-free, but `InProcessClient` wraps
     `ConnectionManager`, which is a GObject/GLib component. The core is not yet
     GTK-free.
 

@@ -1,4 +1,6 @@
 """xterm.js-style pending-callback flow control for PyXtermBridgeBackend."""
+import codecs
+
 from sshpilot.terminal_backends import PyXtermBridgeBackend
 
 
@@ -114,3 +116,19 @@ def test_bridge_pause_resume_idempotent():
     assert br.paused is False
     br.resume()
     br.close()
+
+
+def test_daemon_feed_preserves_utf8_split_across_frames():
+    """Daemon transport framing must not become Unicode framing."""
+    b = object.__new__(PyXtermBridgeBackend)
+    b._daemon_decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    displayed = []
+    b._on_pty_output = displayed.append
+    encoded = "سلام".encode("utf-8")
+
+    # Deliberately split every two-byte Persian code point in half.
+    for byte in encoded:
+        b.feed(bytes((byte,)))
+
+    assert "".join(displayed) == "سلام"
+    assert "�" not in "".join(displayed)

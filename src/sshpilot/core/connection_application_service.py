@@ -200,12 +200,21 @@ class ConnectionApplicationService:
         *,
         interaction_policy: str = "none",
     ) -> tuple:
-        """Internal daemon launch hook using the canonical native SSH path."""
+        """Build a daemon-owned terminal process for any registered protocol.
+
+        SSH retains its interaction-broker preparation below.  Other protocols
+        use the same stateless ``ProtocolBackend.build_spawn`` contract that
+        previously only the GTK process consumed; the daemon is now the process
+        owner for those commands too.
+        """
 
         import asyncio
         import shutil
 
         connection = self._find_connection(connection_id)
+        protocol = str(getattr(connection, "protocol", "ssh") or "ssh")
+        if protocol != "ssh":
+            return self._prepare_protocol_terminal_launch(connection, protocol)
         resolver_policy = "normal" if interaction_policy == "broker" else interaction_policy
         prepared = asyncio.run(
             connection.native_connect(interaction_policy=resolver_policy)
@@ -275,6 +284,54 @@ class ConnectionApplicationService:
                 ErrorCode.SESSION_STARTUP_FAILED,
                 "The OpenSSH executable is unavailable",
                 connection_id=connection_id,
+            )
+        return (executable, *argv[1:]), environment
+
+    def _prepare_protocol_terminal_launch(self, connection, protocol: str) -> tuple:
+        """Resolve a non-SSH protocol through the headless plugin registry."""
+        import shutil
+
+        from sshpilot.plugins.api import PluginContext, ProtocolError
+        from sshpilot.plugins.registry import protocol_registry
+
+        registry = protocol_registry()
+        backend = registry.get_or_none(protocol)
+        if backend is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                f"No terminal launch provider is registered for {protocol!r}",
+                connection_id=connection_id_for(connection),
+            )
+        plugin_id = registry.plugin_id_for(protocol) or protocol
+        config = getattr(self._connection_manager, "config", None)
+        ctx = PluginContext.for_spawn(
+            plugin_id=plugin_id,
+            app_config=config,
+            connection_manager=self._connection_manager,
+            protocol_registry=registry,
+        )
+        try:
+            spawn = backend.build_spawn(connection, ctx)
+        except ProtocolError as exc:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                str(exc),
+                connection_id=connection_id_for(connection),
+            ) from exc
+        argv = tuple(spawn.argv or ())
+        environment = dict(spawn.env or {})
+        if not argv:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                f"The {protocol} launch provider returned an empty command",
+                connection_id=connection_id_for(connection),
+            )
+        executable = shutil.which(argv[0], path=environment.get("PATH"))
+        if executable is None:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                f"The executable required by the {protocol} provider is unavailable",
+                connection_id=connection_id_for(connection),
             )
         return (executable, *argv[1:]), environment
 

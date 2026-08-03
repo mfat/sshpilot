@@ -126,7 +126,7 @@ class TestDaemonTerminalActivation:
             assert str(args[2]) == "TestServer"
             connection.native_connect.assert_not_called()
 
-    def test_local_mode_when_daemon_disabled(self):
+    def test_retired_daemon_setting_cannot_restore_local_mode(self):
         window = self._window()
         window.config = _settings(
             {
@@ -139,9 +139,9 @@ class TestDaemonTerminalActivation:
 
         assert (
             resolve_ssh_terminal_route(window, connection)
-            is SshTerminalRoute.LEGACY_LOCAL
+            is SshTerminalRoute.DAEMON
         )
-        assert not should_use_daemon_ssh_terminal(
+        assert should_use_daemon_ssh_terminal(
             window, connection, client=window.client
         )
 
@@ -163,7 +163,8 @@ class TestDaemonTerminalActivation:
             terminal._connect_ssh = Mock(return_value=True)
             mock_terminal_widget.return_value = terminal
             manager.connect_to_host(connection)
-            terminal.start_daemon_session.assert_not_called()
+            terminal.start_daemon_session.assert_called_once()
+            terminal._connect_ssh.assert_not_called()
 
     def test_daemon_failure_does_not_spawn_local_ssh(self):
         window = self._window()

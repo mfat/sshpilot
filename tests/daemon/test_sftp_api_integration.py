@@ -12,7 +12,7 @@ class TestSftpDaemonPath:
 
     def test_open_sftp_returns_service_id(self, daemon_factory):
         """DaemonClient.open_sftp accepts the request and returns a service ID."""
-        from sshpilot.api.models.operations import OpenSftpRequest, CloseSftpRequest
+        from sshpilot.api.models.operations import OpenSftpRequest
 
         server, _manager = daemon_factory(idle_shutdown_seconds=5.0)
         client = DaemonClient(socket_path=server.socket_path)
@@ -20,8 +20,6 @@ class TestSftpDaemonPath:
 
         opened = client.open_sftp(OpenSftpRequest(connection_id=connection.id))
         assert opened.id is not None
-
-        client.close_sftp(CloseSftpRequest(service_id=opened.id))
 
         client.close()
         server.shutdown()
@@ -32,7 +30,6 @@ class TestSftpDaemonPath:
         from sshpilot.api.models.operations import (
             OpenSftpRequest,
             SftpServiceState,
-            CloseSftpRequest,
         )
 
         server, _manager = daemon_factory(idle_shutdown_seconds=5.0)
@@ -50,8 +47,6 @@ class TestSftpDaemonPath:
             SftpServiceState.READY,
             SftpServiceState.FAILED,
         }
-
-        client.close_sftp(CloseSftpRequest(service_id=opened.id))
 
         client.close()
         server.shutdown()

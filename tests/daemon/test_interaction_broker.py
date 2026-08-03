@@ -708,6 +708,42 @@ def test_prepare_daemon_terminal_launch_carries_local_command(monkeypatch) -> No
     )
 
 
+def test_prepare_daemon_terminal_launch_dispatches_non_ssh_provider(monkeypatch) -> None:
+    """Telnet/Mosh/custom protocols use their registered daemon provider."""
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.plugins import SpawnSpec
+    from sshpilot.plugins.registry import protocol_registry
+    from tests.daemon.conftest import TestConnection, TestConnectionManager
+
+    class Provider:
+        protocol_id = "test-wire"
+        display_name = "Test wire"
+
+        def build_spawn(self, connection, ctx):
+            assert connection.protocol == "test-wire"
+            assert ctx.plugin_id == "test-plugin"
+            return SpawnSpec(argv=["wire-client", connection.hostname], env={"PATH": "/bin"})
+
+    manager = TestConnectionManager()
+    manager.config = None
+    connection = TestConnection(nickname="wire", hostname="wire.test", username="u")
+    connection.id = connection.uuid = "wire"
+    connection.protocol = "test-wire"
+    connection.data.update({"id": "wire", "protocol": "test-wire"})
+    manager.connections = [connection]
+    registry = protocol_registry()
+    registry.register(Provider(), plugin_id="test-plugin")
+    monkeypatch.setattr("shutil.which", lambda name, path=None: "/bin/wire-client")
+    try:
+        service = ConnectionApplicationService(manager, allow_cross_thread_commands=True)
+        argv, env = service.prepare_daemon_terminal_launch(ConnectionId("wire"))
+    finally:
+        registry.unregister_plugin("test-plugin")
+
+    assert argv == ("/bin/wire-client", "wire.test")
+    assert env == {"PATH": "/bin"}
+
+
 def test_daemon_entered_password_is_never_implicitly_stored(
     monkeypatch,
 ) -> None:

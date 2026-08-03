@@ -287,6 +287,14 @@ def _production_core_services():
         config,
         connection_manager=connection_manager,
     )
+    # Protocol launch providers must live with the process-owning daemon.
+    # Headless loading deliberately omits PluginHost/UI integration.
+    from sshpilot.plugins.loader import load_plugins
+    load_plugins(
+        app_config=config,
+        connection_manager=connection_manager,
+        plugin_host=None,
+    )
     connections = ConnectionApplicationService(
         connection_manager,
         group_manager=group_manager,

@@ -4,7 +4,7 @@ This document defines the intended ownership boundary. The local daemon
 currently owns connection CRUD/events, daemon-lifetime sessions, PTYs,
 terminal streams, and typed authentication/trust brokering.
 
-## Phase 9: GTK Terminal Migration Complete
+## Current ownership and known exceptions
 
 Phase 9 completes the GTK terminal migration to daemon ownership:
 
@@ -17,8 +17,14 @@ Phase 9 completes the GTK terminal migration to daemon ownership:
 Phase 9.1 hardens activation ownership: route selection
 (`SshTerminalRoute`) is independent of daemon readiness. A selected daemon
 route that is not ready shows a clear error and never silently launches
-GTK-owned local SSH. Local shell tabs and external terminals remain outside
-daemon SSH ownership.
+GTK-owned local SSH.
+
+Local shell tabs and user-selected external terminals are explicit exceptions:
+their processes are owned by GTK/the external emulator, not by `sshpilotd`.
+They must not be described as daemon sessions. GTK also still constructs a
+`ConnectionManager` for presentation and plugin compatibility; eliminating
+that duplicate configuration graph in favour of daemon-fed DTO stores remains
+follow-up architecture work.
 
 The concrete current client contract is maintained in the
 [API reference](../api/README.md). This document describes intended ownership;
@@ -29,9 +35,8 @@ it does not advertise runtime capabilities.
 ```text
 GTK / Tauri / CLI
        -> SshPilotClient
-       -> retired frontend backend by default
-       -> DaemonClient in experimental opt-in mode
-       -> sshpilotd for connection CRUD/events and session lifecycle
+       -> DaemonClient
+       -> sshpilotd for connection CRUD/events and remote session lifecycle
 ```
 
 Protocol models are independent from the in-process adapter and any future Unix
@@ -152,7 +157,7 @@ binary framing, replay, and slow-peer isolation are defined in
 
 ## Protocol v1 contract decisions
 
-- Commands are synchronous for `retired frontend backend`, with a frontend-neutral event
+- Commands are synchronous for `InProcessClient`, with a frontend-neutral event
   subscription. Calling convention and wire protocol are separate decisions.
 - In-process advertises only the three connection capabilities. The daemon
   additionally advertises `sessions.read`, `sessions.write`, and
@@ -172,7 +177,7 @@ binary framing, replay, and slow-peer isolation are defined in
 
 ## Event guarantees in this phase
 
-- `retired frontend backend` adapts existing `connection-added`,
+- `InProcessClient` adapts existing `connection-added`,
   `connection-updated`, and `connection-removed` GObject signals.
 - Events have a process-local monotonically increasing sequence.
 - Delivery uses a publisher-global serial FIFO in sequence order. The first

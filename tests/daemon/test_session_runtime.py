@@ -288,7 +288,7 @@ def test_startup_failure_is_a_real_failed_session_without_sensitive_details():
         core.close()
 
 
-def test_open_rejects_missing_connection_and_unsupported_protocol():
+def test_open_rejects_missing_connection_and_accepts_provider_protocol():
     manager = _Manager()
     core = ConnectionApplicationService(manager)
     runtime = SessionRuntime(core, runner=ControlledRunner())
@@ -301,13 +301,12 @@ def test_open_rejects_missing_connection_and_unsupported_protocol():
         assert missing.value.code is ErrorCode.CONNECTION_NOT_FOUND
 
         manager.connection.protocol = "telnet"
-        with pytest.raises(SshPilotError) as unsupported:
-            runtime.open_session(
-                OpenSessionRequest(connection_id=core.list_connections()[0].id),
-                client_id=ClientId("client:a"),
-            )
-        assert unsupported.value.code is ErrorCode.UNSUPPORTED_SESSION_PROTOCOL
-        assert runtime.list_sessions() == []
+        opened = runtime.open_session(
+            OpenSessionRequest(connection_id=core.list_connections()[0].id),
+            client_id=ClientId("client:a"),
+        )
+        assert opened.id is not None
+        assert runtime.list_sessions()[0].id == opened.id
     finally:
         runtime.shutdown()
         core.close()

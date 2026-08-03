@@ -14,8 +14,8 @@ implementations.
 5. Add or update event types, typed payloads, ordering, and delivery rules.
 6. Add structured error codes and safe details where needed.
 7. Implement core behaviour while preserving the single native SSH/auth path.
-8. Update `retired frontend backend`.
-9. Update both `retired frontend backend` and `DaemonClient`, or keep the operation
+8. Update `InProcessClient`.
+9. Update both `InProcessClient` and `DaemonClient`, or keep the operation
    schema-only and return `unsupported_capability` consistently.
 10. Add reusable contract tests, not implementation-only assertions.
 11. Update state-transition documentation and transition tests.
@@ -36,7 +36,7 @@ implementations.
 - [ ] Events are added or updated
 - [ ] Ordering, delivery, cancellation, timeout, and threading are defined
 - [ ] State transitions are documented
-- [ ] `retired frontend backend` is updated
+- [ ] `InProcessClient` is updated
 - [ ] `DaemonClient` is updated or a backlog item is recorded
 - [ ] Contract tests are updated
 - [ ] API documentation is updated
@@ -190,7 +190,7 @@ When regenerating API artifacts after claim/release or multi-attachment changes,
 ### Phase 9.3 testing notes
 
 - GUI tests (`SSHPILOT_GUI_TESTS=1`) isolate `HOME`/`XDG_*` **and**
-  `XDG_RUNTIME_DIR`, and force `SSHPILOT_CLIENT_MODE=retired_backend`. They must
+  `XDG_RUNTIME_DIR`, and force `SSHPILOT_CLIENT_MODE=in_process`. They must
   never attach to the developer user socket under `/run/user/$UID/sshpilot/`.
 - Daemon-specific GUI cases start an owned `DaemonServer` on a unique temp
   socket, assert `server_instance_id` / `threads_alive()`, and tear down

@@ -487,12 +487,6 @@ class SessionRuntime:
                 "An open session request is required",
             )
         connection = self._core_client.get_connection(request.connection_id)
-        if connection.protocol != "ssh":
-            raise SshPilotError(
-                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
-                "The connection protocol cannot start a daemon session",
-                connection_id=request.connection_id,
-            )
         session_id = SessionId(self._id_factory())
         now = self._clock()
         record = _SessionRecord(

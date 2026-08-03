@@ -6,7 +6,7 @@ IDs.
 
 <!-- api-event-semantics: serial-fifo-v1 -->
 
-`retired frontend backend` uses one publisher-global FIFO ordering point. Sequence
+`InProcessClient` uses one publisher-global FIFO ordering point. Sequence
 allocation and queue insertion are atomic, and exactly one publishing thread
 drains the queue. Therefore every subscriber observes accepted events in
 strictly increasing sequence order, including when publishers run concurrently.
@@ -30,7 +30,7 @@ subscriber that is absent or already closed does not receive prior events.
 
 <!-- api-daemon-event-semantics: global-sequence-bounded-v1 -->
 
-The daemon subscribes to its `retired frontend backend` connection publisher, its owned
+The daemon subscribes to its `InProcessClient` connection publisher, its owned
 `SessionRuntime` publisher, and its owned `InteractionBroker` publisher. It
 accepts three connection events, four session lifecycle events, and two safe
 interaction lifecycle events. It replaces each source publisher's process-local
@@ -371,7 +371,7 @@ Context-manager use is supported and cleanup is idempotent. Unsubscription
 during an event affects later events; the current event still reaches the
 subscriber snapshot captured when it was accepted.
 
-`retired frontend backend.close()` disconnects its manager signal handlers, rejects new
+`InProcessClient.close()` disconnects its manager signal handlers, rejects new
 publication/subscription, and deactivates subscription handles. An event
 already being delivered, plus events accepted into its FIFO, finish in order;
 callbacks are then released. Closing from inside a callback does not deadlock.
