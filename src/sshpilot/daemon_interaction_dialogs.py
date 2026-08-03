@@ -92,9 +92,14 @@ class DaemonInteractionDialogs:
     def _present(self, summary: InteractionSummary) -> None:
         if self._closed or summary.id in self._dialogs:
             return
-        parent = self._parent.get_root()
-        if not isinstance(parent, Gtk.Window):
-            parent = self._parent
+        from .window_dialogs import resolve_app_modal_parent
+
+        try:
+            parent = resolve_app_modal_parent(self._parent)
+        except RuntimeError:
+            parent = self._parent.get_root()
+            if not isinstance(parent, Gtk.Window):
+                parent = self._parent
         if summary.type is InteractionType.HOST_KEY_CONFIRMATION:
             self._present_host_key(summary, parent)
         elif summary.type in {
@@ -169,9 +174,9 @@ class DaemonInteractionDialogs:
     ) -> None:
         prompt = summary.prompt
         if isinstance(prompt, PasswordPrompt):
-            heading = f"Password for {prompt.username}@{prompt.hostname}"
-            can_remember = prompt.can_remember
-        elif isinstance(prompt, PassphrasePrompt):
+            self._present_shared_password(summary, prompt, parent)
+            return
+        if isinstance(prompt, PassphrasePrompt):
             heading = f"Passphrase for {prompt.key_display_name}"
         elif isinstance(prompt, ChallengePrompt):
             heading = "SSH authentication challenge"
@@ -254,6 +259,45 @@ class DaemonInteractionDialogs:
         )
         self._dialogs[summary.id] = dialog
         dialog.present(parent)
+
+        # AlertDialog maps its extra child during presentation; defer the
+        # focus request until then so typing starts in the password field.
+        def _focus_entry() -> bool:
+            if summary.id not in self._dialogs:
+                return GLib.SOURCE_REMOVE
+            entry.grab_focus()
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(_focus_entry)
+
+    def _present_shared_password(
+        self,
+        summary: InteractionSummary,
+        prompt: PasswordPrompt,
+        parent: Gtk.Widget,
+    ) -> None:
+        """Use the standard password UI, then submit through the broker."""
+        from .window_dialogs import present_for_modal_dialog, show_ssh_password_dialog
+
+        # ``parent`` is resolved from the app window in _present().  Explicitly
+        # prepare it for modal presentation because this call uses the shared
+        # helper's parent_window escape hatch.
+        present_for_modal_dialog(parent)
+        self._dialogs[summary.id] = None
+        try:
+            value = show_ssh_password_dialog(
+                parent_window=parent,
+                display_name=f"{prompt.username}@{prompt.hostname}",
+                host=prompt.hostname,
+                username=prompt.username,
+                allow_store=False,
+            )
+        finally:
+            self._dialogs.pop(summary.id, None)
+        if value:
+            self._submit_secret(summary, bytearray(value.encode("utf-8")))
+        else:
+            self._cancel_secret(summary)
 
     def _presence_closed(self, summary, dialog) -> None:
         self._dialogs.pop(summary.id, None)

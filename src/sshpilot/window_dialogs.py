@@ -196,6 +196,7 @@ def show_ssh_password_dialog(
     body: Optional[str] = None,
     store_label: Optional[str] = None,
     on_store: Optional[Any] = None,
+    allow_store: Optional[bool] = None,
 ) -> Optional[str]:
     """Show the standard in-app SSH **password** dialog (blocking).
 
@@ -254,6 +255,7 @@ def show_ssh_password_dialog(
         body=body,
         store_label=store_label,
         on_store=on_store,
+        allow_store=allow_store,
     )
 
 
@@ -271,6 +273,7 @@ def _show_password_passphrase_dialog(
     body: Optional[str] = None,
     store_label: Optional[str] = None,
     on_store: Optional[Any] = None,
+    allow_store: Optional[bool] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
 
@@ -323,7 +326,8 @@ def _show_password_passphrase_dialog(
         confirm_label = _("OK")
     if not store_label:
         store_label = default_store_label
-    allow_store = prompt_type in ("password", "passphrase")
+    if allow_store is None:
+        allow_store = prompt_type in ("password", "passphrase")
 
     dialog = Adw.Dialog()
     dialog.set_title(heading)
