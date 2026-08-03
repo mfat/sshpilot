@@ -336,7 +336,7 @@ class StoreConnectionPasswordRequest:
     """Store or update a login password for a connection."""
 
     connection_id: ConnectionId
-    password: str
+    password: str = field(repr=False)
     previous_hostname: str = ""
     previous_host: str = ""
     previous_username: str = ""
@@ -363,7 +363,7 @@ class StoreKeyPassphraseRequest:
     """Store or update a key passphrase."""
 
     key_path: str
-    passphrase: str
+    passphrase: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if not self.key_path.strip():
@@ -377,7 +377,7 @@ class LookupKeyPassphraseRequest:
     key_path: str
 
     def __post_init__(self) -> None:
-        require_text(self.key_path, "key path")
+        require_identifier(self.key_path, "key path")
 
 
 @dataclass(frozen=True)
@@ -387,9 +387,7 @@ class DeleteKeyPassphraseRequest:
     key_path: str
 
     def __post_init__(self) -> None:
-        require_text(self.key_path, "key path")
-        if not self.key_path.strip():
-            raise ValueError("key_path must not be empty")
+        require_identifier(self.key_path, "key path")
 
 
 @dataclass(frozen=True)
@@ -611,7 +609,7 @@ class ConnectionValidationResult:
 class StorePluginSecretRequest:
     plugin_id: str
     key: str
-    value: str
+    value: str = field(repr=False)
 
 @dataclass(frozen=True)
 class GetPluginSecretRequest:

@@ -160,6 +160,9 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.delete_password` | `connections.secrets.write` | Implemented |
 | `connections.store_passphrase` | `connections.secrets.write` | Implemented |
 | `connections.lookup_passphrase` | `connections.secrets.write` | Implemented |
+| `connections.store_plugin_secret` | `connections.secrets.write` | Implemented |
+| `connections.get_plugin_secret` | `connections.secrets.write` | Implemented |
+| `connections.delete_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.update_metadata` | `connections.metadata.write` | Implemented |
 | `connections.assign_to_group` | `connections.groups` | Implemented |
 | `connections.create_group` | `connections.groups` | Implemented |
@@ -215,12 +218,15 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.delete_password capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.delete_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
+<!-- api-daemon-method: connections.get_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.lookup_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.store_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: connections.update_metadata capability=connections.metadata.write -->
 <!-- api-daemon-method: connections.assign_to_group capability=connections.groups -->

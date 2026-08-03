@@ -297,11 +297,17 @@
     "connections.delete_password": {
       "capability": "connections.secrets.write"
     },
+    "connections.delete_plugin_secret": {
+      "capability": "connections.secrets.write"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
     "connections.get_editor": {
       "capability": "connections.config.read"
+    },
+    "connections.get_plugin_secret": {
+      "capability": "connections.secrets.write"
     },
     "connections.list": {
       "capability": "connections.read"
@@ -319,6 +325,9 @@
       "capability": "connections.secrets.write"
     },
     "connections.store_password": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_plugin_secret": {
       "capability": "connections.secrets.write"
     },
     "connections.update": {
@@ -2254,7 +2263,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "DeleteConnectionRequest": {
       "fields": [
@@ -2309,7 +2318,26 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
+    },
+    "DeletePluginSecretRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
     },
     "DetachSessionRequest": {
       "fields": [
@@ -2613,6 +2641,25 @@
         }
       ],
       "status": "Schema only"
+    },
+    "GetPluginSecretRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
     },
     "GroupReference": {
       "fields": [
@@ -3210,7 +3257,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "OpenForwardRequest": {
       "fields": [
@@ -4351,7 +4398,7 @@
           "default": null,
           "name": "password",
           "required": true,
-          "sensitive": false,
+          "sensitive": true,
           "type": "str"
         },
         {
@@ -4376,7 +4423,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "StoreKeyPassphraseRequest": {
       "fields": [
@@ -4391,11 +4438,37 @@
           "default": null,
           "name": "passphrase",
           "required": true,
-          "sensitive": false,
+          "sensitive": true,
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
+    },
+    "StorePluginSecretRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
     },
     "SuccessResponseEnvelope": {
       "fields": [

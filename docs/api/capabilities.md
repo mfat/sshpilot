@@ -118,7 +118,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `secrets` | Core-mediated secret operations/interactions | Schema only; no client method | None | No dedicated event; interaction schemas may be used later | Secret service and permissions | v1 |
 | `connections.config.read` | Read full editor state including filesystem paths | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_READ` capability | v1 |
 | `connections.config.write` | Write connection config fields beyond nickname/host/user/port | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_WRITE` capability | v1 |
-| `connections.secrets.write` | Write passwords and passphrases through daemon RPCs | `InProcessClient` and daemon: Implemented | `store_connection_password`, `delete_connection_password`, `store_key_passphrase`, `lookup_key_passphrase`; wire `connections.store_password`, `connections.delete_password`, `connections.store_passphrase`, `connections.lookup_passphrase` | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
+| `connections.secrets.write` | Write passwords, passphrases, and plugin secrets through daemon RPCs | Daemon: Implemented | `store_connection_password`, `delete_connection_password`, `store_key_passphrase`, `lookup_key_passphrase`; wire `connections.store_password`, `connections.delete_password`, `connections.store_passphrase`, `connections.lookup_passphrase`, `connections.store_plugin_secret`, `connections.get_plugin_secret`, `connections.delete_plugin_secret` | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
 | `connections.metadata.write` | Write non-SSH metadata (tags, aliases, WoL settings) | `InProcessClient` and daemon: Implemented | `update_connection_metadata`; wire `connections.update_metadata` | None defined | Gated by `CONNECTIONS_METADATA_WRITE` capability | v1 |
 | `connections.groups` | Assign and reorder connections within groups | `InProcessClient` and daemon: Implemented | `assign_connection_to_group`, `create_group`, `delete_group`, `rename_group`; wire `connections.assign_to_group`, `connections.create_group`, `connections.delete_group`, `connections.rename_group` | None defined | Gated by `CONNECTIONS_GROUPS` capability | v1 |
 | `connections.split` | Split a connection block from a multi-host group | `InProcessClient` and daemon: Implemented | `split_connection`; wire `connections.split` | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
@@ -402,8 +402,9 @@ behind the `CONNECTIONS_CONFIG_WRITE` capability.
 <!-- api-capability: connections.secrets.write -->
 ## `connections.secrets.write`
 
-Schema only. Enables writing passwords and passphrases through daemon RPCs
-rather than local GTK writes. Ensures secrets flow through the daemon's
+Implemented by the daemon. Enables writing passwords, passphrases, and
+plugin-scoped secrets through daemon RPCs rather than local GTK writes.
+Ensures secrets flow through the daemon-owned secret service and connection
 identity-transition saga. Gated behind `CONNECTIONS_SECRETS_WRITE`.
 
 <!-- api-capability: connections.metadata.write -->

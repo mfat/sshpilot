@@ -1,6 +1,5 @@
 from .api.connection_identity import connection_id_for
 import os
-import asyncio
 import logging
 import threading
 from typing import Optional
@@ -451,6 +450,7 @@ class TerminalManager:
             window.connection_manager,
             group_color=group_color,
         )
+        terminal._reconnect_handler = self.reconnect_terminal
         terminal.connect('connection-established', self.on_terminal_connected)
         terminal.connect(
             'connection-failed',
@@ -506,13 +506,10 @@ class TerminalManager:
         local SSH spawn for a daemon-selected route.
         """
         from .daemon_terminal_policy import (
-            SshTerminalRoute,
             daemon_readiness_user_message,
-            resolve_ssh_terminal_route,
         )
 
         window = self.window
-        route = resolve_ssh_terminal_route(window, connection)
         # Split panes are internal renderers, so external preference still uses
         # the daemon rather than creating a second process-owning path.
         use_daemon = True
@@ -531,6 +528,7 @@ class TerminalManager:
                     window.connection_manager,
                     group_color=group_color,
                 )
+                terminal._reconnect_handler = self.reconnect_terminal
                 if group_name:
                     setattr(terminal, 'group_name', group_name)
                 return terminal
@@ -543,6 +541,7 @@ class TerminalManager:
             window.connection_manager,
             group_color=group_color,
         )
+        terminal._reconnect_handler = self.reconnect_terminal
         terminal.connect('connection-established', self.on_terminal_connected)
         terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
         terminal.connect('connection-lost', self.on_terminal_disconnected)
@@ -1376,25 +1375,22 @@ class TerminalManager:
         window._is_controlled_reconnect = True
 
         try:
-            # Disconnect first (defer to avoid blocking)
-            logger.debug("Disconnecting terminal before reconnection")
+            # The reconnect helper terminates the old daemon controller and
+            # opens its replacement.  Do not call TerminalWidget.disconnect()
+            # first: its normal tab-close policy may detach or prompt, neither
+            # of which is appropriate after the user explicitly confirmed a
+            # settings-change reconnect.
+            logger.debug("Scheduling daemon terminal reconnection")
 
-            def _safe_disconnect():
+            def _safe_reconnect():
                 try:
-                    terminal.disconnect()
-                    logger.debug("Terminal disconnected, scheduling reconnect")
-                    # Store the connection temporarily in active_terminals if not present
-                    if connection not in window.active_terminals:
-                        window.active_terminals[connection] = terminal
-                    # Reconnect after disconnect completes
-                    GLib.timeout_add(1000, self._reconnect_terminal, connection)
+                    self._reconnect_terminal(connection)
                 except Exception as e:
-                    logger.error(f"Error during disconnect: {e}")
+                    logger.error(f"Error during daemon reconnect: {e}")
                     GLib.idle_add(self._show_reconnect_error, connection, str(e))
                 return False
 
-            # Defer disconnect to avoid blocking the UI thread
-            GLib.idle_add(_safe_disconnect)
+            GLib.idle_add(_safe_reconnect)
 
         except Exception as e:
             logger.error(f"Error during reconnection: {e}")
@@ -1430,32 +1426,7 @@ class TerminalManager:
         try:
             logger.debug(f"Attempting to reconnect terminal for {connection.nickname}")
 
-            # Rebuild the SSH command using the latest configuration so that
-            # options resolved via ssh -G are honored for the reconnect.
-            # Plugin protocols rebuild statelessly in build_spawn() instead.
-            if getattr(connection, 'protocol', 'ssh') == 'ssh':
-                try:
-                    loop = asyncio.get_event_loop()
-                    # Native-only (connect() delegates to native_connect()).
-                    if hasattr(connection, 'native_connect'):
-                        connect_coro = connection.native_connect()
-                    else:
-                        connect_coro = connection.connect()
-                    if loop.is_running():
-                        future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
-                        future.result()
-                    else:
-                        loop.run_until_complete(connect_coro)
-                except Exception as prep_err:
-                    logger.error(
-                        "Failed to prepare SSH command before reconnect: %s",
-                        prep_err,
-                    )
-                    GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
-                    return False
-
-            # Reconnect with new settings
-            if not terminal._connect_ssh():
+            if not self.reconnect_terminal(terminal):
                 logger.error("Failed to reconnect with new settings")
                 GLib.idle_add(self._show_reconnect_error, connection)
                 return False
@@ -1467,6 +1438,74 @@ class TerminalManager:
             GLib.idle_add(self._show_reconnect_error, connection, str(e))
 
         return False  # Don't repeat the timeout
+
+    def reconnect_terminal(self, terminal) -> bool:
+        """Open a fresh daemon session in an existing terminal widget."""
+        from .daemon_terminal_policy import (
+            daemon_readiness_user_message,
+        )
+
+        window = self.window
+        connection = getattr(terminal, 'connection', None)
+        if connection is None:
+            logger.error("Cannot reconnect terminal without a connection")
+            return False
+
+        readiness = self._ensure_daemon_terminal_ready()
+        if not readiness.ready:
+            message = daemon_readiness_user_message(readiness)
+            logger.error("Daemon terminal reconnect unavailable: %s", message)
+            return False
+
+        old_controller = getattr(terminal, '_daemon_controller', None)
+        if old_controller is not None:
+            try:
+                # Retire widget callbacks before the asynchronous close.  A
+                # transport error while closing the old session must not mark
+                # its freshly opened replacement as failed.
+                old_controller._on_output = None
+                old_controller._on_continuity_lost = None
+                old_controller._on_state_changed = None
+                old_controller._on_error = lambda error: logger.debug(
+                    "Retired daemon controller close error: %s", error
+                )
+                old_controller.close()
+            except Exception:
+                logger.debug(
+                    "Failed to close previous daemon session during reconnect",
+                    exc_info=True,
+                )
+
+        terminal._uninstall_daemon_backend_io()
+        terminal._daemon_mode = False
+        terminal._daemon_controller = None
+        terminal._daemon_tab_state = None
+        terminal._hide_view_only_indicator()
+        terminal.last_error_message = None
+        terminal.connection_state_reason = ''
+        terminal._set_disconnected_banner_visible(False)
+        terminal._set_connecting_overlay_visible(True)
+
+        try:
+            started = terminal.start_daemon_session(
+                window.client,
+                window.client_bridge,
+                connection_id_for(connection),
+            )
+        except Exception:
+            logger.exception("Failed to start replacement daemon terminal session")
+            started = False
+
+        if not started:
+            terminal._set_connecting_overlay_visible(False)
+            return False
+
+        try:
+            terminal.apply_theme()
+            terminal.queue_terminal_draw()
+        except Exception:
+            logger.debug("Failed to refresh reconnected terminal theme", exc_info=True)
+        return True
 
     def _show_reconnect_error(self, connection, error_message=None):
         """Show an error message when reconnection fails"""

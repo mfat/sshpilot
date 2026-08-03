@@ -1046,7 +1046,7 @@ Synthetic representation:
 <!-- api-model: DeleteConnectionPasswordRequest -->
 ## `DeleteConnectionPasswordRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Delete all stored login passwords for a connection.
 
@@ -1142,7 +1142,7 @@ Synthetic representation:
 <!-- api-model: DeleteKeyPassphraseRequest -->
 ## `DeleteKeyPassphraseRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Request to delete an SSH key passphrase.
 
@@ -1158,6 +1158,30 @@ Synthetic representation:
 ```json
 {
   "key_path": "example"
+}
+```
+
+<!-- api-model: DeletePluginSecretRequest -->
+## `DeletePluginSecretRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** DeletePluginSecretRequest(plugin_id: str, key: str)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `plugin_id` | `str` | Yes | — | No |
+| `key` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key": "example",
+  "plugin_id": "example.plugin"
 }
 ```
 
@@ -1363,6 +1387,30 @@ Synthetic representation:
   "remote_port": 0,
   "socks": false,
   "type": "example"
+}
+```
+
+<!-- api-model: GetPluginSecretRequest -->
+## `GetPluginSecretRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** GetPluginSecretRequest(plugin_id: str, key: str)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `plugin_id` | `str` | Yes | — | No |
+| `key` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key": "example",
+  "plugin_id": "example.plugin"
 }
 ```
 
@@ -1821,7 +1869,7 @@ Synthetic representation:
 <!-- api-model: LookupKeyPassphraseRequest -->
 ## `LookupKeyPassphraseRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Look up a stored key passphrase.
 
@@ -2793,7 +2841,7 @@ Synthetic representation:
 <!-- api-model: StoreConnectionPasswordRequest -->
 ## `StoreConnectionPasswordRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Store or update a login password for a connection.
 
@@ -2803,7 +2851,7 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `connection_id` | `ConnectionId` | Yes | — | No |
-| `password` | `str` | Yes | — | No |
+| `password` | `str` | Yes | — | Yes |
 | `previous_hostname` | `str` | No | `` | No |
 | `previous_host` | `str` | No | `` | No |
 | `previous_username` | `str` | No | `` | No |
@@ -2813,7 +2861,7 @@ Synthetic representation:
 ```json
 {
   "connection_id": "production",
-  "password": "example",
+  "password": "<sensitive value omitted>",
   "previous_host": "",
   "previous_hostname": "",
   "previous_username": ""
@@ -2823,7 +2871,7 @@ Synthetic representation:
 <!-- api-model: StoreKeyPassphraseRequest -->
 ## `StoreKeyPassphraseRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Store or update a key passphrase.
 
@@ -2833,14 +2881,40 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `key_path` | `str` | Yes | — | No |
-| `passphrase` | `str` | Yes | — | No |
+| `passphrase` | `str` | Yes | — | Yes |
 
 Synthetic representation:
 
 ```json
 {
   "key_path": "example",
-  "passphrase": "example"
+  "passphrase": "<sensitive value omitted>"
+}
+```
+
+<!-- api-model: StorePluginSecretRequest -->
+## `StorePluginSecretRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** StorePluginSecretRequest(plugin_id: str, key: str, value: str)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `plugin_id` | `str` | Yes | — | No |
+| `key` | `str` | Yes | — | No |
+| `value` | `str` | Yes | — | Yes |
+
+Synthetic representation:
+
+```json
+{
+  "key": "example",
+  "plugin_id": "example.plugin",
+  "value": "<sensitive value omitted>"
 }
 ```
 

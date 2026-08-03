@@ -203,6 +203,7 @@ class TerminalWidget(Gtk.Box):
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
         self._view_only_overlay = None
+        self._reconnect_handler = None
 
         # Register with process manager
         process_manager.register_terminal(self)
@@ -926,6 +927,27 @@ class TerminalWidget(Gtk.Box):
             # Immediately hide banner and show connecting overlay
             self._set_disconnected_banner_visible(False)
             self._set_connecting_overlay_visible(True)
+
+            reconnect_handler = getattr(self, '_reconnect_handler', None)
+            if callable(reconnect_handler):
+                if reconnect_handler(self) is False:
+                    self._set_connecting_overlay_visible(False)
+                    self._record_error_detail(_('Reconnect failed to start'))
+                    self._set_disconnected_banner_visible(
+                        True, _('Reconnect failed to start')
+                    )
+                return
+
+            # Remote SSH terminals must always be re-opened by TerminalManager
+            # through the daemon.  Refuse to fall back to the GTK-owned spawn
+            # path if a caller constructed a terminal without its manager hook.
+            if (
+                getattr(getattr(self, 'connection', None), 'protocol', 'ssh') == 'ssh'
+                and getattr(getattr(self, 'connection', None), 'hostname', None)
+                != 'localhost'
+            ):
+                raise RuntimeError('Daemon reconnect handler is unavailable')
+
             # Rebuild the SSH command with the latest preferences before reconnecting
             def _prepare_and_connect():
                 prepared = False
@@ -3811,6 +3833,18 @@ class TerminalWidget(Gtk.Box):
     def reconnect(self):
         """Reconnect the terminal with updated connection settings"""
         logger.info("Reconnecting terminal with updated settings...")
+        reconnect_handler = getattr(self, '_reconnect_handler', None)
+        if callable(reconnect_handler):
+            return reconnect_handler(self)
+
+        if (
+            getattr(getattr(self, 'connection', None), 'protocol', 'ssh') == 'ssh'
+            and getattr(getattr(self, 'connection', None), 'hostname', None)
+            != 'localhost'
+        ):
+            logger.error('Daemon reconnect handler is unavailable')
+            return False
+
         was_connected = self.is_connected
 
         # Disconnect if currently connected

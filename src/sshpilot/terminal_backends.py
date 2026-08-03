@@ -506,6 +506,17 @@ class VTETerminalBackend:
             self._selection_background = self._clone_rgba(highlight_bg)
             self._selection_foreground = self._clone_rgba(highlight_fg)
 
+            # Paint only inside the rounded terminal card.  Applying this
+            # class to TerminalWidget itself also paints the four-pixel margin
+            # behind the card, making its clipped corners appear square.
+            container = getattr(owner, "container_box", None)
+            if container is not None and hasattr(container, "add_css_class"):
+                container.add_css_class(self._css_class)
+            if hasattr(owner.scrolled_window, "add_css_class"):
+                owner.scrolled_window.add_css_class(self._css_class)
+            if hasattr(self.vte, "add_css_class"):
+                self.vte.add_css_class(self._css_class)
+
             try:
                 rgba = bg_color
                 self._remove_background_provider()
@@ -521,12 +532,6 @@ class VTETerminalBackend:
                         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                     )
                     self._background_provider = provider
-                if hasattr(owner, "add_css_class"):
-                    owner.add_css_class(self._css_class)
-                if hasattr(owner.scrolled_window, "add_css_class"):
-                    owner.scrolled_window.add_css_class(self._css_class)
-                if hasattr(self.vte, "add_css_class"):
-                    self.vte.add_css_class(self._css_class)
             except Exception:
                 logger.debug("Failed to set container background", exc_info=True)
 

@@ -1124,11 +1124,17 @@
     "connections.delete_password": {
       "capability": "connections.secrets.write"
     },
+    "connections.delete_plugin_secret": {
+      "capability": "connections.secrets.write"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
     "connections.get_editor": {
       "capability": "connections.config.read"
+    },
+    "connections.get_plugin_secret": {
+      "capability": "connections.secrets.write"
     },
     "connections.list": {
       "capability": "connections.read"
@@ -1146,6 +1152,9 @@
       "capability": "connections.secrets.write"
     },
     "connections.store_password": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_plugin_secret": {
       "capability": "connections.secrets.write"
     },
     "connections.update": {
@@ -1468,6 +1477,7 @@
     "DeleteConnectionResult",
     "DeleteGroupRequest",
     "DeleteKeyPassphraseRequest",
+    "DeletePluginSecretRequest",
     "DetachSessionRequest",
     "EDITABLE_CONFIG_FIELDS",
     "FORBIDDEN_IN_PATCH",
@@ -1478,6 +1488,7 @@
     "ForwardSummary",
     "ForwardType",
     "ForwardingRule",
+    "GetPluginSecretRequest",
     "GroupReference",
     "HostKeyDecision",
     "HostKeyPrompt",
@@ -1542,6 +1553,7 @@
     "StopDaemonRequest",
     "StoreConnectionPasswordRequest",
     "StoreKeyPassphraseRequest",
+    "StorePluginSecretRequest",
     "TerminalDimensions",
     "TerminalInput",
     "TerminalOutput",
@@ -1824,6 +1836,10 @@
     "DeleteKeyPassphraseRequest": [
       "key_path"
     ],
+    "DeletePluginSecretRequest": [
+      "plugin_id",
+      "key"
+    ],
     "DetachSessionRequest": [
       "session_id",
       "attachment_id"
@@ -1874,6 +1890,10 @@
       "local_port",
       "enabled",
       "socks"
+    ],
+    "GetPluginSecretRequest": [
+      "plugin_id",
+      "key"
     ],
     "GroupReference": [
       "id",
@@ -2194,6 +2214,11 @@
     "StoreKeyPassphraseRequest": [
       "key_path",
       "passphrase"
+    ],
+    "StorePluginSecretRequest": [
+      "plugin_id",
+      "key",
+      "value"
     ],
     "SuccessResponseEnvelope": [
       "protocol_version",

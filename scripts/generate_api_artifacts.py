@@ -72,7 +72,12 @@ IMPLEMENTED_MODELS = {
     "ConnectionDetails",
     "ConnectionSummary",
     "CoreInfo",
+    "DeleteConnectionPasswordRequest",
+    "DeleteKeyPassphraseRequest",
+    "DeletePluginSecretRequest",
     "GroupReference",
+    "GetPluginSecretRequest",
+    "LookupKeyPassphraseRequest",
     "ErrorData",
     "ErrorResponseEnvelope",
     "EventEnvelope",
@@ -115,6 +120,9 @@ IMPLEMENTED_MODELS = {
     "DaemonStopResult",
     "StopDaemonRequest",
     "RestartDaemonRequest",
+    "StoreConnectionPasswordRequest",
+    "StoreKeyPassphraseRequest",
+    "StorePluginSecretRequest",
 }
 PARTIAL_MODELS = {"CoreEvent"}
 
@@ -128,6 +136,9 @@ SENSITIVE_FIELDS = {
     "PluginOperationResult": {"values"},
     "ReplayResult": {"data"},
     "RequestEnvelope": {"params"},
+    "StoreConnectionPasswordRequest": {"password"},
+    "StoreKeyPassphraseRequest": {"passphrase"},
+    "StorePluginSecretRequest": {"value"},
     "SuccessResponseEnvelope": {"result"},
     "TerminalInput": {"data"},
     "TerminalOutput": {"data"},

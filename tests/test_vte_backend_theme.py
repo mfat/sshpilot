@@ -47,18 +47,27 @@ def test_vte_backend_applies_palette_cursor_selection_and_font(monkeypatch):
         "font": "Monospace 13",
         "palette": ["#000000"] * 16,
     }
+    styled = {"owner": [], "container": [], "scrolled": [], "vte": []}
+    vte.add_css_class = lambda name: styled["vte"].append(name)
     owner = types.SimpleNamespace(
         config=types.SimpleNamespace(
             get_terminal_profile=lambda _name: profile,
             get_setting=lambda _key, default=None: default,
         ),
-        scrolled_window=types.SimpleNamespace(add_css_class=lambda _name: None),
-        add_css_class=lambda _name: None,
+        container_box=types.SimpleNamespace(
+            add_css_class=lambda name: styled["container"].append(name)
+        ),
+        scrolled_window=types.SimpleNamespace(
+            add_css_class=lambda name: styled["scrolled"].append(name)
+        ),
+        add_css_class=lambda name: styled["owner"].append(name),
         _get_group_color_rgba=lambda: None,
     )
     backend = object.__new__(VTETerminalBackend)
     backend.owner = owner
     backend.vte = vte
+    backend._css_class = "terminal-bg-test"
+    backend._background_provider = None
 
     backend.apply_theme("dark")
 
@@ -68,6 +77,10 @@ def test_vte_backend_applies_palette_cursor_selection_and_font(monkeypatch):
     assert calls["selection_fg"].value == "#ffffff"
     assert calls["font"].get_size() > 0
     assert calls["redrawn"] is True
+    assert styled["owner"] == []
+    assert styled["container"] == ["terminal-bg-test"]
+    assert styled["scrolled"] == ["terminal-bg-test"]
+    assert styled["vte"] == ["terminal-bg-test"]
 
 
 def test_group_theme_keeps_selection_distinct(monkeypatch):
