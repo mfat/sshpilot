@@ -232,7 +232,14 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 - `run_on_ui_thread(fn, *args)` — run `fn(*args)` on the GTK main thread. Use to return from a background worker before touching UI or calling `add_connection`/`open_connection`.
 
 ### Advanced (escape hatch)
-- `ctx.config`, `ctx.connection_manager` — live internal objects. Stable enough that the built-in backends use them, but prefer the named APIs; treat these as advanced.
+- `ctx.config` is legacy application UI configuration. `ctx.connection_manager`
+  is **deprecated and presentation-only in GTK**: it contains immutable daemon
+  snapshots and must not be used for persistence, secrets, migrations, config
+  file access, or process launch. Use the named `PluginContext` operations for
+  those tasks. Headless daemon plugins receive their separate core context;
+  GTK plugins receive UI registration, event subscriptions, snapshots, and
+  daemon-mediated operations. A duplicate mutable backend is never created for
+  compatibility.
 
 #### Advanced UI — credential dialogs
 

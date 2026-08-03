@@ -2102,7 +2102,7 @@ class WindowConfigDialogsMixin:
                 try:
                     self.config.config_data = self.config.load_json_config()
                     if self.connection_manager:
-                        self.connection_manager.load_ssh_config()
+                        self.connection_manager.refresh()
                     if self.group_manager:
                         self.group_manager._load_groups()
                     self.rebuild_connection_list()
@@ -2149,7 +2149,7 @@ class WindowConfigDialogsMixin:
                         try:
                             self.config.config_data = self.config.load_json_config()
                             if self.connection_manager:
-                                self.connection_manager.load_ssh_config()
+                                self.connection_manager.refresh()
                             # Reload group manager to pick up imported groups and colors
                             if self.group_manager:
                                 self.group_manager._load_groups()
