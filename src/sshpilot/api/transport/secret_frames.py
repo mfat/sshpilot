@@ -37,7 +37,7 @@ class SecretFrame:
             raise ValueError("secret response nonce is malformed")
         if type(self.secret) is not bytearray:
             raise TypeError("secret response payload must be a bytearray")
-        if not self.secret or len(self.secret) > MAX_SECRET_PAYLOAD_SIZE:
+        if len(self.secret) > MAX_SECRET_PAYLOAD_SIZE:
             raise ValueError("secret response payload size is invalid")
         if b"\0" in self.secret:
             raise ValueError("secret response payload must not contain NUL")
@@ -72,7 +72,7 @@ def encode_secret_payload(frame: SecretFrame) -> bytes:
 
 
 def decode_secret_payload(payload: bytes) -> SecretFrame:
-    if not isinstance(payload, bytes) or len(payload) <= _HEADER.size:
+    if not isinstance(payload, bytes) or len(payload) < _HEADER.size:
         raise FramingError(
             ErrorCode.INVALID_FRAME,
             "The secret response frame is incomplete",

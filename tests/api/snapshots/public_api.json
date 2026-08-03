@@ -14,7 +14,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.12",
+  "api_implementation_version": "0.13",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -1444,6 +1444,7 @@
     "CloseSessionRequest",
     "CloseSftpRequest",
     "CompatibilityResult",
+    "ConfirmationPrompt",
     "ConnectionDetails",
     "ConnectionEditorCapabilities",
     "ConnectionEditorDetails",
@@ -1628,6 +1629,9 @@
       "compatible",
       "protocol_version",
       "message"
+    ],
+    "ConfirmationPrompt": [
+      "text"
     ],
     "ConnectionDetails": [
       "id",
@@ -2500,7 +2504,8 @@
       "password",
       "private_key_passphrase",
       "keyboard_interactive",
-      "security_key_presence"
+      "security_key_presence",
+      "confirmation"
     ],
     "RememberPolicy": [
       "do_not_store",

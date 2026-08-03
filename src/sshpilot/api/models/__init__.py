@@ -63,6 +63,7 @@ from .daemon import (
 )
 from .interactions import (
     ChallengePrompt,
+    ConfirmationPrompt,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -162,6 +163,7 @@ __all__ = [
     "AuthenticationMethod",
     "CancelTransferRequest",
     "ChallengePrompt",
+    "ConfirmationPrompt",
     "ClaimForwardRequest",
     "ClaimTerminalInputRequest",
     "ClientId",

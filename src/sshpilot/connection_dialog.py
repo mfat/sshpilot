@@ -3515,6 +3515,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             and hasattr(client, 'store_connection_password')
         )
 
+        pipeline = self.SaveRequest(lambda *_args: None)
+        pipeline.claim()
+
         def _worker():
             ok = True
             try:
@@ -3586,15 +3589,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.exception("Failed to save connection secrets")
                 ok = False
             GLib.idle_add(self._finish_secret_save, ok,
-                          close_spinner, spinner, True)
+                          close_spinner, spinner, True, pipeline)
 
         def _after_config_saved(ok, mutation_result=None, meta_error=None):
-            self._active_save_request = None
             if mutation_result:
                 self._save_mutation_result = mutation_result
             if meta_error:
                 self._save_meta_error = meta_error
-                self._finish_secret_save(False, close_spinner, spinner, True)
+                self._finish_secret_save(
+                    False, close_spinner, spinner, True, pipeline
+                )
             elif ok:
                 try:
                     delattr(self, '_save_meta_error')
@@ -3605,21 +3609,29 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 threading.Thread(target=_worker, daemon=True).start()
             else:
                 self._finish_secret_save(
-                    False, close_spinner, spinner, False)
+                    False, close_spinner, spinner, False, pipeline
+                )
 
         # Preserve the established save order: persist connection/config data first, then
         # its credentials. The private marker keeps update_connection from performing the
         # same secret I/O synchronously inside this signal emission.
         request = self.SaveRequest(_after_config_saved)
-        self._active_save_request = request
+        self._active_save_request = pipeline
         self.emit('connection-saved', connection_data, metadata, secret_plan,
                   request)
         if not request.claimed:
-            self._finish_secret_save(False, close_spinner, spinner, False)
+            self._finish_secret_save(
+                False, close_spinner, spinner, False, pipeline
+            )
 
     def _finish_secret_save(self, ok, close_spinner, spinner,
-                            settings_saved):
+                            settings_saved, pipeline=None):
         """Finish an asynchronous secret save on the GTK main thread."""
+        if pipeline is not None and pipeline.cancelled:
+            close_spinner()
+            return False
+        if pipeline is not None and self._active_save_request is pipeline:
+            self._active_save_request = None
         def _after_closed(*_args):
             self._set_secret_save_busy(False)
             if ok:

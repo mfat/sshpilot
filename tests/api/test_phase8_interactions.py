@@ -111,14 +111,14 @@ def test_secret_binary_frame_round_trip_clear_and_multiplexing() -> None:
     assert decoded.secret == bytearray()
 
 
-def test_secret_frame_rejects_empty_nul_and_oversized_values() -> None:
+def test_secret_frame_allows_empty_but_rejects_nul_and_oversized_values() -> None:
     common = {
         "kind": SecretFrameKind.RESPONSE,
         "interaction_id": _interaction_id(),
         "nonce": bytes.fromhex("00112233445566778899aabbccddeeff"),
     }
-    with pytest.raises(ValueError):
-        SecretFrame(secret=bytearray(), **common)
+    empty = SecretFrame(secret=bytearray(), **common)
+    assert decode_secret_payload(encode_secret_payload(empty)).secret == bytearray()
     with pytest.raises(ValueError):
         SecretFrame(secret=bytearray(b"contains\0nul"), **common)
     with pytest.raises(ValueError):
