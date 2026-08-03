@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
 from .api.capabilities import Capability
+from .api.errors import SshPilotError
 from .api.events import EventType
 from .api.models.common import TransferId
 from .api.models.transfers import (
@@ -165,7 +166,10 @@ class TransferServiceController:
             except RuntimeError:
                 pass
 
-        self._event_subscription = subscribe(_on_event)
+        try:
+            self._event_subscription = subscribe(_on_event)
+        except SshPilotError:
+            pass
 
     def _unsubscribe_events(self) -> None:
         subscription = self._event_subscription

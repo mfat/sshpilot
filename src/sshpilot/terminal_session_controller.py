@@ -445,7 +445,10 @@ class DaemonTerminalSessionController:
             except RuntimeError:
                 pass
 
-        self._event_subscription = subscribe(_on_event)
+        try:
+            self._event_subscription = subscribe(_on_event)
+        except SshPilotError:
+            pass
 
     def _unsubscribe_events(self) -> None:
         subscription = self._event_subscription

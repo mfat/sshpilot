@@ -889,7 +889,7 @@ def test_daemon_editor_close_with_retry_scheduled_submits_nothing(monkeypatch):
 
 def test_daemon_editor_fetch_not_run_outside_daemon_mode():
     window = _MutationWindow()
-    window._app._api_client_selection.mode = SimpleNamespace(value="core_service")
+    window._app._api_client_selection.client = None
     window.client.editor = SimpleNamespace(generation=7)
     dialog = _EditorDialog()
 
