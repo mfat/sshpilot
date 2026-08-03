@@ -1,7 +1,26 @@
-"""AST-based dependency-direction enforcement for the GTK-free boundary."""
+"""AST-based dependency-direction enforcement for the GTK-free boundary.
+
+Enforces the package graph in ``sshpilot/core/package_graph.py``:
+
+* core/api/daemon contain no direct GI imports and import no UI prefixes,
+* core imports only core/api/runtime_identity/platform.paths (plus
+  ``CORE_DEBT``),
+* daemon imports only daemon/api/core/headless helpers (plus ``DAEMON_DEBT``),
+  rejecting GObject adapters such as ``Config``/``ConnectionManager``/
+  ``GroupManager``/``platform_utils``,
+* a real recursive closure from every ``sshpilot.daemon`` module must not reach
+  a forbidden UI/GObject adapter unless that exact importer edge is registered
+  as debt.
+
+Debt is **importer-specific**: registering one edge from one file does not
+authorize the same import from another file in the package, and stale entries
+(deleted files or removed imports) fail like new violations.
+"""
+
 from __future__ import annotations
 
 import ast
+from collections import deque
 from pathlib import Path
 
 from sshpilot.core.package_graph import (
@@ -15,29 +34,30 @@ from sshpilot.core.package_graph import (
 
 ROOT = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
 
-# Registered GObject-adapter imports in the daemon runtime composition. These
-# pull GI transitively, so the daemon *runtime* is not yet GI-free. Each row is
-# removed when the owning migration replaces the adapter with a headless
-# daemon service. Any *new* daemon -> adapter edge fails the suite below.
-DAEMON_DEBT: dict[str, str] = {
-    "sshpilot.config": "M4",  # Config (GTK preference store) -> daemon settings
-    "sshpilot.connection_manager": "M3",  # ConnectionManager -> daemon connections
-    "sshpilot.groups": "M3",  # GroupManager -> daemon connections/groups
-    "sshpilot.plugins": "M8",  # load_plugins (frontend plugin host) -> daemon host
-    # get_state_dir is used for the daemon log. platform_utils imports GI
-    # (plan_utils is GTK-facing), so the daemon runtime depends on GI for its
-    # log path; switch to sshpilot.platform.paths.get_state_dir when the daemon
-    # log lands behind a dedicated path helper.
-    "sshpilot.platform_utils": "M4",
+# Registered GObject-adapter / helper edges in the daemon runtime composition,
+# keyed by (importer_file_rel, imported_prefix). These pull GI transitively, so
+# the daemon *runtime* is not yet GI-free. Each row is removed when the owning
+# migration replaces the adapter with a headless daemon service. Any *other*
+# importer of the same module fails the suite.
+DAEMON_DEBT: dict[tuple[str, str], str] = {
+    ("daemon/cli.py", "sshpilot.config"): "M4",  # Config -> daemon settings
+    ("daemon/cli.py", "sshpilot.connection_manager"): "M3",  # ConnectionManager
+    ("daemon/cli.py", "sshpilot.groups"): "M3",  # GroupManager
+    ("daemon/cli.py", "sshpilot.plugins"): "M8",  # load_plugins -> daemon host
+    # get_state_dir is used for the daemon log. platform_utils imports GI, so the
+    # daemon runtime depends on GI for its log path; switch to the GI-free
+    # sshpilot.platform.paths.get_state_dir helper when the log lands behind it.
+    ("daemon/cli.py", "sshpilot.platform_utils"): "M4",
+    ("daemon/launcher.py", "sshpilot.platform_utils"): "M4",
 }
 
 # core is the bottom layer, but ConnectionApplicationService still couples to
 # frontend modules for command building, plugin capability and config. Each
 # entry is removed as the owning migration replaces that coupling.
-CORE_DEBT: dict[str, str] = {
-    "sshpilot.plugins": "M8",  # plugins.api/registry (plugin capability)
-    "sshpilot.ssh_connection_builder": "M7",  # builds ssh argv/env
-    "sshpilot.config": "M4",  # instantiates Config for command building
+CORE_DEBT: dict[tuple[str, str], str] = {
+    ("core/connection_application_service.py", "sshpilot.plugins"): "M8",
+    ("core/connection_application_service.py", "sshpilot.ssh_connection_builder"): "M7",
+    ("core/connection_application_service.py", "sshpilot.config"): "M4",
 }
 
 
@@ -46,8 +66,23 @@ def _iter_py_files(package: str):
     yield from sorted(base.rglob("*.py"))
 
 
+def _resolve_from(node: ast.ImportFrom, path: Path) -> str:
+    """Resolve an ImportFrom node to its absolute module ('' when bare)."""
+    pkg_parts = list(path.relative_to(ROOT).parts[:-1])
+    if node.level:
+        if node.level > 1:
+            pkg_parts = pkg_parts[: -(node.level - 1)]
+        base = ".".join(("sshpilot",) + tuple(pkg_parts))
+        return f"{base}.{node.module}" if node.module else base
+    return node.module or ""
+
+
 def _collect_imports(path: Path) -> list[tuple[str, str]]:
-    """Return (kind, module_name) for absolute, relative, aliased, and constant importlib calls."""
+    """Absolute module names for Import/ImportFrom/dynamic-import calls.
+
+    Handles ``import X``, ``from pkg import X``, ``from . import X``,
+    ``from .. import X`` and ``from .mod import X``.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     hits: list[tuple[str, str]] = []
     for node in ast.walk(tree):
@@ -55,17 +90,15 @@ def _collect_imports(path: Path) -> list[tuple[str, str]]:
             for alias in node.names:
                 hits.append(("import", alias.name))
         elif isinstance(node, ast.ImportFrom):
-            if node.level and not node.module:
+            base = _resolve_from(node, path)
+            if not node.module and node.level:
+                # `from .. import config` / `from . import service`: each alias
+                # is a member of the resolved package (module or symbol).
+                if base:
+                    hits.extend(("from", f"{base}.{alias.name}") for alias in node.names)
                 continue
-            if node.level and node.module:
-                # Relative import within package — resolve against file package.
-                pkg_parts = path.relative_to(ROOT).parts[:-1]
-                if node.level > 1:
-                    pkg_parts = pkg_parts[: -(node.level - 1)]
-                base = ".".join(("sshpilot",) + pkg_parts)
-                hits.append(("from", f"{base}.{node.module}" if pkg_parts else f"sshpilot.{node.module}"))
-            elif node.module:
-                hits.append(("from", node.module))
+            if base:
+                hits.append(("from", base))
         elif isinstance(node, ast.Call):
             func = node.func
             name = None
@@ -105,6 +138,67 @@ def _forbidden_ui(path: Path) -> list[str]:
     return hits
 
 
+def _matches(prefix: str, name: str) -> bool:
+    return name == prefix or name.startswith(prefix + ".")
+
+
+# ---------------------------------------------------------------------------
+# Project import-graph closure (for the daemon runtime)
+# ---------------------------------------------------------------------------
+def _module_files() -> dict[str, Path]:
+    mapping: dict[str, Path] = {}
+    for path in ROOT.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        parts = path.relative_to(ROOT).parts
+        if parts[-1] == "__init__.py":
+            mod = "sshpilot" if len(parts) == 1 else "sshpilot." + ".".join(parts[:-1])
+        else:
+            mod = "sshpilot." + ".".join(parts[:-1]) + "." + parts[-1][:-3]
+        mapping[mod] = path
+    return mapping
+
+
+def _deepest_existing(full: str, module_files: dict[str, Path]) -> str | None:
+    """Resolve ``sshpilot.a.b.c`` to the deepest module that exists on disk."""
+    parts = full.split(".")
+    for i in range(len(parts), 1, -1):
+        candidate = ".".join(parts[:i])
+        if candidate in module_files:
+            return candidate
+    return None
+
+
+def _project_closure(roots: list[str], module_files: dict[str, Path]):
+    """BFS over project imports from ``roots``; returns (seen, edges).
+
+    edges are (importer_module, imported_module) pairs within the project.
+    External/stdlib imports are ignored (walk stops at the project boundary).
+    """
+    seen: set[str] = set()
+    edges: list[tuple[str, str]] = []
+    queue: deque[str] = deque(sorted(roots))
+    while queue:
+        mod = queue.popleft()
+        if mod in seen:
+            continue
+        seen.add(mod)
+        path = module_files.get(mod)
+        if path is None:
+            continue
+        for _kind, name in sorted(set(_collect_imports(path))):
+            if not name.startswith("sshpilot") or name == "sshpilot":
+                continue
+            target = _deepest_existing(name, module_files)
+            if target is None or target == mod:
+                continue
+            edges.append((mod, target))
+            if target not in seen:
+                queue.append(target)
+    edges.sort()
+    return seen, edges
+
+
 def test_boundary_packages_have_no_gi_imports():
     failures: list[str] = []
     for package in BOUNDARY_PACKAGES:
@@ -128,33 +222,30 @@ def test_package_graph_manifest_lists_boundary_packages():
     assert "sshpilot.gtk" in FORBIDDEN_UI_PREFIXES
 
 
-def _imports(module_rel: str) -> list[str]:
-    """All dotted module names a source module imports (absolute + relative)."""
-    path = ROOT / module_rel
-    hits: list[str] = []
-    for _kind, name in _collect_imports(path):
-        hits.append(name)
-    return hits
+def _importer_edges(rel: str) -> list[str]:
+    """All absolute module names imported by one file."""
+    return [name for _kind, name in _collect_imports(ROOT / rel)]
 
 
-def _matches(prefix: str, name: str) -> bool:
-    return name == prefix or name.startswith(prefix + ".")
+def _allowed_or_debt(name: str, allowed: tuple, debt: dict, importer: str) -> bool:
+    if any(_matches(p, name) for p in allowed):
+        return True
+    for (imp, prefix), _tag in debt.items():
+        if imp == importer and _matches(prefix, name):
+            return True
+    return False
 
 
 def test_daemon_imports_only_allowed_edges():
     """The daemon must not reach GObject/GTK adapters; new edges are rejected."""
     allowed = ALLOWED_EDGES["daemon"]
-    debt_prefixes = tuple(DAEMON_DEBT)
     failures: list[str] = []
     for path in sorted((ROOT / "daemon").rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
-        for name in _imports(rel):
+        for name in _importer_edges(rel):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue  # bare package ``__version__`` import is GI-free
-            ok = any(_matches(p, name) for p in allowed) or any(
-                _matches(p, name) for p in debt_prefixes
-            )
-            if not ok:
+            if not _allowed_or_debt(name, allowed, DAEMON_DEBT, rel):
                 failures.append(f"{rel} imports {name}")
     assert not failures, (
         "daemon imports a module outside its allowed dependency (add headless "
@@ -164,40 +255,68 @@ def test_daemon_imports_only_allowed_edges():
     )
 
 
-def test_daemon_does_not_import_unregistered_goobject_adapters():
-    """GObject adapters may be used by the daemon only via registered debt."""
-    for prefix in DAEMON_DEBT:
-        assert prefix in FORBIDDEN_GOBJECT_ADAPTERS, prefix
-    allowed_debt = frozenset(DAEMON_DEBT)
+def test_daemon_debt_edges_are_importer_specific_and_exact():
+    """Registered debt is per-importer; stale/phantom edges fail."""
     failures: list[str] = []
-    for path in sorted((ROOT / "daemon").rglob("*.py")):
-        rel = path.relative_to(ROOT).as_posix()
-        for name in _imports(rel):
-            for adapter in FORBIDDEN_GOBJECT_ADAPTERS:
-                if _matches(adapter, name) and not any(
-                    _matches(d, name) for d in allowed_debt
-                ):
-                    failures.append(f"{rel}: {name} -> {adapter}")
-    assert not failures, (
-        "daemon imports a GObject adapter outside the registered debt; move "
-        "it behind a headless daemon service instead:\n" + "\n".join(failures)
+    for (imp, prefix), _tag in sorted(DAEMON_DEBT.items()):
+        if not (ROOT / imp).exists():
+            failures.append(f"deleted importer: {imp}")
+            continue
+        seen = [n for n in _importer_edges(imp) if n.startswith("sshpilot")]
+        if not any(_matches(prefix, n) for n in seen):
+            failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
+    assert not failures, "\n".join(failures)
+
+
+def test_daemon_closure_does_not_reach_forbidden_adapters():
+    """Recursive project closure from the daemon must stay on allowed edges."""
+    module_files = _module_files()
+    roots = sorted(
+        m for m in module_files if m == "sshpilot.daemon" or m.startswith("sshpilot.daemon.")
     )
+    _seen, edges = _project_closure(roots, module_files)
+    forbidden = set(FORBIDDEN_UI_PREFIXES) | set(FORBIDDEN_GOBJECT_ADAPTERS)
+    # A debt entry (DAEMON_DEBT or CORE_DEBT) authorizes its *subtree*: once a
+    # package is reachable under a sanctioned prefix, edges within it are not
+    # re-flagged. Denied-by-importer is enforced separately by the direct-edge
+    # tests. Here we only assert the daemon runtime never pulls in a forbidden
+    # subtree that no debt edge opens.
+    sanctioned_prefixes = [prefix for (_imp, prefix), _tag in list(DAEMON_DEBT.items()) + list(CORE_DEBT.items())]
+    violations: list[str] = []
+    for importer, target in edges:
+        if not any(_matches(f, target) for f in forbidden):
+            continue
+        if not any(_matches(p, target) for p in sanctioned_prefixes):
+            violations.append(f"{importer} -> {target}")
+    assert not violations, (
+        "daemon runtime closure reaches a forbidden UI/GObject adapter without a "
+        "registered debt edge authorizing its subtree:\n" + "\n".join(sorted(violations))
+    )
+
+
+def test_daemon_closure_has_no_cycle_beyond_scc():
+    """Closure walk terminates and revisits only already-seen modules."""
+    module_files = _module_files()
+    roots = sorted(
+        m for m in module_files if m == "sshpilot.daemon" or m.startswith("sshpilot.daemon.")
+    )
+    seen, edges = _project_closure(roots, module_files)
+    # Every edge must connect two reached modules (BFS invariant, cycle guard).
+    assert seen, "daemon closure is empty"
+    for importer, target in edges:
+        assert importer in seen and target in seen, (importer, target)
 
 
 def test_core_imports_only_allowed_edges():
     """core is the bottom layer; it may only link core + shared model leaves."""
     allowed = ALLOWED_EDGES["core"]
-    debt_prefixes = tuple(CORE_DEBT)
     failures: list[str] = []
     for path in sorted((ROOT / "core").rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
-        for name in _imports(rel):
+        for name in _importer_edges(rel):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue
-            ok = any(_matches(p, name) for p in allowed) or any(
-                _matches(p, name) for p in debt_prefixes
-            )
-            if not ok:
+            if not _allowed_or_debt(name, allowed, CORE_DEBT, rel):
                 failures.append(f"{rel} imports {name}")
     assert not failures, (
         "core imports outside its allowed edges (core/api/runtime_identity/"
@@ -205,3 +324,15 @@ def test_core_imports_only_allowed_edges():
         "CORE_DEBT and must be removed by its migration:\n"
         + "\n".join(failures)
     )
+
+
+def test_core_debt_edges_are_importer_specific_and_exact():
+    failures: list[str] = []
+    for (imp, prefix), _tag in sorted(CORE_DEBT.items()):
+        if not (ROOT / imp).exists():
+            failures.append(f"deleted importer: {imp}")
+            continue
+        seen = [n for n in _importer_edges(imp) if n.startswith("sshpilot")]
+        if not any(_matches(prefix, n) for n in seen):
+            failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
+    assert not failures, "\n".join(failures)

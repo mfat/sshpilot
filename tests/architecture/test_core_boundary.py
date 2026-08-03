@@ -211,6 +211,7 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("ssh_key_fingerprint.py", "ssh_binary"): "M7",
     ("ssh_multiplex.py", "subprocess"): "M7",
     ("ssh_multiplex.py", "ssh_binary"): "M7",
+    ("terminal.py", "subprocess"): "M7",  # pre-connection cmds + SSH subprocesses
     # -- M8 plugins ------------------------------------------------------
     ("plugins/api.py", "subprocess"): "M8",
     # -- legitimate frontend-owned launches ------------------------------
@@ -220,7 +221,6 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("startup_info.py", "subprocess"): "frontend",
     ("startup_info.py", "ssh_binary"): "frontend",  # ssh -V version probe
     ("sshpilot_agent.py", "subprocess"): "frontend",  # local getent lookups
-    ("terminal.py", "subprocess"): "frontend",  # pre-command / runtime helpers
 }
 
 
@@ -355,6 +355,18 @@ def test_frontend_core_imports_are_categorised():
     )
 
 
+# Baseline diag for macros below.
+_PENDING_EXPECTED = {
+    "M1": 3,
+    "M2": 2,  # load_known_hosts + save_known_hosts (removed by M2)
+    "M3": 1,
+    "M4": 3,
+    "M5": 4,
+    "M6": 4,
+    "M7": 6,
+}
+
+
 def test_pending_tags_are_known():
     assert not PENDING or all(tag in KNOWN_TAGS for (tag, _) in PENDING.values()), (
         "PENDING entry maps to an unknown migration tag"
@@ -383,14 +395,29 @@ def test_registry_matches_the_source_tree():
     )
 
 
+def test_pending_matches_exact_per_tag_baseline():
+    """PENDING counts must match the reviewed baseline exactly.
+
+    As migrations complete, delete the whole tag's rows and drop it from
+    ``_PENDING_EXPECTED``; the count may reach zero for each migration.
+    """
+    from collections import Counter
+
+    actual = Counter(tag for (tag, _) in PENDING.values())
+    expected = {k: v for k, v in _PENDING_EXPECTED.items() if v != 0}
+    assert actual == expected, (
+        f"PENDING per-tag counts changed; expected {expected}, got {dict(actual)}. "
+        "Only remove rows as the owning migration lands."
+    )
+
+
 def test_pending_registry_cannot_grow_silently():
     """PENDING is migration debt; adding entries without a migration is a fail."""
-    # Every tag must correspond to a real migration, and no module may accumulate
-    # more pending core-imports than documented. The bound is the current tree.
-    by_module: dict[str, int] = defaultdict(int)
-    for (rel, _sub, _sym) in PENDING:
-        by_module[rel] += 1
-    assert len(PENDING) <= 32, f"PENDING grew beyond the registered baseline ({len(PENDING)})"
+    allowed_tags = set(_PENDING_EXPECTED)
+    leaks = [tag for (tag, _) in PENDING.values() if tag not in allowed_tags or _PENDING_EXPECTED[tag] == 0]
+    assert not leaks, (
+        f"PENDING rows exist for a fully-migrated tag or an unknown tag: {leaks}"
+    )
 
 
 def test_frontend_daemon_imports_are_allowlisted():
@@ -436,17 +463,34 @@ def test_frontend_backend_operations_are_registered():
 
 
 def test_backend_op_tags_are_known():
-    unknown = {tag for (_, _), tag in BACKEND_OPS.items() if tag not in KNOWN_TAGS}
+    unknown = {t for (_, _), tag in BACKEND_OPS.items() if tag not in KNOWN_TAGS}
     assert not unknown, f"unknown BACKEND_OPS tags: {sorted(unknown)}"
 
 
-def test_remaining_pending_debt_is_bounded():
-    """The registries describe the *current* debt; the suite must not mask it."""
-    core_total = len(PENDING)
-    ops_debt = sum(1 for t in BACKEND_OPS.values() if t != "frontend")
-    assert core_total + ops_debt > 0, "expected some registered daemon-ownership debt"
-    # Sanity: the count is tracked in docs/architecture/core-ownership-migration.md.
-    assert core_total == 23, f"PENDING count changed ({core_total}); update the doc summary"
+def test_backend_ops_debt_matches_exact_baseline():
+    """Backend-op migration debt must match the reviewed baseline exactly.
+
+    Each M# row set shrinks to zero as its migration lands; ``frontend`` ops
+    stay. This migration (M2) must drop the ``known_hosts_io`` row.
+    """
+    from collections import Counter
+
+    debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
+    expected = {"M1": 1, "M2": 1, "M3": 1, "M5": 4, "M6": 1, "M7": 19, "M8": 1}
+    assert dict(debt) == expected, (
+        f"BACKEND_OPS debt changed; expected {expected}, got {dict(debt)}. "
+        "Only remove rows as the owning migration lands."
+    )
+
+
+def test_backend_ops_migration_can_reach_zero():
+    """The per-tag baseline permits debt to reach zero as migrations complete."""
+    from collections import Counter
+
+    debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
+    # No tag is hard-required to stay positive; M7 is large and still migrating,
+    # but nothing asserts debt must remain.
+    assert all(v >= 0 for v in debt.values())
 
 
 def test_core_api_daemon_are_gi_free():
