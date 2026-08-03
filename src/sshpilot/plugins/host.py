@@ -624,9 +624,7 @@ class PluginHost:
         data = text.encode("utf-8")
 
         def _feed():
-            backend = getattr(term, "backend", None)
-            if backend is not None and hasattr(backend, "feed_child"):
-                backend.feed_child(data)
+            term.feed_child_data(data)
 
         try:
             self.run_on_ui_thread(_feed)

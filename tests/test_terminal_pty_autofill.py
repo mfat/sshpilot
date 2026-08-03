@@ -1,12 +1,16 @@
 """TerminalWidget PTY auto-fill: one-shot typing when a known prompt appears."""
 import logging
 import types
+import weakref
+from unittest.mock import Mock
 
 import pytest
 
 pytest.importorskip("gi")
 
 from sshpilot.terminal import TerminalWidget
+from sshpilot import command_blocks
+from sshpilot.plugins.host import PluginHost
 
 
 def _term(*, prompt="[sshPilot] sudo password:", response="s3cret"):
@@ -191,6 +195,53 @@ def test_feed_child_data_daemon_with_ownership_uses_controller():
     )
     t.feed_child_data(b"typed\n")
     assert controller.sent == [b"typed\n"]
+
+
+def _daemon_terminal():
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    terminal._daemon_mode = True
+    terminal._daemon_controller = Mock(input_owner=True)
+    terminal.backend = Mock()
+    return terminal
+
+
+def test_command_blocks_active_terminal_routes_daemon_input_through_widget():
+    terminal = _daemon_terminal()
+    panel = command_blocks.CommandBlocksPanel.__new__(command_blocks.CommandBlocksPanel)
+    panel.window = Mock()
+    panel.window._get_active_terminal_widget.return_value = terminal
+    panel.store = Mock()
+    panel.store._config.get_setting.return_value = False
+
+    panel._feed_terminal("uptime", "command-id")
+
+    terminal._daemon_controller.send_input.assert_called_once_with(b"uptime\n")
+    terminal.backend.feed_child_data.assert_not_called()
+    panel.store.record_use.assert_called_once_with("command-id")
+
+
+def test_command_blocks_specific_terminal_routes_daemon_input_through_widget():
+    terminal = _daemon_terminal()
+    panel = command_blocks.CommandBlocksPanel.__new__(command_blocks.CommandBlocksPanel)
+    panel.store = Mock()
+    panel.store._config.get_setting.return_value = False
+
+    panel._feed_specific_terminal("whoami", terminal, "command-id")
+
+    terminal._daemon_controller.send_input.assert_called_once_with(b"whoami\n")
+    terminal.backend.feed_child_data.assert_not_called()
+    panel.store.record_use.assert_called_once_with("command-id")
+
+
+def test_plugin_send_terminal_routes_daemon_input_through_widget():
+    terminal = _daemon_terminal()
+    host = PluginHost(connection_manager=None)
+    host._terminal_widgets["session-id"] = weakref.ref(terminal)
+
+    assert host.send_terminal("session-id", "pwd\n") is True
+
+    terminal._daemon_controller.send_input.assert_called_once_with(b"pwd\n")
+    terminal.backend.feed_child_data.assert_not_called()
 
 
 def test_pty_autofill_does_not_log_secret(caplog):

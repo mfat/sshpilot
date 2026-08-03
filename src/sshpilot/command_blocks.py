@@ -1319,8 +1319,7 @@ class CommandBlocksPanel(Gtk.Box):
         insert_only = bool(self.store._config.get_setting('command_blocks.insert_only', False))
         data = command_text.encode('utf-8') if insert_only else (command_text + '\n').encode('utf-8')
         try:
-            if hasattr(terminal, 'backend') and terminal.backend:
-                terminal.backend.feed_child(data)
+            terminal.feed_child_data(data)
         except Exception as exc:
             logger.error("Failed to send command to terminal: %s", exc)
             return
@@ -1610,8 +1609,7 @@ class CommandBlocksPanel(Gtk.Box):
         insert_only = bool(self.store._config.get_setting('command_blocks.insert_only', False))
         data = command_text.encode('utf-8') if insert_only else (command_text + '\n').encode('utf-8')
         try:
-            if hasattr(terminal, 'backend') and terminal.backend:
-                terminal.backend.feed_child(data)
+            terminal.feed_child_data(data)
         except Exception as exc:
             logger.error("Failed to send command to terminal: %s", exc)
             return
@@ -1791,4 +1789,3 @@ class CommandBlocksPanel(Gtk.Box):
         self.store.update_command(cmd['id'], is_favorite=new_val)
         cmd['is_favorite'] = new_val
         self.refresh()
-
