@@ -68,6 +68,7 @@ from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
 DEFAULT_HOST_KEY_INTERACTION_TIMEOUT = 180.0
+DEFAULT_PRESENCE_INTERACTION_TIMEOUT = 600.0
 DEFAULT_COMPLETED_INTERACTION_LIMIT = 100
 DEFAULT_ASKPASS_WORKERS = 4
 DEFAULT_ASKPASS_QUEUE_LIMIT = 32
@@ -149,6 +150,7 @@ class InteractionBroker:
         ] = None,
         secret_timeout: float = DEFAULT_SECRET_INTERACTION_TIMEOUT,
         host_key_timeout: float = DEFAULT_HOST_KEY_INTERACTION_TIMEOUT,
+        presence_timeout: float = DEFAULT_PRESENCE_INTERACTION_TIMEOUT,
         completed_limit: int = DEFAULT_COMPLETED_INTERACTION_LIMIT,
         password_lookup: Optional[Callable[[ConnectionId], Optional[str]]] = None,
         password_store: Optional[Callable[[ConnectionId, str], bool]] = None,
@@ -157,7 +159,7 @@ class InteractionBroker:
         askpass_workers: int = DEFAULT_ASKPASS_WORKERS,
         askpass_queue_limit: int = DEFAULT_ASKPASS_QUEUE_LIMIT,
     ) -> None:
-        if secret_timeout <= 0 or host_key_timeout <= 0:
+        if secret_timeout <= 0 or host_key_timeout <= 0 or presence_timeout <= 0:
             raise ValueError("interaction timeouts must be positive")
         if completed_limit < 1:
             raise ValueError("completed interaction limit must be positive")
@@ -166,6 +168,7 @@ class InteractionBroker:
         self._client_is_eligible = client_is_eligible or (lambda _session, _client: True)
         self._secret_timeout = float(secret_timeout)
         self._host_key_timeout = float(host_key_timeout)
+        self._presence_timeout = float(presence_timeout)
         self._completed_limit = completed_limit
         self._password_lookup = password_lookup
         self._password_store = password_store
@@ -297,6 +300,8 @@ class InteractionBroker:
                 name in {"SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"}
                 or name.startswith("SSHPILOT_ASKPASS_")
                 or name.startswith("SSHPILOT_SESSION_")
+                or name.startswith("SSHPILOT_DAEMON_ASKPASS_")
+
             ):
                 environment.pop(name, None)
         askpass_active = headless or resolver_askpass_active
@@ -311,13 +316,6 @@ class InteractionBroker:
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
             f"session={spec.session_id}"
-        )
-        source_root = str(Path(__file__).resolve().parents[2])
-        current_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            source_root
-            if not current_pythonpath
-            else os.pathsep.join((source_root, current_pythonpath))
         )
         if trailing_args:
             argv = (*argv, *trailing_args)
@@ -707,6 +705,8 @@ class InteractionBroker:
             duration = (
                 self._host_key_timeout
                 if interaction_type is InteractionType.HOST_KEY_CONFIRMATION
+                else self._presence_timeout
+                if interaction_type is InteractionType.SECURITY_KEY_PRESENCE
                 else self._secret_timeout
             )
         if duration <= 0:
@@ -834,6 +834,11 @@ class InteractionBroker:
             else:
                 decision = request.secret_decision
                 if decision is None:
+                    raise self._invalid_decision(record)
+                if (
+                    record.summary.type is InteractionType.SECURITY_KEY_PRESENCE
+                    and decision is SecretDecision.SUBMIT
+                ):
                     raise self._invalid_decision(record)
                 if decision is SecretDecision.CANCEL:
                     record.result = InteractionResult(
@@ -1195,7 +1200,12 @@ class InteractionBroker:
             secret: Optional[bytearray] = None
             try:
                 transport.settimeout(
-                    max(self._secret_timeout, self._host_key_timeout) + 5
+                    max(
+                        self._secret_timeout,
+                        self._host_key_timeout,
+                        self._presence_timeout,
+                    )
+                    + 5
                 )
                 request_size = _ASKPASS_LENGTH.unpack(
                     self._receive_exact(transport, _ASKPASS_LENGTH.size)

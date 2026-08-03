@@ -21,6 +21,7 @@ from sshpilot.api.models import (
     InteractionState,
     InteractionType,
     PasswordPrompt,
+    PresencePrompt,
     RememberPolicy,
     SecretDecision,
     SessionId,
@@ -277,6 +278,8 @@ def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
             "SSH_ASKPASS_REQUIRE": "prefer",
             "SSHPILOT_ASKPASS_SOCKET": "/old/socket",
             "SSHPILOT_SESSION_PASSWORD": "staged-secret",
+            "SSHPILOT_DAEMON_ASKPASS_SOCKET": "/stale/socket",
+            "SSHPILOT_DAEMON_ASKPASS_TOKEN": "stale-token",
         }
 
     _argv, environment = broker.prepare_launch(
@@ -301,6 +304,75 @@ def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
     )
     assert "SSHPILOT_ASKPASS_SOCKET" not in environment
     assert "SSHPILOT_SESSION_PASSWORD" not in environment
+
+
+@pytest.mark.parametrize("original", ["/user/custom/modules", None])
+def test_prepare_launch_does_not_modify_pythonpath(
+    broker: InteractionBroker,
+    monkeypatch,
+    original: str | None,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv: {})
+    prepared_environment = {
+        "PATH": "/usr/bin",
+        "SSHPILOT_DAEMON_ASKPASS_SOCKET": "/stale/socket",
+        "SSHPILOT_DAEMON_ASKPASS_TOKEN": "stale-token",
+    }
+    if original is not None:
+        prepared_environment["PYTHONPATH"] = original
+
+    _argv, environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda *_args, **_kwargs: (
+            ("/usr/bin/ssh", "example"),
+            prepared_environment,
+        ),
+    )
+
+    if original is None:
+        assert "PYTHONPATH" not in environment
+    else:
+        assert environment["PYTHONPATH"] == original
+    assert "SSHPILOT_DAEMON_ASKPASS_SOCKET" not in environment
+    assert "SSHPILOT_DAEMON_ASKPASS_TOKEN" not in environment
+
+
+def test_presence_rejects_submit_and_has_dedicated_lifetime() -> None:
+    instance = InteractionBroker(
+        secret_timeout=0.03,
+        host_key_timeout=0.03,
+        presence_timeout=10,
+    )
+    try:
+        summary = instance.create(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            interaction_type=InteractionType.SECURITY_KEY_PRESENCE,
+            prompt=PresencePrompt(text="Touch your security key"),
+        )
+        instance.claim(summary.id, CLIENT_A)
+        with pytest.raises(SshPilotError):
+            instance.respond(
+                InteractionDecisionRequest(
+                    interaction_id=summary.id,
+                    secret_decision=SecretDecision.SUBMIT,
+                ),
+                CLIENT_A,
+            )
+        assert (
+            instance.get(summary.id, CLIENT_A).expires_at
+            - instance.get(summary.id, CLIENT_A).created_at
+        ).total_seconds() == 10
+        assert instance.get(summary.id, CLIENT_A).state is InteractionState.CLAIMED
+    finally:
+        instance.close()
 
 
 @pytest.mark.parametrize(
