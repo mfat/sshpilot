@@ -37,14 +37,41 @@ src/sshpilot/core/
 | `sshpilot.ssh_connection_builder` | Runtime askpass/env adapter over `core.ssh` |
 | `sshpilot.askpass_utils` | Process askpass helper; classifies via `core.interaction` |
 
-See also: `phase13-completion-matrix.md`, `docs/testing/phase13-production-smoke.md`,
+See also: `core-ownership-matrix.md`, `core-ownership-migration.md`,
+`phase13-completion-matrix.md`, `docs/testing/phase13-production-smoke.md`,
 `docs/testing/temporary-openssh-fixture.md`.
 
 ## Rules
 
-1. Core never displays dialogs or loads GI.
+1. Core never displays dialogs or loads GI. It is the bottom layer: it must
+   not import `sshpilot.daemon` or `sshpilot.gtk`.
 2. GTK collects input, calls core/API, renders state, maps `CoreError` to Adw UI.
-3. Daemon consumes the same core request/policy models as GTK.
-4. Compatibility shims stay thin — see `core-compatibility-shims.md`.
+3. **GTK must not instantiate stateful core services or use core modules to
+   perform authoritative I/O.** A module being GTK-free does not mean GTK
+   should own an instance of it; the daemon owns all authoritative state and
+   I/O. `ConnectionManager`, `SecretManager`, `KeyService`, the known-hosts
+   editor, backup apply, and the SSH command builders are daemon-owned.
+4. Frontend reaches into `sshpilot.core` only through the explicit allowlist
+   in `tests/architecture/test_core_boundary.py` (pure validation /
+   classification / naming / formatting) or through registered pending
+   migrations; it never imports `sshpilot.daemon` except the enumerated
+   diagnostic/cleanup utilities.
+5. Compatibility shims stay thin — see `core-compatibility-shims.md` — and
+   must delegate to the daemon API rather than re-owning state.
+
+## Enforcement
+
+`tests/architecture/test_core_boundary.py` statically enforces rules 1, 3 and 4
+at the AST level:
+
+- every frontend core import must be in the explicit `ALLOWED` allowlist or the
+  `PENDING_MIGRATIONS` registry (no package-level allowlists),
+- frontend → `sshpilot.daemon` imports are forbidden outside `DAEMON_ALLOWLIST`,
+- `core`/`api`/`daemon` never import Gtk/GLib/GI,
+- the registry must exactly match the source tree (no stale or phantom entries).
+
+The pending registry is the migration backlog for
+`core-ownership-migration.md`; each migration M1–M8 removes its rows as it
+lands, and registering a new backend call in frontend code fails the suite.
 
 Phase 13.2 runtime ownership (sessions/SFTP/transfers/forwards/interactions) remains in `sshpilot.daemon` consuming core models; see `docs/api/` topic guides.
