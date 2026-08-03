@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 _PT_TO_CSS_PX = 96.0 / 72.0
 
 
+class TerminalBackendCapabilityError(RuntimeError):
+    """Raised when an operation is not provided by the active emulator."""
+
+
 def pango_points_to_xterm_px(points: float, scale: float = 1.0) -> int:
     """Convert a Pango/CSS point size to an xterm.js ``fontSize`` (CSS pixels).
 
@@ -43,6 +47,9 @@ class BaseTerminalBackend(Protocol):
 
     def apply_theme(self, theme_name: Optional[str] = None) -> None:
         """Apply the current theme to the terminal widget."""
+
+    def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
+        """Apply emulator configuration without exposing implementation APIs."""
 
     def grab_focus(self) -> None:
         """Give keyboard focus to the terminal widget."""
@@ -102,16 +109,18 @@ class BaseTerminalBackend(Protocol):
     def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
         """Connect to user input (keystrokes / paste) destined for the child.
 
-        Callback signature matches VTE's ``commit``: ``(widget, text, size)``.
+        The callback receives ``(widget, text, byte_length)``.
         """
 
     def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """Connect to terminal size changes.
 
-        Callback signature matches VTE's ``char-size-changed``:
-        ``(widget, char_width, char_height)``. Callers that need rows/cols
-        should use :meth:`get_size`.
+        Callback arguments are backend-defined notification details. Callers
+        needing rows/columns must use :meth:`get_size`.
         """
+
+    def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Connect a notification emitted after displayed content changes."""
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
         """Configure the search regex for the backend, if supported."""
@@ -262,6 +271,76 @@ class VTETerminalBackend:
             self.vte.show()
         except Exception:
             logger.debug("Failed to show VTE widget", exc_info=True)
+
+    def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
+        """Apply all VTE-only presentation and interaction settings."""
+        settings = settings or {}
+        self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
+        self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
+        self.vte.set_scrollback_lines(int(settings.get("scrollback_lines", 10000)))
+        if hasattr(self.vte, "set_scroll_on_keystroke"):
+            self.vte.set_scroll_on_keystroke(True)
+        if hasattr(self.vte, "set_scroll_on_output"):
+            self.vte.set_scroll_on_output(False)
+        if hasattr(self.vte, "set_word_char_exceptions"):
+            self.vte.set_word_char_exceptions("@-./_~")
+        elif hasattr(self.vte, "set_word_char_options"):
+            self.vte.set_word_char_options("@-./_~")
+        if hasattr(self.vte, "set_mouse_autohide"):
+            self.vte.set_mouse_autohide(True)
+        if hasattr(self.vte, "set_allow_bold"):
+            self.vte.set_allow_bold(True)
+        if hasattr(self.vte, "set_allow_hyperlink"):
+            self.vte.set_allow_hyperlink(True)
+        self.set_encoding(str(settings.get("encoding", "UTF-8")))
+        self.vte.show()
+
+    def setup_link_handling(self, motion_callback, enter_callback, selection_callback) -> None:
+        """Install VTE URL matching and owner callbacks."""
+        pattern = (
+            r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
+            r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]'
+        )
+        regex = Vte.Regex.new_for_match(pattern, len(pattern), 0x00000400)
+        tag = self.vte.match_add_regex(regex, 0)
+        self.vte.match_set_cursor_name(tag, "pointer")
+        controller = Gtk.EventControllerMotion()
+        controller.connect("motion", motion_callback)
+        controller.connect("enter", enter_callback)
+        self.vte.add_controller(controller)
+        self.vte.connect("contents-changed", lambda terminal: terminal.queue_draw())
+        self.vte.connect("selection-changed", selection_callback)
+
+    def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        if hasattr(self.vte, "check_hyperlink_at"):
+            uri = self.vte.check_hyperlink_at(x, y)
+            if uri:
+                return uri
+        if hasattr(self.vte, "check_match_at"):
+            result = self.vte.check_match_at(x, y)
+        elif hasattr(self.vte, "match_check"):
+            width, height = self.vte.get_char_width(), self.vte.get_char_height()
+            result = self.vte.match_check(int(x / width), int(y / height)) if width and height else None
+        else:
+            result = None
+        return result[0] if isinstance(result, tuple) else result
+
+    def set_pointer_over_link(self, over_link: bool) -> None:
+        self.vte.set_cursor(Gdk.Cursor.new_from_name("pointer" if over_link else "text", None))
+
+    def save_contents(self, stream: Any) -> None:
+        self.vte.write_contents_sync(stream, Vte.WriteFlags.DEFAULT, None)
+
+    def get_supported_encodings(self) -> list[str]:
+        values = []
+        for item in self.vte.get_encodings() or []:
+            code = item[0] if isinstance(item, (tuple, list)) and item else item
+            if isinstance(code, str) and code not in values:
+                values.append(code)
+        return values
+
+    def set_encoding(self, encoding: str) -> None:
+        self.vte.set_encoding(encoding)
 
     def destroy(self) -> None:
         try:
@@ -454,6 +533,13 @@ class VTETerminalBackend:
             env_list = [f"{key}={value}" for key, value in env.items()]
         cwd = cwd or None
         pty_flags = Vte.PtyFlags(flags) if flags else Vte.PtyFlags.DEFAULT
+        # PTY creation, initial sizing and attachment are implementation details.
+        if self.vte.get_pty() is None:
+            pty = Vte.Pty.new_sync(pty_flags)
+            rows, cols = self.get_size()
+            if (rows, cols) != (24, 80):
+                pty.set_size(rows, cols)
+            self.vte.set_pty(pty)
         self.vte.spawn_async(
             pty_flags,
             cwd,
@@ -476,7 +562,32 @@ class VTETerminalBackend:
 
     def connect_termprops_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         try:
-            self._termprops_handler = self.vte.connect("termprops-changed", callback)
+            def _on_changed(terminal, ids, _user_data=None):
+                changed = set(ids) if ids and hasattr(ids, "__iter__") else {ids}
+                event: dict[str, Any] = {}
+                if hasattr(Vte, "TERMPROP_XTERM_TITLE"):
+                    try:
+                        event["title"] = terminal.get_termprop_string(
+                            Vte.TERMPROP_XTERM_TITLE
+                        )[0]
+                    except Exception:
+                        pass
+                for name, key, getter in (
+                    ("postexec", "TERMPROP_SHELL_POSTEXEC", "get_termprop_uint"),
+                    ("preexec", "TERMPROP_SHELL_PREEXEC", "get_termprop_value"),
+                    ("precmd", "TERMPROP_SHELL_PRECMD", "get_termprop_value"),
+                ):
+                    prop = getattr(Vte, key, None)
+                    if prop is not None and prop in changed:
+                        try:
+                            ok, value = getattr(terminal, getter)(prop)
+                            if ok:
+                                event[name] = value
+                        except Exception:
+                            pass
+                callback(self.widget, event)
+
+            self._termprops_handler = self.vte.connect("termprops-changed", _on_changed)
         except Exception:
             self._termprops_handler = None
         return self._termprops_handler
@@ -541,6 +652,9 @@ class VTETerminalBackend:
 
     def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         return self.vte.connect("char-size-changed", callback)
+
+    def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        return self.vte.connect("contents-changed", callback)
 
     def feed_child(self, data: bytes) -> None:
         # Deprecated alias — prefer feed_child_data.
@@ -632,10 +746,20 @@ class VTETerminalBackend:
 
     def supports_feature(self, feature: str) -> bool:
         supported = {
-            "search",
-            "font-scaling",
+            "terminal_search",
+            "dynamic_font",
             "clipboard",
             "termprops",
+            "local_process",
+            "content_extraction",
+            "pty_access",
+            "daemon_input",
+            "daemon_resize",
+            "encoding",
+            "hyperlinks",
+            "save_output",
+            # Compatibility spellings.
+            "search", "font-scaling",
         }
         return feature in supported
 
@@ -753,6 +877,10 @@ class PyXtermTerminalBackend:
             return
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
+
+    def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
+        """PyXterm presentation is configured by theme/font JS updates."""
+        return None
 
     def destroy(self) -> None:
         # Embedded backend: nothing server-side to tear down. Subclasses
@@ -1412,7 +1540,10 @@ class PyXtermTerminalBackend:
             return None
 
     def supports_feature(self, feature: str) -> bool:
-        return False
+        return feature in {
+            "search", "font-scaling", "terminal_search", "dynamic_font",
+            "clipboard", "content_extraction", "daemon_input", "daemon_resize",
+        }
 
     def get_pty(self) -> Optional[Any]:
         return None
@@ -2031,6 +2162,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             super().destroy()
 
     def supports_feature(self, feature: str) -> bool:
-        return feature in ("pty",)
-
-
+        return feature in {
+            "pty", "pty_access", "local_process", "terminal_search",
+            "dynamic_font", "clipboard", "content_extraction", "daemon_input",
+            "daemon_resize", "search", "font-scaling",
+        }

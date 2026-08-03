@@ -19,11 +19,9 @@ def _term(*, prompt="[sshPilot] sudo password:", response="s3cret"):
     t._pty_autofill_timeout_id = 99
     fed = []
     t.backend = types.SimpleNamespace(
+        supports_feature=lambda feature: feature == "local_process",
         feed_child_data=lambda data: fed.append(data),
-        # Legacy alias still accepted by feed_child_data fallback.
-        feed_child=lambda data: fed.append(("legacy", data)),
     )
-    t.vte = None
     t._scrape_recent_terminal_text = lambda max_chars=2000: (
         f"docker logs\n{prompt}"
     )
@@ -50,27 +48,16 @@ def test_pty_autofill_ignores_output_without_prompt():
     assert t._pty_autofill_done is False
 
 
-def test_pty_autofill_falls_back_to_vte_feed_child():
+def test_pty_autofill_does_not_fall_back_to_emulator_internals():
     t = _term()
-    t.backend = None
-    fed = []
-    t.vte = types.SimpleNamespace(feed_child=lambda data: fed.append(data))
+    t.backend = types.SimpleNamespace(supports_feature=lambda _feature: False)
     t._on_pty_autofill_changed(None)
-    assert fed == [b"s3cret\n"]
-
-
-def test_pty_autofill_uses_legacy_backend_feed_child_alias():
-    t = _term()
-    fed = []
-    t.backend = types.SimpleNamespace(feed_child=lambda data: fed.append(data))
-    t._on_pty_autofill_changed(None)
-    assert fed == [b"s3cret\n"]
-
+    assert t._fed == []
 
 def test_cancel_pty_autofill_clears_state():
     t = _term()
     disconnected = []
-    t.vte = types.SimpleNamespace(disconnect=lambda hid: disconnected.append(hid))
+    t.backend.disconnect = lambda hid: disconnected.append(hid)
     t._cancel_pty_autofill()
     assert t._pty_autofill is None
     assert t._pty_autofill_done is True

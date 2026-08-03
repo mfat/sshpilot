@@ -12,6 +12,7 @@ pytest.importorskip("gi")
 
 from sshpilot.terminal import TerminalWidget
 from sshpilot.terminal_backends import PyXtermBridgeBackend
+from sshpilot.terminal_backends import TerminalBackendCapabilityError
 
 
 class _FakeJsValue:
@@ -36,7 +37,6 @@ def _daemon_term(*, backend):
         resize=lambda dims: None,
     )
     t.backend = backend
-    t.vte = None  # pyxterm path — must not be required
     t.is_connected = False
     t.connection_state = type("S", (), {"CONNECTING": "connecting", "CONNECTED": "connected"})()
     t.connection_state = t.connection_state.CONNECTING
@@ -113,6 +113,29 @@ def test_daemon_dimensions_use_backend_get_size_not_vte():
     assert dims.columns == 120
 
 
+def test_daemon_input_does_not_require_vte_attribute():
+    sent = []
+    backend = _StackingBackend()
+    t = _daemon_term(backend=backend)
+    t._daemon_controller.send_input = sent.append
+
+    t._on_daemon_commit(None, "whoami\r", 7)
+
+    assert sent == [b"whoami\r"]
+    assert not hasattr(t, "vte")
+
+
+def test_daemon_resize_uses_backend_dimensions():
+    resized = []
+    backend = types.SimpleNamespace(get_size=lambda: (30, 100))
+    t = _daemon_term(backend=backend)
+    t._daemon_controller.resize = resized.append
+
+    t._on_daemon_size_changed(None, 0, 0)
+
+    assert [(item.rows, item.columns) for item in resized] == [(30, 100)]
+
+
 def test_install_daemon_backend_io_uses_abstraction():
     connected = []
     disconnected = []
@@ -170,6 +193,32 @@ def test_uninstall_daemon_backend_io_clears_handlers():
     assert backend._size == []
     assert t._daemon_commit_handler is None
     assert t._daemon_size_handler is None
+
+
+def test_local_input_calls_backend_only():
+    fed = []
+    backend = types.SimpleNamespace(
+        supports_feature=lambda feature: feature == "local_process",
+        feed_child_data=fed.append,
+    )
+    t = TerminalWidget.__new__(TerminalWidget)
+    t._daemon_mode = False
+    t.backend = backend
+
+    t.feed_child_data(b"pwd\r")
+
+    assert fed == [b"pwd\r"]
+    assert not hasattr(t, "vte")
+
+
+def test_unsupported_local_input_fails_clearly():
+    backend = types.SimpleNamespace(supports_feature=lambda _feature: False)
+    t = TerminalWidget.__new__(TerminalWidget)
+    t._daemon_mode = False
+    t.backend = backend
+
+    with pytest.raises(TerminalBackendCapabilityError, match="local process input"):
+        t.feed_child_data(b"pwd\r")
 
 
 def test_pyxterm_bridge_feed_paints_via_write_to_term():
