@@ -19,7 +19,9 @@ class ConnectionPresentationStore:
     or process APIs. ``on_changed`` lets a GTK adapter replace its list model.
     """
 
-    def __init__(self, *, on_changed: Optional[Callable[[Tuple[ConnectionSummary, ...]], None]] = None):
+    def __init__(self, *,
+                 dispatch: Optional[Callable[[Callable[[], None]], object]] = None,
+                 on_changed: Optional[Callable[[Tuple[ConnectionSummary, ...]], None]] = None):
         self._lock = RLock()
         self._by_id: Dict[str, ConnectionSummary] = {}
         self._client = None
@@ -29,6 +31,10 @@ class ConnectionPresentationStore:
         self._refresh_generation = 0
         self._pending_events = []
         self._on_changed = on_changed
+        # Core clients publish events on their dispatch thread.  Frontends must
+        # explicitly choose where observers run; the immediate default keeps
+        # this toolkit-independent and makes headless tests deterministic.
+        self._dispatch = dispatch or (lambda callback: callback())
         self._handlers = {}
         self._next_handler_id = 1
 
@@ -98,28 +104,79 @@ class ConnectionPresentationStore:
             lambda event: self._accept_event(event, generation, instance_id)
         )
         try:
-            self.rebuild(client.list_connections())
+            snapshot = self._resynchronize(client, generation, instance_id)
         except BaseException:
             subscription.unsubscribe()
             raise
         with self._lock:
-            pending = tuple(self._pending_events)
-            self._pending_events = []
-            self._refresh_generation = 0
             if generation != self._generation:
                 subscription.unsubscribe()
             else:
                 self._subscription = subscription
-        for event in sorted(pending, key=lambda item: item.sequence):
-            self._accept_event(event, generation, instance_id)
-        return self.snapshot()
+        return snapshot
 
     def refresh(self) -> Tuple[ConnectionSummary, ...]:
         with self._lock:
             client = self._client
+            generation = self._generation
+            instance_id = getattr(client, "server_instance_id", None)
+            if client is not None:
+                self._refresh_generation = generation
+                self._pending_events = []
         if client is not None:
-            self.rebuild(client.list_connections())
+            try:
+                return self._resynchronize(client, generation, instance_id)
+            except BaseException:
+                # A failed snapshot must not strand the store in buffering
+                # mode. Resume from the still-valid live projection and apply
+                # everything received while the request was in flight.
+                with self._lock:
+                    pending = tuple(self._pending_events)
+                    self._pending_events = []
+                    if self._refresh_generation == generation:
+                        self._refresh_generation = 0
+                for event in sorted(pending, key=lambda item: item.sequence):
+                    self._accept_event(event, generation, instance_id)
+                raise
         return self.snapshot()
+
+    def _resynchronize(self, client, generation: int,
+                       instance_id: Optional[str]) -> Tuple[ConnectionSummary, ...]:
+        """Replace a snapshot and buffered events without a live-mode gap."""
+        connections = client.list_connections()
+        replacement: Dict[str, ConnectionSummary] = {}
+        for connection in connections:
+            if not isinstance(connection, ConnectionSummary):
+                raise TypeError("presentation store only accepts ConnectionSummary DTOs")
+            replacement[connection.id] = connection
+
+        with self._lock:
+            if generation != self._generation or client is not self._client:
+                return tuple(self._by_id.values())
+            previous = self._by_id
+            self._by_id = replacement
+            # Keep the lock while draining. Event callbacks arriving during the
+            # replay block here and observe live mode only after replay ends.
+            pending = sorted(self._pending_events, key=lambda item: item.sequence)
+            self._pending_events = []
+            for event in pending:
+                self._apply_event_locked(event)
+            self._refresh_generation = 0
+            current = dict(self._by_id)
+            snapshot = tuple(current.values())
+
+        self._publish_projection_change(previous, current, snapshot)
+        return snapshot
+
+    def _publish_projection_change(self, previous, replacement, snapshot) -> None:
+        self._notify(snapshot)
+        for connection_id in previous.keys() - replacement.keys():
+            self._emit("connection-removed", previous[connection_id])
+        for connection_id in replacement.keys() - previous.keys():
+            self._emit("connection-added", replacement[connection_id])
+        for connection_id in replacement.keys() & previous.keys():
+            if replacement[connection_id] != previous[connection_id]:
+                self._emit("connection-updated", replacement[connection_id])
 
     def close(self) -> None:
         with self._lock:
@@ -139,25 +196,32 @@ class ConnectionPresentationStore:
             if self._refresh_generation == generation:
                 self._pending_events.append(event)
                 return
-            if event.sequence <= self._last_sequence:
+            if not self._apply_event_locked(event):
                 return
-            self._last_sequence = event.sequence
-            if event.type is EventType.CONNECTION_DELETED:
-                self._by_id.pop(event.payload.id, None)
-                signal_name = "connection-removed"
-            else:
-                self._by_id[event.payload.id] = event.payload
-                signal_name = ("connection-added" if event.type is EventType.CONNECTION_CREATED
-                               else "connection-updated")
+            signal_name = ("connection-removed" if event.type is EventType.CONNECTION_DELETED
+                           else "connection-added" if event.type is EventType.CONNECTION_CREATED
+                           else "connection-updated")
             snapshot = tuple(self._by_id.values())
         self._notify(snapshot)
         self._emit(signal_name, event.payload)
 
+    def _apply_event_locked(self, event: CoreEvent) -> bool:
+        if event.sequence <= self._last_sequence:
+            return False
+        self._last_sequence = event.sequence
+        if event.type is EventType.CONNECTION_DELETED:
+            self._by_id.pop(event.payload.id, None)
+        else:
+            self._by_id[event.payload.id] = event.payload
+        return True
+
     def _notify(self, snapshot: Tuple[ConnectionSummary, ...]) -> None:
         if self._on_changed is not None:
-            self._on_changed(snapshot)
+            self._dispatch(lambda: self._on_changed(snapshot))
 
     def _emit(self, signal_name: str, connection: ConnectionSummary) -> None:
-        for registered_name, callback in tuple(self._handlers.values()):
+        with self._lock:
+            handlers = tuple(self._handlers.values())
+        for registered_name, callback in handlers:
             if registered_name == signal_name:
-                callback(self, connection)
+                self._dispatch(lambda callback=callback: callback(self, connection))
