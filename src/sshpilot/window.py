@@ -3911,11 +3911,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         if connection is not None and not as_new and not skip_group_warning:
             block_info = None
-            try:
-                source_path = split_group_source or getattr(connection, 'source', None)
-                block_info = self.connection_manager.get_host_block_details(connection.nickname, source_path)
-            except Exception as e:
-                logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
+            inspect_host_block = getattr(
+                self.connection_manager, 'get_host_block_details', None
+            )
+            if callable(inspect_host_block):
+                try:
+                    source_path = split_group_source or getattr(connection, 'source', None)
+                    block_info = inspect_host_block(connection.nickname, source_path)
+                except Exception as e:
+                    logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
             if block_info and len(block_info.get('hosts') or []) > 1:
                 self._prompt_group_edit_options(connection, block_info)
                 return
@@ -6558,6 +6562,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         dialog._daemon_generation = int(new_generation)
                 except Exception:
                     pass
+                try:
+                    self._prompt_reconnect_after_daemon_save(
+                        new_conn_id,
+                        connection_data.get('nickname'),
+                    )
+                except Exception:
+                    pass
                 
                 try:
                     conf = getattr(self.connection_manager, 'config', None)
@@ -6636,6 +6647,41 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
         except RuntimeError:
             complete_save(False)
+
+    def _prompt_reconnect_after_daemon_save(
+        self,
+        connection_id: str,
+        nickname: str,
+    ) -> None:
+        """Offer to reconnect an active terminal after a daemon config save.
+
+        The daemon save path emits ``connection-updated`` to every open
+        terminal (which logs "waiting for user confirmation to reconnect")
+        but, unlike the local save path, never surfaces a prompt.  Match the
+        active terminal by the authoritative daemon connection identity and
+        present the same reconnect confirmation.
+        """
+        if self._is_quitting:
+            return
+        if not connection_id or not nickname:
+            return
+        for active_connection, terminal in tuple(self.active_terminals.items()):
+            if (
+                active_connection is None
+                or terminal is None
+                or getattr(terminal, 'is_connected', False) is False
+            ):
+                continue
+            active_id = getattr(active_connection, 'id', None)
+            active_nickname = getattr(active_connection, 'nickname', '')
+            if str(active_id) != connection_id and active_nickname != nickname:
+                continue
+            try:
+                active_connection._terminal_instance = terminal
+            except Exception:
+                pass
+            self.terminal_manager.prompt_reconnect(active_connection)
+            return
 
     def on_connection_saved(self, dialog, connection_data, pending_meta=None,
                             secret_plan=None, save_completion=None):

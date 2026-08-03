@@ -155,14 +155,28 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         sk_provider = (data.get('security_key_provider') or '').strip()
         if sk_provider:
             lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
-        # Include password-based fallback if a password is provided
+        # Include password-based fallback only when a password is provided.
+        # A stale PreferredAuthentications (e.g. ``keyboard-interactive,password``
+        # left over from a previous password-auth save) must never keep ssh
+        # asking for a password after the switch to key-based auth, so login
+        # password methods are stripped here in key mode unless the payload
+        # still carries an explicit password fallback.
         pref_raw = data.get('preferred_authentications')
         if isinstance(pref_raw, (list, tuple)):
-            custom_pref = ",".join(str(p).strip() for p in pref_raw if str(p).strip())
+            pref_list = [str(p).strip() for p in pref_raw if str(p).strip()]
+        elif isinstance(pref_raw, str):
+            pref_list = [p.strip() for p in pref_raw.split(',') if p.strip()]
         else:
-            custom_pref = (pref_raw or '').strip()
-        if custom_pref:
-            lines.append(f"    PreferredAuthentications {custom_pref}")
+            pref_list = []
+        if pref_list:
+            if not data.get('password'):
+                pref_list = [
+                    method for method in pref_list
+                    if method.lower() not in ('password', 'keyboard-interactive')
+                ]
+            custom_pref = ",".join(pref_list)
+            if custom_pref:
+                lines.append(f"    PreferredAuthentications {custom_pref}")
         elif data.get('password'):
             lines.append(
                 "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
