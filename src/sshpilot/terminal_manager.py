@@ -296,10 +296,7 @@ class TerminalManager:
                         logger.error(f"Failed to prepare SSH command: {prep_err}")
 
                 terminal.apply_theme()
-                if terminal.backend:
-                    terminal.backend.queue_draw()
-                elif hasattr(terminal, 'vte') and terminal.vte:
-                    terminal.vte.queue_draw()
+                terminal.queue_terminal_draw()
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection')
                     _cleanup_failed_terminal()
@@ -418,10 +415,7 @@ class TerminalManager:
                 return
             try:
                 terminal.apply_theme()
-                if terminal.backend:
-                    terminal.backend.queue_draw()
-                elif hasattr(terminal, 'vte') and terminal.vte:
-                    terminal.vte.queue_draw()
+                terminal.queue_terminal_draw()
             except Exception as exc:
                 logger.error("Error applying daemon terminal theme: %s", exc)
 
@@ -678,10 +672,7 @@ class TerminalManager:
                             connection_id,
                         )
                         terminal.apply_theme()
-                        if terminal.backend:
-                            terminal.backend.queue_draw()
-                        elif hasattr(terminal, 'vte') and terminal.vte:
-                            terminal.vte.queue_draw()
+                        terminal.queue_terminal_draw()
                     except Exception as exc:
                         logger.error(
                             "Failed to initialize daemon session for pane type=%s",
@@ -712,10 +703,7 @@ class TerminalManager:
                         )
 
                 terminal.apply_theme()
-                if terminal.backend:
-                    terminal.backend.queue_draw()
-                elif hasattr(terminal, 'vte') and terminal.vte:
-                    terminal.vte.queue_draw()
+                terminal.queue_terminal_draw()
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection for pane')
                     connection.is_connected = False
@@ -1053,11 +1041,7 @@ class TerminalManager:
 
                 def _run_command(*_args):
                     data = (command_text + "\n").encode("utf-8")
-                    backend = getattr(terminal_widget, "backend", None)
-                    if backend is not None and hasattr(backend, "feed_child"):
-                        backend.feed_child(data)
-                    elif getattr(terminal_widget, "vte", None) is not None:
-                        terminal_widget.vte.feed_child(data)
+                    terminal_widget.feed_child_data(data)
 
                 terminal_widget.connect("connection-established", _run_command)
             terminal_widget.setup_local_shell()
@@ -1071,21 +1055,13 @@ class TerminalManager:
 
             GLib.idle_add(terminal_widget.show)
             # Show the terminal widget (backend-agnostic)
-            if hasattr(terminal_widget, 'terminal_widget') and terminal_widget.terminal_widget:
-                GLib.idle_add(terminal_widget.terminal_widget.show)
-            elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
-                GLib.idle_add(terminal_widget.vte.show)
+            GLib.idle_add(terminal_widget.show_terminal)
 
             def _focus_local_terminal():
                 try:
                     if hasattr(terminal_widget, 'get_mapped') and not terminal_widget.get_mapped():
                         return
-                    if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
-                        terminal_widget.backend.grab_focus()
-                    elif hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
-                        terminal_widget.vte.grab_focus()
-                    elif hasattr(terminal_widget, 'grab_focus'):
-                        terminal_widget.grab_focus()
+                    terminal_widget.grab_terminal_focus()
                 except Exception as focus_error:
                     logger.debug(f"Failed to focus local terminal: {focus_error}")
 
@@ -1221,10 +1197,7 @@ class TerminalManager:
                         continue
                 else:
                     # Local terminal - use traditional feed_child
-                    if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
-                        terminal_widget.backend.feed_child(cmd)
-                    elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
-                        terminal_widget.vte.feed_child(cmd)
+                    terminal_widget.feed_child_data(cmd)
 
                 sent_count += 1
                 logger.debug(

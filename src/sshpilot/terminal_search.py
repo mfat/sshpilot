@@ -3,7 +3,7 @@
 A composed object that ``TerminalWidget`` owns (``terminal._search``). It builds
 and owns the search bar widgets and holds all search state, driving the active
 backend (sync VTE or async PyXterm). It keeps a back-reference to the terminal
-(``self.t``) for the backend, the VTE widget, and theme-color restoration.
+container and uses only its backend-neutral operations.
 
 Behavior is intentionally identical to the previous in-widget implementation;
 this is a structural move, not a rewrite. ``TerminalWidget`` keeps thin
@@ -13,10 +13,9 @@ forwarders for the names external code binds (``_show_search_overlay``,
 """
 
 import logging
-import re
 from gettext import gettext as _
 
-from gi.repository import Gtk, Gdk, Vte
+from gi.repository import Gtk, Gdk
 
 logger = logging.getLogger(__name__)
 
@@ -196,18 +195,10 @@ class TerminalSearch:
     # -- Overlay show/hide ------------------------------------------------------
 
     def _apply_search_highlight_colors(self):
-        """Switch VTE highlight to a high-contrast color while search is active."""
+        """Ask the active backend to distinguish search matches from selection."""
         try:
-            if self.t.vte is None:
-                return
-            search_bg = Gdk.RGBA()
-            search_bg.parse('#F4D03F')  # Bright amber — visible on dark and light backgrounds
-            search_fg = Gdk.RGBA()
-            search_fg.parse('#000000')
-            if hasattr(self.t.vte, 'set_color_highlight'):
-                self.t.vte.set_color_highlight(search_bg)
-            if hasattr(self.t.vte, 'set_color_highlight_foreground'):
-                self.t.vte.set_color_highlight_foreground(search_fg)
+            if self.t.backend:
+                self.t.backend.set_search_highlight(True)
         except Exception as exc:
             logger.debug("Failed to apply search highlight colors: %s", exc)
 
@@ -241,10 +232,7 @@ class TerminalSearch:
                     self.t.backend.clear_search_decorations()
                 except Exception:
                     pass
-            if self.t.backend:
-                self.t.backend.grab_focus()
-            # Restore theme selection color now that search is closed
-            self.t._apply_cursor_and_selection_colors()
+            self.t.grab_terminal_focus()
         except Exception as exc:
             logger.debug("Failed to hide search overlay: %s", exc)
 
@@ -364,14 +352,6 @@ class TerminalSearch:
                         self.t.backend.search_set_query(
                             text, case_sensitive=case_sensitive, regex=regex
                         )
-                    elif hasattr(self.t.backend, "vte") and self.t.backend.vte:
-                        pattern = text if regex else re.escape(text)
-                        if not case_sensitive and not pattern.startswith("(?i)"):
-                            pattern = "(?i)" + pattern
-                        search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
-                        self.t.backend.search_set_regex(search_regex)
-                        if hasattr(self.t.backend.vte, "search_set_wrap_around"):
-                            self.t.backend.vte.search_set_wrap_around(True)
 
                 self._last_search_text = text
                 self._last_search_case_sensitive = case_sensitive

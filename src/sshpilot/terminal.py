@@ -2467,6 +2467,21 @@ class TerminalWidget(Gtk.Box):
             raise RuntimeError("No terminal backend available for theme application")
         self.backend.apply_theme(theme_name)
 
+    def grab_terminal_focus(self) -> None:
+        """Focus the active emulator without exposing its implementation."""
+        if self.backend is not None:
+            self.backend.grab_focus()
+
+    def queue_terminal_draw(self) -> None:
+        """Request an emulator redraw through the backend."""
+        if self.backend is not None:
+            self.backend.queue_draw()
+
+    def show_terminal(self) -> None:
+        """Show the active emulator through the backend."""
+        if self.backend is not None:
+            self.backend.show()
+
     def _get_group_color_rgba(self) -> Optional[Gdk.RGBA]:
         color_value = getattr(self, 'group_color', None)
         if not color_value:
@@ -2512,12 +2527,13 @@ class TerminalWidget(Gtk.Box):
         self.backend.configure({"encoding": encoding, "scrollback_lines": 10000})
         self.backend.apply_theme()
         self._hovered_hyperlink_uri = None
-        if self.backend.supports_feature("hyperlinks"):
-            self.backend.setup_link_handling(
-                self._on_vte_motion,
-                self._on_vte_pointer_enter,
-                self._on_selection_changed,
-            )
+        # This also installs backend-neutral selection/content callbacks. The
+        # backend treats hyperlink-specific pieces as optional capabilities.
+        self.backend.setup_link_handling(
+            self._on_vte_motion,
+            self._on_vte_pointer_enter,
+            self._on_selection_changed,
+        )
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
 

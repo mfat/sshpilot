@@ -33,7 +33,7 @@ class TestDaemonBroadcastOwnership:
             terminal._daemon_controller = Mock()
         else:
             terminal.backend = Mock()
-            terminal.vte = Mock()
+            terminal.feed_child_data = terminal.backend.feed_child_data
             
         return terminal
 
@@ -52,9 +52,8 @@ class TestDaemonBroadcastOwnership:
             assert sent_count == 2
             assert failed_count == 0
             
-            # Verify feed_child was called
-            terminal1.backend.feed_child.assert_called_once()
-            terminal2.backend.feed_child.assert_called_once()
+            terminal1.backend.feed_child_data.assert_called_once()
+            terminal2.backend.feed_child_data.assert_called_once()
 
     def test_broadcast_to_daemon_terminals_with_input(self, terminal_manager):
         """Test broadcast to daemon terminals with input ownership."""
@@ -111,7 +110,7 @@ class TestDaemonBroadcastOwnership:
             assert failed_count == 1
             
             # Verify correct methods were called
-            local_terminal.backend.feed_child.assert_called_once()
+            local_terminal.backend.feed_child_data.assert_called_once()
             daemon_with_input._daemon_controller.send_input.assert_called_once()
             daemon_without_input._daemon_controller.send_input.assert_not_called()
 

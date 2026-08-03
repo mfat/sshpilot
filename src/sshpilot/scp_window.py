@@ -13,11 +13,6 @@ from typing import List, Optional, Tuple
 from pathlib import Path
 
 import gi
-try:
-    gi.require_version('Vte', '3.91')
-    from gi.repository import Vte
-except Exception:
-    Vte = None
 from gi.repository import Gtk, Adw, GLib, Gio
 
 from .command_progress_dialog import (
@@ -1346,10 +1341,7 @@ class ScpWindowController:
 
             def _focus_terminal_input() -> bool:
                 try:
-                    if hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.grab_focus()
-                    else:
-                        term_widget.grab_focus()
+                    term_widget.grab_terminal_focus()
                 except Exception:
                     pass
                 return False
@@ -1391,10 +1383,6 @@ class ScpWindowController:
                         term_widget.backend.feed(
                             ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
                         )
-                    elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.feed(
-                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
-                        )
                 except Exception:
                     pass
 
@@ -1411,19 +1399,6 @@ class ScpWindowController:
                         child_setup=None,
                         callback=None,
                         user_data=None,
-                    )
-                elif hasattr(term_widget, 'vte') and term_widget.vte:
-                    term_widget.vte.spawn_async(
-                        Vte.PtyFlags.DEFAULT,
-                        os.path.expanduser('~') or '/',
-                        ['bash', '-lc', cmdline],
-                        envv,
-                        GLib.SpawnFlags.DEFAULT,
-                        None,
-                        None,
-                        -1,
-                        None,
-                        None,
                     )
                 try:
                     term_widget._install_pty_autofill()
@@ -1469,8 +1444,6 @@ class ScpWindowController:
                 try:
                     if hasattr(term_widget, 'backend') and term_widget.backend:
                         term_widget.backend.disconnect(handler_id)
-                    elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.disconnect(handler_id)
                 except Exception:
                     pass
                 scp_exit_state['handler_id'] = None
@@ -1639,10 +1612,6 @@ class ScpWindowController:
                 if hasattr(term_widget, 'backend') and term_widget.backend:
                     scp_exit_state['handler_id'] = (
                         term_widget.backend.connect_child_exited(_on_scp_exited)
-                    )
-                elif hasattr(term_widget, 'vte') and term_widget.vte:
-                    scp_exit_state['handler_id'] = term_widget.vte.connect(
-                        'child-exited', _on_scp_exited,
                     )
             except Exception:
                 pass

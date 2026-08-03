@@ -11,6 +11,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 
 from gi.repository import GObject, Gtk
+from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_color
 
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,30 @@ class BaseTerminalBackend(Protocol):
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """Connect a notification emitted after displayed content changes."""
 
+    def setup_link_handling(
+        self, motion_callback: Callable, enter_callback: Callable,
+        selection_callback: Callable,
+    ) -> None:
+        """Install hyperlink interaction callbacks when supported."""
+
+    def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        """Return a hyperlink at widget coordinates, if supported."""
+
+    def set_pointer_over_link(self, over_link: bool) -> None:
+        """Update pointer feedback for a hyperlink, if supported."""
+
+    def save_contents(self, stream: Any) -> None:
+        """Write retained terminal output to ``stream``."""
+
+    def get_supported_encodings(self) -> list[str]:
+        """Return encodings supported by this emulator."""
+
+    def set_encoding(self, encoding: str) -> None:
+        """Set the terminal encoding."""
+
+    def set_search_highlight(self, active: bool) -> None:
+        """Enable search highlighting or restore selection colors."""
+
     def search_set_regex(self, regex: Optional[Any]) -> None:
         """Configure the search regex for the backend, if supported."""
 
@@ -195,6 +220,10 @@ class VTETerminalBackend:
         self.vte = Vte.Terminal()
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
+        self._background_provider = None
+        self._css_class = f"terminal-bg-{id(self)}"
+        self._selection_background = None
+        self._selection_foreground = None
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -273,43 +302,56 @@ class VTETerminalBackend:
             logger.debug("Failed to show VTE widget", exc_info=True)
 
     def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
-        """Apply all VTE-only presentation and interaction settings."""
+        """Apply VTE settings best-effort across supported VTE versions."""
         settings = settings or {}
-        self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
-        self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
-        self.vte.set_scrollback_lines(int(settings.get("scrollback_lines", 10000)))
-        if hasattr(self.vte, "set_scroll_on_keystroke"):
-            self.vte.set_scroll_on_keystroke(True)
-        if hasattr(self.vte, "set_scroll_on_output"):
-            self.vte.set_scroll_on_output(False)
-        if hasattr(self.vte, "set_word_char_exceptions"):
-            self.vte.set_word_char_exceptions("@-./_~")
-        elif hasattr(self.vte, "set_word_char_options"):
-            self.vte.set_word_char_options("@-./_~")
-        if hasattr(self.vte, "set_mouse_autohide"):
-            self.vte.set_mouse_autohide(True)
-        if hasattr(self.vte, "set_allow_bold"):
-            self.vte.set_allow_bold(True)
-        if hasattr(self.vte, "set_allow_hyperlink"):
-            self.vte.set_allow_hyperlink(True)
-        self.set_encoding(str(settings.get("encoding", "UTF-8")))
-        self.vte.show()
+        operations = (
+            ("cursor blink", lambda: self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)),
+            ("cursor shape", lambda: self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)),
+            ("scrollback", lambda: self.vte.set_scrollback_lines(int(settings.get("scrollback_lines", 10000)))),
+            ("scroll on keystroke", lambda: self.vte.set_scroll_on_keystroke(True)),
+            ("scroll on output", lambda: self.vte.set_scroll_on_output(False)),
+            ("mouse autohide", lambda: self.vte.set_mouse_autohide(True)),
+            ("bold text", lambda: self.vte.set_allow_bold(True)),
+            ("OSC 8 hyperlinks", lambda: self.vte.set_allow_hyperlink(True)),
+            ("encoding", lambda: self.set_encoding(str(settings.get("encoding", "UTF-8")))),
+            ("visibility", lambda: self.vte.show()),
+        )
+        for name, operation in operations:
+            try:
+                operation()
+            except Exception:
+                logger.debug("Could not configure optional VTE %s", name, exc_info=True)
+        try:
+            if hasattr(self.vte, "set_word_char_exceptions"):
+                self.vte.set_word_char_exceptions("@-./_~")
+            elif hasattr(self.vte, "set_word_char_options"):
+                self.vte.set_word_char_options("@-./_~")
+        except Exception:
+            logger.debug("Could not configure VTE word selection", exc_info=True)
 
     def setup_link_handling(self, motion_callback, enter_callback, selection_callback) -> None:
-        """Install VTE URL matching and owner callbacks."""
-        pattern = (
-            r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
-            r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]'
-        )
-        regex = Vte.Regex.new_for_match(pattern, len(pattern), 0x00000400)
-        tag = self.vte.match_add_regex(regex, 0)
-        self.vte.match_set_cursor_name(tag, "pointer")
-        controller = Gtk.EventControllerMotion()
-        controller.connect("motion", motion_callback)
-        controller.connect("enter", enter_callback)
-        self.vte.add_controller(controller)
-        self.vte.connect("contents-changed", lambda terminal: terminal.queue_draw())
-        self.vte.connect("selection-changed", selection_callback)
+        """Install optional VTE URL behavior without making startup depend on it."""
+        try:
+            pattern = (r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
+                       r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]')
+            regex = Vte.Regex.new_for_match(pattern, len(pattern), 0x00000400)
+            tag = self.vte.match_add_regex(regex, 0)
+            self.vte.match_set_cursor_name(tag, "pointer")
+        except Exception:
+            logger.debug("VTE plain-text hyperlink matching unavailable", exc_info=True)
+        try:
+            controller = Gtk.EventControllerMotion()
+            controller.connect("motion", motion_callback)
+            controller.connect("enter", enter_callback)
+            self.vte.add_controller(controller)
+        except Exception:
+            logger.debug("VTE hyperlink motion controller unavailable", exc_info=True)
+        for signal, callback in (("contents-changed", lambda terminal: terminal.queue_draw()),
+                                 ("selection-changed", selection_callback)):
+            try:
+                self.vte.connect(signal, callback)
+            except Exception:
+                logger.debug("VTE %s signal unavailable", signal, exc_info=True)
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
         if hasattr(self.vte, "check_hyperlink_at"):
@@ -348,6 +390,17 @@ class VTETerminalBackend:
                 self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
         except Exception:
             pass
+        self._remove_background_provider()
+
+    def _remove_background_provider(self) -> None:
+        provider = getattr(self, "_background_provider", None)
+        display = Gdk.Display.get_default()
+        if provider is not None and display is not None:
+            try:
+                Gtk.StyleContext.remove_provider_for_display(display, provider)
+            except Exception:
+                logger.debug("Failed to remove VTE background provider", exc_info=True)
+        self._background_provider = None
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -419,10 +472,13 @@ class VTETerminalBackend:
 
             if use_group_color and override_rgba is not None:
                 bg_color = self._clone_rgba(override_rgba)  # Use exact group color
-                fg_color = self._get_contrast_color(bg_color)
-                highlight_bg = self._clone_rgba(override_rgba)
-                highlight_fg = self._get_contrast_color(highlight_bg)
-                cursor_color = self._clone_rgba(highlight_fg)
+                fg_color = get_contrast_color(bg_color)
+                contrast = get_contrast_color(bg_color)
+                ratio = 0.35 if relative_luminance(bg_color) < 0.5 else 0.25
+                highlight_bg = mix_rgba(bg_color, contrast, ratio)
+                highlight_bg.alpha = 1.0
+                highlight_fg = get_contrast_color(highlight_bg)
+                cursor_color = self._clone_rgba(fg_color)
 
             palette_colors = None
             if profile.get("palette"):
@@ -446,12 +502,15 @@ class VTETerminalBackend:
             self.vte.set_color_cursor(cursor_color)
             self.vte.set_color_highlight(highlight_bg)
             self.vte.set_color_highlight_foreground(highlight_fg)
+            self._selection_background = self._clone_rgba(highlight_bg)
+            self._selection_foreground = self._clone_rgba(highlight_fg)
 
             try:
                 rgba = bg_color
+                self._remove_background_provider()
                 provider = Gtk.CssProvider()
                 css = (
-                    f".terminal-bg {{ background-color: rgba({int(rgba.red * 255)},"
+                    f".{self._css_class} {{ background-color: rgba({int(rgba.red * 255)},"
                     f" {int(rgba.green * 255)}, {int(rgba.blue * 255)}, {rgba.alpha}); }}"
                 )
                 provider.load_from_data(css.encode("utf-8"))
@@ -460,12 +519,13 @@ class VTETerminalBackend:
                     Gtk.StyleContext.add_provider_for_display(
                         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                     )
+                    self._background_provider = provider
                 if hasattr(owner, "add_css_class"):
-                    owner.add_css_class("terminal-bg")
+                    owner.add_css_class(self._css_class)
                 if hasattr(owner.scrolled_window, "add_css_class"):
-                    owner.scrolled_window.add_css_class("terminal-bg")
+                    owner.scrolled_window.add_css_class(self._css_class)
                 if hasattr(self.vte, "add_css_class"):
-                    self.vte.add_css_class("terminal-bg")
+                    self.vte.add_css_class(self._css_class)
             except Exception:
                 logger.debug("Failed to set container background", exc_info=True)
 
@@ -726,8 +786,23 @@ class VTETerminalBackend:
         return self.vte.search_find_previous()
 
     def clear_search_decorations(self) -> None:
-        # VTE highlight colors are restored by TerminalWidget on overlay hide.
-        return None
+        self.set_search_highlight(False)
+
+    def set_search_highlight(self, active: bool) -> None:
+        try:
+            if active:
+                background, foreground = Gdk.RGBA(), Gdk.RGBA()
+                background.parse("#F5A623")
+                foreground.parse("#000000")
+            else:
+                background = self._selection_background
+                foreground = self._selection_foreground
+            if background is not None and hasattr(self.vte, "set_color_highlight"):
+                self.vte.set_color_highlight(background)
+            if foreground is not None and hasattr(self.vte, "set_color_highlight_foreground"):
+                self.vte.set_color_highlight_foreground(foreground)
+        except Exception:
+            logger.debug("Could not update VTE search highlight", exc_info=True)
 
     def get_child_pid(self) -> Optional[int]:
         try:
@@ -756,11 +831,17 @@ class VTETerminalBackend:
             "daemon_input",
             "daemon_resize",
             "encoding",
-            "hyperlinks",
             "save_output",
             # Compatibility spellings.
             "search", "font-scaling",
         }
+        if feature == "hyperlinks":
+            return bool(
+                hasattr(self.vte, "add_controller")
+                and (hasattr(self.vte, "check_hyperlink_at")
+                     or hasattr(self.vte, "check_match_at")
+                     or hasattr(self.vte, "match_check"))
+            )
         return feature in supported
 
     def get_pty(self) -> Optional[Any]:
@@ -880,6 +961,30 @@ class PyXtermTerminalBackend:
 
     def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
         """PyXterm presentation is configured by theme/font JS updates."""
+        return None
+
+    def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """PyXtermBridgeBackend uses output hooks instead of a widget signal."""
+        return None
+
+    def setup_link_handling(self, motion_callback, enter_callback, selection_callback) -> None:
+        """xterm.js handles links in its WebLinks addon."""
+        return None
+
+    def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        return None
+
+    def set_pointer_over_link(self, over_link: bool) -> None:
+        return None
+
+    def save_contents(self, stream: Any) -> None:
+        raise TerminalBackendCapabilityError("PyXterm does not support saving retained output")
+
+    def get_supported_encodings(self) -> list[str]:
+        return []
+
+    def set_encoding(self, encoding: str) -> None:
+        """PyXterm encoding is applied to the PTY command when it is spawned."""
         return None
 
     def destroy(self) -> None:
@@ -1491,6 +1596,11 @@ class PyXtermTerminalBackend:
             "window.term.searchAddon.clearActiveDecoration();"
             "}})();"
         )
+
+    def set_search_highlight(self, active: bool) -> None:
+        """xterm.js search decoration colors are configured by the addon theme."""
+        if not active:
+            self.clear_search_decorations()
 
     def _search_options_dict(self, *, forward: bool = True) -> dict:
         opts = {

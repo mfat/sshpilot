@@ -30,7 +30,10 @@ def _ssh_terminal(nickname='server'):
     from sshpilot.terminal import TerminalWidget
 
     terminal = TerminalWidget.__new__(TerminalWidget)
-    terminal.backend = types.SimpleNamespace(feed_child=lambda data: None)
+    terminal.backend = types.SimpleNamespace(
+        supports_feature=lambda feature: feature == "local_process",
+        feed_child_data=lambda data: None,
+    )
     terminal.connection = types.SimpleNamespace(
         nickname=nickname,
         hostname=f'{nickname}.example.com',
@@ -162,8 +165,8 @@ def test_broadcast_command_sends_to_split_pane_terminals():
     def record_feed(data):
         sent.append(data)
 
-    regular.backend.feed_child = record_feed
-    pane.backend.feed_child = record_feed
+    regular.backend.feed_child_data = record_feed
+    pane.backend.feed_child_data = record_feed
 
     split = SplitViewTab.__new__(SplitViewTab)
     split._panes = [types.SimpleNamespace(get_terminals=lambda: [pane])]

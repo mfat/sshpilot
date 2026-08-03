@@ -72,15 +72,9 @@ class WindowBroadcastMixin:
     def _focus_active_terminal_tab(self):
         """Focus the currently active terminal tab"""
         try:
-            if hasattr(self, 'tab_view') and self.tab_view:
-                selected_page = self.tab_view.get_selected_page()
-                if selected_page:
-                    terminal_widget = selected_page.get_child()
-                    if terminal_widget:
-                        if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
-                            terminal_widget.vte.grab_focus()
-                        elif hasattr(terminal_widget, 'grab_focus'):
-                            terminal_widget.grab_focus()
+            terminal_widget = self._get_active_terminal_widget()
+            if terminal_widget is not None:
+                terminal_widget.grab_terminal_focus()
         except Exception as e:
             logger.debug(f"Failed to focus active terminal tab: {e}")
 
