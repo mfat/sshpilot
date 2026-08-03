@@ -301,6 +301,7 @@ class InteractionBroker:
                 or name.startswith("SSHPILOT_ASKPASS_")
                 or name.startswith("SSHPILOT_SESSION_")
                 or name.startswith("SSHPILOT_DAEMON_ASKPASS_")
+
             ):
                 environment.pop(name, None)
         askpass_active = headless or resolver_askpass_active

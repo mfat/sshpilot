@@ -217,6 +217,7 @@ class DaemonInteractionDialogs:
             dialog.present(parent)
             return
 
+
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=12,
@@ -230,7 +231,10 @@ class DaemonInteractionDialogs:
         content.append(entry)
         dialog.set_extra_child(content)
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("submit", "Continue")
+        dialog.add_response(
+            "submit",
+            "Yes" if isinstance(prompt, ConfirmationPrompt) else "Continue",
+        )
         dialog.set_response_appearance(
             "submit",
             Adw.ResponseAppearance.SUGGESTED,
@@ -277,6 +281,7 @@ class DaemonInteractionDialogs:
             on_success=lambda _value: None,
             on_error=lambda _error: None,
         )
+
 
     def _secret_response(
         self,
