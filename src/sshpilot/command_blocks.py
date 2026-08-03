@@ -1321,8 +1321,6 @@ class CommandBlocksPanel(Gtk.Box):
         try:
             if hasattr(terminal, 'backend') and terminal.backend:
                 terminal.backend.feed_child(data)
-            elif hasattr(terminal, 'vte') and terminal.vte:
-                terminal.vte.feed_child(data)
         except Exception as exc:
             logger.error("Failed to send command to terminal: %s", exc)
             return
@@ -1614,8 +1612,6 @@ class CommandBlocksPanel(Gtk.Box):
         try:
             if hasattr(terminal, 'backend') and terminal.backend:
                 terminal.backend.feed_child(data)
-            elif hasattr(terminal, 'vte') and terminal.vte:
-                terminal.vte.feed_child(data)
         except Exception as exc:
             logger.error("Failed to send command to terminal: %s", exc)
             return

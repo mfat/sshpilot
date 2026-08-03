@@ -19,9 +19,9 @@ Daemon worker allocates PTY / launches OpenSSH / brokers interactions
     ↓
 Lifecycle events report RUNNING or FAILED asynchronously
     ↓
-VTE receives terminal output via bridge.bind_terminal()
+DaemonTerminalSessionController delivers output to TerminalWidget
     ↓
-VTE displays interactive SSH session
+BaseTerminalBackend.feed() displays it in the active emulator
 ```
 
 ### Key Components
@@ -62,18 +62,40 @@ The daemon terminal state progresses through these stages:
 - **FAILED**: Operation failed
 - **CLOSED**: Session terminated
 
-## Emulator Decision: VTE is Production
+## Process, Emulator, and Container Responsibilities
 
-**VTE feed + commit is the production daemon SSH emulator.** PyXtermJS remains available via `terminal.backend` setting for local terminals only. The daemon SSH path uses one unified VTE-based production emulator:
+These are independent layers:
 
-- **Daemon SSH**: VTE receives output via `terminal.feed()` and `terminal.commit()`
-- **Local terminals**: Can use VTE or PyXtermJS via user setting
-- **External terminals**: Remain process-owned outside sshPilot
+- **Daemon session/process ownership:** the daemon owns the SSH process and PTY,
+  replay buffer, attachment state, and input ownership. GTK never creates a
+  second PTY for a daemon session.
+- **Terminal emulator backend:** `BaseTerminalBackend` is the display/input/size
+  contract. `VTETerminalBackend` implements it with VTE and
+  `PyXtermBridgeBackend` implements it with xterm.js. Either implementation can
+  render and control a daemon-backed session.
+- **GTK terminal container:** `TerminalWidget` owns layout, overlays, menus,
+  session-controller wiring, split-pane integration, and drag-and-drop. It uses
+  `backend.widget` but does not access emulator implementation objects.
 
-This design ensures:
-- Consistent daemon SSH experience across all installations
-- Reliable terminal replay and continuity features
-- Single production code path for testing and maintenance
+Local and legacy terminals still have GTK-side process ownership, but their PTY
+creation and spawning live behind `BaseTerminalBackend.spawn_async()`. External
+terminals remain process-owned outside sshPilot.
+
+The daemon data flow is:
+
+```
+Daemon output
+    → DaemonTerminalSessionController
+    → TerminalWidget
+    → BaseTerminalBackend.feed()
+    → active emulator
+
+User input
+    → active emulator
+    → BaseTerminalBackend callback
+    → TerminalWidget
+    → DaemonTerminalSessionController.send_input()
+```
 
 ## Close Policies
 

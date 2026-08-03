@@ -37,7 +37,7 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
         def remove_controller(self, controller):
             removed_controllers.append(controller)
 
-    terminal.vte = DummyVte()
+    terminal.terminal_widget = DummyVte()
     terminal._shortcut_controller = 'shortcut-controller'
     terminal._scroll_controller = 'scroll-controller'
     terminal._pass_through_mode = False

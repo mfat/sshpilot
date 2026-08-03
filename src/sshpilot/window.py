@@ -806,16 +806,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             def _focus_terminal_when_ready():
                 try:
-                    page = self.tab_view.get_selected_page() if hasattr(self, 'tab_view') else None
-                    if page is None:
-                        return
-                    terminal_widget = page.get_child()
+                    terminal_widget = self._get_active_terminal_widget()
                     if terminal_widget is None:
                         return
-                    if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
-                        terminal_widget.vte.grab_focus()
-                    elif hasattr(terminal_widget, 'grab_focus'):
-                        terminal_widget.grab_focus()
+                    terminal_widget.grab_terminal_focus()
                 except Exception as focus_error:
                     logger.debug(f"Failed to focus startup terminal: {focus_error}")
 
@@ -4743,7 +4737,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if self._focus_is_in_connection_list():
             # Focus the active terminal. Use the split-view-aware lookup so this
             # also returns focus to the active pane of a SplitViewTab (a
-            # SplitViewTab child has no .vte attribute of its own).
+            # SplitViewTab owns a child terminal container.
             terminal = self._get_active_terminal_widget()
             if terminal is not None:
                 self._focus_terminal_widget(terminal)

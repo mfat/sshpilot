@@ -627,8 +627,6 @@ class PluginHost:
             backend = getattr(term, "backend", None)
             if backend is not None and hasattr(backend, "feed_child"):
                 backend.feed_child(data)
-            elif getattr(term, "vte", None) is not None:
-                term.vte.feed_child(data)
 
         try:
             self.run_on_ui_thread(_feed)

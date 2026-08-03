@@ -75,7 +75,7 @@ class PyXtermTerminalBackend:
 
 def _search(**attrs):
     s = TerminalSearch.__new__(TerminalSearch)
-    s.t = SimpleNamespace(backend=None, _apply_cursor_and_selection_colors=lambda: None)
+    s.t = SimpleNamespace(backend=None, grab_terminal_focus=lambda: None)
     s._last_search_text = ""
     s._last_search_case_sensitive = False
     s._last_search_regex = False
@@ -204,7 +204,7 @@ def test_clear_search_pattern_resets_and_queries_none():
 # --- _hide_search_overlay ------------------------------------------------------
 
 def test_hide_search_overlay_resets_error_and_count():
-    calls = {"cursor": 0, "decorations": 0, "focus": 0}
+    calls = {"decorations": 0, "focus": 0}
 
     class _Revealer:
         def __init__(self):
@@ -217,15 +217,23 @@ def test_hide_search_overlay_resets_error_and_count():
         def clear_search_decorations(self):
             calls["decorations"] += 1
 
-        def grab_focus(self):
-            calls["focus"] += 1
-
     s = _search(backend=_Backend(), search_revealer=_Revealer())
-    s.t._apply_cursor_and_selection_colors = lambda: calls.__setitem__("cursor", calls["cursor"] + 1)
+    s.t.grab_terminal_focus = lambda: calls.__setitem__("focus", calls["focus"] + 1)
     s.search_entry.add_css_class("error")
 
     s._hide_search_overlay()
     assert s.search_revealer.revealed is False
     assert "error" not in s.search_entry.classes
     assert s.search_count_label.text == ""
-    assert calls == {"cursor": 1, "decorations": 1, "focus": 1}
+    assert calls == {"decorations": 1, "focus": 1}
+
+
+def test_show_search_highlight_uses_backend_without_vte_escape_hatch():
+    calls = []
+    backend = SimpleNamespace(set_search_highlight=lambda active: calls.append(active))
+    s = _search(backend=backend)
+
+    s._apply_search_highlight_colors()
+
+    assert calls == [True]
+    assert not hasattr(s.t, "vte")

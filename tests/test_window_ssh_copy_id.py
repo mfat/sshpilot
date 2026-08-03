@@ -60,6 +60,12 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
             self.config = config
             self.connection_manager = manager
             self.vte = DummyVte()
+            self.backend = types.SimpleNamespace(
+                spawn_async=lambda **kwargs: setattr(self, "spawn_env", kwargs.get("env")),
+                connect_child_exited=lambda callback: None,
+                disconnect=lambda handler_id: None,
+                feed=lambda data: None,
+            )
             DummyTerminalWidget.last_instance = self
 
         def _set_connecting_overlay_visible(self, *args, **kwargs):
@@ -249,10 +255,10 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
 
     window_instance._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
 
-    spawned_env = DummyTerminalWidget.last_instance.vte.spawn_env
+    spawned_env = DummyTerminalWidget.last_instance.spawn_env
     assert spawned_env is not None
-    assert "SSH_ASKPASS=/tmp/helper" in spawned_env
-    assert "SSH_ASKPASS_REQUIRE=force" in spawned_env
+    assert spawned_env["SSH_ASKPASS"] == "/tmp/helper"
+    assert spawned_env["SSH_ASKPASS_REQUIRE"] == "force"
 
 
 def test_ssh_copy_id_preflight_blocks_missing_binary(monkeypatch, tmp_path):
