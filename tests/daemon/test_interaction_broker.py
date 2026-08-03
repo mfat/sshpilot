@@ -131,13 +131,13 @@ def test_host_key_answer_is_typed_and_final(broker: InteractionBroker) -> None:
     broker.respond(
         InteractionDecisionRequest(
             interaction_id=summary.id,
-            host_key_decision=HostKeyDecision.ACCEPT_ONCE,
+            host_key_decision=HostKeyDecision.ACCEPT,
         ),
         CLIENT_A,
     )
     result = broker.wait_for_result(summary.id)
     assert result is not None
-    assert result.decision is HostKeyDecision.ACCEPT_ONCE
+    assert result.decision is HostKeyDecision.ACCEPT
     assert broker.get(summary.id, CLIENT_A).state is InteractionState.ANSWERED
 
 
@@ -775,7 +775,6 @@ def test_daemon_entered_password_is_never_implicitly_stored(
         waiter.join(1)
         assert not waiter.is_alive()
         assert stored == []
-        instance.mark_authenticated(SESSION_ID)
         assert stored == []
         assert resolved == [bytearray(b"new-value")]
         resolved[0][:] = b"\0" * len(resolved[0])
@@ -821,17 +820,14 @@ def test_prepare_launch_preserves_canonical_ssh_options(
         "-F",
         "/tmp/config",
     )
-    assert argv[-7:] == (
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-o",
-        "ConnectTimeout=5",
+    assert argv == (
+        "/usr/bin/ssh", "-F", "/tmp/config",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "UserKnownHostsFile=/tmp/user-known-hosts",
+        "-o", "ConnectTimeout=5",
         "example",
     )
-    assert sum(value.startswith("UserKnownHostsFile=") for value in argv) == 1
-    assert "UserKnownHostsFile=/tmp/user-known-hosts" not in argv
 
 
 def test_prepare_launch_does_not_add_ssh_option_defaults(
@@ -855,10 +851,8 @@ def test_prepare_launch_does_not_add_ssh_option_defaults(
         ),
     )
 
-    assert argv[0] == "/usr/bin/ssh"
-    assert argv[-1] == "example"
-    assert argv[1] == "-o"
-    assert argv[2].startswith("UserKnownHostsFile=")
+    assert argv == ("/usr/bin/ssh", "example")
+    assert not any("UserKnownHostsFile" in value for value in argv)
 
 
 def test_strict_host_key_mode_selects_first_occurrence() -> None:
@@ -897,7 +891,7 @@ def test_strict_host_key_mode_selects_first_occurrence() -> None:
     ) == "yes"
 
 
-def test_prepare_launch_ask_uses_private_session_known_hosts(
+def test_prepare_launch_preserves_authored_user_known_hosts_file(
     broker: InteractionBroker,
     monkeypatch,
 ) -> None:
@@ -927,9 +921,43 @@ def test_prepare_launch_ask_uses_private_session_known_hosts(
     known_hosts_options = [
         value for value in argv if value.startswith("UserKnownHostsFile=")
     ]
-    assert len(known_hosts_options) == 1
-    assert "sshpilot-interaction-" in known_hosts_options[0]
-    assert "/tmp/user-known-hosts" not in known_hosts_options[0]
+    assert known_hosts_options == ["UserKnownHostsFile=/tmp/user-known-hosts"]
+
+
+@pytest.mark.parametrize(
+    ("known_hosts", "trailing_args"),
+    (
+        ("none", ()),
+        ("/tmp/first /tmp/second", ("sftp",)),
+    ),
+)
+def test_prepare_launch_leaves_known_hosts_policy_to_openssh(
+    broker: InteractionBroker,
+    monkeypatch,
+    known_hosts: str,
+    trailing_args: tuple[str, ...],
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda *_args: {})
+    authored = f"UserKnownHostsFile={known_hosts}"
+    argv, _environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        lambda _connection_id, **_kwargs: (
+            ("/usr/bin/ssh", "-o", authored, "example"),
+            {"PATH": os.environ.get("PATH", "")},
+        ),
+        trailing_args=trailing_args,
+    )
+    assert argv == ("/usr/bin/ssh", "-o", authored, "example", *trailing_args)
+    assert tuple(value for value in argv if "UserKnownHostsFile" in value) == (
+        authored,
+    )
 
 
 def test_parse_openssh_host_key_askpass_prompt(broker: InteractionBroker) -> None:

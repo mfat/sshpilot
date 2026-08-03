@@ -128,10 +128,6 @@ class _AskpassContext:
     control_argv: tuple[str, ...]
     attempts: Dict[str, int]
     stored_attempted: set[str]
-    session_known_hosts: str = ""
-    user_known_hosts_paths: tuple[str, ...] = ()
-    initial_known_hosts_lines: frozenset[str] = frozenset()
-    pending_host_key_store: bool = False
     closed: bool = False
 
 
@@ -262,27 +258,8 @@ class InteractionBroker:
             port = int(effective.get("port", spec.port))
         except (TypeError, ValueError):
             port = spec.port
-        user_paths = self._known_hosts_paths(effective)
         token = secrets.token_urlsafe(32)
-        session_known_hosts = self._private_dir / f"known-hosts-{token}"
-        known_hosts_content = bytearray()
-        for user_path in user_paths:
-            try:
-                content = user_path.expanduser().read_bytes()
-            except OSError:
-                continue
-            known_hosts_content.extend(content)
-            if content and not content.endswith(b"\n"):
-                known_hosts_content.extend(b"\n")
-        session_known_hosts.write_bytes(known_hosts_content)
-        os.chmod(session_known_hosts, 0o600)
-        initial_known_hosts_lines = frozenset(
-            line
-            for line in known_hosts_content.decode("utf-8", errors="replace").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        )
-        # Keep authentication and connection policy from the canonical builder.
-        # Only known-host persistence is redirected to session-private storage.
+        # OpenSSH and its effective configuration own host-key persistence.
         context = _AskpassContext(
             token=token,
             session_id=spec.session_id,
@@ -295,9 +272,6 @@ class InteractionBroker:
             control_argv=(),
             attempts={},
             stored_attempted=set(),
-            session_known_hosts=str(session_known_hosts),
-            user_known_hosts_paths=tuple(str(path) for path in user_paths),
-            initial_known_hosts_lines=initial_known_hosts_lines,
         )
         with self._condition:
             self._require_open_locked()
@@ -327,15 +301,6 @@ class InteractionBroker:
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
             f"session={spec.session_id}"
-        )
-        # OpenSSH owns known_hosts parsing, matching, hashing, and line
-        # generation. It reads a private snapshot for the session and writes
-        # newly accepted keys there; ACCEPT_ONCE therefore cannot modify the
-        # user's files. ACCEPT_AND_STORE promotes OpenSSH's exact generated
-        # line only after authentication succeeds.
-        argv = self._with_broker_options(
-            argv,
-            ("-o", f"UserKnownHostsFile={session_known_hosts}"),
         )
         if trailing_args:
             argv = (*argv, *trailing_args)
@@ -578,98 +543,9 @@ class InteractionBroker:
         if prompt.status is not HostKeyStatus.UNKNOWN:
             append_askpass_log("ASKPASS: host-key accept refused (non-UNKNOWN status)")
             return None
-        if decision is HostKeyDecision.ACCEPT_AND_STORE:
-            with self._condition:
-                context = self._askpass_contexts.get(token)
-                if context is not None and not context.closed:
-                    context.pending_host_key_store = True
-            append_askpass_log("ASKPASS: host-key accepted and will be stored")
-        else:
-            append_askpass_log("ASKPASS: host-key accepted for this session")
+        append_askpass_log("ASKPASS: host-key accepted")
         # OpenSSH askpass expects a yes/no line; helper appends the newline.
         return bytearray(b"yes")
-
-    def _flush_accepted_host_keys(self, context: _AskpassContext) -> None:
-        """Copy session-written known_hosts lines into the user file after store."""
-
-        if not context.pending_host_key_store:
-            return
-        context.pending_host_key_store = False
-        if not context.user_known_hosts_paths:
-            return
-        session_path = Path(context.session_known_hosts)
-        if not session_path.is_file():
-            return
-        try:
-            lines = [
-                line.rstrip("\n")
-                for line in session_path.read_text(encoding="utf-8").splitlines()
-                if line.strip() and not line.lstrip().startswith("#")
-                and line not in context.initial_known_hosts_lines
-            ]
-        except OSError:
-            return
-        if not lines:
-            return
-        destination = Path(context.user_known_hosts_paths[0]).expanduser()
-        try:
-            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            existing = ""
-            if destination.is_file():
-                existing = destination.read_text(encoding="utf-8")
-            additions = [
-                line for line in lines if line and line not in existing
-            ]
-            if not additions:
-                return
-            payload = existing
-            if payload and not payload.endswith("\n"):
-                payload += "\n"
-            payload += "\n".join(additions) + "\n"
-            self._atomic_write(destination, payload.encode("utf-8"))
-            try:
-                os.chmod(destination, 0o600)
-            except OSError:
-                pass
-        except OSError:
-            logger.warning(
-                "Accepted host key could not be stored path=%s",
-                destination,
-            )
-
-    @staticmethod
-    def _known_hosts_paths(effective: dict[str, str]) -> tuple[Path, ...]:
-        raw = effective.get("userknownhostsfile", "~/.ssh/known_hosts")
-        paths = tuple(
-            Path(item).expanduser()
-            for item in raw.split()
-            if item and item.lower() != "none"
-        )
-        return paths or (Path("~/.ssh/known_hosts").expanduser(),)
-
-    @staticmethod
-    def _atomic_write(path: Path, content: bytes) -> None:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{path.name}.",
-            dir=path.parent,
-        )
-        try:
-            os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "wb", closefd=True) as stream:
-                descriptor = -1
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, path)
-            os.chmod(path, 0o600, follow_symlinks=False)
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
 
     def create(
         self,
@@ -890,14 +766,6 @@ class InteractionBroker:
                 if record.summary.state is InteractionState.EXPIRED:
                     return ErrorCode.SESSION_STARTUP_FAILED
         return ErrorCode.SESSION_STARTUP_FAILED
-
-    def mark_authenticated(self, session_id: SessionId) -> None:
-        """Commit only host keys; PTY startup is not authentication success."""
-
-        context = self._context_for_session(session_id)
-        if context is None:
-            return
-        self._flush_accepted_host_keys(context)
 
     def _context_for_session(self, session_id: SessionId) -> Optional[_AskpassContext]:
         with self._condition:

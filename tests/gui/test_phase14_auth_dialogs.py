@@ -143,5 +143,5 @@ def test_host_key_dialog_without_auth_helper(phase14_harness):
     h.respond_host_key_dialog(dialog, "store")
     h.pump_until(lambda: bool(calls), timeout=5.0, label="host-key respond")
     assert calls
-    assert calls[0].host_key_decision is HostKeyDecision.ACCEPT_AND_STORE
+    assert calls[0].host_key_decision is HostKeyDecision.ACCEPT
     dialogs.close()

@@ -41,8 +41,7 @@ class HostKeyStatus(str, Enum):
 
 
 class HostKeyDecision(str, Enum):
-    ACCEPT_ONCE = "accept_once"
-    ACCEPT_AND_STORE = "accept_and_store"
+    ACCEPT = "accept"
     REJECT = "reject"
 
 

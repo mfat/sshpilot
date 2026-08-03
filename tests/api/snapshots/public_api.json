@@ -2467,8 +2467,7 @@
       "dynamic"
     ],
     "HostKeyDecision": [
-      "accept_once",
-      "accept_and_store",
+      "accept",
       "reject"
     ],
     "HostKeyStatus": [

@@ -742,7 +742,7 @@ def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
     overriding with a default keepalive is harmless, just a probe cadence).
     """
     try:
-        if not bool(app_ssh_config.get('apply_default_keepalive', False)):
+        if not bool(app_ssh_config.get('apply_default_keepalive', True)):
             return
 
         # Already set by the user via Preferences. The explicit value is composed

@@ -71,20 +71,8 @@ readiness failure must not trigger legacy secret preparation or local SSH spawn.
 
 ## Host keys
 
-The broker retrieves the presented public key, compares it with configured
-known-hosts entries, and displays a SHA256 fingerprint as untrusted evidence,
-not proof of identity. An accepted key is written to a session-private
-known-hosts file and OpenSSH is launched with strict checking, the exact
-accepted key algorithm, and no global known-hosts fallback. A key change
-between scan and connection therefore fails.
-
-Broker-owned OpenSSH options (`BatchMode`, `StrictHostKeyChecking`, known-hosts
-pins, ControlMaster path, and related auth controls) are inserted immediately
-after `ssh`/`-F` and conflicting earlier copies are stripped. OpenSSH keeps the
-first obtained value for each option, so preference overrides cannot weaken the
-session pin.
-
-Persistent unknown-key acceptance uses an atomic mode-0600 known-hosts update,
-respects the effective `HashKnownHosts` policy, and rejects unsafe primary-file
-symlinks. There is no `StrictHostKeyChecking=no` fallback and changed/revoked
-keys are not replaced in this phase.
+The broker presents OpenSSH's askpass host-key prompt as typed, untrusted
+evidence. **Accept** returns `yes`; **Reject** returns `no` or cancels the
+prompt. OpenSSH uses the effective `ssh_config` and exclusively owns host-key
+verification and persistence. The daemon neither overrides
+`UserKnownHostsFile` nor reads, copies, filters, or writes `known_hosts`.
