@@ -22,10 +22,13 @@ def _make_window():
     window = window_module.MainWindow.__new__(window_module.MainWindow)
     window._key_scope = KeyStoreScope.DEFAULT
     window.client = None
+    window.client_bridge = None
     window.key_manager = None
     window.connection_manager = MagicMock()
     window.connection_runtime_status = MagicMock()
     window.plugin_connection_services = MagicMock()
+    window.group_manager = MagicMock()
+    window._group_mutation_controller = None
     return window
 
 
@@ -105,7 +108,7 @@ def test_init_sequence_attaches_exactly_once_for_reused_selection():
     window = _make_window()
     app = types.SimpleNamespace(
         _api_client_selection=types.SimpleNamespace(client=object()),
-        _api_client_bridge=object(),
+        _api_client_bridge=MagicMock(),
     )
 
     window._compose_api_client(app)

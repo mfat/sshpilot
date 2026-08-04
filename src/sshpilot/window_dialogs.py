@@ -2805,48 +2805,27 @@ class WindowConfigDialogsMixin:
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        # Use a closure to retain the created group ID across
-                        # all assignment steps, since ``run_sequence`` only
-                        # threads the *previous* step's return value (which is
-                        # a bool for assignment RPCs).
-                        created_group_id = [None]
-
-                        def _validate_create(_prev):
-                            gid = controller.client.create_group(
-                                group_name, parent_id="", color=selected_color or "",
-                            )
-                            if not gid or not str(gid).strip():
-                                raise ValueError(
-                                    "The daemon did not return a valid group ID"
-                                )
-                            created_group_id[0] = str(gid).strip()
-                            return gid
-
-                        steps = [_validate_create]
-                        for nick in connection_nicknames:
-                            steps.append(
-                                lambda _prev, n=nick: (
-                                    controller.client.copy_connection_to_group(
-                                        CopyConnectionToGroupRequest(
-                                            connection_id=ConnectionId(n),
-                                            group_id=GroupId(created_group_id[0]),
-                                        )
-                                    )
-                                    if is_copy
-                                    else controller.client.assign_connection_to_group(
-                                        n, created_group_id[0]
-                                    )
-                                )
-                            )
+                        # Reuse the production step builder so the
+                        # create-group result is validated as a nonempty
+                        # string group ID and reused across every assignment
+                        # step (run_sequence only threads the previous step's
+                        # return value, which is a bool for assignment RPCs).
+                        from sshpilot.gtk.group_store import (
+                            build_create_and_assign_steps,
+                        )
+                        steps = build_create_and_assign_steps(
+                            controller.client,
+                            group_name,
+                            connection_nicknames,
+                            is_copy=is_copy,
+                            color=selected_color or "",
+                        )
                 elif selected_group_id is not None:
                     steps = _build_move_steps(connection_nicknames, selected_group_id)
                 else:
                     return False
 
                 _set_controls_enabled(False)
-                from sshpilot.api.models.connection_store import (
-                    ConnectionId, CopyConnectionToGroupRequest, GroupId,
-                )
 
                 def _on_done(_result):
                     dialog.close()

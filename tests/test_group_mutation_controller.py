@@ -34,7 +34,11 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.gtk.group_store import GroupMutationController
+from sshpilot.gtk.group_store import (
+    GroupMutationController,
+    build_create_and_assign_steps,
+    validate_group_id,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -768,40 +772,24 @@ class TestCreateAndAssignSequence:
 
     The critical requirement: every assignment step must receive the original
     created group ID, not the return value of the previous assignment (bool).
+
+    These tests exercise the production ``build_create_and_assign_steps``
+    helper directly — they do not reconstruct the workflow in a test double.
     """
 
-    def _make_assign_steps(self, controller, client, group_name, nicknames,
-                           *, is_copy=False):
-        """Reproduce the production create-and-assign step construction.
-
-        This mirrors the fixed ``_open_group_assignment_dialog`` logic.
-        """
-        created_group_id = [None]
-
-        def _validate_create(_prev):
-            gid = client.create_group(group_name, parent_id="", color="")
-            if not gid or not str(gid).strip():
-                raise ValueError("The daemon did not return a valid group ID")
-            created_group_id[0] = str(gid).strip()
-            return gid
-
-        steps = [_validate_create]
-        for nick in nicknames:
-            steps.append(
-                lambda _prev, n=nick: (
-                    client.copy_connection_to_group({"conn": n, "group": created_group_id[0]})
-                    if is_copy
-                    else client.assign_connection_to_group(n, created_group_id[0])
-                )
-            )
-        return steps
+    def _build_steps(self, client, group_name, nicknames, *, is_copy=False,
+                     color=""):
+        """Build the production create-and-assign step list."""
+        return build_create_and_assign_steps(
+            client, group_name, nicknames, is_copy=is_copy, color=color,
+        )
 
     def test_create_and_move_two_connections(self):
         """Create group, then move two connections to it."""
         client = FakeClient()
         client.set_result("create_group", "grp-new")
         ctrl = _make_controller(client=client)
-        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1", "c2"])
+        steps = self._build_steps(client, "Prod", ["c1", "c2"])
         results = []
         ctrl.run_sequence(
             steps,
@@ -818,7 +806,7 @@ class TestCreateAndAssignSequence:
         client = FakeClient()
         client.set_result("create_group", "grp-3")
         ctrl = _make_controller(client=client)
-        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1", "c2", "c3"])
+        steps = self._build_steps(client, "Prod", ["c1", "c2", "c3"])
         results = []
         ctrl.run_sequence(
             steps,
@@ -834,8 +822,8 @@ class TestCreateAndAssignSequence:
         client = FakeClient()
         client.set_result("create_group", "grp-copy")
         ctrl = _make_controller(client=client)
-        steps = self._make_assign_steps(
-            ctrl, client, "Copy Group", ["c1", "c2"], is_copy=True,
+        steps = self._build_steps(
+            client, "Copy Group", ["c1", "c2"], is_copy=True,
         )
         results = []
         ctrl.run_sequence(
@@ -847,7 +835,8 @@ class TestCreateAndAssignSequence:
         # Both copy requests must use the created group ID.
         for i in [1, 2]:
             req = client.calls[i][1][0]
-            assert req["group"] == "grp-copy"
+            assert req.group_id == "grp-copy"
+            assert req.connection_id == client.calls[i][1][0].connection_id
 
     def test_every_assignment_receives_created_group_id(self):
         """Verify the closure captures the group ID correctly for 5 connections."""
@@ -855,7 +844,7 @@ class TestCreateAndAssignSequence:
         client.set_result("create_group", "grp-many")
         ctrl = _make_controller(client=client)
         nicks = [f"c{i}" for i in range(5)]
-        steps = self._make_assign_steps(ctrl, client, "Prod", nicks)
+        steps = self._build_steps(client, "Prod", nicks)
         ctrl.run_sequence(
             steps,
             on_success=lambda r: None,
@@ -870,7 +859,7 @@ class TestCreateAndAssignSequence:
         client.set_result("create_group", "grp-ctx")
         client.set_result("assign_connection_to_group", True)  # explicit True
         ctrl = _make_controller(client=client)
-        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1", "c2"])
+        steps = self._build_steps(client, "Prod", ["c1", "c2"])
         results = []
         ctrl.run_sequence(
             steps,
@@ -887,7 +876,7 @@ class TestCreateAndAssignSequence:
         client.set_result("create_group", "grp-ctx2")
         client.set_result("assign_connection_to_group", 0)  # falsy
         ctrl = _make_controller(client=client)
-        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1"])
+        steps = self._build_steps(client, "Prod", ["c1"])
         results = []
         ctrl.run_sequence(
             steps,
@@ -901,7 +890,7 @@ class TestCreateAndAssignSequence:
         client = FakeClient()
         client.set_result("create_group", "")  # empty group ID
         ctrl = _make_controller(client=client)
-        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1"])
+        steps = self._build_steps(client, "Prod", ["c1"])
         errors = []
         ctrl.run_sequence(
             steps,
@@ -918,7 +907,7 @@ class TestCreateAndAssignSequence:
         client = FakeClient()
         client.set_result("create_group", None)
         ctrl = _make_controller(client=client)
-        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1"])
+        steps = self._build_steps(client, "Prod", ["c1"])
         errors = []
         ctrl.run_sequence(
             steps,
@@ -927,6 +916,72 @@ class TestCreateAndAssignSequence:
         )
         assert len(errors) == 1
         assert len(client.calls) == 1  # only create_group
+
+    def test_nonstring_create_result_aborts(self):
+        """Integer / bool / object create results must abort the sequence."""
+        for bad in (123, True, False, object(), 3.14):
+            client = FakeClient()
+            client.set_result("create_group", bad)
+            ctrl = _make_controller(client=client)
+            steps = self._build_steps(client, "Prod", ["c1"])
+            errors = []
+            ctrl.run_sequence(
+                steps,
+                on_success=lambda r: pytest.fail(
+                    f"unexpected success for {bad!r}"
+                ),
+                on_error=lambda e: errors.append(e),
+            )
+            assert len(errors) == 1, f"expected abort for {bad!r}"
+            assert "valid group ID" in str(errors[0])
+            # No assignment attempted.
+            assert len(client.calls) == 1
+
+    def test_whitespace_only_create_result_aborts(self):
+        """A whitespace-only create result must abort."""
+        client = FakeClient()
+        client.set_result("create_group", "   ")
+        ctrl = _make_controller(client=client)
+        steps = self._build_steps(client, "Prod", ["c1"])
+        errors = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert len(client.calls) == 1
+
+    def test_stripped_nonempty_string_is_accepted(self):
+        """A padded nonempty string group ID is accepted and stripped."""
+        client = FakeClient()
+        client.set_result("create_group", "  grp-pad  ")
+        ctrl = _make_controller(client=client)
+        steps = self._build_steps(client, "Prod", ["c1"])
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: None,
+            on_error=lambda e: pytest.fail(str(e)),
+        )
+        # The stripped ID must be propagated to the assignment step.
+        assert client.calls[1][1] == ("c1", "grp-pad")
+
+    def test_color_is_forwarded_to_create_group(self):
+        """The color argument flows through to create_group."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-color")
+        ctrl = _make_controller(client=client)
+        steps = self._build_steps(
+            client, "Prod", ["c1"], color="#ff0000",
+        )
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: None,
+            on_error=lambda e: pytest.fail(str(e)),
+        )
+        assert client.calls[0] == (
+            "create_group", ("Prod", "", "#ff0000"), {},
+        )
 
     def test_nested_refresh_submission_failure_releases_lock(self):
         """If the refresh submit raises synchronously, lock and busy are released."""
@@ -943,14 +998,23 @@ class TestCreateAndAssignSequence:
             return original_submit(operation, **kwargs)
         ctrl.submit = selective_submit
         errors = []
+        successes = []
         ctrl.run(
             lambda: ctrl.client.create_group("Prod"),
-            on_success=lambda r: None,
+            on_success=lambda r: successes.append(r),
             on_error=lambda e: errors.append(e),
         )
         # Lock must be released.
         assert not ctrl._lock.locked()
         assert not ctrl._busy
+        # The refresh submission failure is terminal: on_error exactly once,
+        # on_success never invoked, no recursive refresh attempt.
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.DAEMON_UNAVAILABLE
+        assert successes == []
+        assert call_count[0] == 2  # mutation + refresh attempt only
+        # The terminal error callback is dispatched through _dispatch.
+        assert ctrl._dispatched
 
     def test_ambiguity_refresh_submission_failure_releases_lock(self):
         """If ambiguity refresh submit raises, lock and busy are released."""
@@ -966,15 +1030,22 @@ class TestCreateAndAssignSequence:
             return original_submit(operation, **kwargs)
         ctrl.submit = selective_submit
         errors = []
+        successes = []
         ctrl.run(
             lambda: (_ for _ in ()).throw(
                 SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed")
             ),
-            on_success=lambda r: None,
+            on_success=lambda r: successes.append(r),
             on_error=lambda e: errors.append(e),
         )
         assert not ctrl._lock.locked()
         assert not ctrl._busy
+        # Ambiguity refresh submission failure is terminal: error once, no
+        # success, no recursive refresh.
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.MUTATION_AMBIGUOUS
+        assert successes == []
+        assert call_count[0] == 2  # mutation + refresh attempt only
 
     def test_partial_failure_refresh_submission_failure_releases_lock(self):
         """If partial-failure refresh submit raises, lock and busy are released."""
@@ -990,17 +1061,21 @@ class TestCreateAndAssignSequence:
             return original_submit(operation, **kwargs)
         ctrl.submit = selective_submit
         errors = []
+        successes = []
         ctrl.run_sequence(
             [
                 lambda _prev: ctrl.client.create_group("Prod"),
                 lambda prev: (_ for _ in ()).throw(RuntimeError("assign failed")),
             ],
-            on_success=lambda r: pytest.fail("unexpected success"),
+            on_success=lambda r: successes.append(r),
             on_error=lambda e: errors.append(e),
         )
         assert not ctrl._lock.locked()
         assert not ctrl._busy
         assert len(errors) == 1
+        assert successes == []
+        # mutation submit + step-2 submit + refresh attempt only.
+        assert call_count[0] == 3
 
     def test_close_between_creation_and_first_assignment(self):
         """Closing the controller between create and assign aborts cleanly."""
@@ -1027,6 +1102,7 @@ class TestCreateAndAssignSequence:
         # The sequence should still complete (the close happens after create
         # returns, so assign will be submitted but the controller is closed).
         assert not ctrl._lock.locked()
+        assert results == []  # closed suppresses both success and error callbacks
 
     def test_close_between_two_assignments(self):
         """Closing between two assignments aborts the remaining steps."""
@@ -1053,3 +1129,408 @@ class TestCreateAndAssignSequence:
             on_error=lambda e: results.append(("err", e)),
         )
         assert not ctrl._lock.locked()
+
+
+# ---------------------------------------------------------------------------
+# Commit 1: Refresh-failure terminality (run + run_sequence)
+# ---------------------------------------------------------------------------
+
+
+class _RefreshFailureController:
+    """Build a controller whose refresh either fails to submit or to execute.
+
+    The refresh submit is intercepted so the second ``submit()`` (the refresh)
+    raises synchronously when ``fail_submit`` is set, or the refresh operation
+    itself raises when ``fail_execute`` is set.  Trackers record every
+    ``on_success`` / ``on_error`` invocation and the number of refresh
+    submissions attempted.
+    """
+
+    def __init__(self, *, fail_submit=False, fail_execute=False,
+                 refresh_after=True, async_mode=False):
+        self.success_calls = []
+        self.error_calls = []
+        self.submit_calls = [0]
+        self.refresh_calls = [0]
+        self.busy_events = []
+        client = FakeClient()
+        client.set_result("create_group", "ok")
+
+        def _refresh():
+            self.refresh_calls[0] += 1
+            if fail_execute:
+                raise SshPilotError(
+                    ErrorCode.PERSISTENCE_FAILED, "refresh failed",
+                )
+            return MagicMock(name="snapshot")
+
+        bridge = AsyncBridge() if async_mode else SyncBridge()
+        original_submit = bridge.submit
+
+        def selective_submit(operation, **kwargs):
+            self.submit_calls[0] += 1
+            if fail_submit and self.submit_calls[0] == 2:
+                raise RuntimeError("bridge down")
+            return original_submit(operation, **kwargs)
+
+        bridge.submit = selective_submit
+
+        dispatched = []
+
+        def dispatch(callback):
+            dispatched.append(callback)
+            return callback()
+
+        ctrl = GroupMutationController(
+            client,
+            bridge=bridge,
+            refresh=_refresh,
+            dispatch=dispatch,
+            on_busy=lambda v: self.busy_events.append(v),
+        )
+        ctrl._dispatched = dispatched
+        ctrl._bridge = bridge
+        ctrl._client = client
+        self.ctrl = ctrl
+        self._refresh_after = refresh_after
+
+    def run(self):
+        self.ctrl.run(
+            lambda: self.ctrl._client.create_group("Prod"),
+            on_success=lambda r: self.success_calls.append(r),
+            on_error=lambda e: self.error_calls.append(e),
+            refresh_after=self._refresh_after,
+        )
+
+    def run_sequence(self):
+        self.ctrl.run_sequence(
+            [lambda _prev: self.ctrl._client.create_group("Prod")],
+            on_success=lambda r: self.success_calls.append(r),
+            on_error=lambda e: self.error_calls.append(e),
+        )
+
+    def drain(self):
+        if hasattr(self.ctrl._bridge, "drain_gtk_queue"):
+            self.ctrl._bridge.drain_gtk_queue()
+
+
+class TestRunRefreshFailureTerminal:
+    def test_run_refresh_submission_failure_invokes_on_error_once(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run()
+        assert len(harness.error_calls) == 1
+        assert harness.error_calls[0].code is ErrorCode.DAEMON_UNAVAILABLE
+
+    def test_run_refresh_submission_failure_never_invokes_on_success(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run()
+        assert harness.success_calls == []
+
+    def test_run_refresh_submission_failure_no_second_refresh(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run()
+        # Only the mutation submit + the failed refresh-submit attempt.
+        assert harness.submit_calls[0] == 2
+        assert harness.refresh_calls[0] == 0  # refresh never executed
+
+    def test_run_refresh_submission_failure_releases_busy_and_lock(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run()
+        assert not harness.ctrl._busy
+        assert not harness.ctrl._lock.locked()
+
+    def test_run_refresh_submission_failure_dispatches_callbacks(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run()
+        assert harness.ctrl._dispatched  # terminal dispatched through _dispatch
+
+    def test_run_refresh_execution_failure_invokes_on_error_once(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run()
+        assert len(harness.error_calls) == 1
+        assert harness.error_calls[0].code is ErrorCode.PERSISTENCE_FAILED
+
+    def test_run_refresh_execution_failure_never_invokes_on_success(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run()
+        assert harness.success_calls == []
+
+    def test_run_refresh_execution_failure_no_second_refresh(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run()
+        assert harness.refresh_calls[0] == 1  # exactly one refresh execution
+        assert harness.submit_calls[0] == 2  # mutation + refresh only
+
+    def test_run_refresh_execution_failure_releases_busy_and_lock(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run()
+        assert not harness.ctrl._busy
+        assert not harness.ctrl._lock.locked()
+
+    def test_run_refresh_execution_failure_dispatches_callbacks(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run()
+        assert harness.ctrl._dispatched
+
+    def test_run_ambiguity_refresh_execution_failure_is_terminal(self):
+        """Refresh execution failure on the ambiguity path is terminal."""
+        client = FakeClient()
+        refresh_calls = [0]
+        def _refresh():
+            refresh_calls[0] += 1
+            raise SshPilotError(ErrorCode.PERSISTENCE_FAILED, "refresh failed")
+        ctrl = _make_controller(refresh=_refresh)
+        errors = []
+        successes = []
+        ctrl.run(
+            lambda: (_ for _ in ()).throw(
+                SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed")
+            ),
+            on_success=lambda r: successes.append(r),
+            on_error=lambda e: errors.append(e),
+        )
+        # The refresh execution failure is terminal: the original mutation
+        # error is reported (not the refresh error, and never success).
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.MUTATION_AMBIGUOUS
+        assert successes == []
+        assert refresh_calls[0] == 1  # no recursive refresh
+
+
+class TestRunSequenceRefreshFailureTerminal:
+    def test_sequence_final_refresh_submission_failure_invokes_on_error_once(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run_sequence()
+        assert len(harness.error_calls) == 1
+        assert harness.success_calls == []
+
+    def test_sequence_final_refresh_submission_failure_no_second_refresh(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run_sequence()
+        assert harness.submit_calls[0] == 2  # mutation + refresh attempt only
+        assert harness.refresh_calls[0] == 0
+
+    def test_sequence_final_refresh_submission_failure_releases_busy_and_lock(self):
+        harness = _RefreshFailureController(fail_submit=True)
+        harness.run_sequence()
+        assert not harness.ctrl._busy
+        assert not harness.ctrl._lock.locked()
+        assert harness.ctrl._dispatched
+
+    def test_sequence_final_refresh_execution_failure_invokes_on_error_once(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run_sequence()
+        assert len(harness.error_calls) == 1
+        assert harness.success_calls == []
+
+    def test_sequence_final_refresh_execution_failure_no_second_refresh(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run_sequence()
+        assert harness.refresh_calls[0] == 1
+        assert harness.submit_calls[0] == 2
+
+    def test_sequence_final_refresh_execution_failure_releases_busy_and_lock(self):
+        harness = _RefreshFailureController(fail_execute=True)
+        harness.run_sequence()
+        assert not harness.ctrl._busy
+        assert not harness.ctrl._lock.locked()
+
+    def test_sequence_partial_failure_refresh_submission_failure_no_recursive_refresh(self):
+        """Partial-failure refresh submission failure: terminal, no retry."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-new")
+        refresh_calls = [0]
+        def _refresh():
+            refresh_calls[0] += 1
+            return MagicMock()
+        ctrl = _make_controller(refresh=_refresh)
+        original_submit = ctrl.submit
+        submit_calls = [0]
+        def selective_submit(operation, **kwargs):
+            submit_calls[0] += 1
+            if submit_calls[0] == 3:  # partial-failure refresh submit
+                raise RuntimeError("bridge down")
+            return original_submit(operation, **kwargs)
+        ctrl.submit = selective_submit
+        errors = []
+        successes = []
+        ctrl.run_sequence(
+            [
+                lambda _prev: client.create_group("Prod"),
+                lambda prev: (_ for _ in ()).throw(RuntimeError("assign failed")),
+            ],
+            on_success=lambda r: successes.append(r),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert successes == []
+        assert refresh_calls[0] == 0  # refresh never executed
+        assert submit_calls[0] == 3  # mutation + step2 + refresh attempt only
+
+    def test_sequence_ambiguity_refresh_submission_failure_no_recursive_refresh(self):
+        """Ambiguity refresh submission failure in a sequence: terminal."""
+        client = FakeClient()
+        refresh_calls = [0]
+        def _refresh():
+            refresh_calls[0] += 1
+            return MagicMock()
+        ctrl = _make_controller(refresh=_refresh)
+        original_submit = ctrl.submit
+        submit_calls = [0]
+        def selective_submit(operation, **kwargs):
+            submit_calls[0] += 1
+            if submit_calls[0] == 3:
+                raise RuntimeError("bridge down")
+            return original_submit(operation, **kwargs)
+        ctrl.submit = selective_submit
+        errors = []
+        successes = []
+        ctrl.run_sequence(
+            [
+                lambda _prev: client.create_group("Prod"),
+                lambda prev: (_ for _ in ()).throw(
+                    SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed")
+                ),
+            ],
+            on_success=lambda r: successes.append(r),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.MUTATION_AMBIGUOUS
+        assert successes == []
+        assert refresh_calls[0] == 0
+        assert submit_calls[0] == 3
+
+
+# ---------------------------------------------------------------------------
+# Commit 1: close suppression of terminal callbacks
+# ---------------------------------------------------------------------------
+
+
+class TestCloseSuppressesCallbacks:
+    def _build_hold_controller(self):
+        """A controller with a deferred dispatch and a refresh that fails.
+
+        The dispatch defers running callbacks so the test can close the
+        controller after the refresh failure is generated but before the
+        terminal ``_finish`` callback runs.
+        """
+        client = FakeClient()
+        client.set_result("create_group", "ok")
+
+        def _refresh():
+            raise SshPilotError(
+                ErrorCode.PERSISTENCE_FAILED, "refresh failed",
+            )
+
+        from collections import deque
+        dispatched = deque()
+
+        def dispatch(callback):
+            dispatched.append(callback)
+            # Intentionally do NOT run callbacks here.
+
+        ctrl = GroupMutationController(
+            client,
+            bridge=AsyncBridge(),
+            refresh=_refresh,
+            dispatch=dispatch,
+            on_busy=lambda v: None,
+        )
+        ctrl._dispatched = dispatched
+        ctrl._bridge = ctrl.bridge
+        return ctrl
+
+    def test_close_before_terminal_dispatch_suppresses_callbacks(self):
+        ctrl = self._build_hold_controller()
+        successes = []
+        errors = []
+        ctrl.run(
+            lambda: ctrl._client.create_group("Prod"),
+            on_success=lambda r: successes.append(r),
+            on_error=lambda e: errors.append(e),
+        )
+        # Drive the mutation worker; its GTK callback submits the refresh.
+        ctrl._bridge.drain_gtk_queue()
+        # Drive the refresh worker; its GTK error callback enqueues the
+        # terminal _finish (deferred — not yet run).
+        ctrl._bridge.drain_gtk_queue()
+        # Close before running the deferred terminal callback.
+        ctrl.close()
+        # Now release every queued dispatch callback; closed suppresses
+        # the terminal on_error/on_success delivery.
+        while ctrl._dispatched:
+            ctrl._dispatched.popleft()()
+        assert successes == []
+        assert errors == []
+        # Busy and lock are still released even when suppressed.
+        assert not ctrl._busy
+        assert not ctrl._lock.locked()
+
+    def test_close_before_ambiguity_terminal_dispatch_suppresses_callbacks(self):
+        ctrl = self._build_hold_controller()
+        successes = []
+        errors = []
+        ctrl.run(
+            lambda: (_ for _ in ()).throw(
+                SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed")
+            ),
+            on_success=lambda r: successes.append(r),
+            on_error=lambda e: errors.append(e),
+        )
+        # Drive the mutation worker (the ambiguity path submits a refresh).
+        ctrl._bridge.drain_gtk_queue()
+        # Drive the refresh worker; its GTK callback enqueues terminal _finish.
+        ctrl._bridge.drain_gtk_queue()
+        ctrl.close()
+        while ctrl._dispatched:
+            ctrl._dispatched.popleft()()
+        assert successes == []
+        assert errors == []
+        assert not ctrl._busy
+        assert not ctrl._lock.locked()
+
+
+# ---------------------------------------------------------------------------
+# Commit 1: group ID validation (production helper)
+# ---------------------------------------------------------------------------
+
+
+class TestGroupIDValidation:
+    @pytest.mark.parametrize(
+        "value",
+        [True, False, 123, 3.14, object(), None, "", "   ", "\t\n", b"group-id"],
+    )
+    def test_rejects_invalid_group_id(self, value):
+        with pytest.raises(ValueError, match="valid group ID"):
+            validate_group_id(value)
+
+    def test_accepts_nonempty_string(self):
+        assert validate_group_id("g1") == "g1"
+
+    def test_strips_padded_nonempty_string(self):
+        assert validate_group_id("  g1  ") == "g1"
+
+    def test_rejects_object_with_str_conversion(self):
+        """An object whose ``str()`` is nonempty must still be rejected."""
+        class _StrCoercible:
+            def __str__(self):
+                return "looks-fine"
+        with pytest.raises(ValueError, match="valid group ID"):
+            validate_group_id(_StrCoercible())
+
+    def test_rejects_integer_through_build_create_and_assign_steps(self):
+        """The production step builder rejects non-string create results."""
+        client = FakeClient()
+        client.set_result("create_group", 42)
+        steps = build_create_and_assign_steps(client, "Prod", ["c1"])
+        ctrl = _make_controller(client=client)
+        errors = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert "valid group ID" in str(errors[0])
+        assert len(client.calls) == 1  # no assignment attempted
