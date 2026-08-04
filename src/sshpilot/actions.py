@@ -395,25 +395,25 @@ class WindowActions:
             connection_count = len(actual_connections)
 
             controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before deleting groups."),
+                )
+                return
 
             def _run_delete(sequence):
                 """Run a controller sequence for the delete operation."""
-                if controller is not None:
-                    controller.run_sequence(
-                        sequence,
-                        on_success=lambda _r: self.rebuild_connection_list(),
-                        on_error=lambda e: self._simple_dialog(
-                            _("Error"),
-                            _("Failed to delete group: {error}").format(
-                                error=str(e),
-                            ),
+                controller.run_sequence(
+                    sequence,
+                    on_success=lambda _r: self.rebuild_connection_list(),
+                    on_error=lambda e: self._simple_dialog(
+                        _("Error"),
+                        _("Failed to delete group: {error}").format(
+                            error=str(e),
                         ),
-                    )
-                else:
-                    # Fallback: run steps synchronously.
-                    for step in sequence:
-                        step(None)
-                    self.rebuild_connection_list()
+                    ),
+                )
 
             if connection_count > 0:
                 dialog = Adw.MessageDialog(
@@ -437,29 +437,26 @@ class WindowActions:
                 def on_response_with_connections(_dialog, response):
                     if response == 'move':
                         _run_delete([
-                            lambda _prev: controller.client.delete_group(group_id)
-                            if controller is not None
-                            else self.group_manager.delete_group(group_id),
-                        ] if controller is not None else [
-                            lambda _prev: self.group_manager.delete_group(group_id),
+                            lambda _prev: controller.client.delete_group(group_id),
                         ])
                     elif response == 'delete_all':
                         # Delete each connection, then delete the group.
+                        from sshpilot.api.models.connections import (
+                            ConnectionId, DeleteConnectionRequest,
+                        )
                         steps = []
                         for nickname in actual_connections:
                             steps.append(
                                 lambda _prev, nick=nickname: (
-                                    controller.client.delete_connection(nick)
-                                    if controller is not None
-                                    else self.connection_manager.delete_connection(nick)
+                                    controller.client.delete_connection(
+                                        DeleteConnectionRequest(
+                                            connection_id=ConnectionId(nick),
+                                        )
+                                    )
                                 )
                             )
                         steps.append(
-                            lambda _prev: (
-                                controller.client.delete_group(group_id)
-                                if controller is not None
-                                else self.group_manager.delete_group(group_id)
-                            )
+                            lambda _prev: controller.client.delete_group(group_id),
                         )
                         _run_delete(steps)
                     _dialog.destroy()
@@ -486,11 +483,7 @@ class WindowActions:
                 def on_response_empty_group(_dialog, response):
                     if response == 'delete':
                         _run_delete([
-                            lambda _prev: (
-                                controller.client.delete_group(group_id)
-                                if controller is not None
-                                else self.group_manager.delete_group(group_id)
-                            )
+                            lambda _prev: controller.client.delete_group(group_id),
                         ])
                     _dialog.destroy()
 

@@ -2352,15 +2352,13 @@ class WindowConfigDialogsMixin:
                     return False
                 controller = getattr(self.group_manager, 'controller', None)
                 if controller is None:
-                    # Fallback: synchronous local call.
-                    self.group_manager.create_group(name, color=color)
-                    self.rebuild_connection_list()
-                    return True
+                    self._simple_dialog(
+                        _("Service unavailable"),
+                        _("Connect to the sshPilot daemon before creating groups."),
+                    )
+                    return False
                 if set_busy is not None:
                     set_busy(True)
-                from sshpilot.api.models.connection_store import (
-                    CreateGroupRequest,
-                )
                 def _do_create():
                     return controller.client.create_group(
                         name, parent_id="", color=color or "",
@@ -2423,11 +2421,11 @@ class WindowConfigDialogsMixin:
                     return False
                 controller = getattr(self.group_manager, 'controller', None)
                 if controller is None:
-                    self.group_manager.rename_group(group_id, name)
-                    if color is not None:
-                        self.group_manager.set_group_color(group_id, color)
-                    self.rebuild_connection_list()
-                    return True
+                    self._simple_dialog(
+                        _("Service unavailable"),
+                        _("Connect to the sshPilot daemon before editing groups."),
+                    )
+                    return False
                 if set_busy is not None:
                     set_busy(True)
                 from sshpilot.api.models.connection_store import (
@@ -2538,18 +2536,12 @@ class WindowConfigDialogsMixin:
                         on_error=_on_error,
                     )
                     return False  # keep dialog open until async completes
-                # Fallback: legacy config-only rename.
-                self.config.rename_tag(old_name, name)
-                try:
-                    state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
-                    self.config.set_setting(
-                        'ui.tag_groups_expanded',
-                        migrate_expanded_state(state, old_key, name.casefold()),
-                    )
-                except Exception:
-                    logger.debug("Failed to migrate tag expansion state", exc_info=True)
-                self.rebuild_connection_list()
-                return True
+                # No controller/client available — service unavailable.
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before renaming tags."),
+                )
+                return False
 
             self._group_form_dialog(
                 title=_("Rename Tag"),
@@ -2578,6 +2570,10 @@ class WindowConfigDialogsMixin:
         ``mode`` is either ``'move'`` (relocate the connection to the chosen
         group) or ``'copy'`` (add it to the chosen group while keeping it in any
         group it already belongs to).
+
+        All mutations run through the controller as serialized sequences.  The
+        dialog disables its controls while busy and only closes after the full
+        sequence succeeds.
         """
         is_copy = mode == 'copy'
         try:
@@ -2591,12 +2587,13 @@ class WindowConfigDialogsMixin:
             if not connection_nicknames:
                 return
 
-            def assign(nickname: str, target_group_id) -> None:
-                if is_copy:
-                    if target_group_id:
-                        self.group_manager.copy_connection_to_group(nickname, target_group_id)
-                else:
-                    self.group_manager.move_connection(nickname, target_group_id)
+            controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before using group operations."),
+                )
+                return
 
             available_groups = self.get_available_groups()
             logger.debug(f"Available groups for {mode} dialog: {len(available_groups)} groups")
@@ -2760,45 +2757,107 @@ class WindowConfigDialogsMixin:
             create_group_entry.connect('changed', update_confirm_state)
             update_confirm_state()
 
+            def _set_controls_enabled(enabled: bool) -> None:
+                """Disable all dialog controls while an async operation runs."""
+                confirm_button.set_sensitive(enabled)
+                cancel_button.set_sensitive(enabled)
+                create_group_entry.set_sensitive(enabled)
+                color_button.set_sensitive(enabled)
+                clear_color_button.set_sensitive(enabled)
+
+            def _show_error(message: str) -> None:
+                _set_controls_enabled(True)
+                self._simple_dialog(_("Error"), message)
+
+            def _build_move_steps(nicknames, target_group_id):
+                """Build sequence steps to move/copy all nicknames to target_group_id."""
+                steps = []
+                if is_copy:
+                    from sshpilot.api.models.connection_store import (
+                        ConnectionId, CopyConnectionToGroupRequest, GroupId,
+                    )
+                    for nick in nicknames:
+                        steps.append(
+                            lambda _prev, n=nick: controller.client.copy_connection_to_group(
+                                CopyConnectionToGroupRequest(
+                                    connection_id=ConnectionId(n),
+                                    group_id=GroupId(target_group_id),
+                                )
+                            )
+                        )
+                else:
+                    for nick in nicknames:
+                        steps.append(
+                            lambda _prev, n=nick: controller.client.assign_connection_to_group(
+                                n, target_group_id
+                            )
+                        )
+                return steps
+
             def perform_move() -> bool:
                 group_name = create_group_entry.get_text().strip()
                 if group_name:
                     existing_group_id = find_existing_group_id(group_name)
                     if existing_group_id:
-                        for nickname in connection_nicknames:
-                            assign(nickname, existing_group_id)
-                        self.rebuild_connection_list()
-                        return True
-                    try:
+                        steps = _build_move_steps(connection_nicknames, existing_group_id)
+                    else:
                         selected_color = None
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        new_group_id = self.group_manager.create_group(
-                            group_name, color=selected_color
-                        )
-                        for nickname in connection_nicknames:
-                            assign(nickname, new_group_id)
-                        self.rebuild_connection_list()
-                        return True
-                    except ValueError as e:
-                        show_group_exists_error(str(e))
-                        create_group_entry.set_text("")
-                        reset_color_selection()
-                        create_group_entry.grab_focus()
-                        update_confirm_state()
-                        return False
+                        # Create group then move/copy to it.
+                        steps = [
+                            lambda _prev: controller.client.create_group(
+                                group_name, parent_id="", color=selected_color or "",
+                            ),
+                        ]
+                        # Each subsequent step uses the returned group ID.
+                        for i, nick in enumerate(connection_nicknames):
+                            steps.append(
+                                lambda prev, n=nick: (
+                                    controller.client.copy_connection_to_group(
+                                        CopyConnectionToGroupRequest(
+                                            connection_id=ConnectionId(n),
+                                            group_id=GroupId(prev),
+                                        )
+                                    )
+                                    if is_copy
+                                    else controller.client.assign_connection_to_group(
+                                        n, prev
+                                    )
+                                )
+                            )
+                elif selected_group_id is not None:
+                    steps = _build_move_steps(connection_nicknames, selected_group_id)
+                else:
+                    return False
 
-                if selected_group_id is not None:
-                    for nickname in connection_nicknames:
-                        assign(nickname, selected_group_id)
+                _set_controls_enabled(False)
+                from sshpilot.api.models.connection_store import (
+                    ConnectionId, CopyConnectionToGroupRequest, GroupId,
+                )
+
+                def _on_done(_result):
+                    dialog.close()
                     self.rebuild_connection_list()
-                    return True
-                return False
+
+                def _on_error(error):
+                    _show_error(
+                        _("Failed to {mode}: {error}").format(
+                            mode=mode, error=str(error),
+                        )
+                    )
+
+                controller.run_sequence(
+                    steps,
+                    on_success=_on_done,
+                    on_error=_on_error,
+                )
+                return False  # dialog stays open until async completes
 
             def on_confirm(*_args):
-                if has_valid_target() and perform_move():
-                    dialog.close()
+                if has_valid_target():
+                    perform_move()
 
             confirm_button.connect('clicked', on_confirm)
             create_group_entry.connect('entry-activated', lambda _e: on_confirm())

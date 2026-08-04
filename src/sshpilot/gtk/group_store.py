@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from threading import Lock
 from sshpilot.api.errors import ErrorCode, SshPilotError
+
+logger = logging.getLogger(__name__)
 
 
 class GroupPresentationStore:
@@ -44,6 +47,8 @@ class GroupMutationController:
         return self._busy
 
     def close(self):
+        """Mark the controller closed.  No further RPCs are submitted and
+        pending callbacks are discarded."""
         self._closed = True
 
     def _set_busy(self, value):
@@ -73,7 +78,7 @@ class GroupMutationController:
                 finally:
                     self._set_busy(False)
                     self._lock.release()
-            if refresh_after and self.refresh is not None:
+            if refresh_after and not self._closed and self.refresh is not None:
                 self.submit(
                     self.refresh,
                     on_success=lambda _snapshot: self._dispatch(finish),
@@ -117,10 +122,19 @@ class GroupMutationController:
             self._set_busy(False)
             self._lock.release()
             raise RuntimeError("a GTK client bridge is required")
-        return self.submit(operation, on_success=finish_success, on_error=failure,
-                           on_discard=lambda _result: failure(
-                               SshPilotError(ErrorCode.OPERATION_CANCELLED, "Group operation cancelled")
-                           ))
+        try:
+            return self.submit(
+                operation, on_success=finish_success, on_error=failure,
+                on_discard=lambda _result: failure(
+                    SshPilotError(ErrorCode.OPERATION_CANCELLED, "Group operation cancelled")
+                ),
+            )
+        except Exception as exc:
+            try:
+                self._set_busy(False)
+            finally:
+                self._lock.release()
+            raise
 
     def run_sequence(self, steps, *, on_success, on_error):
         """Execute a chain of async operations; each step may consume the
@@ -167,18 +181,32 @@ class GroupMutationController:
 
     def _submit_internal(self, operation, success, error, *, refresh_after=False, owns_lock=False):
         def ok(result):
+            if self._closed:
+                self._finish_busy()
+                return
             if refresh_after and self.refresh is not None:
                 self.submit(self.refresh, on_success=lambda _snapshot: success(result), on_error=error)
             else:
                 success(result)
 
         def fail(exc):
+            if self._closed:
+                self._finish_busy()
+                return
             self._dispatch(lambda: self._finish_error(exc, error))
 
-        self.submit(operation, on_success=ok, on_error=fail,
-                    on_discard=lambda _result: fail(
-                        SshPilotError(ErrorCode.OPERATION_CANCELLED, "Group operation cancelled")
-                    ))
+        try:
+            self.submit(operation, on_success=ok, on_error=fail,
+                        on_discard=lambda _result: fail(
+                            SshPilotError(ErrorCode.OPERATION_CANCELLED, "Group operation cancelled")
+                        ))
+        except Exception as exc:
+            if not owns_lock:
+                self._finish_busy()
+            else:
+                self._set_busy(False)
+                self._lock.release()
+            raise
 
     def _complete_sequence(self, result, callback):
         if not self._closed:
@@ -188,14 +216,27 @@ class GroupMutationController:
     def _finish_error(self, error, callback):
         # On any sequence failure, refresh once (without retrying the mutation)
         # then report the error.
-        if not self._closed and self.refresh is not None:
-            self.submit(
-                self.refresh,
-                on_success=lambda _value: self._finish_error_callback(error, callback),
-                on_error=lambda _err: self._finish_error_callback(error, callback),
-            )
+        if self._closed:
+            self._finish_busy()
             return
-        self._finish_error_callback(error, callback)
+        if self.refresh is not None:
+            def _after_refresh(_result):
+                if self._closed:
+                    self._finish_busy()
+                    return
+                callback(error)
+                self._finish_busy()
+            try:
+                self.submit(
+                    self.refresh,
+                    on_success=_after_refresh,
+                    on_error=_after_refresh,
+                )
+                return
+            except Exception:
+                pass
+        callback(error)
+        self._finish_busy()
 
     def _finish_error_callback(self, error, callback):
         if not self._closed:
@@ -207,35 +248,20 @@ class GroupMutationController:
             self._set_busy(False)
             self._lock.release()
 
-    def _run(self, operation):
-        """Fire-and-forget wrapper; prefer ``run()`` for new callers."""
-        return self.run(operation, on_success=lambda _result: None, on_error=lambda _error: None)
+    def _fire_and_forget(self, operation, *, label="group operation"):
+        """Fire-and-forget compatibility wrapper.
 
-    def create_group(self, name, parent_id=None, color=""):
-        return self._run(lambda: self.client.create_group(name, parent_id or "", color))
-
-    def delete_group(self, group_id):
-        return self._run(lambda: self.client.delete_group(group_id))
-
-    def rename_group(self, group_id, name):
-        return self._run(lambda: self.client.rename_group(group_id, name))
-
-    def set_group_color(self, request):
-        return self._run(lambda: self.client.set_group_color(request))
-
-    def move_connection(self, connection_id, group_id=None):
-        return self._run(
-            lambda: self.client.assign_connection_to_group(connection_id, group_id or "")
-        )
-
-    def copy_connection_to_group(self, request):
-        return self._run(lambda: self.client.copy_connection_to_group(request))
-
-    def remove_connection_from_group(self, request):
-        return self._run(lambda: self.client.remove_connection_from_group(request))
-
-    def place_group(self, request):
-        return self._run(lambda: self.client.place_group(request))
-
-    def reorder_connection(self, request):
-        return self._run(lambda: self.client.reorder_connection(request))
+        Logs an error instead of silently swallowing failures.  Prefer
+        ``run()`` / ``run_sequence()`` for new callers.
+        """
+        def _on_error(error):
+            logger.error("%s failed: %s", label, error)
+        try:
+            return self.run(
+                operation,
+                on_success=lambda _result: None,
+                on_error=_on_error,
+            )
+        except RuntimeError:
+            logger.warning("Cannot submit %s: controller busy or closed", label)
+            return None

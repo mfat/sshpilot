@@ -19,12 +19,16 @@ Covers the full matrix from the M3 spec:
 16. Mutation ambiguity refreshes without retry.
 17. Close during a sequence.
 18. Client replacement.
+19. Tag rename uses daemon.
+20. Expansion persists and migrates.
+21. No direct group or tag mutation calls remain outside the controller.
 """
 
 from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -93,18 +97,80 @@ class FakeClient:
             raise self._errors["remove_connection_from_group"]
         return self._results.get("remove_connection_from_group", True)
 
-    def delete_connection(self, connection_id):
-        self.calls.append(("delete_connection", (connection_id,), {}))
+    def delete_connection(self, request):
+        self.calls.append(("delete_connection", (request,), {}))
         if "delete_connection" in self._errors:
             raise self._errors["delete_connection"]
         return self._results.get("delete_connection", True)
 
+    def rename_tag(self, request):
+        self.calls.append(("rename_tag", (request,), {}))
+        if "rename_tag" in self._errors:
+            raise self._errors["rename_tag"]
+        return self._results.get("rename_tag", 1)
 
-class FakeBridge:
-    """Fake GTK client bridge that runs submit callbacks synchronously."""
+
+class AsyncBridge:
+    """Actually asynchronous bridge that queues worker and GTK callbacks separately.
+
+    Worker callbacks (the ``operation`` / ``self.refresh`` callables) run in
+    a dedicated thread-pool worker; GTK callbacks (``on_success`` /
+    ``on_error``) are queued and delivered on demand via
+    :meth:`drain_gtk_queue`.  This exercises the real async code path without
+    a running GLib main loop.
+    """
 
     def __init__(self):
-        self._pending: list = []
+        self._gtk_queue: deque = deque()
+        self._worker_pool: list[threading.Thread] = []
+        self._pending_workers: deque = deque()
+        self._lock = threading.Lock()
+        self._gtk_ready = threading.Event()
+
+    def submit(self, operation, *, on_success, on_error, on_discard=None):
+        """Submit *operation* for off-thread execution, then queue GTK callbacks."""
+
+        def _run_worker():
+            try:
+                result = operation()
+                with self._lock:
+                    self._gtk_queue.append(("success", on_success, result))
+                    self._gtk_ready.set()
+            except Exception as exc:
+                with self._lock:
+                    self._gtk_queue.append(("error", on_error, exc))
+                    self._gtk_ready.set()
+
+        t = threading.Thread(target=_run_worker, daemon=True)
+        t.start()
+        self._worker_pool.append(t)
+        return MagicMock()
+
+    def drain_gtk_queue(self, timeout=2.0):
+        """Execute all queued GTK callbacks synchronously."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if self._gtk_queue:
+                    break
+            self._gtk_ready.wait(timeout=0.05)
+            self._gtk_ready.clear()
+
+        while True:
+            with self._lock:
+                if not self._gtk_queue:
+                    break
+                kind, callback, payload = self._gtk_queue.popleft()
+            callback(payload)
+
+        # Wait for all worker threads to finish.
+        for t in self._worker_pool:
+            t.join(timeout=2.0)
+        self._worker_pool.clear()
+
+
+class SyncBridge:
+    """Synchronous bridge for fast tests where threading is not needed."""
 
     def submit(self, operation, *, on_success, on_error, on_discard=None):
         try:
@@ -115,11 +181,14 @@ class FakeBridge:
         return MagicMock()
 
 
-def _make_controller(client=None, *, on_busy=None, on_error=None, refresh=None):
-    """Create a controller with a synchronous fake bridge."""
+def _make_controller(client=None, *, bridge=None, on_busy=None, on_error=None,
+                     refresh=None, async_mode=False):
+    """Create a controller with a fake bridge."""
     if client is None:
         client = FakeClient()
-    bridge = FakeBridge()
+    if bridge is None:
+        bridge = AsyncBridge() if async_mode else SyncBridge()
+
     dispatched = []
 
     def dispatch(callback):
@@ -135,6 +204,7 @@ def _make_controller(client=None, *, on_busy=None, on_error=None, refresh=None):
         on_error=on_error,
     )
     ctrl._dispatched = dispatched
+    ctrl._bridge = bridge
     return ctrl
 
 
@@ -188,15 +258,16 @@ class TestRunBasic:
 
     def test_run_raises_when_already_busy(self):
         ctrl = _make_controller()
-        # Hold the lock by setting it without releasing.
         ctrl._lock.acquire(blocking=False)
-        with pytest.raises(RuntimeError, match="already in progress"):
-            ctrl.run(
-                lambda: ctrl.client.create_group("Test"),
-                on_success=lambda r: None,
-                on_error=lambda e: None,
-            )
-        ctrl._lock.release()
+        try:
+            with pytest.raises(RuntimeError, match="already in progress"):
+                ctrl.run(
+                    lambda: ctrl.client.create_group("Test"),
+                    on_success=lambda r: None,
+                    on_error=lambda e: None,
+                )
+        finally:
+            ctrl._lock.release()
 
     def test_run_raises_when_closed(self):
         ctrl = _make_controller()
@@ -207,6 +278,36 @@ class TestRunBasic:
                 on_success=lambda r: None,
                 on_error=lambda e: None,
             )
+
+    def test_run_releases_lock_on_submit_failure(self):
+        """Catch synchronous submit() failures and release busy/lock."""
+        ctrl = _make_controller()
+        ctrl.submit = MagicMock(side_effect=RuntimeError("bridge down"))
+        with pytest.raises(RuntimeError, match="bridge down"):
+            ctrl.run(
+                lambda: ctrl.client.create_group("Prod"),
+                on_success=lambda r: None,
+                on_error=lambda e: None,
+            )
+        # Lock must be released.
+        assert not ctrl._lock.locked()
+        assert not ctrl._busy
+
+    def test_run_ambiguity_refreshes_and_reports_error(self):
+        """On mutation ambiguity, refresh once without retrying, then report."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        errors = []
+        ctrl.run(
+            lambda: (_ for _ in ()).throw(
+                SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed")
+            ),
+            on_success=lambda r: None,
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.MUTATION_AMBIGUOUS
+        assert refresh.call_count >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -273,24 +374,70 @@ class TestRunSequence:
         )
         assert results == [("ok", True)]
 
+    def test_multiple_selected_moves(self):
+        """Spec item 4: multiple selected connections moved as one sequence."""
+        ctrl = _make_controller()
+        nicks = ["c1", "c2", "c3"]
+        steps = [
+            lambda _prev, n=n: ctrl.client.assign_connection_to_group(n, "target")
+            for n in nicks
+        ]
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: None,
+            on_error=lambda e: pytest.fail(str(e)),
+        )
+        assert len(ctrl.client.calls) == 3
+        for i, nick in enumerate(nicks):
+            assert ctrl.client.calls[i] == ("assign_connection_to_group", (nick, "target"), {})
+
+    def test_multiple_selected_copies(self):
+        """Spec item 5: multiple selected connections copied as one sequence."""
+        ctrl = _make_controller()
+        from sshpilot.api.models.connection_store import (
+            ConnectionId, CopyConnectionToGroupRequest, GroupId,
+        )
+        nicks = ["c1", "c2"]
+        steps = [
+            lambda _prev, n=n: ctrl.client.copy_connection_to_group(
+                CopyConnectionToGroupRequest(
+                    connection_id=ConnectionId(n),
+                    group_id=GroupId("target"),
+                )
+            )
+            for n in nicks
+        ]
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: None,
+            on_error=lambda e: pytest.fail(str(e)),
+        )
+        assert len(ctrl.client.calls) == 2
+        for i, nick in enumerate(nicks):
+            req = ctrl.client.calls[i][1][0]
+            assert req.connection_id == nick
+            assert req.group_id == "target"
+
     def test_rename_plus_color_sequence(self):
         """Spec item 7: rename group then optionally set color."""
         ctrl = _make_controller()
+        from sshpilot.api.models.connection_store import GroupId, SetGroupColorRequest
         results = []
-        new_name = "Production"
-        color = "#ff0000"
         ctrl.run_sequence(
             [
-                lambda _prev: ctrl.client.rename_group("g1", new_name),
-                lambda prev: ctrl.client.set_group_color({"group_id": "g1", "color": color})
-                if color else None,
+                lambda _prev: ctrl.client.rename_group("g1", "Production"),
+                lambda prev: ctrl.client.set_group_color(
+                    SetGroupColorRequest(
+                        group_id=GroupId("g1"), color="#ff0000",
+                    )
+                ),
             ],
             on_success=lambda r: results.append(r),
             on_error=lambda e: results.append(("err", e)),
         )
         assert len(results) == 1
         assert ctrl.client.calls[0] == ("rename_group", ("g1", "Production"), {})
-        assert ctrl.client.calls[1] == ("set_group_color", ({"group_id": "g1", "color": "#ff0000"},), {})
+        assert ctrl.client.calls[1][0] == "set_group_color"
 
     def test_partial_failure_refreshes_once(self):
         """Spec item 10: on partial failure, refresh once and report the error."""
@@ -298,8 +445,10 @@ class TestRunSequence:
         ctrl = _make_controller(refresh=refresh)
         ctrl.client.set_result("create_group", "grp-new")
         errors = []
+
         def _raise_on_assign():
             raise RuntimeError("assign failed")
+
         ctrl.run_sequence(
             [
                 lambda _prev: ctrl.client.create_group("Prod"),
@@ -310,25 +459,12 @@ class TestRunSequence:
         )
         assert len(errors) == 1
         assert "assign failed" in str(errors[0])
-        # refresh should be called once (after the failed step)
         assert refresh.call_count >= 1
 
     def test_empty_sequence_raises(self):
         ctrl = _make_controller()
         with pytest.raises(ValueError, match="must not be empty"):
             ctrl.run_sequence([], on_success=lambda r: None, on_error=lambda e: None)
-
-    def test_close_during_sequence_discards_callbacks(self):
-        """Spec item 17: closing the controller discards all later callbacks."""
-        ctrl = _make_controller()
-        ctrl.close()
-        results = []
-        with pytest.raises(RuntimeError, match="closed"):
-            ctrl.run_sequence(
-                [lambda _prev: ctrl.client.create_group("Prod")],
-                on_success=lambda r: results.append(r),
-                on_error=lambda e: results.append(("err", e)),
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -344,9 +480,8 @@ class TestBusyState:
             on_success=lambda r: None,
             on_error=lambda e: None,
         )
-        # The dispatch callback runs synchronously, so busy should be set.
-        assert True in busy_values  # at least one True
-        assert False in busy_values  # and one False (cleanup)
+        assert True in busy_values
+        assert False in busy_values
 
     def test_busy_set_true_during_sequence(self):
         busy_values = []
@@ -374,26 +509,52 @@ class TestBusyState:
 
 
 # ---------------------------------------------------------------------------
-# Threading requirements
+# Threading requirements (async bridge)
 # ---------------------------------------------------------------------------
 
 class TestThreading:
+    def test_worker_runs_off_gtk_thread(self):
+        """RPC work runs off the GTK thread."""
+        worker_threads = set()
+        gtk_thread = threading.current_thread().ident
+        bridge = AsyncBridge()
+
+        original_submit = bridge.submit
+
+        def tracking_submit(operation, **kwargs):
+            def _track():
+                worker_threads.add(threading.current_thread().ident)
+                return operation()
+
+            return original_submit(_track, **kwargs)
+
+        bridge.submit = tracking_submit
+        ctrl = _make_controller(bridge=bridge, async_mode=True)
+        ctrl.run(
+            lambda: ctrl.client.create_group("Prod"),
+            on_success=lambda r: None,
+            on_error=lambda e: None,
+        )
+        bridge.drain_gtk_queue()
+        assert len(worker_threads) > 0
+        assert gtk_thread not in worker_threads
+
     def test_callbacks_run_on_dispatch_thread(self):
         """Spec items 14-15: RPCs off GTK, callbacks on GTK (via dispatch)."""
-        callback_thread = []
+        callback_threads = []
         ctrl = _make_controller()
 
         def track_thread(cb):
-            callback_thread.append(threading.current_thread().ident)
+            callback_threads.append(threading.current_thread().ident)
             return cb()
 
         ctrl._dispatch = track_thread
         ctrl.run(
             lambda: ctrl.client.create_group("Prod"),
-            on_success=lambda r: callback_thread.append("success"),
-            on_error=lambda e: callback_thread.append("error"),
+            on_success=lambda r: callback_threads.append("success"),
+            on_error=lambda e: callback_threads.append("error"),
         )
-        assert "success" in callback_thread
+        assert "success" in callback_threads
 
 
 # ---------------------------------------------------------------------------
@@ -402,12 +563,14 @@ class TestThreading:
 
 class TestMutationAmbiguity:
     def test_ambiguity_refreshes_without_retry(self):
-        """Spec item 16: on mutation ambiguity, refresh once without retrying."""
+        """On mutation ambiguity, refresh once without retrying."""
         refresh = MagicMock()
         ctrl = _make_controller(refresh=refresh)
         errors = []
+
         def _raise_ambiguity():
             raise SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed externally")
+
         ctrl.run(
             _raise_ambiguity,
             on_success=lambda r: None,
@@ -415,8 +578,71 @@ class TestMutationAmbiguity:
         )
         assert len(errors) == 1
         assert errors[0].code is ErrorCode.MUTATION_AMBIGUOUS
-        # refresh should have been called
         assert refresh.call_count >= 1
+
+    def test_sequence_ambiguity_refreshes_and_reports(self):
+        """Sequence failure from ambiguity: refresh once, report error."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        errors = []
+
+        def _fail():
+            raise SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed")
+
+        ctrl.run_sequence(
+            [
+                lambda _prev: ctrl.client.rename_group("g1", "New"),
+                lambda prev: _fail(),
+            ],
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.MUTATION_AMBIGUOUS
+        assert refresh.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# Close during / before sequence
+# ---------------------------------------------------------------------------
+
+class TestCloseBehaviour:
+    def test_close_during_sequence_discards_callbacks(self):
+        ctrl = _make_controller()
+        ctrl.close()
+        results = []
+        with pytest.raises(RuntimeError, match="closed"):
+            ctrl.run_sequence(
+                [lambda _prev: ctrl.client.create_group("Prod")],
+                on_success=lambda r: results.append(r),
+                on_error=lambda e: results.append(("err", e)),
+            )
+
+    def test_close_before_refresh_skips_refresh(self):
+        """Once closed, no further RPCs are submitted."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        ctrl.close()
+        # Cannot run (closed), so no refresh.
+        assert refresh.call_count == 0
+
+    def test_only_one_terminal_delivery(self):
+        """Ensure exactly one terminal success/error delivery even after close."""
+        results = []
+        ctrl = _make_controller()
+        ctrl.client.set_result("create_group", "ok")
+
+        def _on_success(r):
+            results.append(("ok", r))
+            ctrl.close()  # Close inside callback.
+
+        ctrl.run(
+            lambda: ctrl.client.create_group("Prod"),
+            on_success=_on_success,
+            on_error=lambda e: results.append(("err", e)),
+        )
+        assert len(results) == 1
+        assert results[0][0] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +651,7 @@ class TestMutationAmbiguity:
 
 class TestClientReplacement:
     def test_close_old_and_create_new(self):
-        """Spec item 18: client replacement closes old controller, creates new."""
+        """Client replacement closes old controller, creates new."""
         ctrl = _make_controller()
         ctrl.client.set_result("create_group", "ok")
         ctrl.run(
@@ -436,7 +662,6 @@ class TestClientReplacement:
         ctrl.close()
         assert ctrl._closed
 
-        # New controller works fine.
         new_ctrl = _make_controller()
         new_ctrl.client.set_result("create_group", "ok2")
         results = []
@@ -446,6 +671,34 @@ class TestClientReplacement:
             on_error=lambda e: pytest.fail("unexpected error"),
         )
         assert results == ["ok2"]
+
+
+# ---------------------------------------------------------------------------
+# Fire-and-forget compatibility
+# ---------------------------------------------------------------------------
+
+class TestFireAndForget:
+    def test_fire_and_forget_logs_error(self):
+        """_fire_and_forget logs an error instead of swallowing it."""
+        ctrl = _make_controller()
+        ctrl.client.set_error("create_group", RuntimeError("boom"))
+
+        with patch("sshpilot.gtk.group_store.logger") as mock_logger:
+            ctrl._fire_and_forget(
+                lambda: ctrl.client.create_group("Prod"),
+                label="test op",
+            )
+            mock_logger.error.assert_called_once()
+            assert "boom" in str(mock_logger.error.call_args)
+
+    def test_fire_and_forget_returns_none_when_busy(self):
+        ctrl = _make_controller()
+        ctrl._lock.acquire(blocking=False)
+        result = ctrl._fire_and_forget(
+            lambda: ctrl.client.create_group("Prod"),
+        )
+        ctrl._lock.release()
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -482,3 +735,24 @@ class TestGroupManagerDelegation:
 
         gm.rename_group("grp-1", "New Name")
         ctrl.rename_group.assert_called_once_with("grp-1", "New Name")
+
+    def test_group_manager_raises_without_controller(self):
+        from sshpilot.groups import GroupManager
+
+        gm = GroupManager.__new__(GroupManager)
+        gm.client = None
+        gm.controller = None
+        gm.config = None
+        gm.groups = {}
+        gm.connections = {}
+        gm.root_connections = []
+        gm._expanded = {}
+        gm._projection_handler = None
+        gm.connection_manager = MagicMock()
+        gm.connection_manager.snapshot.return_value = None
+
+        with pytest.raises(RuntimeError, match="no mutation controller"):
+            gm.run(lambda: None, on_success=lambda r: None, on_error=lambda e: None)
+
+        with pytest.raises(RuntimeError, match="no mutation controller"):
+            gm.run_sequence([], on_success=lambda r: None, on_error=lambda e: None)

@@ -5967,9 +5967,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not connections:
                 return
 
+            controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before moving connections."),
+                )
+                return
+
             context_row = getattr(self, '_context_menu_row', None)
             context_group_id = getattr(context_row, '_group_id', None)
 
+            steps = []
             for connection in connections:
                 nickname = getattr(connection, 'nickname', None)
                 if not nickname:
@@ -5981,11 +5990,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     and context_group_id in member_groups
                     and len(member_groups) > 1
                 ):
-                    # Only detach from the group the row is displayed under
-                    self.group_manager.remove_connection_from_group(nickname, context_group_id)
+                    from sshpilot.api.models.connection_store import (
+                        ConnectionId, GroupId, RemoveConnectionFromGroupRequest,
+                    )
+                    steps.append(
+                        lambda _prev, n=nickname, gid=context_group_id: (
+                            controller.client.remove_connection_from_group(
+                                RemoveConnectionFromGroupRequest(
+                                    connection_id=ConnectionId(n),
+                                    group_id=GroupId(gid),
+                                )
+                            )
+                        )
+                    )
                 else:
-                    self.group_manager.move_connection(nickname, None)
-            self.rebuild_connection_list()
+                    steps.append(
+                        lambda _prev, n=nickname: (
+                            controller.client.assign_connection_to_group(n, "")
+                        )
+                    )
+            if steps:
+                controller.run_sequence(
+                    steps,
+                    on_success=lambda _r: self.rebuild_connection_list(),
+                    on_error=lambda e: self._simple_dialog(
+                        _("Error"),
+                        _("Failed to move connection: {error}").format(error=str(e)),
+                    ),
+                )
 
         except Exception as e:
             logger.error(f"Failed to move connection to ungrouped: {e}")
@@ -5993,8 +6025,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def move_connection_to_group(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a specific group"""
         try:
-            self.group_manager.move_connection(connection_nickname, target_group_id)
-            self.rebuild_connection_list()
+            controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before moving connections."),
+                )
+                return
+            controller.run(
+                lambda: controller.client.assign_connection_to_group(
+                    connection_nickname, target_group_id or ""
+                ),
+                on_success=lambda _r: self.rebuild_connection_list(),
+                on_error=lambda e: self._simple_dialog(
+                    _("Error"),
+                    _("Failed to move connection: {error}").format(error=str(e)),
+                ),
+            )
         except Exception as e:
             logger.error(f"Failed to move connection {connection_nickname} to group: {e}")
 
