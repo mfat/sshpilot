@@ -176,6 +176,7 @@ class DaemonTerminalSessionController:
         self._closed = False
         self._opening_session_id: Optional[SessionId] = None
         self._event_subscription = None
+        self._restoring_existing = False
 
     @property
     def tab_state(self) -> DaemonTerminalTabState:
@@ -206,6 +207,7 @@ class DaemonTerminalSessionController:
 
         self._tab_state.state = TerminalSessionState.OPENING
         self._tab_state.connection_id = connection_id
+        self._restoring_existing = False
 
         self._bridge.submit(
             lambda: self._client.open_session(
@@ -232,9 +234,11 @@ class DaemonTerminalSessionController:
         if not self._tab_state.session_id:
             raise RuntimeError("No session to attach to")
 
+        restoring_existing = self._tab_state.state is TerminalSessionState.DETACHED
         if self._tab_state.state not in {TerminalSessionState.OPENING, TerminalSessionState.DETACHED}:
             raise RuntimeError(f"Cannot attach in state: {self._tab_state.state}")
 
+        self._restoring_existing = restoring_existing
         self._tab_state.state = TerminalSessionState.ATTACHING
 
         # Set up terminal output stream first
@@ -546,7 +550,11 @@ class DaemonTerminalSessionController:
 
     def _on_attach_error(self, error) -> None:
         """Handle session attach error."""
-        if getattr(getattr(error, "code", None), "value", None) == "session_already_closed":
+        if (
+            self._restoring_existing
+            and getattr(getattr(error, "code", None), "value", None)
+            == "session_already_closed"
+        ):
             # Restore metadata can outlive a daemon session that failed or was
             # closed between discovery and the asynchronous attach request.
             # This is stale restore state, not a connection failure.
