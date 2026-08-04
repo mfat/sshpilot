@@ -169,6 +169,21 @@ class ConnectionService:
                     return copy.deepcopy(rec)
         return None
 
+    def ordered_records(self) -> List[ConnectionRecord]:
+        """Records in daemon load order (insertion order), not sorted."""
+        with self._lock:
+            return list(self._connections.values())
+
+    def root_order(self) -> List[str]:
+        """Ordered ids of ungrouped (root) connections."""
+        with self._lock:
+            return list(self._root_order)
+
+    def group_ids_of(self, connection_id: str) -> List[str]:
+        """Group ids containing *connection_id* in deterministic order."""
+        with self._lock:
+            return self._group_ids_of(connection_id)
+
     def existing_nicknames(self, *, exclude_id: Optional[str] = None) -> set[str]:
         with self._lock:
             return {
