@@ -279,6 +279,10 @@ class SshConfigStore:
         # are in-memory only; the daemon process owns them for its lifetime.
         self._generations: Dict[str, int] = {}
 
+    @property
+    def root_path(self) -> Path:
+        return self._root_path
+
     # -- loading -----------------------------------------------------------
 
     def load(self) -> LoadedSshConfiguration:

@@ -130,7 +130,6 @@ def test_production_composition_does_not_load_plugins_or_legacy_managers(
         "ConnectionManager",
         "GroupManager",
         "load_plugins",
-        "AuthoritativeConfigurationBackend",
     )
     for name in forbidden:
         assert name not in source, f"cli.py must not reference {name}"

@@ -276,6 +276,7 @@ def _production_core_services():
     from sshpilot.core.connections.ssh_config_store import SshConfigStore
 
     from .bootstrap_settings import DaemonBootstrapSettings
+    from .config_reload import AuthoritativeConfigurationBackend
     from .connection_launch_provider import DaemonConnectionLaunchProvider
     from .connection_secret_provider import DaemonConnectionSecretProvider
     from .key_service import DaemonKeyService
@@ -321,10 +322,7 @@ def _production_core_services():
     )
     return CoreServices(
         connections=connections,
-        # Authoritative external reloads are re-composed over the repository
-        # in the M3 reload migration (Task 14); until then the daemon serves
-        # its own authoritative store snapshot without a legacy watcher.
-        configuration_backend=None,
+        configuration_backend=AuthoritativeConfigurationBackend(repository),
         known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
         keys=DaemonKeyService(_resolve_key_root),
     )

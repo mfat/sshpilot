@@ -214,8 +214,13 @@ class ConnectionRepository:
         with self._lock:
             paths = {self._state_path}
             loaded = self._ssh_store.load()
-            paths.update(str(p) for p in loaded.source_paths)
+            paths.update(Path(p) for p in loaded.source_paths)
             return frozenset(paths)
+
+    @property
+    def root_config_path(self) -> Path:
+        """Return the daemon-selected SSH root for reload stability checks."""
+        return Path(self._ssh_store.root_path)
 
     def reload(self) -> ConnectionStoreSnapshot:
         """Re-read authoritative sources; publish a change only when semantics differ."""

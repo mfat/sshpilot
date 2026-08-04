@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import logging
 import os
 import stat
@@ -12,9 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, FrozenSet, Optional, Protocol
 
-from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.models.connections import ConnectionSummary
-from sshpilot.ssh_config_utils import discover_ssh_config_paths
+from sshpilot.core.connections.repository import ConnectionRepository
 
 from .command_executor import BoundedCommandExecutor, DeferredCommand
 
@@ -155,42 +153,23 @@ class PollingConfigurationWatcher:
 
 
 class AuthoritativeConfigurationBackend:
-    """Transactional adapter around the daemon's concrete in-process core."""
+    """Transactional adapter around the daemon-owned connection repository."""
 
-    def __init__(
-        self,
-        client: ConnectionApplicationService,
-        connection_manager: object,
-        group_manager: object,
-        config: object,
-    ) -> None:
-        self.client = client
-        self.connection_manager = connection_manager
-        self.group_manager = group_manager
-        self.config = config
+    def __init__(self, repository: ConnectionRepository) -> None:
+        self.repository = repository
         self._transient_root_failures = 0
 
     def discover_paths(self) -> set[Path]:
-        root = Path(self.connection_manager.ssh_config_path)
-        discovery = discover_ssh_config_paths(os.fspath(root))
-        paths = {Path(path) for path in discovery.watch_paths}
-        config_file = getattr(self.config, "config_file", None)
-        if config_file:
-            paths.add(Path(os.path.abspath(os.fspath(config_file))))
-        return paths
-
-    def _validate_includes_readable(self) -> None:
-        discovery = discover_ssh_config_paths(
-            os.fspath(self.connection_manager.ssh_config_path)
-        )
-        root = os.path.abspath(
-            os.fspath(self.connection_manager.ssh_config_path)
-        )
-        if any(path != root for path in discovery.unreadable_paths):
-            raise OSError("an SSH include is unreadable")
+        # The repository resolves the root and all recursively included files.
+        # It also deliberately includes only the dedicated state file, never
+        # the legacy config.json.
+        return {Path(path) for path in self.repository.discover_paths()}
 
     def _validate_root_stability(self, has_connections: bool) -> None:
-        root = Path(self.connection_manager.ssh_config_path)
+        root = getattr(self.repository, "root_config_path", None)
+        if root is None:
+            return
+        root = Path(root)
         unstable = not root.exists()
         if not unstable:
             try:
@@ -205,77 +184,24 @@ class AuthoritativeConfigurationBackend:
         if not unstable:
             self._transient_root_failures = 0
 
-    @staticmethod
-    def _validate_group_data(config_data: object) -> None:
-        if not isinstance(config_data, dict):
-            raise ValueError("configuration root must be an object")
-        groups = config_data.get("connection_groups", {})
-        if groups is not None and not isinstance(groups, dict):
-            raise ValueError("connection groups must be an object")
-        if not isinstance(groups, dict):
-            return
-        for key, expected in (
-            ("groups", dict),
-            ("connections", dict),
-            ("root_connections", list),
-        ):
-            value = groups.get(key, expected())
-            if not isinstance(value, expected):
-                raise ValueError(f"connection group {key} has an invalid type")
-
     def reload(self) -> ConnectionReloadResult:
-        manager = self.connection_manager
-        transaction = manager.authoritative_state_transaction
-        with transaction():
-            before = {
-                summary.id: summary
-                for summary in self.client.snapshot_connection_summaries()
-            }
-            self._validate_root_stability(bool(before))
-            self._validate_includes_readable()
-            old_config_data = copy.deepcopy(
-                getattr(self.config, "config_data", {})
-            )
-            config_file = getattr(self.config, "config_file", None)
-            try:
-                if config_file:
-                    read_strict = getattr(
-                        self.config,
-                        "read_json_config_strict",
-                        None,
-                    )
-                    if callable(read_strict):
-                        pending_config = read_strict()
-                        self._validate_group_data(pending_config)
-                        self.config.config_data = pending_config
-                manager.load_ssh_config(
-                    create_missing=False,
-                    reuse_existing=False,
-                )
-                migration_error = getattr(
-                    manager,
-                    "identity_migration_error",
-                    None,
-                )
-                if migration_error is not None:
-                    raise RuntimeError("authoritative connection reload failed")
-                load_groups = getattr(self.group_manager, "_load_groups", None)
-                if callable(load_groups):
-                    load_groups()
-                bind_groups = getattr(
-                    self.group_manager,
-                    "bind_connections",
-                    None,
-                )
-                if callable(bind_groups):
-                    bind_groups(manager.get_connections())
-                after = {
-                    summary.id: summary
-                    for summary in self.client.snapshot_connection_summaries()
-                }
-            except Exception:
-                self.config.config_data = old_config_data
-                raise
+        before_snapshot = self.repository.snapshot()
+        self._validate_root_stability(bool(before_snapshot.connections))
+        try:
+            after_snapshot = self.repository.reload()
+        except (OSError, UnicodeError) as error:
+            # Atomic editor saves can briefly leave the root unavailable. The
+            # coordinator provides the bounded retry; do not expose the error.
+            if self._transient_root_failures < 2:
+                self._transient_root_failures += 1
+                raise ConfigReloadTransientError(
+                    "SSH configuration is temporarily unavailable"
+                ) from error
+            raise
+        self._transient_root_failures = 0
+
+        before = {summary.id: summary for summary in before_snapshot.connections}
+        after = {summary.id: summary for summary in after_snapshot.connections}
 
         deleted = tuple(
             before[key]
@@ -296,18 +222,16 @@ class AuthoritativeConfigurationBackend:
             created=created,
             updated=updated,
             unchanged_count=unchanged,
-            generation=int(
-                getattr(manager, "connection_config_generation", 0)
-            ),
+            generation=after_snapshot.generation,
             watched_paths=frozenset(self.discover_paths()),
         )
 
     def publish(self, result: ConnectionReloadResult) -> None:
-        self.client.publish_connection_reload(
-            deleted=result.deleted,
-            created=result.created,
-            updated=result.updated,
-        )
+        # ConnectionRepository.reload() publishes its RepositoryChange. The
+        # application service converts that single commit into compatibility
+        # events and the coherent store event. Keeping this hook preserves the
+        # coordinator contract without publishing a duplicate event.
+        del result
 
 
 class ConfigurationReloadCoordinator:

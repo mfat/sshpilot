@@ -9,12 +9,10 @@ from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.events import EventType
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.models.connections import CreateConnectionRequest
-from sshpilot.config import Config
-import sshpilot.connection_manager as connection_manager_module
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.core.connections.repository import ConnectionRepository
+from sshpilot.core.connections.ssh_config_store import SshConfigStore
 from sshpilot.daemon.config_reload import AuthoritativeConfigurationBackend
 from sshpilot.daemon.server import CoreServices, DaemonServer
-from sshpilot.groups import GroupManager
 
 
 def _wait_until(predicate, timeout=2.0):
@@ -26,95 +24,26 @@ def _wait_until(predicate, timeout=2.0):
     return bool(predicate())
 
 
-class _FileConfig:
-    def __init__(self, path: Path):
-        self.config_file = str(path)
-        self.config_data = {"config_version": 3}
-        self._connection_uuid_by_nickname = {}
-        self._connection_nickname_by_uuid = {}
-        self.save_json_config()
-
-    def get_setting(self, key, default=None):
-        current = self.config_data
-        for part in key.split("."):
-            if not isinstance(current, dict) or part not in current:
-                return default
-            current = current[part]
-        return current
-
-    def set_setting(self, key, value):
-        ConnectionManager._set_nested_setting(self.config_data, key, value)
-        self.save_json_config()
-
-    def save_json_config(self, data=None, *, raise_on_error=False):
-        return Config.save_json_config(
-            self,
-            data,
-            raise_on_error=raise_on_error,
-        )
-
-    def read_json_config_strict(self):
-        value = json.loads(Path(self.config_file).read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError("configuration root must be an object")
-        return value
-
-    def bind_connection_identities(self, connections):
-        Config.bind_connection_identities(self, connections)
-
-
 def _build_server(tmp_path, monkeypatch, ssh_text):
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir(mode=0o700, exist_ok=True)
     root = ssh_dir / "config"
     root.write_text(ssh_text, encoding="utf-8")
     os.chmod(root, 0o600)
-    config = _FileConfig(tmp_path / "config.json")
-    monkeypatch.setattr(
-        connection_manager_module,
-        "get_ssh_dir",
-        lambda: str(ssh_dir),
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"config_version": 3}), encoding="utf-8")
+    repository = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=config_path,
+        isolated=False,
     )
-    monkeypatch.setattr(
-        connection_manager_module,
-        "get_config_dir",
-        lambda: str(tmp_path),
-    )
-    manager = ConnectionManager(config)
-    handlers = {}
-    next_handler = 1
-
-    def _connect(signal_name, callback):
-        nonlocal next_handler
-        handler_id = next_handler
-        next_handler += 1
-        handlers[handler_id] = (signal_name, callback)
-        return handler_id
-
-    def _disconnect(handler_id):
-        handlers.pop(handler_id, None)
-
-    def _emit(signal_name, connection):
-        for registered_name, callback in tuple(handlers.values()):
-            if registered_name == signal_name:
-                callback(manager, connection)
-
-    manager.connect = _connect
-    manager.disconnect = _disconnect
-    manager.emit = _emit
-    groups = GroupManager(config, connection_manager=manager)
     core = ConnectionApplicationService(
-        manager,
-        group_manager=groups,
+        repository,
         client_name="reload-test",
         allow_cross_thread_commands=True,
     )
-    backend = AuthoritativeConfigurationBackend(
-        core,
-        manager,
-        groups,
-        config,
-    )
+    backend = AuthoritativeConfigurationBackend(repository)
     server = DaemonServer(
         lambda: CoreServices(core, backend),
         socket_path=tmp_path / "runtime" / "sshpilotd.sock",
@@ -122,7 +51,7 @@ def _build_server(tmp_path, monkeypatch, ssh_text):
         configuration_poll_interval=0.02,
     )
     server.start_in_thread()
-    return server, manager, root
+    return server, repository, root
 
 
 def _connection_block(name, hostname="example.test"):
@@ -469,14 +398,14 @@ def test_partial_json_write_preserves_snapshot_and_recovers(
     client = DaemonClient(socket_path=server.socket_path)
     coordinator = server._configuration_reload
     assert coordinator is not None
-    config_path = Path(coordinator.backend.config.config_file)
+    config_path = Path(coordinator.backend.repository._state_path)
     original = client.list_connections()
     try:
-        config_path.write_text('{"config_version":', encoding="utf-8")
+        config_path.write_text('{"version":', encoding="utf-8")
         time.sleep(0.12)
         assert client.list_connections() == original
         config_path.write_text(
-            json.dumps({"config_version": 3}),
+            json.dumps({"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}}),
             encoding="utf-8",
         )
         before = coordinator.reload_count
@@ -534,9 +463,14 @@ def test_change_after_reload_read_schedules_follow_up(tmp_path, monkeypatch):
 
 
 def test_create_connection_with_proxy_jump_persists_to_ssh_config(
-    daemon_factory,
+    tmp_path,
+    monkeypatch,
 ):
-    server, manager = daemon_factory(start=True)
+    server, _repository, _root = _build_server(
+        tmp_path,
+        monkeypatch,
+        _connection_block("Existing"),
+    )
     client = DaemonClient(socket_path=server.socket_path)
     try:
         created = client.create_connection(
@@ -555,4 +489,3 @@ def test_create_connection_with_proxy_jump_persists_to_ssh_config(
         client.close()
         server.shutdown()
         assert server.wait_stopped(timeout=2)
-
