@@ -403,7 +403,10 @@ class SshCopyIdWindow(Adw.Window):
             self._server_label.set_label(nick)
             self._server_label.set_visible(bool(nick))
             self._server_row.set_subtitle(f"{user}@{host}" if user and host else host)
-        self.btn_ok.set_sensitive(conn is not None)
+        # Central sensitivity: an in-flight key load/generate keeps OK off even
+        # when a server is chosen (fixes the constructor ordering bug where the
+        # initial load disabled OK and _set_server re-enabled it).
+        self._update_ok_sensitivity()
 
     def _on_mode_toggled(self, *_):
         # Reveal generator only when "Generate new key" is selected
@@ -419,6 +422,7 @@ class SshCopyIdWindow(Adw.Window):
         if not generate_active:
             self.row_pass_toggle.set_active(False)
             self.pass_box.set_visible(False)
+        self._update_ok_sensitivity()
     
     def _on_key_type_changed(self, *_):
         # Update key name placeholder when key type changes
@@ -463,8 +467,11 @@ class SshCopyIdWindow(Adw.Window):
         GLib.idle_add(self._on_keys_loaded, keys)
 
     def _on_keys_loaded(self, keys):
+        # Reset the raw flag first, then bail out when closed: never touch
+        # widgets or start new work from a callback after the window is gone.
+        # The cache is committed before controls are re-enabled so OK
+        # sensitivity reflects the freshly loaded key list.
         self._loading_keys = False
-        self._set_key_loading_state(False)
         if self._closed:
             return
         logger.info("SshCopyIdWindow: Discovered %d keys", len(keys))
@@ -472,27 +479,44 @@ class SshCopyIdWindow(Adw.Window):
         self._last_real_selection = 0
         names = [k.name for k in keys] or [_("No keys found")]
         self._rebuild_existing_dropdown(names, 0)
+        self._set_key_loading_state(False)
 
     def _on_keys_load_failed(self, exc):
         self._loading_keys = False
-        self._set_key_loading_state(False)
         if self._closed:
             return
         logger.error("SshCopyIdWindow: Failed to load existing keys: %s", type(exc).__name__)
         self._existing_keys_cache = []
         self._last_real_selection = 0
         self._rebuild_existing_dropdown([_("Error loading keys")], 0)
+        self._set_key_loading_state(False)
         self._error(_("Key Loading Failed"), _("Could not load the local keys."))
 
     def _set_key_loading_state(self, loading):
         """Disable/re-enable the existing-key controls while listing keys."""
         try:
             self.dropdown_existing.set_sensitive(not loading)
-            if loading:
-                if self.radio_existing.get_active():
-                    self.btn_ok.set_sensitive(False)
+            self._update_ok_sensitivity()
+        except Exception:
+            pass
+
+    def _update_ok_sensitivity(self):
+        """Single source of truth for OK-button sensitivity.
+
+        OK is enabled only when a server is selected, no key operation is
+        running, and the active mode has a usable selection: existing-key mode
+        needs at least one real key in the cache; generation mode needs the
+        form (its validity is checked on click).
+        """
+        try:
+            if self._conn is None or self._loading_keys or self._generating:
+                self.btn_ok.set_sensitive(False)
+                return
+            if self.radio_existing.get_active():
+                has_real = bool(getattr(self, "_existing_keys_cache", None))
+                self.btn_ok.set_sensitive(has_real)
             else:
-                self.btn_ok.set_sensitive(self._conn is not None)
+                self.btn_ok.set_sensitive(True)
         except Exception:
             pass
 
@@ -527,6 +551,8 @@ class SshCopyIdWindow(Adw.Window):
 
     def _open_key_file_chooser(self):
         """Portal-aware native file chooser for selecting a public key."""
+        if self._closed:
+            return
         try:
             dlg = Gtk.FileChooserNative(
                 title=_("Select Public Key"),
@@ -561,6 +587,9 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_file_response(self, dlg, response):
         try:
+            # A response after closure must not update the key cache.
+            if self._closed:
+                return
             path = None
             if response == Gtk.ResponseType.ACCEPT:
                 gfile = dlg.get_file()
@@ -588,6 +617,8 @@ class SshCopyIdWindow(Adw.Window):
         (plus the Browse item) so selection indices always line up, even when the
         list previously held only a placeholder ("No keys found").
         """
+        if self._closed:
+            return
         cache = list(getattr(self, "_existing_keys_cache", None) or [])
 
         # De-dupe: if this exact public key is already listed, just select it.
@@ -596,6 +627,7 @@ class SshCopyIdWindow(Adw.Window):
                 self._last_real_selection = i
                 self._rebuild_existing_dropdown([k.name for k in cache], i)
                 self.radio_existing.set_active(True)
+                self._update_ok_sensitivity()
                 return
 
         cache.append(_ssh_key_from_public_path(path))
@@ -605,6 +637,7 @@ class SshCopyIdWindow(Adw.Window):
         self._rebuild_existing_dropdown([k.name for k in cache], new_idx)
         # Browsing implies copying an existing key.
         self.radio_existing.set_active(True)
+        self._update_ok_sensitivity()
 
     def _info(self, title, body):
         try:
@@ -639,6 +672,11 @@ class SshCopyIdWindow(Adw.Window):
     # ---------- OK (main action) ----------
     def _on_ok_clicked(self, *_):
         logger.info("SshCopyIdWindow: OK button clicked")
+        # Nothing to do after close, while a listing runs, or while a
+        # generation is already in flight (OK is also disabled then, but a
+        # re-entrant activation must never start a second worker).
+        if self._closed or self._loading_keys or self._generating:
+            return
         logger.debug("SshCopyIdWindow: Starting main action processing")
         
         # Log current UI state
@@ -777,9 +815,9 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_generated(self, new_key, conn):
         self._generating = False
-        self._set_generating_state(False)
         if self._closed:
             return
+        self._set_generating_state(False)
         logger.info("SshCopyIdWindow: Key generated successfully")
         # The daemon result is authoritative; no local file checks or delays.
         try:
@@ -801,9 +839,9 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_mutation_ambiguous(self, exc):
         self._generating = False
-        self._set_generating_state(False)
         if self._closed:
             return
+        self._set_generating_state(False)
         logger.warning(
             "SshCopyIdWindow: Key generation outcome unknown: %s", type(exc).__name__
         )
@@ -819,9 +857,9 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_generation_failed(self, exc):
         self._generating = False
-        self._set_generating_state(False)
         if self._closed:
             return
+        self._set_generating_state(False)
         logger.error(
             "SshCopyIdWindow: Generate failed: %s", type(exc).__name__
         )
@@ -836,7 +874,6 @@ class SshCopyIdWindow(Adw.Window):
     def _set_generating_state(self, generating):
         """Disable/re-enable the form while a generation is running."""
         try:
-            self.btn_ok.set_sensitive(not generating and self._conn is not None)
             self.row_key_name.set_sensitive(not generating)
             self.type_dropdown.set_sensitive(not generating)
             self.row_pass_toggle.set_sensitive(
@@ -846,6 +883,11 @@ class SshCopyIdWindow(Adw.Window):
                 not generating and self.radio_generate.get_active()
             )
             self.force_toggle.set_sensitive(not generating)
+            # Mode switches and server re-selection are frozen mid-generation.
+            self.radio_existing.set_sensitive(not generating)
+            self.radio_generate.set_sensitive(not generating)
+            self._server_row.set_sensitive(not generating)
+            self._update_ok_sensitivity()
         except Exception:
             pass
 

@@ -23,8 +23,10 @@ file of a daemon-discovered key.
 - Keys are addressed by **deterministic opaque IDs** (scope + relative POSIX
   path, SHA-256 truncated) — never UUIDs, never absolute paths.
 - Private-key contents are never serialized and never cross the API.
-- Passphrases never appear in `repr`, logs, events, or errors; the passphrase
-  lives only in the worker-local generation request.
+- Passphrases are sent only inside `GenerateKeyRequest` over the local daemon
+  API (the request is worker-local and goes out of scope when it returns);
+  they are excluded from `repr`, logs, events, errors, and retained controller
+  state.
 - Public-key text crosses the API only through `keys.get_public`.
 
 ## Capabilities and RPCs

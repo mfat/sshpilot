@@ -519,6 +519,8 @@ class AuthorizedKeysWindow(Adw.Window):
         The injected key manager is the only source; when no manager is
         available (daemon down) there is no local fallback and no scanning.
         """
+        if self._closing:
+            return
         if self._key_manager is None:
             self._toast(
                 _("SSH keys require the background service. Start it and try again.")
@@ -552,10 +554,12 @@ class AuthorizedKeysWindow(Adw.Window):
         GLib.idle_add(self._on_local_keys_loaded, keys, None)
 
     def _on_local_keys_loaded(self, keys, exc):
+        # Reset the raw flag first, then bail out when closing: no widget or
+        # toast work may run from a callback after teardown.
         self._listing_keys = False
-        self._set_local_key_busy(False)
         if self._closing:
             return
+        self._set_local_key_busy(False)
         if exc is not None:
             logger.error("Failed to read local keys: %s", type(exc).__name__)
             self._toast(_("Failed to read local keys."))
@@ -584,6 +588,9 @@ class AuthorizedKeysWindow(Adw.Window):
         dlg.set_close_response("cancel")
 
         def _on_response(_d, resp):
+            # A response after teardown must not start a daemon read.
+            if self._closing:
+                return
             if resp != "add":
                 return
             idx = dropdown.get_selected()
@@ -596,7 +603,7 @@ class AuthorizedKeysWindow(Adw.Window):
 
     def _start_public_key_read(self, key) -> None:
         """Read a daemon-discovered key's public text off the GTK thread."""
-        if self._reading_public:
+        if self._closing or self._listing_keys or self._reading_public:
             return
         self._reading_public = True
         self._set_local_key_busy(True)
@@ -629,16 +636,16 @@ class AuthorizedKeysWindow(Adw.Window):
 
     def _on_public_key_read_ok(self, text):
         self._reading_public = False
-        self._set_local_key_busy(False)
         if self._closing:
             return
+        self._set_local_key_busy(False)
         self._append_pubkey_text(text)
 
     def _on_public_key_read_failed(self, code):
         self._reading_public = False
-        self._set_local_key_busy(False)
         if self._closing:
             return
+        self._set_local_key_busy(False)
         if code == ErrorCode.KEY_PUBLIC_UNAVAILABLE:
             self._toast(
                 _("The public key for the selected key is not available. "

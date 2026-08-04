@@ -62,7 +62,9 @@ def _make_window():
     window._last_real_selection = 0
     window.dropdown_existing = MagicMock()
     window.radio_existing = MagicMock()
+    window.radio_existing.get_active.return_value = True
     window.radio_generate = MagicMock()
+    window.radio_generate.get_active.return_value = False
     window.btn_ok = MagicMock()
     window.row_key_name = MagicMock()
     window.type_dropdown = MagicMock()
@@ -71,6 +73,8 @@ def _make_window():
     window.pass2 = MagicMock()
     window.pass_box = MagicMock()
     window.force_toggle = MagicMock()
+    window._server_label = MagicMock()
+    window._server_row = MagicMock()
     window._error = MagicMock()
     window._info = MagicMock()
     window.close = MagicMock()
@@ -83,6 +87,7 @@ def _set_generate_form(window, name="id_rsa", type_index=1, passphrase=False):
     window.type_dropdown.get_selected.return_value = type_index
     window.row_pass_toggle.get_active.return_value = passphrase
     window.radio_generate.get_active.return_value = True
+    window.radio_existing.get_active.return_value = False
     window.force_toggle.get_active.return_value = True
 
 
@@ -249,6 +254,57 @@ def test_close_during_successful_generation_no_runner_no_close(monkeypatch, idle
     window.close.assert_not_called()
     window._error.assert_not_called()
     assert window._generating is False
+
+
+def test_generation_completion_after_close_does_not_update_controls(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    _set_generate_form(window)
+    window._do_generate_and_copy()
+    thread = _ThreadSpy.instances[0]
+    window._set_generating_state = MagicMock()
+
+    new_key = SSHKey("/daemon/keys/k", name="k")
+    window._km.generate_key.return_value = new_key
+    thread.target(*thread.args)
+    window._closed = True
+    fn, args = idle[0]
+    fn(*args)
+
+    window._set_generating_state.assert_not_called()
+    window._parent._show_ssh_copy_id_terminal_using_main_widget.assert_not_called()
+    window.close.assert_not_called()
+
+
+def test_generation_failure_after_close_shows_no_dialog(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    _set_generate_form(window)
+    window._do_generate_and_copy()
+    thread = _ThreadSpy.instances[0]
+    window._set_generating_state = MagicMock()
+
+    window._km.generate_key.side_effect = RuntimeError("boom")
+    thread.target(*thread.args)
+    window._closed = True
+    fn, args = idle[0]
+    fn(*args)
+
+    window._set_generating_state.assert_not_called()
+    window._error.assert_not_called()
+    assert window._generating is False
+
+
+def test_ok_click_while_generating_starts_no_second_mutation(monkeypatch):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    _set_generate_form(window)
+    window._generating = True
+
+    window._on_ok_clicked()
+
+    assert _ThreadSpy.instances == []
+    window._km.generate_key.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ The workstream is complete when every row below is `Complete`:
 
 | Tag | Migration | Frontend today | Daemon target | Status | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| M1 | Key generation + directory discovery | `key_manager.py` instantiates `core.keys.KeyService`, runs `ssh-keygen`, scans `~/.ssh` | Daemon owns key files and `ssh-keygen`; API lists/generates/deletes keys | **Complete** | API cycle landed; `KeyManager` is a client adapter; `keys.*` RPCs + capabilities live |
+| M1 | Key generation + directory discovery | `key_manager.py` instantiates `core.keys.KeyService`, runs `ssh-keygen`, scans `~/.ssh` | Daemon owns key files and `ssh-keygen`; API lists/reads/generates keys (no deletion in M1) | **Complete** | API cycle landed; `KeyManager` is a client adapter; `keys.*` RPCs + capabilities live |
 | M2 | Known-hosts file ownership | `known_hosts_editor.py` calls `core.known_hosts.load/save_known_hosts` from GTK | Daemon API list/remove with a revision token; GTK renders entries and sends batched mutations | **Complete** | API cycle landed; editor routed through `KnownHostsController` |
 | M3 | Connection store ownership | `connection_manager.py` instantiates `core.connections.ConnectionService` (`_domain`) and writes `~/.ssh/config` | Daemon is the authoritative store; GTK uses `ConnectionApplicationService` through the client | **Deferred** | See M3 deferral |
 | M4 | Settings / config JSON ownership | `config.py` (GTK `Config`) loads/saves the config JSON via `core.settings` | Daemon owns persistent `ssh.*`/preferences keys; GTK keeps visual keys | **Deferred** | See M4 deferral |
@@ -94,8 +94,9 @@ discovery/generation is daemon.
 - Path metadata on `KeySummary` is temporary compatibility data for the M7
   `ssh-copy-id` subprocess adapter; GTK does not derive or scan those paths,
   and user-browsed arbitrary public-key files remain explicit frontend input.
-- Private-key contents and passphrases never cross the API and never appear
-  in logs, `repr`, events, or errors.
+- Private-key contents never cross the API. Passphrases are sent only inside
+  `GenerateKeyRequest` over the local daemon API; they are excluded from
+  logs, `repr`, events, errors, and retained controller state.
 - No deletion API was added because no existing GTK key-deletion workflow
   exists.
 

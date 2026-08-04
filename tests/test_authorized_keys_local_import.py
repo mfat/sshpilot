@@ -185,6 +185,143 @@ def test_close_during_list_suppresses_prompt(monkeypatch, idle):
 
 
 # ---------------------------------------------------------------------------
+# Teardown guards and flag hygiene
+# ---------------------------------------------------------------------------
+def test_start_public_key_read_after_teardown_does_nothing(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    window._key_manager = MagicMock()
+    window._closing = True
+
+    window._start_public_key_read(_key())
+
+    assert _ThreadSpy.instances == []
+
+
+def test_start_public_key_read_rejected_while_listing(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    window._key_manager = MagicMock()
+    window._listing_keys = True
+
+    window._start_public_key_read(_key())
+
+    assert _ThreadSpy.instances == []
+
+
+def test_add_from_local_after_teardown_starts_no_work(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    window._key_manager = MagicMock()
+    window._closing = True
+
+    window._on_add_from_local()
+
+    assert _ThreadSpy.instances == []
+    window._toast.assert_not_called()
+
+
+def test_delayed_picker_response_after_teardown_starts_no_read(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    captured = {}
+
+    class _FakeDialog:
+        def __init__(self, *args, **kwargs):
+            self._handlers = {}
+
+        def add_response(self, *args):
+            pass
+
+        def set_response_appearance(self, *args):
+            pass
+
+        def set_default_response(self, *args):
+            pass
+
+        def set_close_response(self, *args):
+            pass
+
+        def set_extra_child(self, *args):
+            pass
+
+        def connect(self, signal, callback):
+            self._handlers[signal] = callback
+
+        def present(self, *args):
+            captured["dialog"] = self
+
+    class _FakeDropDown:
+        @staticmethod
+        def new_from_strings(names):
+            captured["names"] = names
+            dd = MagicMock()
+            dd.get_selected.return_value = 0
+            return dd
+
+    monkeypatch.setattr(win_mod.Adw, "MessageDialog", _FakeDialog)
+    monkeypatch.setattr(win_mod.Gtk, "DropDown", _FakeDropDown)
+
+    window = _make_window()
+    window._key_manager = MagicMock()
+    real_prompt = win_mod.AuthorizedKeysWindow._prompt_local_key_pick
+    window._prompt_local_key_pick = real_prompt.__get__(window)
+
+    window._prompt_local_key_pick([_key("k1")])
+    response_cb = captured["dialog"]._handlers["response"]
+
+    window._closing = True
+    response_cb(None, "add")
+
+    assert _ThreadSpy.instances == []
+
+
+def test_callbacks_after_teardown_do_not_touch_widgets(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    window._key_manager = MagicMock()
+    window._on_add_from_local()
+    thread = _ThreadSpy.instances[0]
+    window._key_manager.discover_keys.return_value = [_key()]
+    window._add_button.set_sensitive.reset_mock()
+    window._toast.reset_mock()
+
+    window._closing = True
+    thread.target(*thread.args)
+    fn, args = idle[0]
+    fn(*args)
+
+    window._add_button.set_sensitive.assert_not_called()
+    window._toast.assert_not_called()
+    window._prompt_local_key_pick.assert_not_called()
+    assert window._listing_keys is False
+
+
+def test_operation_flags_reset_after_workers(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    window._key_manager = MagicMock()
+
+    # Listing completes and resets the flag.
+    window._on_add_from_local()
+    thread = _ThreadSpy.instances.pop(0)
+    window._key_manager.discover_keys.return_value = [_key()]
+    thread.target(*thread.args)
+    fn, args = idle.pop(0)
+    fn(*args)
+    assert window._listing_keys is False
+
+    # Public-key read completes and resets the flag.
+    window._start_public_key_read(_key())
+    thread = _ThreadSpy.instances.pop(0)
+    window._key_manager.read_public_key.return_value = "ssh-ed25519 AAAA ok\n"
+    thread.target(*thread.args)
+    fn, args = idle.pop(0)
+    fn(*args)
+    assert window._reading_public is False
+    window._append_pubkey_text.assert_called_once_with("ssh-ed25519 AAAA ok\n")
+
+
+# ---------------------------------------------------------------------------
 # No direct .pub reads for daemon-discovered inventory
 # ---------------------------------------------------------------------------
 _IMPORT_FUNCS = frozenset(

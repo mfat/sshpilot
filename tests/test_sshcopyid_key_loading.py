@@ -55,7 +55,9 @@ def _make_window():
     window._last_real_selection = 0
     window.dropdown_existing = MagicMock()
     window.radio_existing = MagicMock()
+    window.radio_existing.get_active.return_value = True
     window.radio_generate = MagicMock()
+    window.radio_generate.get_active.return_value = False
     window.btn_ok = MagicMock()
     window.row_key_name = MagicMock()
     window.type_dropdown = MagicMock()
@@ -64,6 +66,8 @@ def _make_window():
     window.pass2 = MagicMock()
     window.pass_box = MagicMock()
     window.force_toggle = MagicMock()
+    window._server_label = MagicMock()
+    window._server_row = MagicMock()
     window._error = MagicMock()
     window._info = MagicMock()
     window.close = MagicMock()
@@ -190,3 +194,82 @@ def test_browse_adds_key_with_exact_public_path():
     names = window._rebuild_existing_dropdown.call_args[0][0]
     assert names == ["server"]
     window.radio_existing.set_active.assert_called_with(True)
+
+
+# ---------------------------------------------------------------------------
+# Centralized OK sensitivity
+# ---------------------------------------------------------------------------
+def test_initial_loading_keeps_ok_insensitive_after_set_server():
+    """The constructor ordering bug: _set_server must not re-enable OK while
+    the initial key listing is still in flight."""
+    window = _make_window()
+    window._loading_keys = True
+    window._existing_keys_cache = [SSHKey("/daemon/keys/k", name="k")]
+    window.btn_ok.set_sensitive.reset_mock()
+
+    window._set_server(object())
+
+    window.btn_ok.set_sensitive.assert_called_with(False)
+
+
+def test_existing_key_ok_disabled_when_list_empty_or_failed():
+    window = _make_window()
+    window._conn = object()
+    window._existing_keys_cache = []
+
+    window._update_ok_sensitivity()
+    window.btn_ok.set_sensitive.assert_called_with(False)
+
+    # A failed load leaves the cache empty, so OK stays off.
+    window.btn_ok.set_sensitive.reset_mock()
+    window._on_keys_load_failed(RuntimeError("boom"))
+    window.btn_ok.set_sensitive.assert_called_with(False)
+
+
+def test_browsing_a_key_enables_ok():
+    window = _make_window()
+    window._conn = object()
+    window._existing_keys_cache = []
+    window.btn_ok.set_sensitive.reset_mock()
+
+    window._add_browsed_public_key("/home/alice/keys/server.pub")
+
+    window.btn_ok.set_sensitive.assert_called_with(True)
+
+
+def test_ok_click_does_nothing_while_closed_loading_or_generating(monkeypatch):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+
+    window._closed = True
+    window._on_ok_clicked()
+    assert _ThreadSpy.instances == []
+
+    window._closed = False
+    window._loading_keys = True
+    window._on_ok_clicked()
+    assert _ThreadSpy.instances == []
+
+    window._loading_keys = False
+    window._generating = True
+    window._on_ok_clicked()
+    assert _ThreadSpy.instances == []
+
+
+def test_load_completion_after_close_does_not_touch_widgets(monkeypatch, idle):
+    monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
+    window = _make_window()
+    window._reload_existing_keys()
+    thread = _ThreadSpy.instances[0]
+    window._km.discover_keys.return_value = [SSHKey("/daemon/keys/k", name="k")]
+    window.btn_ok.set_sensitive.reset_mock()
+    window.dropdown_existing.set_sensitive.reset_mock()
+
+    thread.target(*thread.args)
+    window._closed = True
+    fn, args = idle[0]
+    fn(*args)
+
+    window.btn_ok.set_sensitive.assert_not_called()
+    window.dropdown_existing.set_sensitive.assert_not_called()
+    assert window._loading_keys is False
