@@ -2409,12 +2409,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not conns:
             return
         try:
-            all_pinned = all(self.config.is_pinned(c.nickname) for c in conns)
+            all_pinned = all(
+                bool(self.connection_manager.get_metadata(c.nickname).get("pinned"))
+                for c in conns
+            )
             for c in conns:
-                if all_pinned:
-                    self.config.unpin_connection(c.nickname)
-                else:
-                    self.config.pin_connection(c.nickname)
+                self.client.update_connection_metadata(
+                    c.nickname, {"pinned": not all_pinned}
+                )
             if len(conns) == 1:
                 msg = _("Unpinned from start page") if all_pinned else _("Pinned to start page")
             elif all_pinned:
@@ -3212,7 +3214,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Attach tags so the search filter and freshly built rows see them.
         for conn in connections:
             try:
-                object.__setattr__(conn, 'tags', self.config.get_connection_tags(conn.nickname))
+                object.__setattr__(
+                    conn,
+                    "tags",
+                    list(self.connection_manager.get_metadata(conn.nickname).get("tags", [])),
+                )
             except Exception:
                 object.__setattr__(conn, 'tags', [])
         connections_dict = {conn.nickname: conn for conn in connections}
@@ -6253,13 +6259,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not nickname or not isinstance(meta, dict):
             return
         try:
-            if 'tags' in meta:
-                self.config.set_connection_tags(nickname, list(meta.get('tags') or []))
-            wol = {k: meta[k] for k in ('wol_mac', 'wol_broadcast_ip', 'wol_port') if k in meta}
-            if wol:
-                existing = self.config.get_connection_meta(nickname)
-                existing.update(wol)
-                self.config.set_connection_meta(nickname, existing)
+            values = {}
+            if "tags" in meta:
+                values["tags"] = list(meta.get("tags") or [])
+            values.update(
+                {
+                    key: meta[key]
+                    for key in ("wol_mac", "wol_broadcast_ip", "wol_port")
+                    if key in meta
+                }
+            )
+            if values:
+                self.client.update_connection_metadata(nickname, values)
         except Exception:
             # The connection itself saved; only the app-side metadata failed.
             # Surface it — a silent miss here means WoL/tags quietly vanish.
@@ -6297,19 +6308,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.group_manager.rename_connection(original_nickname, new_nickname)
                 except Exception:
                     pass
-                try:
-                    old_meta = self.config.get_connection_meta(original_nickname)
-                    if old_meta:
-                        new_meta = self.config.get_connection_meta(new_nickname)
-                        merged = {**old_meta, **new_meta}
-                        meta_all = self.config.get_setting('connections_meta', {}) or {}
-                        meta_all.pop(original_nickname, None)
-                        self.config.set_setting('connections_meta', meta_all)
-                        self.config.set_connection_meta(new_nickname, merged)
-                except Exception:
-                    logger.debug("Failed to migrate connection meta on rename", exc_info=True)
             try:
-                object.__setattr__(old_connection, 'tags', self.config.get_connection_tags(old_connection.nickname))
+                object.__setattr__(
+                    old_connection,
+                    "tags",
+                    list(self.connection_manager.get_metadata(new_nickname).get("tags", [])),
+                )
             except Exception:
                 pass
             rows = self._rows_for_connection(old_connection)
@@ -6806,27 +6810,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         self.group_manager.rename_connection(original_nickname, new_nickname)
                     except Exception:
                         pass
-                    # Migrate per-connection metadata (pinned, WoL, tags) to the
-                    # new nickname. The dialog already wrote its own fields under
-                    # the new key, so those win over the old entry's values.
-                    try:
-                        old_meta = self.config.get_connection_meta(original_nickname)
-                        if old_meta:
-                            new_meta = self.config.get_connection_meta(new_nickname)
-                            merged = {**old_meta, **new_meta}
-                            meta_all = self.config.get_setting('connections_meta', {}) or {}
-                            meta_all.pop(original_nickname, None)
-                            self.config.set_setting('connections_meta', meta_all)
-                            self.config.set_connection_meta(new_nickname, merged)
-                    except Exception:
-                        logger.debug("Failed to migrate connection meta on rename", exc_info=True)
 
                 # Update UI. The tag-filtered list is derived during rebuilds,
                 # so a tag change needs a full rebuild while a tag filter is
                 # active — update_display() alone leaves it stale.
                 tags_changed = False
                 try:
-                    fresh_tags = self.config.get_connection_tags(old_connection.nickname)
+                    fresh_tags = list(
+                        self.connection_manager.get_metadata(new_nickname).get("tags", [])
+                    )
                     if list(getattr(old_connection, 'tags', None) or []) != fresh_tags:
                         tags_changed = True
                     object.__setattr__(old_connection, 'tags', fresh_tags)

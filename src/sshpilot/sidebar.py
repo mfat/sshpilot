@@ -3543,15 +3543,15 @@ def _on_connection_list_drop(window, target, value, x, y):
                             return False
                         from .tag_groups import add_tag_to_list
                         tag_name = str(target_row.group_info.get("name", ""))
-                        cfg = getattr(window, "config", None)
-                        if not tag_name or cfg is None:
+                        if not tag_name or getattr(window, "client", None) is None:
                             return False
                         for nickname in connection_nicknames:
                             tags, changed = add_tag_to_list(
-                                cfg.get_connection_tags(nickname), tag_name
+                                window.connection_manager.get_metadata(nickname).get("tags", []),
+                                tag_name,
                             )
                             if changed:
-                                cfg.set_connection_tags(nickname, tags)
+                                window.client.update_connection_metadata(nickname, {"tags": tags})
                                 changes_made = True
                         if changes_made:
                             tag_drop = True
@@ -4007,7 +4007,9 @@ def _build_sidebar_header(window, sidebar_box):
             tag_map = {}
             for conn in window.connection_manager.get_connections():
                 try:
-                    tag_map[conn.nickname] = window.config.get_connection_tags(conn.nickname)
+                    tag_map[conn.nickname] = list(
+                        window.connection_manager.get_metadata(conn.nickname).get("tags", [])
+                    )
                 except Exception:
                     pass
             tags_section = Gio.Menu()
@@ -4245,7 +4247,7 @@ def _attach_connection_list_context_menu(window):
 
                 def _has_wol_mac(c):
                     try:
-                        meta = window.config.get_connection_meta(c.nickname) if c else {}
+                        meta = window.connection_manager.get_metadata(c.nickname) if c else {}
                         return bool((meta or {}).get('wol_mac', '').strip())
                     except Exception:
                         return False
@@ -4284,7 +4286,8 @@ def _attach_connection_list_context_menu(window):
                 try:
                     pin_targets = selected_conns if multi else ([conn] if conn else [])
                     all_pinned = bool(pin_targets) and all(
-                        window.config.is_pinned(c.nickname) for c in pin_targets
+                        window.connection_manager.get_metadata(c.nickname).get("pinned", False)
+                        for c in pin_targets
                     )
                     if all_pinned:
                         menu.add_section(

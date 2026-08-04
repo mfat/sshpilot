@@ -338,7 +338,11 @@ def _recent_and_pinned(window, connections: Sequence[Any]) -> List[Any]:
     }
     ordered: List[Any] = []
     try:
-        for nickname in window.config.get_pinned_nicknames():
+        for nickname in (
+            item.connection_id
+            for item in window.connection_manager.metadata
+            if item.values.get("pinned")
+        ):
             if nickname in by_name and by_name[nickname] not in ordered:
                 ordered.append(by_name[nickname])
     except Exception:
@@ -346,9 +350,9 @@ def _recent_and_pinned(window, connections: Sequence[Any]) -> List[Any]:
 
     def last_used(connection):
         try:
-            return window.config.get_connection_meta(
-                connection.nickname,
-            ).get("last_used", 0) or 0
+            return window.connection_manager.get_metadata(connection.nickname).get(
+                "last_used", 0
+            ) or 0
         except Exception:
             return 0
 

@@ -1131,9 +1131,9 @@ class TerminalManager:
             import time
             nickname = getattr(terminal.connection, 'nickname', None)
             if nickname:
-                meta = self.window.config.get_connection_meta(nickname)
-                meta['last_used'] = time.time()
-                self.window.config.set_connection_meta(nickname, meta)
+                self.window.client.update_connection_metadata(
+                    nickname, {"last_used": time.time()}
+                )
                 welcome = getattr(self.window, 'welcome_view', None)
                 if welcome is not None and hasattr(welcome, 'refresh_recent'):
                     welcome.refresh_recent()

@@ -3112,10 +3112,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Load protocol-agnostic app metadata (Wake-on-LAN, tags) into rows."""
         if hasattr(self, 'wol_mac_row'):
             try:
-                cfg = getattr(self.parent_window, 'config', None)
+                store = getattr(self.parent_window, 'connection_manager', None)
                 nickname = getattr(self.connection, 'nickname', '').strip()
-                if cfg and nickname:
-                    meta = cfg.get_connection_meta(nickname)
+                if store and nickname:
+                    meta = store.get_metadata(nickname)
                     if meta:
                         self.wol_mac_row.set_text((meta.get('wol_mac') or '').strip())
                         self.wol_broadcast_row.set_text((meta.get('wol_broadcast_ip') or '').strip())
@@ -3130,13 +3130,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         if hasattr(self, 'tags_row'):
             try:
-                cfg = getattr(self.parent_window, 'config', None)
+                store = getattr(self.parent_window, 'connection_manager', None)
                 nickname = getattr(self.connection, 'nickname', '').strip()
-                if cfg and nickname:
+                if store and nickname:
                     # Suppress inline autocompletion while loading.
                     self._set_text_without_completion(
                         self.tags_row,
-                        ', '.join(cfg.get_connection_tags(nickname)),
+                        ', '.join(store.get_metadata(nickname).get('tags', [])),
                     )
             except Exception as e:
                 logger.debug("Load tags meta: %s", e)

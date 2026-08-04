@@ -424,7 +424,7 @@ class WelcomePage(Gtk.Overlay):
 
         def _last_used(conn):
             try:
-                return self.config.get_connection_meta(conn.nickname).get('last_used', 0) or 0
+                return self.window.connection_manager.get_metadata(conn.nickname).get('last_used', 0) or 0
             except Exception:
                 return 0
 
@@ -559,7 +559,15 @@ class WelcomePage(Gtk.Overlay):
             child = nxt
 
         conn_map = {c.nickname: c for c in self.connection_manager.connections}
-        pinned = [conn_map[n] for n in self.config.get_pinned_nicknames() if n in conn_map][:4]
+        pinned = [
+            conn_map[n]
+            for n in (
+                item.connection_id
+                for item in self.window.connection_manager.metadata
+                if item.values.get("pinned")
+            )
+            if n in conn_map
+        ][:4]
         if pinned:
             rows = []
             for conn in pinned:
@@ -730,8 +738,8 @@ class WelcomePage(Gtk.Overlay):
         """Auto-unpin a connection when it is deleted from the inventory."""
         try:
             nickname = getattr(connection, 'nickname', None)
-            if nickname and self.config.is_pinned(nickname):
-                self.config.unpin_connection(nickname)
+            if nickname and self.window.connection_manager.get_metadata(nickname).get("pinned"):
+                self.window.client.update_connection_metadata(nickname, {"pinned": False})
                 self.refresh_pinned()
         except Exception:
             pass

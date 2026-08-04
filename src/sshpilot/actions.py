@@ -315,7 +315,7 @@ class WindowActions:
                     nickname = getattr(connection, 'nickname', '').strip() if connection else ''
                     if not nickname:
                         continue
-                    meta = config.get_connection_meta(nickname)
+                    meta = self.window.connection_manager.get_metadata(nickname)
                     mac = (meta.get('wol_mac') or '').strip()
                     if not mac:
                         continue
