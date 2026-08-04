@@ -419,12 +419,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         logger.info("Main window initialized")
 
     def _compose_api_client(self, app) -> None:
-        """Reuse a validated daemon client or begin daemon-only startup."""
+        """Select and store the client; never attach client-backed services.
+
+        Attaching happens exactly once per selection: ``__init__`` does it for
+        an already-selected client and ``_apply_client_selection`` does it for a
+        newly completed asynchronous selection. Keeping attachment out of this
+        method prevents the duplicate attach path (services were attached here
+        *and* again in ``__init__``).
+        """
         existing = getattr(app, '_api_client_selection', None) if app else None
         if existing is not None:
             self.client = existing.client
             self.client_bridge = getattr(app, '_api_client_bridge', None)
-            self._attach_client_backed_services()
             return
         from .gtk_client_bridge import GtkClientBridge
         self.client = None
@@ -483,6 +489,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         self.client = None
+        self.key_manager = None
         self.plugin_connection_services.detach_client()
         self.connection_runtime_status.close()
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)

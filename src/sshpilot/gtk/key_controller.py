@@ -47,14 +47,12 @@ class KeyController:
             key_list = self._client.list_keys(
                 ListKeysRequest(scope=self._scope)
             )
-        except BaseException:
+            with self._lock:
+                self._cached = key_list
+            return key_list
+        finally:
             with self._lock:
                 self._busy = False
-            raise
-        with self._lock:
-            self._cached = key_list
-            self._busy = False
-        return key_list
 
     def read_public_key(self, key_id: KeyId) -> PublicKeyResult:
         self._enter_operation()
@@ -62,13 +60,10 @@ class KeyController:
             result = self._client.read_public_key(
                 ReadPublicKeyRequest(key_id=key_id, scope=self._scope)
             )
-        except BaseException:
+            return result
+        finally:
             with self._lock:
                 self._busy = False
-            raise
-        with self._lock:
-            self._busy = False
-        return result
 
     def generate_key(
         self,
@@ -79,26 +74,24 @@ class KeyController:
         passphrase: str = "",
     ) -> GenerateKeyResult:
         self._enter_operation()
-        request = GenerateKeyRequest(
-            name=name,
-            key_type=key_type,
-            key_size=key_size,
-            comment=comment,
-            passphrase=passphrase,
-            scope=self._scope,
-        )
         try:
+            request = GenerateKeyRequest(
+                name=name,
+                key_type=key_type,
+                key_size=key_size,
+                comment=comment,
+                passphrase=passphrase,
+                scope=self._scope,
+            )
             result = self._client.generate_key(request)
-        except BaseException:
+            with self._lock:
+                self._upsert_summary(result.key)
+            # The request (and its passphrase) goes out of scope here; the
+            # controller retains only the public summary.
+            return result
+        finally:
             with self._lock:
                 self._busy = False
-            raise
-        with self._lock:
-            self._upsert_summary(result.key)
-            self._busy = False
-        # The request (and its passphrase) goes out of scope here; the
-        # controller retains only the public summary.
-        return result
 
     def key_snapshot(self) -> tuple[KeySummary, ...]:
         """Read-only snapshot of the latest cached key list."""

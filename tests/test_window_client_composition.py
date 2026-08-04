@@ -82,7 +82,26 @@ def test_detached_client_never_creates_fallback_manager():
 # ---------------------------------------------------------------------------
 # _compose_api_client (already-selected client)
 # ---------------------------------------------------------------------------
-def test_compose_api_client_reused_selection_attaches_services():
+def test_compose_api_client_reused_selection_does_not_attach():
+    """Composition only stores the client; attachment is the caller's job."""
+    window = _make_window()
+    app = types.SimpleNamespace(
+        _api_client_selection=types.SimpleNamespace(client=object()),
+        _api_client_bridge=object(),
+    )
+    attached = []
+    window._attach_client_backed_services = lambda: attached.append(True)
+
+    window._compose_api_client(app)
+
+    assert window.client is app._api_client_selection.client
+    assert window.client_bridge is app._api_client_bridge
+    assert attached == []
+    assert window.key_manager is None
+
+
+def test_init_sequence_attaches_exactly_once_for_reused_selection():
+    """The ``__init__`` sequence (compose, then attach-when-present) attaches once."""
     window = _make_window()
     app = types.SimpleNamespace(
         _api_client_selection=types.SimpleNamespace(client=object()),
@@ -90,10 +109,32 @@ def test_compose_api_client_reused_selection_attaches_services():
     )
 
     window._compose_api_client(app)
+    if window.client is not None:
+        window._attach_client_backed_services()
 
-    assert window.client is app._api_client_selection.client
-    assert window.client_bridge is app._api_client_bridge
+    window.connection_manager.attach_client.assert_called_once_with(window.client)
+    window.connection_runtime_status.attach_client.assert_called_once_with(window.client)
+    window.plugin_connection_services.attach_client.assert_called_once_with(window.client)
     assert isinstance(window.key_manager, KeyManager)
+    assert window.key_manager._scope is KeyStoreScope.DEFAULT
+
+
+def test_failed_selection_leaves_key_manager_none():
+    """A failed selection clears any previously attached key manager."""
+    window = _make_window()
+    window.client = object()
+    window.key_manager = KeyManager(window.client, KeyStoreScope.DEFAULT)
+    window._api_client_selection_pending = True
+    window._api_client_selection_request = object()
+    window.plugin_connection_services.detach_client = MagicMock()
+    window.connection_runtime_status.close = MagicMock()
+    window._show_client_mode_warning = lambda: None
+
+    window._handle_client_selection_error(Exception("boom"))
+
+    assert window.key_manager is None
+    assert window.client is None
+    window.plugin_connection_services.detach_client.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------

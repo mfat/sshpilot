@@ -218,6 +218,72 @@ def test_busy_flag_reset_after_generate_error():
 
 
 # ---------------------------------------------------------------------------
+# Request-model construction failures must not poison the busy flag
+# ---------------------------------------------------------------------------
+def test_invalid_generate_name_raises_and_leaves_controller_usable():
+    client = _FakeClient()
+    controller = _controller(client)
+
+    with pytest.raises(ValueError):
+        controller.generate_key(name="bad\\name")
+    # A failed request-model construction makes no client call.
+    assert client.generate_requests == []
+    # The controller remains usable afterwards.
+    assert controller.list_keys().keys[0].key_id == "key-1"
+    controller.generate_key(name="fine_name")
+    assert any(k.name == "new_key" for k in controller.key_snapshot())
+
+
+def test_invalid_generate_type_or_size_leaves_controller_usable():
+    client = _FakeClient()
+    controller = _controller(client)
+
+    with pytest.raises(ValueError):
+        controller.generate_key(name="x", key_type="dsa")
+    with pytest.raises(ValueError):
+        controller.generate_key(name="x", key_type="rsa", key_size=512)
+    with pytest.raises(TypeError):
+        controller.generate_key(name="x", key_size=True)
+    assert client.generate_requests == []
+    # Still usable for every operation type.
+    assert controller.list_keys().keys[0].key_id == "key-1"
+    assert controller.read_public_key(KeyId("key-1")).key_id == "key-1"
+
+
+def test_validation_failure_makes_no_client_call():
+    client = _FakeClient()
+    controller = _controller(client)
+
+    with pytest.raises(ValueError):
+        controller.generate_key(name="a/b")
+    with pytest.raises(ValueError):
+        controller.generate_key(name="..")
+    with pytest.raises(ValueError):
+        controller.generate_key(name="x", comment="\x00")
+
+    assert client.generate_requests == []
+    assert client.list_scopes == []
+
+
+def test_bad_returned_generation_dto_does_not_poison_busy():
+    """A commit failure on the returned DTO resets the busy flag too."""
+    client = _FakeClient()
+    controller = _controller(client)
+
+    # The client returns a broken payload: the summary upsert must fail and the
+    # busy flag must still be released.
+    client.generate_result = object()  # no .key attribute
+    with pytest.raises(AttributeError):
+        controller.generate_key(name="x")
+
+    # Recover: a healthy result commits and refreshes the cache.
+    client.generate_result = GenerateKeyResult(key=_summary("key-2", "new_key"))
+    result = controller.generate_key(name="x")
+    assert result.key.key_id == "key-2"
+    assert [k.key_id for k in controller.key_snapshot()] == ["key-2"]
+
+
+# ---------------------------------------------------------------------------
 # Passphrase handling
 # ---------------------------------------------------------------------------
 def test_passphrase_not_retained_on_controller():
