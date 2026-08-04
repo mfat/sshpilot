@@ -2333,15 +2333,7 @@ class WindowConfigDialogsMixin:
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                if self._daemon_mode_active():
-                    try:
-                        self.client.create_group(name, color=color or "")
-                    except Exception as exc:
-                        logger.error("Create group via daemon RPC failed: %s", exc)
-                        self._simple_dialog(_("Error"), _("Failed to create group via daemon: ") + str(exc))
-                        return False
-                else:
-                    self.group_manager.create_group(name, color=color)
+                self.group_manager.create_group(name, color=color)
                 self.rebuild_connection_list()
                 return True
 
@@ -2380,17 +2372,8 @@ class WindowConfigDialogsMixin:
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                if self._daemon_mode_active():
-                    try:
-                        self.client.rename_group(group_id, name)
-                        if color is not None:
-                            self.group_manager.set_group_color(group_id, color)
-                    except Exception as exc:
-                        logger.error("Rename group via daemon RPC failed: %s", exc)
-                        self._simple_dialog(_("Error"), _("Failed to edit group via daemon: ") + str(exc))
-                        return False
-                else:
-                    self.group_manager.rename_group(group_id, name)
+                self.group_manager.rename_group(group_id, name)
+                if color is not None:
                     self.group_manager.set_group_color(group_id, color)
                 self.rebuild_connection_list()
                 return True
@@ -2483,28 +2466,8 @@ class WindowConfigDialogsMixin:
             def assign(nickname: str, target_group_id) -> None:
                 if is_copy:
                     if target_group_id:
-                        if self._daemon_mode_active():
-                            connection_id = self._find_connection_id_for_nickname(nickname)
-                            if connection_id:
-                                try:
-                                    self.client.assign_connection_to_group(connection_id, target_group_id)
-                                except Exception as exc:
-                                    logger.error("Copy connection to group via daemon RPC failed: %s", exc)
-                            else:
-                                logger.error("Could not find daemon connection_id for %s", nickname)
-                            return
                         self.group_manager.copy_connection_to_group(nickname, target_group_id)
                 else:
-                    if self._daemon_mode_active():
-                        connection_id = self._find_connection_id_for_nickname(nickname)
-                        if connection_id:
-                            try:
-                                self.client.assign_connection_to_group(connection_id, target_group_id or "")
-                            except Exception as exc:
-                                logger.error("Move connection to group via daemon RPC failed: %s", exc)
-                        else:
-                            logger.error("Could not find daemon connection_id for %s", nickname)
-                        return
                     self.group_manager.move_connection(nickname, target_group_id)
 
             available_groups = self.get_available_groups()
@@ -2683,15 +2646,9 @@ class WindowConfigDialogsMixin:
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        if self._daemon_mode_active():
-                            try:
-                                new_group_id = self.client.create_group(
-                                    group_name, color=selected_color or ""
-                                )
-                            except Exception:
-                                new_group_id = self.group_manager.create_group(group_name, color=selected_color)
-                        else:
-                            new_group_id = self.group_manager.create_group(group_name, color=selected_color)
+                        new_group_id = self.group_manager.create_group(
+                            group_name, color=selected_color
+                        )
                         for nickname in connection_nicknames:
                             assign(nickname, new_group_id)
                         self.rebuild_connection_list()
