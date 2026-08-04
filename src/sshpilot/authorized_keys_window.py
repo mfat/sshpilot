@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import os
 import posixpath
+import threading
 from gettext import gettext as _
 from typing import List, Optional
 
 from gi.repository import Adw, GLib, Gtk
 
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from .authorized_keys_parser import (
     AuthorizedKeyEntry,
     Item,
@@ -103,6 +105,9 @@ class AuthorizedKeysWindow(Adw.Window):
         self._loaded = False
         self._local_path: Optional[str] = None
         self._closing = False
+        # Local-key import guards (daemon-backed, off the GTK thread).
+        self._listing_keys = False
+        self._reading_public = False
         self._manager_signal_ids: List[int] = []
         self._open_raw_editors: List[Gtk.Window] = []
         self._teardown_when_idle = False
@@ -509,23 +514,60 @@ class AuthorizedKeysWindow(Adw.Window):
     # ------------------------------------------------------------------
 
     def _on_add_from_local(self) -> None:
-        if self._key_manager is None:
-            try:
-                from .key_manager import KeyManager
-                self._key_manager = KeyManager(self._connection_manager)
-            except Exception as exc:
-                self._toast(_("Cannot list local keys: {error}").format(error=exc))
-                return
-        try:
-            keys = self._key_manager.discover_keys() or []
-        except Exception as exc:
-            self._toast(_("Failed to read local keys: {error}").format(error=exc))
-            return
-        if not keys:
-            self._toast(_("No local SSH keys found in ~/.ssh"))
-            return
+        """List daemon-discovered keys off the GTK thread, then let the user pick.
 
-        names = [os.path.basename(k.private_path) for k in keys]
+        The injected key manager is the only source; when no manager is
+        available (daemon down) there is no local fallback and no scanning.
+        """
+        if self._key_manager is None:
+            self._toast(
+                _("SSH keys require the background service. Start it and try again.")
+            )
+            return
+        if self._listing_keys or self._reading_public:
+            return
+        self._listing_keys = True
+        self._set_local_key_busy(True)
+        km = self._key_manager
+        try:
+            thread = threading.Thread(
+                target=self._list_keys_worker,
+                args=(km,),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.error("Could not start local key listing: %s", type(exc).__name__)
+            self._listing_keys = False
+            self._set_local_key_busy(False)
+            self._toast(_("Could not start listing local keys."))
+
+    def _list_keys_worker(self, km):
+        """Daemon/client call off the GTK thread; result delivered via idle."""
+        try:
+            keys = km.discover_keys() or []
+        except BaseException as exc:  # noqa: BLE001 - marshalled to the GTK thread
+            GLib.idle_add(self._on_local_keys_loaded, None, exc)
+            return
+        GLib.idle_add(self._on_local_keys_loaded, keys, None)
+
+    def _on_local_keys_loaded(self, keys, exc):
+        self._listing_keys = False
+        self._set_local_key_busy(False)
+        if self._closing:
+            return
+        if exc is not None:
+            logger.error("Failed to read local keys: %s", type(exc).__name__)
+            self._toast(_("Failed to read local keys."))
+            return
+        keys = list(keys or [])
+        if not keys:
+            self._toast(_("No local SSH keys found"))
+            return
+        self._prompt_local_key_pick(keys)
+
+    def _prompt_local_key_pick(self, keys):
+        names = [k.name for k in keys]
         dlg = Adw.MessageDialog(
             transient_for=self,
             modal=True,
@@ -547,10 +589,70 @@ class AuthorizedKeysWindow(Adw.Window):
             idx = dropdown.get_selected()
             if idx < 0 or idx >= len(keys):
                 return
-            self._append_pubkey_from_path(keys[idx].public_path)
+            self._start_public_key_read(keys[idx])
 
         dlg.connect("response", _on_response)
         dlg.present()
+
+    def _start_public_key_read(self, key) -> None:
+        """Read a daemon-discovered key's public text off the GTK thread."""
+        if self._reading_public:
+            return
+        self._reading_public = True
+        self._set_local_key_busy(True)
+        km = self._key_manager
+        try:
+            thread = threading.Thread(
+                target=self._read_public_worker,
+                args=(km, key),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.error("Could not start public-key read: %s", type(exc).__name__)
+            self._reading_public = False
+            self._set_local_key_busy(False)
+            self._toast(_("Could not start reading the public key."))
+
+    def _read_public_worker(self, km, key):
+        """Daemon/client call off the GTK thread; result delivered via idle."""
+        try:
+            text = km.read_public_key(key)
+        except SshPilotError as exc:
+            GLib.idle_add(self._on_public_key_read_failed, exc.code)
+            return
+        except BaseException as exc:  # noqa: BLE001 - marshalled to the GTK thread
+            logger.debug("public-key read failed: %s", type(exc).__name__)
+            GLib.idle_add(self._on_public_key_read_failed, None)
+            return
+        GLib.idle_add(self._on_public_key_read_ok, text)
+
+    def _on_public_key_read_ok(self, text):
+        self._reading_public = False
+        self._set_local_key_busy(False)
+        if self._closing:
+            return
+        self._append_pubkey_text(text)
+
+    def _on_public_key_read_failed(self, code):
+        self._reading_public = False
+        self._set_local_key_busy(False)
+        if self._closing:
+            return
+        if code == ErrorCode.KEY_PUBLIC_UNAVAILABLE:
+            self._toast(
+                _("The public key for the selected key is not available. "
+                  "Generate it with ssh-keygen and try again.")
+            )
+        else:
+            self._toast(_("Could not read the public key."))
+
+    def _set_local_key_busy(self, busy: bool) -> None:
+        """Disable the add-menu button while a daemon key operation runs."""
+        try:
+            self._add_button.set_sensitive(not busy)
+        except Exception:
+            pass
 
     def _on_add_from_paste(self) -> None:
         dlg = Adw.MessageDialog(
@@ -585,23 +687,6 @@ class AuthorizedKeysWindow(Adw.Window):
 
         dlg.connect("response", _on_response)
         dlg.present()
-
-    def _append_pubkey_from_path(self, public_path: str) -> None:
-        # KeyManager.discover_keys() derives public_path as private_path
-        # + ".pub" without checking existence — the .pub file may not be
-        # on disk if the user imported only the private key.
-        if not os.path.exists(public_path):
-            self._toast(
-                _("No public-key file found at {path}. Generate it with `ssh-keygen -y -f <private>` and try again.").format(path=public_path)
-            )
-            return
-        try:
-            with open(public_path, encoding="utf-8") as fh:
-                text = fh.read().strip()
-        except OSError as exc:
-            self._toast(_("Could not read {path}: {error}").format(path=public_path, error=exc))
-            return
-        self._append_pubkey_text(text)
 
     def _append_pubkey_text(self, text: str) -> None:
         parsed = parse_file(text + "\n")
