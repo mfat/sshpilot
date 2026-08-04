@@ -337,6 +337,69 @@ def test_concurrent_writes_serialized(tmp_path):
     assert len(snap.connections) == 8
 
 
+def test_rename_grouped_connection_without_metadata_survives_reload(tmp_path):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    gid = repo._service.create_group("Prod").id
+    repo._service.copy_connection_to_group("web", gid)
+    repo.update_connection(
+        "web",
+        {"nickname": "web2", "hostname": "example.com", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    # The state file must carry the renamed membership so a reload stays valid.
+    snap = repo.reload()
+    assert [c.id for c in snap.connections] == ["web2"]
+    web2 = next(c for c in snap.connections if c.id == "web2")
+    assert web2.groups[0].id == gid
+
+
+def test_create_then_reload_preserves_root_order(tmp_path):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.create_connection(
+        {"nickname": "new", "hostname": "new.example", "protocol": "ssh"}
+    )
+    snap = repo.reload()
+    assert snap.root_connection_ids == ("web", "new")
+
+
+def test_delete_grouped_connection_survives_reload(tmp_path):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    gid = repo._service.create_group("Prod").id
+    repo._service.copy_connection_to_group("web", gid)
+    repo.delete_connection("web")
+    snap = repo.reload()  # stale group membership would fail here
+    assert snap.connections == ()
+    assert snap.groups[0].connection_ids == ()
+
+
+def test_non_ssh_update_stale_generation_rejected(tmp_path):
+    _write_state(
+        tmp_path / "connections.json",
+        {
+            "version": 1,
+            "non_ssh_connections": [
+                {"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"}
+            ],
+            "groups": {"groups": {}, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    repo, root, state = _repo(tmp_path)
+    repo.update_connection(
+        "tel",
+        {"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.6"},
+        expected_generation=0,
+    )
+    with pytest.raises(CoreError) as exc:
+        repo.update_connection(
+            "tel",
+            {"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.7"},
+            expected_generation=0,  # stale: current is 1
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert repo.get_record("tel").hostname == "10.0.0.6"
+
+
 def test_no_uuid_anywhere(tmp_path):
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     repo.create_connection(

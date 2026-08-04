@@ -390,7 +390,9 @@ class ConnectionRepository:
                     payload["nickname"] = nickname
                     created = self._service.create(payload)
                     self._non_ssh_generations[created.id] = 1
-                    self._persist_state_file_locked()
+                # Root order / membership / metadata always live in
+                # connections.json; persist it after every committed mutation.
+                self._persist_state_file_locked()
             except Exception:
                 self._resync_from_files()
                 raise
@@ -435,6 +437,15 @@ class ConnectionRepository:
                     updated = self._service.update(connection_id, fresh.data)
                     self._overlay_ssh_generations(result.config)
                 else:
+                    if (
+                        expected_generation is not None
+                        and expected_generation
+                        != self._non_ssh_generations.get(connection_id, 0)
+                    ):
+                        raise CoreError(
+                            ErrorCode.STALE_CONNECTION_STATE,
+                            "The connection has been modified since it was last read",
+                        )
                     nickname = new_nick or connection_id
                     payload["id"] = nickname
                     payload["nickname"] = nickname
@@ -446,11 +457,11 @@ class ConnectionRepository:
                         self._non_ssh_generations[connection_id] = (
                             self._non_ssh_generations.get(connection_id, 0) + 1
                         )
-                    self._persist_state_file_locked()
+                self._migrate_metadata_on_rename(connection_id, updated.id)
+                self._persist_state_file_locked()
             except Exception:
                 self._resync_from_files()
                 raise
-            self._migrate_metadata_on_rename(connection_id, updated.id)
             self._commit(before)
             return self._service.get(updated.id)
 
@@ -475,10 +486,10 @@ class ConnectionRepository:
                 else:
                     created = self._service.duplicate(connection_id)
                     self._non_ssh_generations[created.id] = 1
-                    self._persist_state_file_locked()
                 # Mirror the source's group placement on the duplicate.
                 for gid in self._service.group_ids_of(connection_id):
                     self._service.copy_connection_to_group(created.id, gid)
+                self._persist_state_file_locked()
             except Exception:
                 self._resync_from_files()
                 raise
@@ -501,10 +512,8 @@ class ConnectionRepository:
                 else:
                     self._service.delete(connection_id)
                     self._non_ssh_generations.pop(connection_id, None)
-                    self._persist_state_file_locked()
-                if connection_id in self._metadata:
-                    self._metadata.pop(connection_id, None)
-                    self._persist_state_file_locked()
+                self._metadata.pop(connection_id, None)
+                self._persist_state_file_locked()
             except Exception:
                 self._resync_from_files()
                 raise
@@ -540,19 +549,22 @@ class ConnectionRepository:
                 )
                 if connection_id in fresh_ids:
                     # A different alias was split out: the original survives
-                    # and the new standalone connection is created.
+                    # and the new standalone connection is created (its
+                    # metadata starts fresh).
                     created = self._service.create(new_record.data)
                     result_id = created.id
                 else:
                     # The split removed the original token: rename the old
-                    # record into the new standalone connection.
+                    # record into the new standalone connection and carry its
+                    # metadata over.
                     updated = self._service.update(connection_id, new_record.data)
                     result_id = updated.id
+                    self._migrate_metadata_on_rename(connection_id, result_id)
                 self._overlay_ssh_generations(result.config)
+                self._persist_state_file_locked()
             except Exception:
                 self._resync_from_files()
                 raise
-            self._migrate_metadata_on_rename(connection_id, result_id)
             self._commit(before)
             return self._service.get(result_id)
 
@@ -560,11 +572,175 @@ class ConnectionRepository:
         write_connection_state(self._state_path, self._build_file_state_locked())
 
     def _migrate_metadata_on_rename(self, old_id: str, new_id: str) -> None:
+        """Move metadata to the new id (in-memory; the caller persists once)."""
         if old_id == new_id:
             return
         if old_id in self._metadata:
             self._metadata[new_id] = self._metadata.pop(old_id)
-            self._persist_state_file_locked()
+
+    # ------------------------------------------------------------------
+    # Group operations
+    # ------------------------------------------------------------------
+
+    def _group_mutation(self, mutation: Callable[[], Any]):
+        """Shared lock/persist/commit wrapper for group mutations.
+
+        A failed state-file write rolls the in-memory state back to the
+        persisted files so memory never diverges from disk.
+        """
+        with self._lock:
+            before = self._begin()
+            try:
+                result = mutation()
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return result
+
+    def create_group(
+        self,
+        name: str,
+        *,
+        parent_id: Optional[str] = None,
+        color: str = "",
+    ) -> "GroupRecord":
+        return self._group_mutation(
+            lambda: self._service.create_group(
+                name, parent_id=parent_id, color=color
+            )
+        )
+
+    def rename_group(self, group_id: str, new_name: str) -> "GroupRecord":
+        return self._group_mutation(
+            lambda: self._service.rename_group(group_id, new_name)
+        )
+
+    def delete_group(self, group_id: str) -> None:
+        self._group_mutation(lambda: self._service.delete_group(group_id))
+
+    def set_group_color(self, group_id: str, color: str) -> "GroupRecord":
+        return self._group_mutation(
+            lambda: self._service.set_group_color(group_id, color)
+        )
+
+    def place_group(
+        self,
+        group_id: str,
+        parent_id: Optional[str],
+        index: int,
+    ) -> "GroupRecord":
+        return self._group_mutation(
+            lambda: self._service.place_group(group_id, parent_id, index)
+        )
+
+    def assign_connection_to_group(
+        self, connection_id: str, group_id: Optional[str]
+    ) -> ConnectionRecord:
+        return self._group_mutation(
+            lambda: self._service.assign_group(connection_id, group_id)
+        )
+
+    def copy_connection_to_group(
+        self, connection_id: str, group_id: str
+    ) -> ConnectionRecord:
+        return self._group_mutation(
+            lambda: self._service.copy_connection_to_group(connection_id, group_id)
+        )
+
+    def remove_connection_from_group(
+        self, connection_id: str, group_id: str
+    ) -> ConnectionRecord:
+        return self._group_mutation(
+            lambda: self._service.remove_connection_from_group(
+                connection_id, group_id
+            )
+        )
+
+    def reorder_connection(
+        self,
+        connection_id: str,
+        target_connection_id: str,
+        group_id: Optional[str],
+        position: str,
+    ) -> None:
+        self._group_mutation(
+            lambda: self._service.reorder_connection(
+                connection_id, target_connection_id, group_id, position
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Metadata operations
+    # ------------------------------------------------------------------
+
+    def update_connection_metadata(
+        self, connection_id: str, values: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Merge safe metadata; ``None`` values remove the corresponding key."""
+        with self._lock:
+            before = self._begin()
+            try:
+                if self._service.get(connection_id) is None:
+                    raise CoreError(
+                        ErrorCode.CONNECTION_NOT_FOUND,
+                        "The connection does not exist",
+                    )
+                if not isinstance(values, Mapping):
+                    raise TypeError("metadata values must be a mapping")
+                current = dict(self._metadata.get(connection_id, {}))
+                for key, value in values.items():
+                    if value is None:
+                        current.pop(key, None)
+                    else:
+                        current[key] = value
+                if current:
+                    self._metadata[connection_id] = validate_safe_metadata(current)
+                else:
+                    self._metadata.pop(connection_id, None)
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return copy.deepcopy(self._metadata.get(connection_id, {}))
+
+    def rename_tag(self, old_tag: str, new_tag: str) -> None:
+        """Rename a tag across every connection (case-insensitive, deduped)."""
+        if not isinstance(old_tag, str) or not old_tag.strip():
+            raise ValueError("old tag must be a non-empty string")
+        if not isinstance(new_tag, str) or not new_tag.strip():
+            raise ValueError("new tag must be a non-empty string")
+        with self._lock:
+            before = self._begin()
+            old_lower = old_tag.lower()
+            changed = False
+            try:
+                for values in self._metadata.values():
+                    tags = values.get("tags")
+                    if not isinstance(tags, list):
+                        continue
+                    new_tags: List[str] = []
+                    seen = set()
+                    for tag in tags:
+                        tag_str = str(tag)
+                        if tag_str.lower() == old_lower:
+                            tag_str = new_tag
+                        lowered = tag_str.lower()
+                        if lowered not in seen:
+                            seen.add(lowered)
+                            new_tags.append(tag_str)
+                    if new_tags != tags:
+                        values["tags"] = new_tags
+                        changed = True
+                if changed:
+                    self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            if changed:
+                self._commit(before)
 
     # ------------------------------------------------------------------
     # Event dispatch (outside the lock)

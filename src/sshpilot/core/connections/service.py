@@ -651,6 +651,21 @@ class ConnectionService:
         self._emit(MutationEvent(MutationKind.GROUP_CREATED, group_id=group_id))
         return saved
 
+    def rename_group(self, group_id: str, new_name: str) -> GroupRecord:
+        """Rename a group (the id is stable; memberships are unaffected)."""
+        with self._lock:
+            group = self._groups.get(group_id)
+            if group is None:
+                raise _validation_error(f"Unknown group {group_id!r}")
+            name = (new_name or "").strip()
+            if not name:
+                raise _validation_error("Group name is required")
+            group.name = name
+            saved = copy.deepcopy(group)
+        self._persist()
+        self._emit(MutationEvent(MutationKind.GROUP_CREATED, group_id=group_id))
+        return saved
+
     def set_group_color(self, group_id: str, color: str) -> GroupRecord:
         """Update a group's color (empty string clears it)."""
         with self._lock:
