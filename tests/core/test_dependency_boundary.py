@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 from collections import deque
+from functools import lru_cache
 from pathlib import Path
 
 from sshpilot.core.package_graph import (
@@ -73,6 +74,23 @@ def _iter_py_files(package: str):
     yield from sorted(base.rglob("*.py"))
 
 
+@lru_cache(maxsize=None)
+def _read_source(path: Path) -> str:
+    """Read a source file once; later parses reuse the cached text."""
+    return path.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=None)
+def _parse_source(path: Path) -> ast.Module:
+    """Parse a source file once and reuse the tree across every scan test.
+
+    The boundary/closure tests each walk every ``src/sshpilot`` file
+    independently; without this cache each file is tokenised and parsed once
+    per test, which dominates the runtime of these two modules.
+    """
+    return ast.parse(_read_source(path), filename=str(path))
+
+
 def _has_triple_dot(mod: str) -> bool:
     return "..." in mod or ".." in mod
 
@@ -104,7 +122,7 @@ def _collect_imports(
     detect ``from sshpilot import config`` as an edge to ``sshpilot.config``
     while ignoring pure-symbol names like ``__version__``.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = _parse_source(path)
     hits: list[tuple[str, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -150,7 +168,7 @@ def _forbidden_gi(path: Path) -> list[str]:
             hits.append(f"{kind} {name}")
         if name.startswith("gi.repository"):
             hits.append(f"{kind} {name}")
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = _parse_source(path)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("gi"):
             for alias in node.names:

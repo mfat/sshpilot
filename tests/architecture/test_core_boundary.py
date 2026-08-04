@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import ast
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
@@ -226,6 +227,23 @@ def _rel(path: Path) -> str:
     return "/".join(path.relative_to(SOURCE).parts)
 
 
+@lru_cache(maxsize=None)
+def _read_source(path: Path) -> str:
+    """Read a source file once; later scans reuse the cached text."""
+    return path.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=None)
+def _parse_source(path: Path) -> ast.Module:
+    """Parse a source file once and reuse the tree across every boundary scan.
+
+    Each frontend/core scan below walks the same ``src/sshpilot`` files; without
+    this cache every file is tokenised and parsed once per test, which dominates
+    the runtime of this module (~10s of the suite).
+    """
+    return ast.parse(_read_source(path))
+
+
 def _full_names(node: ast.AST, rel: str) -> list[str]:
     """Resolve an Import/ImportFrom node to absolute dotted module names."""
     parts = rel.split("/")[:-1]
@@ -326,7 +344,7 @@ def test_frontend_core_imports_are_categorised():
     violations: list[str] = []
     registry = set(ALLOWED) | set(PENDING)
     for path in _frontend_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _parse_source(path)
         rel = _rel(path)
         for sub, symbol in _core_imports(tree, rel):
             if (rel, sub, symbol) not in registry:
@@ -359,7 +377,7 @@ def test_registry_matches_the_source_tree():
     """Every ALLOWED/PENDING entry must resolve (no stale, no phantom)."""
     seen: set[tuple[str, str, str]] = set()
     for path in _frontend_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _parse_source(path)
         rel = _rel(path)
         for sub, symbol in _core_imports(tree, rel):
             seen.add((rel, sub, symbol))
@@ -407,7 +425,7 @@ def test_frontend_daemon_imports_are_allowlisted():
     allowed = set(DAEMON_ALLOWLIST)
     violations: list[str] = []
     for path in _frontend_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _parse_source(path)
         rel = _rel(path)
         for symbol in _daemon_imports(tree, rel):
             if (rel, symbol) not in allowed:
@@ -423,7 +441,7 @@ def test_frontend_backend_operations_are_registered():
     violations: list[str] = []
     stale: list[str] = []
     for path in _frontend_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _parse_source(path)
         rel = _rel(path)
         detected = _backend_ops(tree)
         for op in detected:
@@ -477,7 +495,7 @@ def test_core_api_daemon_are_gi_free():
         for path in base.rglob("*.py"):
             if "__pycache__" in path.parts:
                 continue
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = _parse_source(path)
             names: list[str] = []
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
@@ -495,7 +513,7 @@ def test_core_does_not_import_daemon():
     for path in (SOURCE / "core").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _parse_source(path)
         rel = _rel(path)
         hits = _daemon_imports(tree, rel)
         assert not hits, f"{path}: core imports daemon: {hits}"
@@ -509,7 +527,7 @@ def test_known_hosts_editor_has_no_local_file_io():
     ``Path.write_text`` calls.
     """
     path = SOURCE / "known_hosts_editor.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = _parse_source(path)
     used: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -565,7 +583,7 @@ def test_key_manager_has_no_local_key_io():
     and no file read/write calls.
     """
     path = SOURCE / "key_manager.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = _parse_source(path)
     used: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -655,12 +673,12 @@ def test_authorized_keys_window_reads_no_discovered_key_paths():
     API; the old path-based ``_append_pubkey_from_path`` helper is gone.
     """
     path = SOURCE / "authorized_keys_window.py"
-    source = path.read_text(encoding="utf-8")
+    source = _read_source(path)
     assert "def _append_pubkey_from_path" not in source, (
         "authorized_keys_window.py still reads public keys from a path "
         "(M1 incomplete)"
     )
-    tree = ast.parse(source)
+    tree = _parse_source(path)
     for name, ids in _ids_in_funcs(tree, _KEY_IMPORT_FLOW).items():
         assert not ({"open", "exists", "isfile"} & ids), (
             f"{name} performs a local key-file operation (M1 incomplete)"
