@@ -46,6 +46,17 @@ from ..models.known_hosts import (
     KnownHostsSnapshot,
     RemoveKnownHostEntriesRequest,
 )
+from ..models.keys import (
+    GenerateKeyRequest,
+    GenerateKeyResult,
+    KeyId,
+    KeyList,
+    KeyStoreScope,
+    KeySummary,
+    ListKeysRequest,
+    PublicKeyResult,
+    ReadPublicKeyRequest,
+)
 from ..models.connections import (
     EDITABLE_CONFIG_FIELDS,
     AuthenticationMethod,
@@ -761,6 +772,159 @@ def known_hosts_mutation_result_from_wire(
             known_host_entry_summary_from_wire(item) for item in entries
         ),
     )
+
+
+def _key_store_scope(value: Any, context: str) -> KeyStoreScope:
+    """Parse a semantic key-store scope; reject malformed or unknown values."""
+
+    if type(value) is not str or value not in {"default", "isolated"}:
+        raise ValueError(f"{context} must be a supported key store scope")
+    return KeyStoreScope(value)
+
+
+def key_summary_to_wire(summary: KeySummary) -> Dict[str, Any]:
+    if type(summary) is not KeySummary:
+        raise TypeError("key summary is required")
+    return {
+        "key_id": summary.key_id,
+        "name": summary.name,
+        "private_path": summary.private_path,
+        "public_path": summary.public_path,
+        "public_key_available": summary.public_key_available,
+    }
+
+
+def key_summary_from_wire(value: Any) -> KeySummary:
+    data = _strict_fields(
+        value,
+        required={
+            "key_id",
+            "name",
+            "private_path",
+            "public_path",
+            "public_key_available",
+        },
+        context="key summary",
+    )
+    return KeySummary(
+        key_id=KeyId(_identifier(data["key_id"], "key id")),
+        name=_text(data["name"], "key name"),
+        private_path=_text(data["private_path"], "key private path"),
+        public_path=_text(data["public_path"], "key public path"),
+        public_key_available=_boolean(
+            data["public_key_available"], "key public availability"
+        ),
+    )
+
+
+def list_keys_request_to_wire(request: ListKeysRequest) -> Dict[str, Any]:
+    if type(request) is not ListKeysRequest:
+        raise TypeError("list keys request is required")
+    return {"scope": request.scope.value}
+
+
+def list_keys_request_from_wire(value: Any) -> ListKeysRequest:
+    data = _strict_fields(value, required={"scope"}, context="list keys request")
+    return ListKeysRequest(
+        scope=_key_store_scope(data["scope"], "key store scope")
+    )
+
+
+def key_list_to_wire(key_list: KeyList) -> Dict[str, Any]:
+    if type(key_list) is not KeyList:
+        raise TypeError("key list is required")
+    return {"keys": [key_summary_to_wire(item) for item in key_list.keys]}
+
+
+def key_list_from_wire(value: Any) -> KeyList:
+    data = _strict_fields(value, required={"keys"}, context="key list")
+    keys = data["keys"]
+    if type(keys) is not list:
+        raise ValueError("key list entries must be an array")
+    return KeyList(keys=tuple(key_summary_from_wire(item) for item in keys))
+
+
+def read_public_key_request_to_wire(request: ReadPublicKeyRequest) -> Dict[str, Any]:
+    if type(request) is not ReadPublicKeyRequest:
+        raise TypeError("read public key request is required")
+    return {"key_id": request.key_id, "scope": request.scope.value}
+
+
+def read_public_key_request_from_wire(value: Any) -> ReadPublicKeyRequest:
+    data = _strict_fields(
+        value,
+        required={"key_id", "scope"},
+        context="read public key request",
+    )
+    return ReadPublicKeyRequest(
+        key_id=KeyId(_identifier(data["key_id"], "key id")),
+        scope=_key_store_scope(data["scope"], "key store scope"),
+    )
+
+
+def public_key_result_to_wire(result: PublicKeyResult) -> Dict[str, Any]:
+    if type(result) is not PublicKeyResult:
+        raise TypeError("public key result is required")
+    return {"key_id": result.key_id, "text": result.text}
+
+
+def public_key_result_from_wire(value: Any) -> PublicKeyResult:
+    data = _strict_fields(
+        value,
+        required={"key_id", "text"},
+        context="public key result",
+    )
+    return PublicKeyResult(
+        key_id=KeyId(_identifier(data["key_id"], "key id")),
+        text=_text(data["text"], "public key text"),
+    )
+
+
+def generate_key_request_to_wire(request: GenerateKeyRequest) -> Dict[str, Any]:
+    if type(request) is not GenerateKeyRequest:
+        raise TypeError("generate key request is required")
+    return {
+        "name": request.name,
+        "key_type": request.key_type,
+        "key_size": request.key_size,
+        "comment": request.comment,
+        "passphrase": request.passphrase,
+        "scope": request.scope.value,
+    }
+
+
+def generate_key_request_from_wire(value: Any) -> GenerateKeyRequest:
+    data = _strict_fields(
+        value,
+        required={
+            "name",
+            "key_type",
+            "key_size",
+            "comment",
+            "passphrase",
+            "scope",
+        },
+        context="generate key request",
+    )
+    return GenerateKeyRequest(
+        name=_text(data["name"], "key name"),
+        key_type=_text(data["key_type"], "key type"),
+        key_size=_integer(data["key_size"], "key size"),
+        comment=_text(data["comment"], "key comment", allow_empty=True),
+        passphrase=_text(data["passphrase"], "key passphrase", allow_empty=True),
+        scope=_key_store_scope(data["scope"], "key store scope"),
+    )
+
+
+def generate_key_result_to_wire(result: GenerateKeyResult) -> Dict[str, Any]:
+    if type(result) is not GenerateKeyResult:
+        raise TypeError("generate key result is required")
+    return {"key": key_summary_to_wire(result.key)}
+
+
+def generate_key_result_from_wire(value: Any) -> GenerateKeyResult:
+    data = _strict_fields(value, required={"key"}, context="generate key result")
+    return GenerateKeyResult(key=key_summary_from_wire(data["key"]))
 
 
 def handshake_request_to_wire(request: HandshakeRequest) -> Dict[str, Any]:
