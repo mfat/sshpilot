@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any, FrozenSet, Mapping, Optional, Tuple, Union
 
 from .common import ConnectionId, require_identifier
+from .connection_store import validate_safe_metadata
 
 
 
@@ -390,19 +391,6 @@ class DeleteKeyPassphraseRequest:
         require_identifier(self.key_path, "key path")
 
 
-@dataclass(frozen=True)
-class UpdateConnectionMetadataRequest:
-    """Update non-SSH metadata (tags, WoL settings) for a connection."""
-
-    connection_id: ConnectionId
-    meta: Mapping[str, Any]
-
-    def __post_init__(self) -> None:
-        require_identifier(self.connection_id, "connection id")
-        if not isinstance(self.meta, Mapping):
-            raise TypeError("meta must be a mapping")
-
-
 # -- Group request / response models ---------------------------------------
 
 @dataclass(frozen=True)
@@ -654,3 +642,17 @@ def delete_plugin_secret_request_from_wire(payload: dict) -> DeletePluginSecretR
         plugin_id=payload["plugin_id"],
         key=payload["key"],
     )
+
+
+# -- UpdateConnectionMetadataRequest hardening ------------------------------
+
+@dataclass(frozen=True)
+class UpdateConnectionMetadataRequest:
+    """Update non-SSH metadata (tags, WoL settings) for a connection."""
+
+    connection_id: ConnectionId
+    meta: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        object.__setattr__(self, "meta", validate_safe_metadata(self.meta))
