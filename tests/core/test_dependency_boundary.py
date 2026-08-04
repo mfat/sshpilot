@@ -61,19 +61,17 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     # the fixed scanner reveals them. They are pre-existing coupling, not new debt.
     ("askpass_utils.py", "sshpilot.secret_storage"): "M5",
     ("connection_manager.py", "sshpilot.secret_storage"): "M5",
+    ("connection_manager.py", "sshpilot.plugins"): "M8",  # plugin launch runtime
     ("credential_model.py", "sshpilot.secret_storage"): "M5",
     ("plugins/api.py", "sshpilot.plugins.host"): "M8",
 }
 
-# core is the bottom layer, but ConnectionApplicationService still couples to
-# frontend modules for command building, plugin capability and config. Each
-# entry is removed as the owning migration replaces that coupling.
-CORE_DEBT: dict[tuple[str, str], str] = {
-    ("core/connection_application_service.py", "sshpilot.plugins.api"): "M8",
-    ("core/connection_application_service.py", "sshpilot.plugins.registry"): "M8",
-    ("core/connection_application_service.py", "sshpilot.ssh_connection_builder"): "M7",
-    ("core/connection_application_service.py", "sshpilot.config"): "M4",
-}
+# core is the bottom layer. ConnectionApplicationService now delegates launch
+# and secret behavior to injected providers (daemon-owned compatibility), so
+# the former config/plugin/builder coupling is gone. Any remaining frontend
+# coupling in daemon providers is registered as DAEMON_DEBT against its own
+# migration.
+CORE_DEBT: dict[tuple[str, str], str] = {}
 
 
 def _iter_py_files(package: str):

@@ -23,7 +23,7 @@ import copy
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
 from ...api.models.connection_store import (
     ConnectionMetadataSummary,
@@ -60,6 +60,101 @@ class RepositoryChange:
 
 
 ChangeListener = Callable[[RepositoryChange], None]
+
+
+@runtime_checkable
+class ConnectionRepositoryProtocol(Protocol):
+    """The minimal repository surface consumed by the application service.
+
+    Keep this protocol limited to operations the service actually needs; the
+    service never inspects repository private fields.
+    """
+
+    def snapshot(self) -> ConnectionStoreSnapshot: ...
+
+    def list_records(self) -> Tuple[ConnectionRecord, ...]: ...
+
+    def get_record(self, connection_id: str) -> Optional[ConnectionRecord]: ...
+
+    def get_editor_record(self, connection_id: str) -> Optional[ConnectionRecord]: ...
+
+    def discover_paths(self) -> frozenset: ...
+
+    def reload(self) -> ConnectionStoreSnapshot: ...
+
+    def add_listener(self, callback: ChangeListener) -> None: ...
+
+    def remove_listener(self, callback: ChangeListener) -> None: ...
+
+    def create_connection(self, data: Mapping[str, Any]) -> ConnectionRecord: ...
+
+    def update_connection(
+        self,
+        connection_id: str,
+        data: Mapping[str, Any],
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord: ...
+
+    def duplicate_connection(self, connection_id: str) -> ConnectionRecord: ...
+
+    def delete_connection(self, connection_id: str) -> None: ...
+
+    def split_connection(
+        self,
+        connection_id: str,
+        original_host_token: str,
+        data: Mapping[str, Any],
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord: ...
+
+    def create_group(
+        self,
+        name: str,
+        *,
+        parent_id: Optional[str] = None,
+        color: str = "",
+    ) -> "GroupRecord": ...
+
+    def rename_group(self, group_id: str, new_name: str) -> "GroupRecord": ...
+
+    def delete_group(self, group_id: str) -> None: ...
+
+    def set_group_color(self, group_id: str, color: str) -> "GroupRecord": ...
+
+    def place_group(
+        self,
+        group_id: str,
+        parent_id: Optional[str],
+        index: int,
+    ) -> "GroupRecord": ...
+
+    def assign_connection_to_group(
+        self, connection_id: str, group_id: Optional[str]
+    ) -> ConnectionRecord: ...
+
+    def copy_connection_to_group(
+        self, connection_id: str, group_id: str
+    ) -> ConnectionRecord: ...
+
+    def remove_connection_from_group(
+        self, connection_id: str, group_id: str
+    ) -> ConnectionRecord: ...
+
+    def reorder_connection(
+        self,
+        connection_id: str,
+        target_connection_id: str,
+        group_id: Optional[str],
+        position: str,
+    ) -> None: ...
+
+    def update_connection_metadata(
+        self, connection_id: str, values: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
+
+    def rename_tag(self, old_tag: str, new_tag: str) -> None: ...
 
 
 def _repository_error(message: str) -> CoreError:
