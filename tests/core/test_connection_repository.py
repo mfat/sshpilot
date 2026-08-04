@@ -447,6 +447,22 @@ def test_listener_reentrancy(tmp_path):
     assert seen == [1]
 
 
+def test_listener_runs_after_repository_lock_release(tmp_path):
+    repo, root, _state, _ = _repo(tmp_path)
+    completed = threading.Event()
+
+    def callback(change):
+        assert repo.snapshot().generation == change.after.generation
+        reader = threading.Thread(target=lambda: (repo.snapshot(), completed.set()))
+        reader.start()
+        reader.join(1)
+        assert completed.is_set()
+
+    repo.add_listener(callback)
+    root.write_text("Host a\n    HostName a.example.com\n")
+    repo.reload()
+
+
 def test_thread_serialization(tmp_path):
     repo, root, state, _ = _repo(tmp_path)
     errors = []

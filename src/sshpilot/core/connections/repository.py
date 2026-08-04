@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
+import stat
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple, runtime_checkable
@@ -42,7 +45,7 @@ from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord, GroupRecord
 from .service import ConnectionService
 from .ssh_config_loader import LoadedSshConfiguration
-from .ssh_config_store import SshConfigStore
+from .ssh_config_store import SshConfigStore, _atomic_write_text
 from .state_file import (
     ConnectionFileState,
     GroupFileState,
@@ -192,6 +195,7 @@ class ConnectionRepository:
         self._legacy_config_path = Path(legacy_config_path)
         self._isolated = bool(isolated)
         self._listeners: List[ChangeListener] = []
+        self._pending_changes = []
         self._service = ConnectionService(autosave=False)
         self._metadata: Dict[str, Dict[str, Any]] = {}
         self._non_ssh_generations: Dict[str, int] = {}
@@ -239,11 +243,11 @@ class ConnectionRepository:
 
     def reload(self) -> ConnectionStoreSnapshot:
         """Re-read authoritative sources; publish a change only when semantics differ."""
-        with self._lock:
+        with self._mutation_scope():
             before = self._build_snapshot_locked()
             self._load_state_locked()
             after = self._build_snapshot_locked()
-        return self._notify(before, after)
+            return self._notify(before, after)
 
     def add_listener(self, callback: ChangeListener) -> None:
         with self._lock:
@@ -554,6 +558,12 @@ class ConnectionRepository:
     def _begin(self) -> ConnectionStoreSnapshot:
         return self._build_snapshot_locked()
 
+    @contextmanager
+    def _mutation_scope(self):
+        with self._lock:
+            yield
+        self._dispatch_pending_changes()
+
     def _commit(self, before: ConnectionStoreSnapshot) -> None:
         self._notify(before, self._build_snapshot_locked())
 
@@ -562,6 +572,45 @@ class ConnectionRepository:
         ssh_config = self._ssh_store.load()
         file_state, _migrated = self._read_state()
         self._publish_state_locked(ssh_config, file_state)
+
+    def _capture_transaction_files_locked(self):
+        paths = {self._state_path, self._ssh_store.root_path}
+        paths.update(self._ssh_store.load().source_paths)
+        captured = {}
+        for path in paths:
+            path = Path(path)
+            try:
+                info = path.stat()
+            except FileNotFoundError:
+                captured[path] = (False, b"", 0)
+                continue
+            captured[path] = (True, path.read_bytes(), stat.S_IMODE(info.st_mode))
+        return captured
+
+    def _restore_transaction_files_locked(self, captured) -> None:
+        for path, (existed, data, mode) in captured.items():
+            if not existed:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
+            _atomic_write_text(path, data.decode("utf-8"))
+            os.chmod(path, mode, follow_symlinks=False)
+
+    def _rollback_after_failure_locked(self, captured) -> None:
+        try:
+            self._restore_transaction_files_locked(captured)
+            self._resync_from_files()
+        except Exception as rollback_error:
+            try:
+                self._resync_from_files()
+            except Exception:
+                pass
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection mutation outcome could not be determined",
+            ) from rollback_error
 
     def _validate_new_nickname(self, nickname: str) -> str:
         nickname = (nickname or "").strip()
@@ -579,8 +628,9 @@ class ConnectionRepository:
         return nickname
 
     def create_connection(self, data: Mapping[str, Any]) -> ConnectionRecord:
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
+            disk_before = self._capture_transaction_files_locked()
             payload = dict(data)
             payload.pop("uuid", None)
             protocol = str(payload.get("protocol") or "ssh").strip() or "ssh"
@@ -605,7 +655,7 @@ class ConnectionRepository:
                 # connections.json; persist it after every committed mutation.
                 self._persist_state_file_locked()
             except Exception:
-                self._resync_from_files()
+                self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
             return self._service.get(created.id)
@@ -617,8 +667,9 @@ class ConnectionRepository:
         *,
         expected_generation: Optional[int] = None,
     ) -> ConnectionRecord:
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
+            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -671,14 +722,15 @@ class ConnectionRepository:
                 self._migrate_metadata_on_rename(connection_id, updated.id)
                 self._persist_state_file_locked()
             except Exception:
-                self._resync_from_files()
+                self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
             return self._service.get(updated.id)
 
     def duplicate_connection(self, connection_id: str) -> ConnectionRecord:
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
+            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -702,14 +754,15 @@ class ConnectionRepository:
                     self._service.copy_connection_to_group(created.id, gid)
                 self._persist_state_file_locked()
             except Exception:
-                self._resync_from_files()
+                self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
             return self._service.get(created.id)
 
     def delete_connection(self, connection_id: str) -> None:
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
+            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -726,7 +779,7 @@ class ConnectionRepository:
                 self._metadata.pop(connection_id, None)
                 self._persist_state_file_locked()
             except Exception:
-                self._resync_from_files()
+                self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
 
@@ -738,8 +791,9 @@ class ConnectionRepository:
         *,
         expected_generation: Optional[int] = None,
     ) -> ConnectionRecord:
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
+            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -774,7 +828,7 @@ class ConnectionRepository:
                 self._overlay_ssh_generations(result.config)
                 self._persist_state_file_locked()
             except Exception:
-                self._resync_from_files()
+                self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
             return self._service.get(result_id)
@@ -799,7 +853,7 @@ class ConnectionRepository:
         A failed state-file write rolls the in-memory state back to the
         persisted files so memory never diverges from disk.
         """
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
             try:
                 result = mutation()
@@ -890,7 +944,7 @@ class ConnectionRepository:
         self, connection_id: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]:
         """Merge safe metadata; ``None`` values remove the corresponding key."""
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
             try:
                 if self._service.get(connection_id) is None:
@@ -923,7 +977,7 @@ class ConnectionRepository:
             raise ValueError("old tag must be a non-empty string")
         if not isinstance(new_tag, str) or not new_tag.strip():
             raise ValueError("new tag must be a non-empty string")
-        with self._lock:
+        with self._mutation_scope():
             before = self._begin()
             old_lower = old_tag.lower()
             changed = False
@@ -967,10 +1021,18 @@ class ConnectionRepository:
             self._generation += 1
             after = self._build_snapshot_locked()
             listeners = list(self._listeners)
-        change = RepositoryChange(before=before, after=after)
-        for callback in listeners:
-            callback(change)
+            self._pending_changes.append(
+                (RepositoryChange(before=before, after=after), listeners)
+            )
         return after
+
+    def _dispatch_pending_changes(self) -> None:
+        with self._lock:
+            pending = list(self._pending_changes)
+            self._pending_changes.clear()
+        for change, listeners in pending:
+            for callback in listeners:
+                callback(change)
 
     @staticmethod
     def _semantically_equal(

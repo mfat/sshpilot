@@ -58,6 +58,31 @@ def test_ssh_create(tmp_path):
     assert snap.generation == 1
 
 
+def test_ssh_create_rolls_back_when_state_write_fails(tmp_path, monkeypatch):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    before_root = root.read_bytes()
+    before_state = state.read_bytes() if state.exists() else None
+    before_snapshot = repo.snapshot()
+    events = []
+    repo.add_listener(events.append)
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("injected state write failure")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository.write_connection_state",
+        fail_write,
+    )
+    with pytest.raises(OSError):
+        repo.create_connection(
+            {"nickname": "new", "hostname": "example.net", "protocol": "ssh"}
+        )
+    assert root.read_bytes() == before_root
+    assert (state.read_bytes() if state.exists() else None) == before_state
+    assert repo.snapshot() == before_snapshot
+    assert events == []
+
+
 def test_ssh_create_duplicate_rejected(tmp_path):
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     with pytest.raises(CoreError) as exc:

@@ -562,14 +562,33 @@ class SshConfigStore:
         payload.pop("uuid", None)
         payload.pop("source", None)
         payload.pop("source_config_path", None)
-        payload["nickname"] = str(payload.get("nickname") or "").strip() or original_host_token
+        payload["nickname"] = str(payload.get("nickname") or "").strip()
         new_name = str(payload.get("nickname") or "").strip()
+        if not original_host_token or not new_name:
+            raise CoreError(
+                ErrorCode.VALIDATION_ERROR,
+                "A split host token and destination name are required",
+            )
+        if new_name != connection_id and any(
+            item.id == new_name for item in config.connections
+        ):
+            raise _already_exists_error()
 
         target = Path(source)
         expected_revision = config.root_revision
         expected_bytes = target.read_bytes()
 
         doc = SSHConfigDocument.parse_file(str(target))
+        matching_blocks = [
+            node
+            for node in doc.nodes
+            if isinstance(node, HostBlock) and original_host_token in node.tokens
+        ]
+        if not matching_blocks:
+            raise CoreError(
+                ErrorCode.VALIDATION_ERROR,
+                "The original host token was not found",
+            )
         new_nodes: List[Any] = []
         for node in doc.nodes:
             if isinstance(node, HostBlock) and original_host_token in node.tokens:
