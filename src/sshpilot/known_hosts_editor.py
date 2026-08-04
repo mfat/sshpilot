@@ -24,8 +24,9 @@ class KnownHostsEditorWindow(Adw.Window):
     listbox = Gtk.Template.Child()
     save_button = Gtk.Template.Child()
 
-    # Class-level default so stub-built instances (tests) start idle.
+    # Class-level defaults so stub-built instances (tests) start idle/open.
     _operation_in_flight = False
+    _closed = False
 
     def __init__(self, parent, client: SshPilotClient, on_saved: Optional[Callable] = None):
         super().__init__()
@@ -37,6 +38,8 @@ class KnownHostsEditorWindow(Adw.Window):
         self._controller = KnownHostsController(client)
         self._all_entries = []  # List[KnownHostEntrySummary] for filtering
         self._operation_in_flight = False
+        self._closed = False
+        self.connect("close-request", self._on_close_request)
 
         # Populate after present() so the window appears immediately
         # (matches AuthorizedKeysWindow's deferred load).
@@ -44,7 +47,12 @@ class KnownHostsEditorWindow(Adw.Window):
 
     @Gtk.Template.Callback()
     def _on_cancel_clicked(self, _btn):
+        self._closed = True
         self.close()
+
+    def _on_close_request(self, *_args):
+        self._closed = True
+        return False
 
     def _set_operation_in_flight(self, in_flight: bool) -> None:
         """Update the UI busy state for the interactive controls."""
@@ -57,6 +65,8 @@ class KnownHostsEditorWindow(Adw.Window):
 
     def _load_entries(self):
         """Load known_hosts entries through the daemon client on a worker thread."""
+        if self._closed:
+            return
         # Ignore a second load request while any operation is running.
         if self._operation_in_flight:
             return
@@ -73,6 +83,8 @@ class KnownHostsEditorWindow(Adw.Window):
 
     def _start_load_worker(self):
         """Start one load worker thread; the busy state stays on until it reports."""
+        if self._closed:
+            return
 
         def worker():
             try:
@@ -86,6 +98,9 @@ class KnownHostsEditorWindow(Adw.Window):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_load_finished(self, payload):
+        if self._closed:
+            self._operation_in_flight = False
+            return
         if payload[0] != "ok":
             self._set_operation_in_flight(False)
             self._show_error(_("Could not load known hosts"), payload[1])
@@ -165,7 +180,7 @@ class KnownHostsEditorWindow(Adw.Window):
             self.listbox.append(list_row)
 
     def _on_remove_clicked(self, _btn, row):
-        if self._operation_in_flight:
+        if self._closed or self._operation_in_flight:
             return
         entry_id = getattr(row, '_entry_id', None)
         if entry_id is None:
@@ -236,6 +251,8 @@ class KnownHostsEditorWindow(Adw.Window):
 
     @Gtk.Template.Callback()
     def _on_save_clicked(self, _btn):
+        if self._closed:
+            return
         # Ignore another Save click while loading or saving.
         if self._operation_in_flight:
             return
@@ -263,6 +280,11 @@ class KnownHostsEditorWindow(Adw.Window):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_save_finished(self, payload):
+        if self._closed:
+            self._operation_in_flight = False
+            if payload[0] == "ok" and self._on_saved:
+                self._on_saved()
+            return
         status = payload[0]
         if status == "ok":
             self._set_operation_in_flight(False)

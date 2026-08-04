@@ -144,6 +144,7 @@ def _build_editor(client, on_saved=None, monkeypatch=None, *, real_threads=False
     editor.search_entry = _Widget()
     editor.save_button = _Widget()
     editor._operation_in_flight = False
+    editor._closed = False
     editor.close_calls = 0
 
     def _close():
@@ -395,3 +396,150 @@ def test_no_change_save_closes_without_mutation_rpc(monkeypatch):
     assert client.listed == 1  # load only
     assert saved == [True]
     assert editor.close_calls == 1
+
+
+def test_cancel_during_blocked_initial_load(monkeypatch):
+    client = _FakeClient(entries=[_entry("a")])
+    client.list_block = threading.Event()  # initial load stays in flight
+    editor = _build_editor(client, monkeypatch=monkeypatch, real_threads=True)
+    _install_icon_stub(monkeypatch)
+    editor._load_entries()
+    assert _wait_until(lambda: client.listed == 1)
+
+    editor._on_cancel_clicked(_Widget())  # close while the load is blocked
+    assert editor._closed is True
+
+    client.list_block.set()
+    # The finished load must not touch widgets after closure.
+    assert _wait_until(lambda: editor._operation_in_flight is False)
+    assert editor.listbox.children == []
+    assert editor.close_calls == 1
+
+
+def test_cancel_during_blocked_stale_save(monkeypatch):
+    client = _FakeClient(entries=[_entry("a")])
+    client.remove_error = SshPilotError(
+        ErrorCode.STALE_EDITOR,
+        "changed",
+        retryable=True,
+        details={"resource": "known_hosts"},
+    )
+    editor = _build_editor(client, monkeypatch=monkeypatch, real_threads=True)
+    _install_icon_stub(monkeypatch)
+    editor._load_entries()
+    assert _wait_until(
+        lambda: client.listed == 1 and editor._operation_in_flight is False
+    )
+    editor._on_remove_clicked(_Widget(), editor.listbox.children[0])
+
+    client.remove_block = threading.Event()  # keep the save in flight
+    editor._on_save_clicked(_Widget())
+    assert _wait_until(lambda: client.removed == 1)
+
+    editor._on_cancel_clicked(_Widget())  # close while the save is blocked
+    assert editor._closed is True
+
+    client.remove_block.set()  # the stale error now surfaces after closure
+    assert _wait_until(lambda: editor._operation_in_flight is False)
+    assert client.listed == 1  # no stale reload after closure
+    assert editor.close_calls == 1
+
+
+def test_close_during_successful_save(monkeypatch):
+    client = _FakeClient(entries=[_entry("a")])
+    saved = []
+    editor = _build_editor(
+        client, on_saved=lambda: saved.append(True),
+        monkeypatch=monkeypatch, real_threads=True,
+    )
+    _install_icon_stub(monkeypatch)
+    editor._load_entries()
+    assert _wait_until(
+        lambda: client.listed == 1 and editor._operation_in_flight is False
+    )
+    editor._on_remove_clicked(_Widget(), editor.listbox.children[0])
+
+    client.remove_block = threading.Event()  # keep the save in flight
+    editor._on_save_clicked(_Widget())
+    assert _wait_until(lambda: client.removed == 1)
+
+    editor._on_close_request()  # window close-request fires
+    assert editor._closed is True
+
+    client.remove_block.set()
+    assert _wait_until(lambda: editor._operation_in_flight is False)
+    # A successful save after closure may call on_saved once, but must not
+    # call close() again.
+    assert saved == [True]
+    assert editor.close_calls == 0
+
+
+def test_no_client_work_after_closure(monkeypatch):
+    client = _FakeClient(entries=[_entry("a")])
+    editor = _build_editor(client, monkeypatch=monkeypatch)
+    _install_icon_stub(monkeypatch)
+
+    editor._closed = True
+    editor._load_entries()
+    editor._start_load_worker()
+    editor._on_save_clicked(_Widget())
+    editor._on_remove_clicked(_Widget(), _Widget())
+
+    assert client.listed == 0
+    assert client.removed == 0
+    assert editor._operation_in_flight is False
+    assert editor.close_calls == 0
+
+
+def test_no_dialog_or_reload_after_closure(monkeypatch):
+    client = _FakeClient(entries=[_entry("a")])
+    client.remove_error = SshPilotError(
+        ErrorCode.DAEMON_UNAVAILABLE, "no daemon"
+    )
+    editor = _build_editor(client, monkeypatch=monkeypatch, real_threads=True)
+    _install_icon_stub(monkeypatch)
+    errors = []
+    editor._show_error = lambda heading, body: errors.append((heading, body))
+    editor._load_entries()
+    assert _wait_until(
+        lambda: client.listed == 1 and editor._operation_in_flight is False
+    )
+    editor._on_remove_clicked(_Widget(), editor.listbox.children[0])
+
+    client.remove_block = threading.Event()  # keep the save in flight
+    editor._on_save_clicked(_Widget())
+    assert _wait_until(lambda: client.removed == 1)
+
+    editor._on_cancel_clicked(_Widget())
+    client.remove_block.set()  # the daemon error now surfaces after closure
+    assert _wait_until(lambda: editor._operation_in_flight is False)
+    assert errors == []  # no dialog after closure
+    assert client.listed == 1  # no reload after closure
+
+
+def test_on_saved_runs_at_most_once(monkeypatch):
+    client = _FakeClient(entries=[_entry("a")])
+    saved = []
+    editor = _build_editor(
+        client, on_saved=lambda: saved.append(True),
+        monkeypatch=monkeypatch, real_threads=True,
+    )
+    _install_icon_stub(monkeypatch)
+    editor._load_entries()
+    assert _wait_until(
+        lambda: client.listed == 1 and editor._operation_in_flight is False
+    )
+    editor._on_remove_clicked(_Widget(), editor.listbox.children[0])
+
+    client.remove_block = threading.Event()
+    editor._on_save_clicked(_Widget())
+    assert _wait_until(lambda: client.removed == 1)
+
+    editor._on_close_request()
+    client.remove_block.set()
+    assert _wait_until(lambda: editor._operation_in_flight is False)
+    # One save worker -> one _on_save_finished -> on_saved exactly once, even
+    # though the window was closed before the result landed. The busy flag
+    # prevented a second save from ever starting.
+    assert saved == [True]
+    assert editor.close_calls == 0  # no close() after closure

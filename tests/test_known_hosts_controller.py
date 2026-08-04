@@ -69,6 +69,27 @@ class _BlockingClient(_FakeClient):
         )
 
 
+class _BlockingResult:
+    """A mutation result whose ``revision`` blocks, holding the save open.
+
+    ``save()`` reads ``result.revision`` while building the next snapshot
+    inside its protected section; blocking here proves ``_saving`` stays held
+    until the returned state is fully committed.
+    """
+
+    def __init__(self, entries):
+        self.entries = entries
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.removed_count = 1
+
+    @property
+    def revision(self):
+        self.entered.set()
+        self.release.wait(timeout=5)
+        return "revision-2"
+
+
 def _entry(entry_id: str, hostname: str = "example.test") -> KnownHostEntrySummary:
     return KnownHostEntrySummary(
         entry_id=KnownHostEntryId(entry_id),
@@ -320,25 +341,49 @@ def test_failed_save_retains_pending_ids():
     )
 
 
-def test_successful_save_keeps_ids_not_in_request():
+def test_save_holds_busy_flag_until_result_commit():
+    """A save blocked reading its result must reject overlapping operations.
+
+    ``_saving`` stays held until the returned revision/entries have been
+    committed to the stored snapshot; only then does it clear.
+    """
     client = _FakeClient()
-    client.snapshot = _snapshot(_entry("a"), _entry("b"))
+    client.snapshot = _snapshot(_entry("a"))
     controller = KnownHostsController(client)
     controller.load()
     controller.stage_remove(KnownHostEntryId("a"))
 
-    # Simulate an ID arriving while the save is in flight (it was not part of
-    # this save's request); it must survive the successful save.
-    client_side_pending = [KnownHostEntryId("b")]
-    original_remove = client.remove_known_host_entries
+    blocking = _BlockingResult(entries=())
+    client.remove_known_host_entries = lambda request: blocking
 
-    def _remove_with_race(request):
-        result = original_remove(request)
-        controller._pending.extend(client_side_pending)
-        return result
+    outcome = {}
 
-    client.remove_known_host_entries = _remove_with_race
+    def _save():
+        try:
+            outcome["result"] = controller.save()
+        except Exception as exc:  # pragma: no cover - cleanup guard
+            outcome["error"] = exc
 
-    controller.save()
+    thread = threading.Thread(target=_save)
+    thread.start()
+    assert blocking.entered.wait(timeout=2)
 
-    assert controller.pending_entry_ids() == (KnownHostEntryId("b"),)
+    # Save is blocked inside the result commit; every overlapping operation
+    # must be rejected while the busy flag is still held.
+    with pytest.raises(RuntimeError):
+        controller.stage_remove(KnownHostEntryId("b"))
+    with pytest.raises(RuntimeError):
+        controller.save()
+    with pytest.raises(RuntimeError):
+        controller.load()
+
+    blocking.release.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert "error" not in outcome
+    # The committed snapshot carries the released result's revision.
+    assert controller._snapshot.revision == "revision-2"
+    assert controller._saving is False
+    assert controller._loading is False
+    assert controller.pending_entry_ids() == ()
+

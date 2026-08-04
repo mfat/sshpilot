@@ -41,14 +41,19 @@ class KnownHostsController:
         with self._lock:
             self._ensure_idle()
             self._loading = True
+
         try:
             snapshot = self._client.list_known_hosts()
-        finally:
+        except BaseException:
             with self._lock:
                 self._loading = False
+            raise
+
         with self._lock:
             self._snapshot = snapshot
             self._pending = []
+            self._loading = False
+
         return snapshot
 
     def stage_remove(self, entry_id: KnownHostEntryId) -> None:
@@ -72,28 +77,32 @@ class KnownHostsController:
                 )
             saved_ids = tuple(self._pending)
             self._saving = True
+
         try:
-            if not saved_ids:
-                # Unchanged save is a successful no-op: keep the loaded
-                # revision and entries, and never touch the client.
-                return KnownHostsMutationResult(
+            if saved_ids:
+                request = RemoveKnownHostEntriesRequest(
+                    revision=snapshot.revision,
+                    entry_ids=saved_ids,
+                )
+                result = self._client.remove_known_host_entries(request)
+            else:
+                result = KnownHostsMutationResult(
                     revision=snapshot.revision,
                     removed_count=0,
                     entries=snapshot.entries,
                 )
-            request = RemoveKnownHostEntriesRequest(
-                revision=snapshot.revision,
-                entry_ids=saved_ids,
-            )
-            result = self._client.remove_known_host_entries(request)
-        finally:
-            with self._lock:
-                self._saving = False
-        with self._lock:
-            self._snapshot = KnownHostsSnapshot(
+
+            next_snapshot = KnownHostsSnapshot(
                 revision=result.revision,
                 entries=result.entries,
             )
+        except BaseException:
+            with self._lock:
+                self._saving = False
+            raise
+
+        with self._lock:
+            self._snapshot = next_snapshot
             # Clear only the IDs this save sent; never discard a staged ID
             # that was not part of the request.
             self._pending = [
@@ -101,6 +110,8 @@ class KnownHostsController:
                 for entry_id in self._pending
                 if entry_id not in saved_ids
             ]
+            self._saving = False
+
         return result
 
     def clear_pending(self) -> None:
