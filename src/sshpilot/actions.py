@@ -265,6 +265,10 @@ class WindowActions:
                              getattr(connection, 'protocol', 'ssh'))
                 return
 
+            if getattr(self, 'key_manager', None) is None:
+                self._show_key_service_unavailable()
+                return
+
             # Open the copy key window directly
             from .sshcopyid_window import SshCopyIdWindow
             win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)

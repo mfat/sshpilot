@@ -49,6 +49,7 @@ from .gtk.daemon_connection_services import DaemonConnectionServices
 from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
 from .key_manager import KeyManager
+from sshpilot.api.models.keys import KeyStoreScope
 from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
@@ -100,7 +101,6 @@ from .shortcut_utils import (
     get_primary_modifier_label,
 )
 from .platform_utils import (
-    get_config_dir,
     get_default_terminal_command,
     get_user_preferred_terminal,
     find_any_terminal,
@@ -237,7 +237,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 self._config_changed_handler = None
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
-        key_dir = Path(get_config_dir()) if effective_isolated else None
+        # Semantic key-store scope. GTK never derives a key-directory path; the
+        # daemon resolves it. The key manager is attached below once a daemon
+        # client exists (see _attach_client_backed_services).
+        self._key_scope = (
+            KeyStoreScope.ISOLATED if effective_isolated else KeyStoreScope.DEFAULT
+        )
+        self.key_manager = None
         # Compatibility attribute while call sites migrate terminology. This is
         # a DTO projection, never a persistence-capable backend manager.
         self.connection_manager = ConnectionPresentationStore(
@@ -309,7 +315,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.loaded_plugins = []
             self.plugin_host = None
 
-        self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(
             self.config,
             connection_manager=self.connection_manager,
@@ -331,9 +336,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._client_mode_warning = None
         self._compose_api_client(app)
         if self.client is not None:
-            self.connection_manager.attach_client(self.client)
-            self.connection_runtime_status.attach_client(self.client)
-            self.plugin_connection_services.attach_client(self.client)
+            self._attach_client_backed_services()
 
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -421,6 +424,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if existing is not None:
             self.client = existing.client
             self.client_bridge = getattr(app, '_api_client_bridge', None)
+            self._attach_client_backed_services()
             return
         from .gtk_client_bridge import GtkClientBridge
         self.client = None
@@ -428,6 +432,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if app is not None:
             app._api_client_bridge = self.client_bridge
         self._api_client_selection_pending = True
+
+    def _attach_client_backed_services(self) -> None:
+        """Attach every client-backed frontend service for the active daemon client.
+
+        Called for both an already-selected client (``_compose_api_client``) and
+        a newly completed asynchronous selection (``_apply_client_selection``).
+        The key manager is only ever built over the daemon client; when no
+        client is available it stays ``None`` and there is no local fallback.
+        """
+        if self.client is None:
+            self.key_manager = None
+            return
+        self.connection_manager.attach_client(self.client)
+        self.connection_runtime_status.attach_client(self.client)
+        self.plugin_connection_services.attach_client(self.client)
+        self.key_manager = KeyManager(self.client, self._key_scope)
 
     def _begin_daemon_client_selection(self) -> None:
         """Locate/start and validate the sole backend away from the GTK thread."""
@@ -446,9 +466,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             selection.client.close()
             return
         self.client = selection.client
-        self.connection_manager.attach_client(self.client)
-        self.connection_runtime_status.attach_client(self.client)
-        self.plugin_connection_services.attach_client(self.client)
+        self._attach_client_backed_services()
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         app = self.get_application()
@@ -4204,6 +4222,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.info("No connections available, showing new connection dialog")
             self.show_connection_dialog()
             return
+        if self.key_manager is None:
+            self._show_key_service_unavailable()
+            return
         try:
             from .sshcopyid_window import SshCopyIdWindow
             SshCopyIdWindow(self, None, self.key_manager, self.connection_manager)
@@ -4237,11 +4258,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     # --- Single, simplified key generator (no copy-to-server inside) ------------
 
+    def _show_key_service_unavailable(self) -> None:
+        """Recovery message when the daemon (and therefore keys) is unavailable."""
+        try:
+            dialog = Adw.AlertDialog.new(
+                _("Key Service Unavailable"),
+                _(
+                    "SSH keys require the background service. "
+                    "Restart the service and try again."
+                ),
+            )
+            dialog.add_response("ok", _("OK"))
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(self)
+        except Exception:
+            logger.warning("Unable to show key service unavailable dialog", exc_info=True)
+
     def show_key_dialog(self, on_success=None):
         """
         Single key generation dialog (Adw). Optional passphrase.
         No copy-to-server in this dialog. If provided, `on_success(key)` is called.
         """
+        if self.key_manager is None:
+            self._show_key_service_unavailable()
+            return None
         try:
             dlg = Adw.Dialog.new()
             dlg.set_title(_("Generate SSH Key"))
@@ -4266,15 +4307,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             def on_name_changed(entry):
                 key_name = (entry.get_text() or "").strip()
                 if key_name and not key_name.startswith(".") and "/" not in key_name:
-                    key_path = self.key_manager.ssh_dir / key_name
-                    if key_path.exists():
-                        entry.add_css_class("error")
-                        entry.set_title(_("Key file name (already exists)"))
-                    else:
-                        entry.remove_css_class("error")
-                        entry.set_title(_("Key file name"))
-                else:
                     entry.remove_css_class("error")
+                    entry.set_title(_("Key file name"))
+                else:
+                    entry.add_css_class("error")
                     entry.set_title(_("Key file name"))
 
             name_row.connect("changed", on_name_changed)
@@ -4339,13 +4375,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     if "/" in key_name or key_name.startswith("."):
                         raise ValueError(_("Key file name must not contain '/' or start with '.'"))
 
-                    # Check if key already exists before attempting generation
-                    key_path = self.key_manager.ssh_dir / key_name
-                    if key_path.exists():
-                        # Suggest alternative names
+                    # Existence check against the daemon inventory — never the filesystem.
+                    existing_names = {
+                        key.name for key in (self.key_manager.discover_keys() or [])
+                    }
+                    if key_name in existing_names:
                         base_name = key_name
                         counter = 1
-                        while (self.key_manager.ssh_dir / f"{base_name}_{counter}").exists():
+                        while f"{base_name}_{counter}" in existing_names:
                             counter += 1
                         suggestion = f"{base_name}_{counter}"
 
@@ -4369,7 +4406,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
                                f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
 
-                    new_key = self._km.generate_key(
+                    new_key = self.key_manager.generate_key(
                         key_name=key_name,
                         key_type=kt,
                         key_size=3072 if kt == "rsa" else 0,
@@ -4378,45 +4415,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
 
                     if not new_key:
-                        logger.debug("SshCopyIdWindow: Key generation returned None")
+                        logger.debug("Key generation returned None")
                         raise RuntimeError("Key generation failed. See logs for details.")
 
-                    logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
-                    logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
-                               f"public_path='{new_key.public_path}'")
+                    logger.info("SSH key generated")
 
-                    # Ensure the key files are properly written and accessible
-                    import time
-                    logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
-                    time.sleep(0.5)  # Small delay to ensure files are written
-
-                    # Verify the key files exist and are accessible
-                    private_exists = os.path.exists(new_key.private_path)
-                    public_exists = os.path.exists(new_key.public_path)
-                    logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
-
-                    if not private_exists:
-                        logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
-                        raise RuntimeError(f"Private key file not found: {new_key.private_path}")
-                    if not public_exists:
-                        logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
-                        raise RuntimeError(f"Public key file not found: {new_key.public_path}")
-
-                    logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
-                    logger.debug("SshCopyIdWindow: All key files verified successfully")
-
-                    # Run your terminal ssh-copy-id flow
-                    logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
-                    self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
-                    logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
-                    self.close()
+                    if on_success:
+                        on_success(new_key)
+                    close_dialog()
 
                 except Exception as e:
-                    logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
-                    self._error("Generate & Copy failed",
-                                "Could not generate a new key and copy it to the server.",
-                                str(e))
+                    logger.error("Key generation failed: %s", type(e).__name__)
+                    try:
+                        self._error_dialog(
+                            _("Key Generation Failed"),
+                            str(e) or _("Could not generate the SSH key."),
+                        )
+                    except Exception:
+                        logger.debug("Unable to show key generation error dialog", exc_info=True)
 
             btn_primary.connect("clicked", do_generate)
             dlg.present()
@@ -4451,6 +4467,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
             logger.debug("ssh-copy-id unavailable: protocol %r has no key deployment",
                          getattr(connection, 'protocol', 'ssh'))
+            return
+        if self.key_manager is None:
+            self._show_key_service_unavailable()
             return
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
         logger.debug(f"Main window: Connection details - host: {getattr(connection, 'hostname', getattr(connection, 'host', 'unknown'))}, "

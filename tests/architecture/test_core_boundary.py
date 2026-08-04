@@ -56,8 +56,6 @@ KNOWN_TAGS = frozenset({"frontend"} | {"M%d" % i for i in range(1, 9)})
 ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
     {
         # -- error mapping (presentation) -------------------------------
-        ("key_manager.py", "errors", "CoreError"),
-        ("key_manager.py", "errors", "ErrorCode"),
         ("connection_manager.py", "errors", "CoreError"),
         ("backup_manager.py", "errors", "CoreError"),
         # -- connection field validation --------------------------------
@@ -112,10 +110,6 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
 #    Key: (module_rel, core_submodule, symbol) -> (tag, short reason).
 # ---------------------------------------------------------------------------
 PENDING: dict[tuple[str, str, str], tuple[str, str]] = {
-    # === M1 — keys: generation + discovery move to the daemon ===========
-    ("key_manager.py", "keys", "KeyGenerateSpec"): ("M1", "key generation spec -> daemon"),
-    ("key_manager.py", "keys", "KeyService"): ("M1", "instantiate key service -> daemon"),
-    ("key_manager.py", "keys", "SSHKeyInfo"): ("M1", "key listing result -> daemon"),
     # === M3 — connections store ========================================
     ("connection_manager.py", "connections", "ConnectionService"): ("M3", "in-GTK store -> daemon"),
     # === M4 — settings / config JSON ownership ==========================
@@ -173,8 +167,6 @@ SSH_BINS = {"ssh", "scp", "sftp", "ssh-copy-id", "ssh-keygen", "ssh-add", "sshfs
 SERVICE_CLASSES = {"SecretManager", "ConnectionService", "KeyService", "BackupManager"}
 
 BACKEND_OPS: dict[tuple[str, str], str] = {
-    # -- M1 keys ---------------------------------------------------------
-    ("key_manager.py", "KeyService"): "M1",
     # -- M3 connections --------------------------------------------------
     ("connection_manager.py", "ConnectionService"): "M3",
     # -- M5 secrets ------------------------------------------------------
@@ -349,7 +341,6 @@ def test_frontend_core_imports_are_categorised():
 
 # Baseline diag for macros below.
 _PENDING_EXPECTED = {
-    "M1": 3,
     "M3": 1,
     "M4": 3,
     "M5": 4,
@@ -467,7 +458,7 @@ def test_backend_ops_debt_matches_exact_baseline():
     from collections import Counter
 
     debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
-    expected = {"M1": 1, "M3": 1, "M5": 4, "M6": 1, "M7": 19, "M8": 1}
+    expected = {"M3": 1, "M5": 4, "M6": 1, "M7": 19, "M8": 1}
     assert dict(debt) == expected, (
         f"BACKEND_OPS debt changed; expected {expected}, got {dict(debt)}. "
         "Only remove rows as the owning migration lands."
@@ -562,4 +553,64 @@ def test_known_hosts_editor_has_no_local_file_io():
                     raise AssertionError(
                         "known_hosts_editor.py stores a known-hosts filesystem "
                         "path (M2 incomplete)"
+                    )
+
+
+def test_key_manager_has_no_local_key_io():
+    """M1: KeyManager is a daemon adapter and never touches the file system.
+
+    Enumerated AST check for the exact legacy key surface: no core key service
+    types, no path helper, no subprocess / ssh-keygen, no directory scanning,
+    and no file read/write calls.
+    """
+    path = SOURCE / "key_manager.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    used: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            used.add(node.attr)
+        elif isinstance(node, ast.Import):
+            used.update(a.asname or a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            used.update(a.asname or a.name for a in node.names)
+    forbidden = {
+        "KeyService",
+        "KeyGenerateSpec",
+        "SSHKeyInfo",
+        "get_ssh_dir",
+        "subprocess",
+        "ssh-keygen",
+        "rglob",
+        "read_text",
+        "read_bytes",
+        "write_text",
+        "write_bytes",
+        "open",
+    }
+    hits = sorted(forbidden & used)
+    assert not hits, (
+        "key_manager.py performs local key I/O (M1 incomplete): "
+        + ", ".join(hits)
+    )
+
+    # The constructor must not accept a key-directory path.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__":
+            arg_names = {arg.arg for arg in node.args.args}
+            path_like = arg_names & {"ssh_dir", "path", "key_dir"}
+            assert not path_like, (
+                "KeyManager.__init__ accepts a key-directory path "
+                "(M1 incomplete): " + ", ".join(sorted(path_like))
+            )
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr in {"ssh_dir", "key_dir"}
+                ):
+                    raise AssertionError(
+                        "key_manager.py stores a key-directory path "
+                        "(M1 incomplete)"
                     )

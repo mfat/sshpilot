@@ -1,4 +1,10 @@
-# key_manager.py — GObject adapter over ``sshpilot.core.keys.KeyService``.
+# key_manager.py — GObject adapter over the daemon-backed ``SshPilotClient``.
+#
+# M1 ownership: the daemon owns key discovery, generation, and public-key
+# reads. This module performs no filesystem access — no key-directory scanning,
+# no ``ssh-keygen``, no ``.pub`` reads — and keeps a compatibility ``SSHKey``
+# DTO so the existing ssh-copy-id / authorized-keys UIs keep working against
+# the daemon's summaries.
 from __future__ import annotations
 
 import logging
@@ -7,74 +13,137 @@ from typing import List, Optional
 
 from gi.repository import GObject
 
-from .platform_utils import get_ssh_dir
-from sshpilot.core.keys import KeyGenerateSpec, KeyService, SSHKeyInfo
+from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models.keys import KeyStoreScope, KeySummary
+from sshpilot.gtk.key_controller import KeyController
 
 logger = logging.getLogger(__name__)
 
 
 class SSHKey:
-    """Lightweight representation of a generated/known SSH key."""
+    """Lightweight compatibility DTO projected from a daemon ``KeySummary``.
 
-    def __init__(self, private_path: str):
+    Paths are daemon-provided compatibility metadata for the M7 ssh-copy-id
+    subprocess adapter; the frontend never derives, scans, or reads these
+    files. ``key_id`` is the opaque daemon identifier used for API calls.
+    """
+
+    __slots__ = (
+        "key_id",
+        "name",
+        "private_path",
+        "public_path",
+        "public_key_available",
+    )
+
+    def __init__(
+        self,
+        private_path: str,
+        *,
+        key_id: Optional[str] = None,
+        name: Optional[str] = None,
+        public_path: Optional[str] = None,
+        public_key_available: bool = False,
+    ):
         self.private_path = private_path
-        self.public_path = f"{private_path}.pub"
+        self.public_path = (
+            public_path if public_path is not None else f"{private_path}.pub"
+        )
+        self.name = name if name is not None else (
+            Path(private_path).name if private_path else ""
+        )
+        self.key_id = key_id
+        self.public_key_available = public_key_available
 
     def __str__(self) -> str:
-        return Path(self.private_path).name
+        return self.name
 
     @classmethod
-    def from_info(cls, info: SSHKeyInfo) -> "SSHKey":
-        return cls(info.private_path)
+    def from_summary(cls, summary: KeySummary) -> "SSHKey":
+        return cls(
+            summary.private_path,
+            key_id=summary.key_id,
+            name=summary.name,
+            public_path=summary.public_path,
+            public_key_available=summary.public_key_available,
+        )
 
 
 class KeyManager(GObject.Object):
-    """GObject-facing key manager; domain work is in :class:`KeyService`."""
+    """GObject-facing key manager; domain work happens in the daemon.
+
+    Never instantiates ``core.keys.KeyService`` and never touches the file
+    system. All operations are routed through ``KeyController`` over the
+    injected ``SshPilotClient``; there is no local fallback.
+    """
 
     __gsignals__ = {
         "key-generated": (GObject.SignalFlags.RUN_LAST, None, (object,)),
     }
 
-    def __init__(self, ssh_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        client,
+        scope: KeyStoreScope = KeyStoreScope.DEFAULT,
+    ):
+        if isinstance(client, (str, bytes, Path)) or hasattr(client, "__fspath__"):
+            raise TypeError(
+                "KeyManager no longer accepts a key-directory path; "
+                "pass a daemon-backed SshPilotClient instead"
+            )
         super().__init__()
-        self._service = KeyService(Path(ssh_dir or get_ssh_dir()))
-        self.ssh_dir = self._service.ssh_dir
+        self._controller = KeyController(client, scope)
+        self._scope = scope
 
     def discover_keys(self) -> List[SSHKey]:
-        return [SSHKey.from_info(info) for info in self._service.discover_keys()]
+        key_list = self._controller.list_keys()
+        return [SSHKey.from_summary(summary) for summary in key_list.keys]
+
+    def read_public_key(self, key: SSHKey) -> str:
+        """Return the public-key text for a daemon-discovered ``SSHKey``.
+
+        The daemon resolves the opaque ``key_id``; no local ``.pub`` read.
+        """
+        result = self._controller.read_public_key(key.key_id)
+        return result.text
 
     def generate_key(
         self,
         key_name: str,
         key_type: str = "ed25519",
-        key_size: int = 3072,
+        key_size: int = 0,
         comment: Optional[str] = None,
         passphrase: Optional[str] = None,
     ) -> Optional[SSHKey]:
-        """Generate a key via the core service; emit ``key-generated`` on success."""
-        from sshpilot.core.errors import CoreError, ErrorCode
-
+        """Generate a key via the daemon; emit ``key-generated`` on success."""
         try:
-            info = self._service.generate_key(
-                KeyGenerateSpec(
-                    key_name=key_name,
-                    key_type=key_type,
-                    key_size=key_size,
-                    comment=comment,
-                    passphrase=passphrase,
-                )
+            result = self._controller.generate_key(
+                name=key_name,
+                key_type=key_type,
+                key_size=key_size,
+                comment=comment or "",
+                passphrase=passphrase or "",
             )
-            key = SSHKey.from_info(info)
+        except SshPilotError as exc:
+            raise self._map_error(exc) from exc
+        key = SSHKey.from_summary(result.key)
+        try:
             self.emit("key-generated", key)
-            logger.info("Generated SSH key at %s", info.private_path)
-            return key
-        except CoreError as e:
-            # Preserve historical exception types for GTK callers / tests.
-            if e.code == ErrorCode.KEY_EXISTS:
-                raise FileExistsError(e.message) from e
-            if e.code == ErrorCode.VALIDATION_ERROR:
-                raise ValueError(e.message) from e
-            raise RuntimeError(e.message) from e
-        except Exception as e:
-            logger.error("Key generation failed: %s", e, exc_info=True)
-            raise
+        except Exception:
+            # Fire-and-forget notification; never fail generation on a signal
+            # callback issue (matches Config/ConnectionManager emit usage).
+            logger.debug("key-generated signal emit failed", exc_info=True)
+        logger.info("SSH key generated")
+        return key
+
+    @staticmethod
+    def _map_error(exc: SshPilotError) -> BaseException:
+        """Preserve historical exception types for GTK callers / tests.
+
+        Never includes paths, passphrases, or subprocess command lines.
+        """
+        if exc.code == ErrorCode.KEY_ALREADY_EXISTS:
+            return FileExistsError(exc.message)
+        if exc.code == ErrorCode.VALIDATION_FAILED:
+            return ValueError(exc.message)
+        return RuntimeError(exc.message)

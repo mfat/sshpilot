@@ -44,52 +44,25 @@ def _generate_test_key(path):
     )
 
 
-def test_discover_keys_recurses(tmp_path):
-    # Skip if system python3 or gi (PyGObject) is unavailable
-    if not os.path.exists("/usr/bin/python3"):
-        pytest.skip("/usr/bin/python3 not available")
-    gi_check = subprocess.run([
-        "/usr/bin/python3", "-c", "import gi"
-    ])
-    if gi_check.returncode != 0:
-        pytest.skip("gi not available")
+
+
+
+def test_key_manager_rejects_key_directory(tmp_path):
+    """M1: KeyManager is a daemon adapter and never accepts a key directory.
+
+    Local recursive discovery is daemon-owned; the frontend manager must not
+    accept a filesystem path, let alone scan it.
+    """
+    from pathlib import Path
+
+    from sshpilot.key_manager import KeyManager
 
     ssh_dir = tmp_path / ".ssh"
     ssh_dir.mkdir()
-
-    root_key = ssh_dir / "id_root"
-    _generate_test_key(root_key)
-
-    nested_dir = ssh_dir / "nested"
-    nested_dir.mkdir()
-    nested_key = nested_dir / "id_nested"
-    _generate_test_key(nested_key)
-
-    script = textwrap.dedent(
-        """
-        import sys
-        from pathlib import Path
-        from sshpilot.key_manager import KeyManager
-        km = KeyManager(Path(sys.argv[1]))
-        for k in km.discover_keys():
-            print(k.private_path)
-        """
-    )
-
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        (os.path.join(os.getcwd(), "src"), env.get("PYTHONPATH", ""))
-    )
-    proc = subprocess.run(
-        ["/usr/bin/python3", "-c", script, str(ssh_dir)],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=env,
-    )
-    paths = set(proc.stdout.strip().splitlines())
-    assert str(root_key) in paths
-    assert str(nested_key) in paths
+    with pytest.raises(TypeError):
+        KeyManager(Path(ssh_dir))
+    with pytest.raises(TypeError):
+        KeyManager(str(ssh_dir))
 
 
 def test_connection_manager_loads_keys_standard(tmp_path, monkeypatch):
