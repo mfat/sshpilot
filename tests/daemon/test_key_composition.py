@@ -81,3 +81,15 @@ def test_dispatcher_without_service_advertises_no_key_capability():
     values = {item.value for item in capabilities.supported}
     assert "keys.read" not in values
     assert "keys.write" not in values
+
+
+def test_dispatcher_with_service_advertises_key_capabilities():
+    service = DaemonKeyService(lambda scope: mock.Mock())
+    dispatcher = RequestDispatcher(
+        ConnectionApplicationService(mock.Mock(), client_name="test"),
+        key_service=service,
+    )
+    capabilities = dispatcher._capabilities_for(_handshake_state())
+    values = {item.value for item in capabilities.supported}
+    assert "keys.read" in values
+    assert "keys.write" in values

@@ -46,7 +46,7 @@ The workstream is complete when every row below is `Complete`:
 
 | Tag | Migration | Frontend today | Daemon target | Status | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| M1 | Key generation + directory discovery | `key_manager.py` instantiates `core.keys.KeyService`, runs `ssh-keygen`, scans `~/.ssh` | Daemon owns key files and `ssh-keygen`; API lists/generates/deletes keys | **Deferred** | See M1 deferral |
+| M1 | Key generation + directory discovery | `key_manager.py` instantiates `core.keys.KeyService`, runs `ssh-keygen`, scans `~/.ssh` | Daemon owns key files and `ssh-keygen`; API lists/generates/deletes keys | **Complete** | API cycle landed; `KeyManager` is a client adapter; `keys.*` RPCs + capabilities live |
 | M2 | Known-hosts file ownership | `known_hosts_editor.py` calls `core.known_hosts.load/save_known_hosts` from GTK | Daemon API list/remove with a revision token; GTK renders entries and sends batched mutations | **Complete** | API cycle landed; editor routed through `KnownHostsController` |
 | M3 | Connection store ownership | `connection_manager.py` instantiates `core.connections.ConnectionService` (`_domain`) and writes `~/.ssh/config` | Daemon is the authoritative store; GTK uses `ConnectionApplicationService` through the client | **Deferred** | See M3 deferral |
 | M4 | Settings / config JSON ownership | `config.py` (GTK `Config`) loads/saves the config JSON via `core.settings` | Daemon owns persistent `ssh.*`/preferences keys; GTK keeps visual keys | **Deferred** | See M4 deferral |
@@ -62,30 +62,47 @@ and the exit condition that removes the `PENDING_MIGRATIONS` rows for that tag.
 
 ### M1 — Keys
 
+**Status: Complete.**
+
 **Registered in `PENDING_MIGRATIONS`:** `key_manager.py` ×
-`core.keys.{KeyGenerateSpec, KeyService, SSHKeyInfo}`.
+`core.keys.{KeyGenerateSpec, KeyService, SSHKeyInfo}` — **removed**. The
+`BACKEND_OPS` row `(key_manager.py, KeyService)` is **removed**.
 
 Pure key sniffing (`key_utils.py` × `core.keys.{SKIPPED_FILENAMES,
-is_private_key, looks_like_private_key}`) is `ALLOWED` and stays local; the
+is_private_key, looks_like_private_key}`) stays `ALLOWED` and local; the
 matrix classifies it `MIXED_NEEDS_SPLIT` — sniffing is presentation, directory
 discovery/generation is daemon.
 
-**Done now:** classification captured; the GTK adapter and its `KeyService`
-instantiation are identified as the single migration point.
+**What landed:**
 
-**Deferred because:** a real daemon key API needs typed request/result models
-(`ListKeysResult`, `GenerateKeyRequest/Result`, `DeleteKeyRequest/Result`),
-codec functions, capability entries, client + `DaemonClient` methods, dispatch
-handlers, and a daemon-side `KeyService` instance — plus regeneration of the
-strict `tests/api/snapshots/public_api.json` and the exact capability/error
-marker sets asserted by `tests/api/test_api_documentation.py`. That is exactly
-the reference-migration scope M2 established (known-hosts: models → codecs →
-capabilities → RPCs → daemon service → client methods → controller → editor);
-M1 mirrors that pattern.
+- The daemon resolves the active key directory per semantic scope
+  (`KeyStoreScope.DEFAULT` → `get_ssh_dir()`, `KeyStoreScope.ISOLATED` →
+  `get_config_dir()`); the frontend never sends or derives a key-directory
+  path.
+- The daemon creates key directories, recursively discovers private keys,
+  runs `ssh-keygen`, and reads public-key files for application features
+  (`DaemonKeyService` over `core.keys.KeyService`, keyed by stable opaque IDs).
+- `keys.list` / `keys.get_public` / `keys.generate` RPCs with
+  `KEYS_READ` / `KEYS_WRITE` capabilities advertised only when the daemon key
+  service is installed.
+- `KeyManager` is a GObject compatibility adapter over `SshPilotClient`;
+  GTK never instantiates `core.keys.KeyService`, never scans key directories,
+  and never generates keys locally.
+- Public-key text crosses the API only through `keys.get_public`; the
+  authorized-keys local import uses `KeyManager.read_public_key()` and never
+  opens a daemon-discovered `.pub` file.
+- Path metadata on `KeySummary` is temporary compatibility data for the M7
+  `ssh-copy-id` subprocess adapter; GTK does not derive or scan those paths,
+  and user-browsed arbitrary public-key files remain explicit frontend input.
+- Private-key contents and passphrases never cross the API and never appear
+  in logs, `repr`, events, or errors.
+- No deletion API was added because no existing GTK key-deletion workflow
+  exists.
 
-**Exit condition:** no `KeyService` instantiation or `ssh-keygen` invocation
-remains in GTK; key generation/listing/deletion go through `client.*`; the three
-M1 rows leave `PENDING_MIGRATIONS`.
+**Exit condition met:** no `KeyService` instantiation, `ssh-keygen`
+invocation, or directory scan remains in GTK; key listing, public-key reads,
+and generation go through `client.*`; the M1 rows are gone from
+`PENDING_MIGRATIONS` and `BACKEND_OPS`.
 
 ### M2 — Known-hosts
 
@@ -241,11 +258,11 @@ the daemon. The M8 tag then has no debt.
 are green on the baseline tree:
 
 ```text
-ALLOWED (pure, stays local) ........ 38 symbols
+ALLOWED (pure, stays local) ........ 36 symbols
 PENDING_MIGRATIONS (frontend core imports to route to daemon)
-  M1=3  M3=1  M4=3  M5=4  M6=4  M7=6           (M2=0, M8=0: contracts are allowed)
+  M3=1  M4=3  M5=4  M6=4  M7=6           (M1=0, M2=0, M8=0: contracts are allowed)
 BACKEND_OPS (frontend backend operations)
-  M1=1  M3=1  M5=4  M6=1  M7=19  M8=1  frontend=6
+  M3=1  M5=4  M6=1  M7=19  M8=1  frontend=6
 DAEMON_ALLOWLIST ................... 7 app-side daemon bootstrap/diagnostic utilities
 DAEMON_DEBT ....................... 5 daemon -> GObject-adapter imports (M3/M4/M8)
 CORE_DEBT ......................... 3 core -> frontend-helper imports (M4/M7/M8)

@@ -453,7 +453,8 @@ def test_backend_ops_debt_matches_exact_baseline():
     """Backend-op migration debt must match the reviewed baseline exactly.
 
     Each M# row set shrinks to zero as its migration lands; ``frontend`` ops
-    stay. This migration (M2) must drop the ``known_hosts_io`` row.
+    stay. M1 (keys) and M2 (known-hosts) are complete, so the remaining debt
+    is M3/M5–M8.
     """
     from collections import Counter
 
@@ -614,3 +615,53 @@ def test_key_manager_has_no_local_key_io():
                         "key_manager.py stores a key-directory path "
                         "(M1 incomplete)"
                     )
+
+
+_KEY_IMPORT_FLOW = frozenset(
+    {
+        "_on_add_from_local",
+        "_list_keys_worker",
+        "_on_local_keys_loaded",
+        "_prompt_local_key_pick",
+        "_start_public_key_read",
+        "_read_public_worker",
+        "_on_public_key_read_ok",
+        "_on_public_key_read_failed",
+    }
+)
+
+
+def _ids_in_funcs(tree: ast.Module, names: frozenset) -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name not in names:
+            continue
+        ids: set[str] = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                ids.add(child.id)
+            elif isinstance(child, ast.Attribute):
+                ids.add(child.attr)
+        found[node.name] = ids
+    return found
+
+
+def test_authorized_keys_window_reads_no_discovered_key_paths():
+    """M1: the window never opens a daemon-discovered key's ``.pub`` file.
+
+    Local key import resolves public text through the daemon ``read_public_key``
+    API; the old path-based ``_append_pubkey_from_path`` helper is gone.
+    """
+    path = SOURCE / "authorized_keys_window.py"
+    source = path.read_text(encoding="utf-8")
+    assert "def _append_pubkey_from_path" not in source, (
+        "authorized_keys_window.py still reads public keys from a path "
+        "(M1 incomplete)"
+    )
+    tree = ast.parse(source)
+    for name, ids in _ids_in_funcs(tree, _KEY_IMPORT_FLOW).items():
+        assert not ({"open", "exists", "isfile"} & ids), (
+            f"{name} performs a local key-file operation (M1 incomplete)"
+        )

@@ -17,8 +17,7 @@ mean GTK should own an instance of it.
 
 | GTK-facing module | Core import | Classification | What it does today | Target |
 | --- | --- | --- | --- | --- |
-| `key_manager.py` | `core.keys.KeyService`, `KeyGenerateSpec`, `SSHKeyInfo` | `DAEMON_STATE_REQUIRED` | Instantiates `KeyService`, runs `ssh-keygen`, scans `~/.ssh` | API adapter; daemon owns key files and `ssh-keygen` |
-| `key_manager.py` | `core.errors.CoreError`, `ErrorCode` | `PURE_FRONTEND_SAFE` | Maps structured errors to legacy exception types | Keep local (error mapping is presentation) |
+| `key_manager.py` | none (was `core.keys.KeyService`, `KeyGenerateSpec`, `SSHKeyInfo`) | `DAEMON_STATE_REQUIRED` | **Complete (M1)** — GObject adapter over `SshPilotClient` + `KeyController`; no local key I/O | API adapter; daemon owns key files and `ssh-keygen` |
 | `key_utils.py` | `core.keys` (`looks_like_private_key`, `is_private_key`, `SKIPPED_FILENAMES`) | `MIXED_NEEDS_SPLIT` | Headless key discovery used by connection dialog key chooser | Pure sniffing may stay local; discovery over the SSH dir moves to daemon |
 | `known_hosts_editor.py` | `sshpilot.api.models.known_hosts` (+ `KnownHostsController`) | `DAEMON_STATE_REQUIRED` | **Complete (M2)** — renders daemon API summaries; stages IDs; batched revision-checked removal | Daemon API list/remove with revision token; GTK renders entries |
 | `ssh_connection_validator.py` | `core.validation.connection` | `PURE_FRONTEND_SAFE` | Field validation, hostname/port/username rules | Keep local (form validation stays local) |

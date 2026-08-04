@@ -19,8 +19,11 @@ notes remain separate.
   `ListKeysRequest`, `ReadPublicKeyRequest`, `PublicKeyResult`,
   `GenerateKeyRequest`, and `GenerateKeyResult`. Added `key_not_found`,
   `key_already_exists`, `key_public_unavailable`, and `key_generation_failed`
-  error codes. Schema only: the daemon does not advertise these capabilities or
-  implement the RPCs yet.
+  error codes.
+- M1 complete: the daemon key service implements `keys.list`, `keys.get_public`,
+  and `keys.generate`, and advertises `keys.read` / `keys.write` only when that
+  service is installed. `KeyManager` became a GObject adapter over the daemon
+  client with no local key I/O.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.15`; `PROTOCOL_VERSION` stays `1.0`.
 
 - Implemented `DaemonClient.list_known_hosts` and

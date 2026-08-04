@@ -52,8 +52,10 @@ See also: `core-ownership-matrix.md`, `core-ownership-migration.md`,
    perform authoritative I/O.** A module being GTK-free does not mean GTK
    should own an instance of it; the daemon owns all authoritative state and
    I/O. `ConnectionManager`, `SecretManager`, `KeyService`, the known-hosts
-   file (M2 **complete** — the editor routes through the daemon client),
-   backup apply, and the SSH command builders are daemon-owned.
+   file (M2 **complete** — the editor routes through the daemon client), key
+   discovery/generation and `.pub` reads (M1 **complete** — `KeyManager` is a
+   client adapter), backup apply, and the SSH command builders are
+   daemon-owned.
 4. Frontend reaches into `sshpilot.core` only through the explicit allowlist
    in `tests/architecture/test_core_boundary.py` (pure validation /
    classification / naming / formatting) or through registered pending
@@ -92,8 +94,9 @@ Two AST test modules enforce rules 1, 3, 4, 5 and the package direction:
 The registries are the migration backlog for `core-ownership-migration.md`;
 each migration M1–M8 removes its rows as it lands, and registering a new
 backend call, operation or dependency edge in frontend/daemon code fails the
-suite. M2 (known-hosts file ownership) is **complete**; the remaining debt is
-M1/M3–M8. The daemon *runtime* is **not yet GI-free** — its composition of
-GObject adapters is registered debt (see `core-ownership-migration.md`).
+suite. M1 (key ownership) and M2 (known-hosts file ownership) are
+**complete**; the remaining debt is M3–M8. The daemon *runtime* is **not yet
+GI-free** — its composition of GObject adapters is registered debt (see
+`core-ownership-migration.md`).
 
 Phase 13.2 runtime ownership (sessions/SFTP/transfers/forwards/interactions) remains in `sshpilot.daemon` consuming core models; see `docs/api/` topic guides.

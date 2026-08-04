@@ -444,17 +444,17 @@ draining.
 <!-- api-capability: keys.read -->
 ## `keys.read`
 
-Schema only. Lists key metadata from the daemon-owned selected key store scope
-and returns public-key text for an opaque key ID. Gated behind `KEYS_READ`.
-Runtime support depends on daemon capability negotiation; providers do not
-advertise it yet.
+Implemented when the daemon key service is installed. Lists key metadata from
+the daemon-owned selected key store scope (`keys.list`) and returns public-key
+text for an opaque key ID (`keys.get_public`). Gated behind `KEYS_READ`.
 
 <!-- api-capability: keys.write -->
 ## `keys.write`
 
-Schema only. Generates keypairs through the daemon-owned `ssh-keygen` in the
-selected key store scope. Gated behind `KEYS_WRITE`. Runtime support depends on
-daemon capability negotiation; providers do not advertise it yet.
+Implemented when the daemon key service is installed. Generates keypairs
+through the daemon-owned `ssh-keygen` in the selected key store scope
+(`keys.generate`). Gated behind `KEYS_WRITE`. Generation is unavailable while
+the daemon is draining.
 
 ## Frontend behaviour
 

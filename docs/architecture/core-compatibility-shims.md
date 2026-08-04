@@ -21,7 +21,7 @@ service is not a shim — it is a violation (see
 | Historical path | Core owner | Notes |
 | --- | --- | --- |
 | `sshpilot.ssh_connection_validator` | `core.validation` | Re-export / thin wrapper (pure; allowed) |
-| `sshpilot.key_manager.KeyManager` | `core.keys.KeyService` | GObject shell → API adapter (M1) |
+| `sshpilot.key_manager.KeyManager` | `core.keys.KeyService` | **Complete (M1)** — GObject adapter over `SshPilotClient`; no local key I/O |
 | `sshpilot.known_hosts_editor` I/O | `core.known_hosts` | **Complete (M2)** — editor renders daemon API data; no local I/O |
 | `sshpilot.config.Config` | `core.settings` | GObject/GSettings shell; daemon owns persistent keys (M4) |
 | `sshpilot.preferences.save_advanced_ssh_settings` | `core.settings.compose_ssh_overrides` | Composition in core (pure; allowed) |
