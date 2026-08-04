@@ -550,11 +550,8 @@ class DaemonTerminalSessionController:
 
     def _on_attach_error(self, error) -> None:
         """Handle session attach error."""
-        if (
-            self._restoring_existing
-            and getattr(getattr(error, "code", None), "value", None)
-            == "session_already_closed"
-        ):
+        stale_session = getattr(getattr(error, "code", None), "value", None) == "session_already_closed"
+        if self._restoring_existing and stale_session:
             # Restore metadata can outlive a daemon session that failed or was
             # closed between discovery and the asynchronous attach request.
             # This is stale restore state, not a connection failure.
@@ -567,6 +564,45 @@ class DaemonTerminalSessionController:
                 self._stream = None
             self._notify_state_changed()
             return
+        if stale_session and self._tab_state.session_id is not None:
+            # The attach raced a startup failure. Fetch the session summary so
+            # the UI reports the daemon's actual launch failure instead of the
+            # generic attachment-state error.
+            try:
+                self._bridge.submit(
+                    lambda: self._client.get_session(self._tab_state.session_id),
+                    on_success=self._on_failed_attach_session,
+                    on_error=lambda _: self._finish_attach_error(error),
+                )
+                return
+            except RuntimeError:
+                pass
+        self._finish_attach_error(error)
+
+    def _on_failed_attach_session(self, summary) -> None:
+        failure = getattr(summary, "failure", None)
+        if failure is None:
+            self._finish_attach_error(
+                SshPilotError(
+                    ErrorCode.SESSION_STARTUP_FAILED,
+                    "The daemon session failed before attachment",
+                    session_id=self._tab_state.session_id,
+                )
+            )
+            return
+        try:
+            code = ErrorCode(failure.code)
+        except ValueError:
+            code = ErrorCode.SESSION_STARTUP_FAILED
+        self._finish_attach_error(
+            SshPilotError(
+                code,
+                failure.message,
+                session_id=self._tab_state.session_id,
+            )
+        )
+
+    def _finish_attach_error(self, error) -> None:
         self._tab_state.state = TerminalSessionState.FAILED
         self._on_error(error)
 
