@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.15",
+  "api_implementation_version": "0.16",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -1567,10 +1567,13 @@
     "ConnectionEditorDetails",
     "ConnectionHealth",
     "ConnectionId",
+    "ConnectionMetadataSummary",
     "ConnectionMutationResult",
+    "ConnectionStoreSnapshot",
     "ConnectionSummary",
     "ConnectionValidationError",
     "ConnectionValidationResult",
+    "CopyConnectionToGroupRequest",
     "CoreInfo",
     "CreateConnectionRequest",
     "CreateGroupRequest",
@@ -1600,7 +1603,9 @@
     "GenerateKeyRequest",
     "GenerateKeyResult",
     "GetPluginSecretRequest",
+    "GroupId",
     "GroupReference",
+    "GroupSummary",
     "HostKeyDecision",
     "HostKeyPrompt",
     "HostKeyStatus",
@@ -1636,6 +1641,7 @@
     "OpenSftpRequest",
     "PassphrasePrompt",
     "PasswordPrompt",
+    "PlaceGroupRequest",
     "PluginArgument",
     "PluginOperationRequest",
     "PluginOperationResult",
@@ -1647,8 +1653,11 @@
     "RememberPolicy",
     "RemoteFileEntry",
     "RemoteFileType",
+    "RemoveConnectionFromGroupRequest",
     "RemoveKnownHostEntriesRequest",
     "RenameGroupRequest",
+    "RenameTagRequest",
+    "ReorderConnectionRequest",
     "ReplayBounds",
     "ReplayRequest",
     "ReplayResult",
@@ -1663,6 +1672,7 @@
     "SessionId",
     "SessionState",
     "SessionSummary",
+    "SetGroupColorRequest",
     "SftpChmodRequest",
     "SftpEntry",
     "SftpPathRequest",
@@ -1834,10 +1844,21 @@
       "source",
       "generation"
     ],
+    "ConnectionMetadataSummary": [
+      "connection_id",
+      "values"
+    ],
     "ConnectionMutationResult": [
       "connection_id",
       "nickname",
       "generation"
+    ],
+    "ConnectionStoreSnapshot": [
+      "generation",
+      "connections",
+      "groups",
+      "root_connection_ids",
+      "metadata"
     ],
     "ConnectionSummary": [
       "id",
@@ -1858,6 +1879,10 @@
     "ConnectionValidationResult": [
       "valid",
       "errors"
+    ],
+    "CopyConnectionToGroupRequest": [
+      "connection_id",
+      "group_id"
     ],
     "CoreEvent": [
       "type",
@@ -2034,6 +2059,14 @@
       "id",
       "name"
     ],
+    "GroupSummary": [
+      "id",
+      "name",
+      "parent_id",
+      "order",
+      "color",
+      "connection_ids"
+    ],
     "HandshakeRequest": [
       "client_name",
       "client_version",
@@ -2194,6 +2227,11 @@
       "can_remember",
       "stored_secret_available"
     ],
+    "PlaceGroupRequest": [
+      "group_id",
+      "parent_id",
+      "index"
+    ],
     "PluginArgument": [
       "name",
       "value",
@@ -2246,6 +2284,10 @@
       "modified_at",
       "link_target"
     ],
+    "RemoveConnectionFromGroupRequest": [
+      "connection_id",
+      "group_id"
+    ],
     "RemoveKnownHostEntriesRequest": [
       "revision",
       "entry_ids"
@@ -2253,6 +2295,16 @@
     "RenameGroupRequest": [
       "group_id",
       "new_name"
+    ],
+    "RenameTagRequest": [
+      "old_tag",
+      "new_tag"
+    ],
+    "ReorderConnectionRequest": [
+      "connection_id",
+      "target_connection_id",
+      "group_id",
+      "position"
     ],
     "ReplayBounds": [
       "earliest_sequence",
@@ -2316,6 +2368,10 @@
       "exit_info",
       "failure",
       "attachment_count"
+    ],
+    "SetGroupColorRequest": [
+      "group_id",
+      "color"
     ],
     "SftpChmodRequest": [
       "service_id",

@@ -5,6 +5,18 @@ notes remain separate.
 
 ## Unreleased
 
+- Published the connection-store protocol schema: `ConnectionStoreSnapshot`,
+  `GroupSummary`, `ConnectionMetadataSummary`, `GroupId`, the group mutation
+  requests (`SetGroupColorRequest`, `PlaceGroupRequest`,
+  `CopyConnectionToGroupRequest`, `RemoveConnectionFromGroupRequest`,
+  `ReorderConnectionRequest`, `RenameTagRequest`), and the hardened
+  `UpdateConnectionMetadataRequest`. Added the `connection_store.changed`
+  event type carrying an exact `ConnectionStoreSnapshot` payload. The schema
+  is published but not yet implemented by the daemon; client methods and RPC
+  handlers land in later tasks.
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.16`; `PROTOCOL_VERSION` stays
+  `1.0`.
+
 - Implemented `DaemonClient.list_keys`, `DaemonClient.read_public_key`, and
   `DaemonClient.generate_key` over the `keys.list`, `keys.get_public`, and
   `keys.generate` RPCs. Key generation uses a safe mutation-ambiguity

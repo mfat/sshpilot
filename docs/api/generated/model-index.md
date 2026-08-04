@@ -623,6 +623,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ConnectionMetadataSummary -->
+## `ConnectionMetadataSummary`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Safe per-connection metadata (tags, pinning, WoL). Values never repr'd.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `values` | `Mapping[str, Any]` | No | `{}` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "values": {}
+}
+```
+
 <!-- api-model: ConnectionMutationResult -->
 ## `ConnectionMutationResult`
 
@@ -646,6 +670,36 @@ Synthetic representation:
   "connection_id": "production",
   "generation": 0,
   "nickname": "example"
+}
+```
+
+<!-- api-model: ConnectionStoreSnapshot -->
+## `ConnectionStoreSnapshot`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The complete daemon-owned connection store, revisioned by generation.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `generation` | `int` | Yes | — | No |
+| `connections` | `Tuple['ConnectionSummary', ...]` | Yes | — | No |
+| `groups` | `Tuple[GroupSummary, ...]` | Yes | — | No |
+| `root_connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
+| `metadata` | `Tuple[ConnectionMetadataSummary, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connections": {},
+  "generation": {},
+  "groups": {},
+  "metadata": {},
+  "root_connection_ids": {}
 }
 ```
 
@@ -734,6 +788,30 @@ Synthetic representation:
 {
   "errors": [],
   "valid": false
+}
+```
+
+<!-- api-model: CopyConnectionToGroupRequest -->
+## `CopyConnectionToGroupRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Copy a connection into a group, preserving existing memberships.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `group_id` | `GroupId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "group_id": {}
 }
 ```
 
@@ -1494,6 +1572,40 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: GroupSummary -->
+## `GroupSummary`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One connection group in the daemon-owned store.
+
+Group expansion is deliberately absent: it is visual frontend state.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `id` | `GroupId` | Yes | — | No |
+| `name` | `str` | Yes | — | No |
+| `parent_id` | `Optional[GroupId]` | No | `null` | No |
+| `order` | `int` | No | `0` | No |
+| `color` | `str` | No | `` | No |
+| `connection_ids` | `Tuple[ConnectionId, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "color": "",
+  "connection_ids": [],
+  "id": "production",
+  "name": "example",
+  "order": 0,
+  "parent_id": null
+}
+```
+
 <!-- api-model: HandshakeRequest -->
 ## `HandshakeRequest`
 
@@ -2236,6 +2348,32 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: PlaceGroupRequest -->
+## `PlaceGroupRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Place a group at a parent/index in the sibling order.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `group_id` | `GroupId` | Yes | — | No |
+| `parent_id` | `Optional[GroupId]` | Yes | — | No |
+| `index` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "group_id": {},
+  "index": {},
+  "parent_id": {}
+}
+```
+
 <!-- api-model: PluginArgument -->
 ## `PluginArgument`
 
@@ -2484,6 +2622,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: RemoveConnectionFromGroupRequest -->
+## `RemoveConnectionFromGroupRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Remove one membership of a connection from a group.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `group_id` | `GroupId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "group_id": {}
+}
+```
+
 <!-- api-model: RemoveKnownHostEntriesRequest -->
 ## `RemoveKnownHostEntriesRequest`
 
@@ -2529,6 +2691,58 @@ Synthetic representation:
 {
   "group_id": "example",
   "new_name": "example"
+}
+```
+
+<!-- api-model: RenameTagRequest -->
+## `RenameTagRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Rename a tag across all connections (case-insensitive, deduplicated).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `old_tag` | `str` | Yes | — | No |
+| `new_tag` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "new_tag": {},
+  "old_tag": {}
+}
+```
+
+<!-- api-model: ReorderConnectionRequest -->
+## `ReorderConnectionRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Reorder a connection above/below a target within a group or the root.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `target_connection_id` | `ConnectionId` | Yes | — | No |
+| `group_id` | `Optional[GroupId]` | No | `null` | No |
+| `position` | `str` | No | `below` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production",
+  "group_id": null,
+  "position": "below",
+  "target_connection_id": {}
 }
 ```
 
@@ -2840,6 +3054,30 @@ Synthetic representation:
   "id": "production",
   "input_owner": null,
   "state": "created"
+}
+```
+
+<!-- api-model: SetGroupColorRequest -->
+## `SetGroupColorRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Set a group's display color.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `group_id` | `GroupId` | Yes | — | No |
+| `color` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "color": {},
+  "group_id": {}
 }
 ```
 

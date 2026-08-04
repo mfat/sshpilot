@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.15",
+  "api_implementation_version": "0.16",
   "client_method_contract": {
     "assign_connection_to_group": {
       "capability": "connections.groups",
@@ -1649,6 +1649,25 @@
       ],
       "status": "Schema only"
     },
+    "ConnectionMetadataSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": {},
+          "name": "values",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "ConnectionMutationResult": {
       "fields": [
         {
@@ -1671,6 +1690,46 @@
           "required": true,
           "sensitive": false,
           "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionStoreSnapshot": {
+      "fields": [
+        {
+          "default": null,
+          "name": "generation",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "connections",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple['ConnectionSummary', ...]"
+        },
+        {
+          "default": null,
+          "name": "groups",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[GroupSummary, ...]"
+        },
+        {
+          "default": null,
+          "name": "root_connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "metadata",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionMetadataSummary, ...]"
         }
       ],
       "status": "Schema only"
@@ -1784,6 +1843,25 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[ConnectionValidationError, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "CopyConnectionToGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
         }
       ],
       "status": "Schema only"
@@ -2788,6 +2866,53 @@
       ],
       "status": "Implemented"
     },
+    "GroupSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "parent_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": 0,
+          "name": "order",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "color",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "connection_ids",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "HandshakeRequest": {
       "fields": [
         {
@@ -3674,6 +3799,32 @@
       ],
       "status": "Schema only"
     },
+    "PlaceGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "parent_id",
+          "required": true,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": null,
+          "name": "index",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
     "PluginArgument": {
       "fields": [
         {
@@ -3957,6 +4108,25 @@
       ],
       "status": "Implemented"
     },
+    "RemoveConnectionFromGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        }
+      ],
+      "status": "Schema only"
+    },
     "RemoveKnownHostEntriesRequest": {
       "fields": [
         {
@@ -3989,6 +4159,58 @@
           "default": null,
           "name": "new_name",
           "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "RenameTagRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "old_tag",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "new_tag",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ReorderConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "target_connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": "below",
+          "name": "position",
+          "required": false,
           "sensitive": false,
           "type": "str"
         }
@@ -4338,6 +4560,25 @@
         }
       ],
       "status": "Implemented"
+    },
+    "SetGroupColorRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "color",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
     },
     "SftpChmodRequest": {
       "fields": [
