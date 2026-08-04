@@ -79,11 +79,14 @@ class GroupMutationController:
                     self._set_busy(False)
                     self._lock.release()
             if refresh_after and not self._closed and self.refresh is not None:
-                self.submit(
-                    self.refresh,
-                    on_success=lambda _snapshot: self._dispatch(finish),
-                    on_error=failure,
-                )
+                try:
+                    self.submit(
+                        self.refresh,
+                        on_success=lambda _snapshot: self._dispatch(finish),
+                        on_error=failure,
+                    )
+                except Exception:
+                    self._dispatch(finish)
             else:
                 self._dispatch(finish)
 
@@ -103,11 +106,21 @@ class GroupMutationController:
                             self._set_busy(False)
                             self._lock.release()
                     self._dispatch(finish)
-                self.submit(
-                    self.refresh,
-                    on_success=after_refresh,
-                    on_error=after_refresh,
-                )
+                try:
+                    self.submit(
+                        self.refresh,
+                        on_success=after_refresh,
+                        on_error=after_refresh,
+                    )
+                except Exception:
+                    def finish():
+                        try:
+                            if not self._closed:
+                                on_error(error)
+                        finally:
+                            self._set_busy(False)
+                            self._lock.release()
+                    self._dispatch(finish)
                 return
             def finish():
                 try:
@@ -185,7 +198,13 @@ class GroupMutationController:
                 self._finish_busy()
                 return
             if refresh_after and self.refresh is not None:
-                self.submit(self.refresh, on_success=lambda _snapshot: success(result), on_error=error)
+                try:
+                    self.submit(self.refresh, on_success=lambda _snapshot: success(result), on_error=error)
+                except Exception:
+                    self._finish_error(SshPilotError(
+                        ErrorCode.CONNECTION_STATE_IO_ERROR,
+                        "Failed to submit refresh",
+                    ), error)
             else:
                 success(result)
 
@@ -234,6 +253,7 @@ class GroupMutationController:
                 )
                 return
             except Exception:
+                # Refresh submission failed — still report the error.
                 pass
         callback(error)
         self._finish_busy()

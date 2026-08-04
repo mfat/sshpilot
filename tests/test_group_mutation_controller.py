@@ -756,3 +756,300 @@ class TestGroupManagerDelegation:
 
         with pytest.raises(RuntimeError, match="no mutation controller"):
             gm.run_sequence([], on_success=lambda r: None, on_error=lambda e: None)
+
+
+# ---------------------------------------------------------------------------
+# Commit 1: Sequence context propagation tests
+# ---------------------------------------------------------------------------
+
+
+class TestCreateAndAssignSequence:
+    """Tests for the create-new-group + assign connections workflow.
+
+    The critical requirement: every assignment step must receive the original
+    created group ID, not the return value of the previous assignment (bool).
+    """
+
+    def _make_assign_steps(self, controller, client, group_name, nicknames,
+                           *, is_copy=False):
+        """Reproduce the production create-and-assign step construction.
+
+        This mirrors the fixed ``_open_group_assignment_dialog`` logic.
+        """
+        created_group_id = [None]
+
+        def _validate_create(_prev):
+            gid = client.create_group(group_name, parent_id="", color="")
+            if not gid or not str(gid).strip():
+                raise ValueError("The daemon did not return a valid group ID")
+            created_group_id[0] = str(gid).strip()
+            return gid
+
+        steps = [_validate_create]
+        for nick in nicknames:
+            steps.append(
+                lambda _prev, n=nick: (
+                    client.copy_connection_to_group({"conn": n, "group": created_group_id[0]})
+                    if is_copy
+                    else client.assign_connection_to_group(n, created_group_id[0])
+                )
+            )
+        return steps
+
+    def test_create_and_move_two_connections(self):
+        """Create group, then move two connections to it."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-new")
+        ctrl = _make_controller(client=client)
+        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1", "c2"])
+        results = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: results.append(("ok", r)),
+            on_error=lambda e: results.append(("err", e)),
+        )
+        assert results == [("ok", True)]
+        # Both assignments must use the group ID returned by create_group.
+        assert client.calls[1] == ("assign_connection_to_group", ("c1", "grp-new"), {})
+        assert client.calls[2] == ("assign_connection_to_group", ("c2", "grp-new"), {})
+
+    def test_create_and_move_three_connections(self):
+        """Create group, then move three connections to it."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-3")
+        ctrl = _make_controller(client=client)
+        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1", "c2", "c3"])
+        results = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: results.append(("ok", r)),
+            on_error=lambda e: results.append(("err", e)),
+        )
+        assert results == [("ok", True)]
+        for i, nick in enumerate(["c1", "c2", "c3"], start=1):
+            assert client.calls[i][1] == (nick, "grp-3")
+
+    def test_create_and_copy_two_connections(self):
+        """Create group, then copy two connections to it."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-copy")
+        ctrl = _make_controller(client=client)
+        steps = self._make_assign_steps(
+            ctrl, client, "Copy Group", ["c1", "c2"], is_copy=True,
+        )
+        results = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: results.append(("ok", r)),
+            on_error=lambda e: results.append(("err", e)),
+        )
+        assert results == [("ok", True)]
+        # Both copy requests must use the created group ID.
+        for i in [1, 2]:
+            req = client.calls[i][1][0]
+            assert req["group"] == "grp-copy"
+
+    def test_every_assignment_receives_created_group_id(self):
+        """Verify the closure captures the group ID correctly for 5 connections."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-many")
+        ctrl = _make_controller(client=client)
+        nicks = [f"c{i}" for i in range(5)]
+        steps = self._make_assign_steps(ctrl, client, "Prod", nicks)
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: None,
+            on_error=lambda e: pytest.fail(str(e)),
+        )
+        for i, nick in enumerate(nicks, start=1):
+            assert client.calls[i][1] == (nick, "grp-many")
+
+    def test_first_assignment_true_does_not_replace_context(self):
+        """Assignment returning True must not overwrite the group ID context."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-ctx")
+        client.set_result("assign_connection_to_group", True)  # explicit True
+        ctrl = _make_controller(client=client)
+        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1", "c2"])
+        results = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: results.append(r),
+            on_error=lambda e: results.append(("err", e)),
+        )
+        assert results == [True]
+        assert client.calls[1][1] == ("c1", "grp-ctx")
+        assert client.calls[2][1] == ("c2", "grp-ctx")
+
+    def test_first_assignment_falsy_does_not_replace_context(self):
+        """Assignment returning a falsy value must not overwrite the context."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-ctx2")
+        client.set_result("assign_connection_to_group", 0)  # falsy
+        ctrl = _make_controller(client=client)
+        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1"])
+        results = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: results.append(r),
+            on_error=lambda e: results.append(("err", e)),
+        )
+        assert client.calls[1][1] == ("c1", "grp-ctx2")
+
+    def test_empty_create_result_aborts_before_assignment(self):
+        """If create_group returns empty string, the sequence must abort."""
+        client = FakeClient()
+        client.set_result("create_group", "")  # empty group ID
+        ctrl = _make_controller(client=client)
+        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1"])
+        errors = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert "valid group ID" in str(errors[0])
+        # No assignment should have been attempted.
+        assert len(client.calls) == 1  # only create_group
+
+    def test_none_create_result_aborts(self):
+        """If create_group returns None, the sequence must abort."""
+        client = FakeClient()
+        client.set_result("create_group", None)
+        ctrl = _make_controller(client=client)
+        steps = self._make_assign_steps(ctrl, client, "Prod", ["c1"])
+        errors = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert len(client.calls) == 1  # only create_group
+
+    def test_nested_refresh_submission_failure_releases_lock(self):
+        """If the refresh submit raises synchronously, lock and busy are released."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        ctrl.client.set_result("create_group", "ok")
+        # Make refresh submission fail.
+        original_submit = ctrl.submit
+        call_count = [0]
+        def selective_submit(operation, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 2:  # second submit is the refresh
+                raise RuntimeError("bridge down")
+            return original_submit(operation, **kwargs)
+        ctrl.submit = selective_submit
+        errors = []
+        ctrl.run(
+            lambda: ctrl.client.create_group("Prod"),
+            on_success=lambda r: None,
+            on_error=lambda e: errors.append(e),
+        )
+        # Lock must be released.
+        assert not ctrl._lock.locked()
+        assert not ctrl._busy
+
+    def test_ambiguity_refresh_submission_failure_releases_lock(self):
+        """If ambiguity refresh submit raises, lock and busy are released."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        ctrl.client.set_result("create_group", "ok")
+        original_submit = ctrl.submit
+        call_count = [0]
+        def selective_submit(operation, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 2:  # second submit is the ambiguity refresh
+                raise RuntimeError("bridge down")
+            return original_submit(operation, **kwargs)
+        ctrl.submit = selective_submit
+        errors = []
+        ctrl.run(
+            lambda: (_ for _ in ()).throw(
+                SshPilotError(ErrorCode.MUTATION_AMBIGUOUS, "changed")
+            ),
+            on_success=lambda r: None,
+            on_error=lambda e: errors.append(e),
+        )
+        assert not ctrl._lock.locked()
+        assert not ctrl._busy
+
+    def test_partial_failure_refresh_submission_failure_releases_lock(self):
+        """If partial-failure refresh submit raises, lock and busy are released."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        ctrl.client.set_result("create_group", "grp-new")
+        original_submit = ctrl.submit
+        call_count = [0]
+        def selective_submit(operation, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 3:  # third submit is the error refresh
+                raise RuntimeError("bridge down")
+            return original_submit(operation, **kwargs)
+        ctrl.submit = selective_submit
+        errors = []
+        ctrl.run_sequence(
+            [
+                lambda _prev: ctrl.client.create_group("Prod"),
+                lambda prev: (_ for _ in ()).throw(RuntimeError("assign failed")),
+            ],
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert not ctrl._lock.locked()
+        assert not ctrl._busy
+        assert len(errors) == 1
+
+    def test_close_between_creation_and_first_assignment(self):
+        """Closing the controller between create and assign aborts cleanly."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-cl")
+        ctrl = _make_controller(client=client)
+
+        def create_and_close(_prev):
+            gid = client.create_group("Prod", parent_id="", color="")
+            ctrl.close()  # close during the sequence
+            return gid
+
+        steps = [
+            create_and_close,
+            lambda _prev: client.assign_connection_to_group("c1", "grp-cl"),
+        ]
+        results = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: results.append(r),
+            on_error=lambda e: results.append(("err", e)),
+        )
+        # After close, no further callbacks should fire.
+        # The sequence should still complete (the close happens after create
+        # returns, so assign will be submitted but the controller is closed).
+        assert not ctrl._lock.locked()
+
+    def test_close_between_two_assignments(self):
+        """Closing between two assignments aborts the remaining steps."""
+        client = FakeClient()
+        client.set_result("create_group", "grp-cl2")
+        ctrl = _make_controller(client=client)
+        call_count = [0]
+
+        def assign_with_close(_prev):
+            call_count[0] += 1
+            if call_count[0] == 2:  # first assignment
+                ctrl.close()
+            return client.assign_connection_to_group("c1", "grp-cl2")
+
+        steps = [
+            lambda _prev: client.create_group("Prod", parent_id="", color=""),
+            assign_with_close,
+            lambda _prev: client.assign_connection_to_group("c2", "grp-cl2"),
+        ]
+        results = []
+        ctrl.run_sequence(
+            steps,
+            on_success=lambda r: results.append(r),
+            on_error=lambda e: results.append(("err", e)),
+        )
+        assert not ctrl._lock.locked()

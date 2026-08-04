@@ -2805,25 +2805,36 @@ class WindowConfigDialogsMixin:
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        # Create group then move/copy to it.
-                        steps = [
-                            lambda _prev: controller.client.create_group(
+                        # Use a closure to retain the created group ID across
+                        # all assignment steps, since ``run_sequence`` only
+                        # threads the *previous* step's return value (which is
+                        # a bool for assignment RPCs).
+                        created_group_id = [None]
+
+                        def _validate_create(_prev):
+                            gid = controller.client.create_group(
                                 group_name, parent_id="", color=selected_color or "",
-                            ),
-                        ]
-                        # Each subsequent step uses the returned group ID.
-                        for i, nick in enumerate(connection_nicknames):
+                            )
+                            if not gid or not str(gid).strip():
+                                raise ValueError(
+                                    "The daemon did not return a valid group ID"
+                                )
+                            created_group_id[0] = str(gid).strip()
+                            return gid
+
+                        steps = [_validate_create]
+                        for nick in connection_nicknames:
                             steps.append(
-                                lambda prev, n=nick: (
+                                lambda _prev, n=nick: (
                                     controller.client.copy_connection_to_group(
                                         CopyConnectionToGroupRequest(
                                             connection_id=ConnectionId(n),
-                                            group_id=GroupId(prev),
+                                            group_id=GroupId(created_group_id[0]),
                                         )
                                     )
                                     if is_copy
                                     else controller.client.assign_connection_to_group(
-                                        n, prev
+                                        n, created_group_id[0]
                                     )
                                 )
                             )
