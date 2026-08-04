@@ -329,8 +329,17 @@
     "connections.lookup_password": {
       "capability": "connections.secrets.write"
     },
+    "connections.metadata.rename_tag": {
+      "capability": "connections.metadata.write"
+    },
+    "connections.metadata.update": {
+      "capability": "connections.metadata.write"
+    },
     "connections.rename_group": {
       "capability": "connections.groups"
+    },
+    "connections.snapshot": {
+      "capability": "connections.read"
     },
     "connections.split": {
       "capability": "connections.split"
@@ -376,6 +385,30 @@
     },
     "forwards.open": {
       "capability": "forwards.write"
+    },
+    "groups.copy_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.create": {
+      "capability": "connections.groups"
+    },
+    "groups.delete": {
+      "capability": "connections.groups"
+    },
+    "groups.place": {
+      "capability": "connections.groups"
+    },
+    "groups.remove_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.rename": {
+      "capability": "connections.groups"
+    },
+    "groups.reorder_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.set_color": {
+      "capability": "connections.groups"
     },
     "interactions.cancel": {
       "capability": "interactions.respond"

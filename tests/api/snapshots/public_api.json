@@ -367,6 +367,7 @@
     "close_forward",
     "close_session",
     "close_sftp",
+    "copy_connection_to_group",
     "create_connection",
     "create_group",
     "delete_connection",
@@ -380,6 +381,7 @@
     "get_capabilities",
     "get_connection",
     "get_connection_editor",
+    "get_connection_store_snapshot",
     "get_daemon_diagnostics",
     "get_daemon_status",
     "get_forward",
@@ -400,17 +402,22 @@
     "open_forward",
     "open_session",
     "open_sftp",
+    "place_group",
     "read_public_key",
     "release_interaction",
     "release_terminal_input",
+    "remove_connection_from_group",
     "remove_known_host_entries",
     "rename_group",
+    "rename_tag",
+    "reorder_connection",
     "replay_terminal",
     "resize_terminal",
     "respond_to_interaction",
     "restart_daemon",
     "send_interaction_secret",
     "send_terminal_input",
+    "set_group_color",
     "sftp_chmod",
     "sftp_list_directory",
     "sftp_lstat",
@@ -552,6 +559,16 @@
       ],
       "return": "None"
     },
+    "copy_connection_to_group": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "CopyConnectionToGroupRequest"
+        }
+      ],
+      "return": "bool"
+    },
     "create_connection": {
       "parameters": [
         {
@@ -685,6 +702,10 @@
         }
       ],
       "return": "ConnectionEditorDetails"
+    },
+    "get_connection_store_snapshot": {
+      "parameters": [],
+      "return": "ConnectionStoreSnapshot"
     },
     "get_daemon_diagnostics": {
       "parameters": [],
@@ -832,6 +853,16 @@
       ],
       "return": "SftpServiceSummary"
     },
+    "place_group": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "PlaceGroupRequest"
+        }
+      ],
+      "return": "bool"
+    },
     "read_public_key": {
       "parameters": [
         {
@@ -862,6 +893,16 @@
       ],
       "return": "None"
     },
+    "remove_connection_from_group": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "RemoveConnectionFromGroupRequest"
+        }
+      ],
+      "return": "bool"
+    },
     "remove_known_host_entries": {
       "parameters": [
         {
@@ -883,6 +924,26 @@
           "kind": "positional_or_keyword",
           "name": "new_name",
           "type": "str"
+        }
+      ],
+      "return": "bool"
+    },
+    "rename_tag": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "RenameTagRequest"
+        }
+      ],
+      "return": "int"
+    },
+    "reorder_connection": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ReorderConnectionRequest"
         }
       ],
       "return": "bool"
@@ -956,6 +1017,16 @@
         }
       ],
       "return": "None"
+    },
+    "set_group_color": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SetGroupColorRequest"
+        }
+      ],
+      "return": "bool"
     },
     "sftp_chmod": {
       "parameters": [
@@ -1231,8 +1302,17 @@
     "connections.lookup_password": {
       "capability": "connections.secrets.write"
     },
+    "connections.metadata.rename_tag": {
+      "capability": "connections.metadata.write"
+    },
+    "connections.metadata.update": {
+      "capability": "connections.metadata.write"
+    },
     "connections.rename_group": {
       "capability": "connections.groups"
+    },
+    "connections.snapshot": {
+      "capability": "connections.read"
     },
     "connections.split": {
       "capability": "connections.split"
@@ -1278,6 +1358,30 @@
     },
     "forwards.open": {
       "capability": "forwards.write"
+    },
+    "groups.copy_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.create": {
+      "capability": "connections.groups"
+    },
+    "groups.delete": {
+      "capability": "connections.groups"
+    },
+    "groups.place": {
+      "capability": "connections.groups"
+    },
+    "groups.remove_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.rename": {
+      "capability": "connections.groups"
+    },
+    "groups.reorder_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.set_color": {
+      "capability": "connections.groups"
     },
     "interactions.cancel": {
       "capability": "interactions.respond"

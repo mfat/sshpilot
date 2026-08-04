@@ -5,6 +5,9 @@ notes remain separate.
 
 ## Unreleased
 
+- Implemented daemon-backed `connections.snapshot`, complete group mutation
+  RPCs, and connection metadata/tag mutation methods.
+
 - Published the connection-store protocol schema: `ConnectionStoreSnapshot`,
   `GroupSummary`, `ConnectionMetadataSummary`, `GroupId`, the group mutation
   requests (`SetGroupColorRequest`, `PlaceGroupRequest`,

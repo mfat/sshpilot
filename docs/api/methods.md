@@ -150,6 +150,20 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: split_connection status=implemented capability=connections.split -->
+<!-- api-method-contract: get_connection_store_snapshot status=implemented capability=connections.read -->
+<!-- api-method-contract: set_group_color status=implemented capability=connections.groups -->
+<!-- api-method-contract: place_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: copy_connection_to_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: remove_connection_from_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: reorder_connection status=implemented capability=connections.groups -->
+<!-- api-method-contract: rename_tag status=implemented capability=connections.metadata.write -->
+<!-- api-method: get_connection_store_snapshot -->
+<!-- api-method: set_group_color -->
+<!-- api-method: place_group -->
+<!-- api-method: copy_connection_to_group -->
+<!-- api-method: remove_connection_from_group -->
+<!-- api-method: reorder_connection -->
+<!-- api-method: rename_tag -->
 
 ## Daemon wire methods
 
@@ -160,6 +174,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `system.handshake` | None | Implemented; required exactly once |
 | `system.get_capabilities` | None | Implemented after handshake |
 | `connections.list` | `connections.read` | Implemented |
+| `connections.snapshot` | `connections.read` | Implemented; complete immutable store snapshot |
+<!-- api-daemon-method: connections.snapshot capability=connections.read -->
 | `connections.get` | `connections.read` | Implemented |
 | `connections.create` | `connections.write` | Implemented |
 | `connections.duplicate` | `connections.write` | Implemented |
@@ -175,10 +191,30 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.get_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.delete_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.update_metadata` | `connections.metadata.write` | Implemented |
+| `connections.metadata.update` | `connections.metadata.write` | Implemented |
+| `connections.metadata.rename_tag` | `connections.metadata.write` | Implemented |
+<!-- api-daemon-method: connections.metadata.update capability=connections.metadata.write -->
+<!-- api-daemon-method: connections.metadata.rename_tag capability=connections.metadata.write -->
 | `connections.assign_to_group` | `connections.groups` | Implemented |
 | `connections.create_group` | `connections.groups` | Implemented |
 | `connections.delete_group` | `connections.groups` | Implemented |
 | `connections.rename_group` | `connections.groups` | Implemented |
+| `groups.create` | `connections.groups` | Implemented |
+| `groups.delete` | `connections.groups` | Implemented |
+| `groups.rename` | `connections.groups` | Implemented |
+| `groups.set_color` | `connections.groups` | Implemented |
+| `groups.place` | `connections.groups` | Implemented |
+| `groups.copy_connection` | `connections.groups` | Implemented |
+| `groups.remove_connection` | `connections.groups` | Implemented |
+| `groups.reorder_connection` | `connections.groups` | Implemented |
+<!-- api-daemon-method: groups.create capability=connections.groups -->
+<!-- api-daemon-method: groups.delete capability=connections.groups -->
+<!-- api-daemon-method: groups.rename capability=connections.groups -->
+<!-- api-daemon-method: groups.set_color capability=connections.groups -->
+<!-- api-daemon-method: groups.place capability=connections.groups -->
+<!-- api-daemon-method: groups.copy_connection capability=connections.groups -->
+<!-- api-daemon-method: groups.remove_connection capability=connections.groups -->
+<!-- api-daemon-method: groups.reorder_connection capability=connections.groups -->
 | `connections.split` | `connections.split` | Implemented |
 | `interactions.list` | `interactions.read` | Implemented |
 | `interactions.get` | `interactions.read` | Implemented |
