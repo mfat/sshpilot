@@ -534,6 +534,8 @@ def test_known_hosts_editor_has_no_local_file_io():
         "save_known_hosts",
         "read_text",
         "write_text",
+        "read_bytes",
+        "write_bytes",
         "open",
     }
     hits = sorted(forbidden & used)
@@ -541,3 +543,23 @@ def test_known_hosts_editor_has_no_local_file_io():
         "known_hosts_editor.py performs local known-hosts I/O (M2 incomplete): "
         + ", ".join(hits)
     )
+
+    # The editor must not accept or store a known-hosts filesystem path.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__":
+            arg_names = {arg.arg for arg in node.args.args}
+            path_like = arg_names & {"path", "known_hosts_path"}
+            assert not path_like, (
+                "known_hosts_editor.py accepts a known-hosts filesystem path "
+                "(M2 incomplete): " + ", ".join(sorted(path_like))
+            )
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Attribute) and target.attr in {
+                    "_known_hosts_path",
+                    "known_hosts_path",
+                }:
+                    raise AssertionError(
+                        "known_hosts_editor.py stores a known-hosts filesystem "
+                        "path (M2 incomplete)"
+                    )

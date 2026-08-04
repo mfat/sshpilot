@@ -20,8 +20,17 @@ The daemon exposes two RPCs — `known_hosts.list` (`KNOWN_HOSTS_READ`) and
 client side; removals surface `stale_editor` when the file changed since the
 snapshot.
 
+The daemon's byte-level reads and atomic mutation preserve the file exactly:
+comments, blank lines, malformed lines, ordering, LF vs CRLF, and the presence
+(or absence) of a final newline are all retained. Removal changes only the
+selected physical lines.
+
 `KnownHostsEditorWindow` is a GTK view that loads and removes through the
 daemon-backed client via `sshpilot.gtk.known_hosts_controller`
-(`KnownHostsController`). Rows store entry IDs (so duplicate lines stay
-distinguishable), removals are staged and applied in one batched,
-revision-checked call, and the editor never performs local file I/O.
+(`KnownHostsController`). GTK receives revisioned snapshots only: rows store
+entry IDs (so duplicate identical lines stay distinguishable via
+occurrence-specific IDs), filtering is local to the rendered entries, removals
+are staged and applied in one batched, revision-checked call, and a stale
+revision triggers a reload without any automatic retry. There is no frontend
+filesystem fallback — the editor never performs local file I/O and never
+accepts or stores a known-hosts path.

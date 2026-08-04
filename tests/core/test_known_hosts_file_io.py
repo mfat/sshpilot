@@ -3,6 +3,7 @@
 import os
 import stat
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -32,16 +33,18 @@ def test_normal_read(tmp_path):
     assert read_known_hosts_bytes(path) == CONTENT
 
 
-def test_read_converts_os_errors(tmp_path):
+def test_read_converts_os_errors(tmp_path, monkeypatch):
     path = tmp_path / "known_hosts"
     path.write_bytes(CONTENT)
-    path.chmod(0o000)
-    try:
-        with pytest.raises(CoreError) as excinfo:
-            read_known_hosts_bytes(path)
-        assert excinfo.value.code is ErrorCode.KNOWN_HOST_IO_ERROR
-    finally:
-        path.chmod(0o600)
+
+    def fail_read_bytes(*_args, **_kwargs):
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+    with pytest.raises(CoreError) as excinfo:
+        read_known_hosts_bytes(path)
+    assert excinfo.value.code is ErrorCode.KNOWN_HOST_IO_ERROR
+    assert str(tmp_path) not in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

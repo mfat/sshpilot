@@ -15,9 +15,8 @@ notes remain separate.
   `KnownHostsMutationResult`, `KnownHostEntryId`). Both methods are daemon-only;
   local clients keep reporting them as unsupported.
 - Declared `known_hosts.read` and `known_hosts.write` capability enum values.
-  Runtime support depends on daemon capability negotiation: a daemon advertises
-  them only when its known-hosts service is installed and its RPC handlers are
-  wired. Until then clients must treat them as unavailable.
+  A daemon advertises them when its known-hosts service is installed; until
+  then clients must treat them as unavailable.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.14`; `PROTOCOL_VERSION` stays `1.0`.
 
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.13` for the expanded interaction

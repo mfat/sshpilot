@@ -429,16 +429,17 @@ new standalone `Host` block. Gated behind `CONNECTIONS_SPLIT`.
 <!-- api-capability: known_hosts.read -->
 ## `known_hosts.read`
 
-Schema only. Lists known-host entries from the daemon-owned known-hosts file
-as a revisioned snapshot. Gated behind `KNOWN_HOSTS_READ`. Runtime support
-depends on daemon capability negotiation; providers do not advertise it yet.
+Implemented by the daemon when its known-hosts service is installed. Returns a
+revisioned snapshot of displayable entries from the daemon-owned known-hosts
+file. Gated behind `KNOWN_HOSTS_READ`.
 
 <!-- api-capability: known_hosts.write -->
 ## `known_hosts.write`
 
-Schema only. Removes known-host entries through the daemon with an optimistic
-revision check. Gated behind `KNOWN_HOSTS_WRITE`. Runtime support depends on
-daemon capability negotiation; providers do not advertise it yet.
+Implemented by the daemon when its known-hosts service is installed. Removes a
+batch of occurrence-specific entry IDs using an optimistic revision check.
+Gated behind `KNOWN_HOSTS_WRITE`. Mutation is unavailable while the daemon is
+draining.
 
 ## Frontend behaviour
 
