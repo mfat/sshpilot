@@ -261,14 +261,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 def _production_core_services():
+    """Compose the daemon's headless application services.
+
+    The daemon is the sole owner of saved connection state: it resolves the
+    active SSH config root, owns ``connections.json``, and drives the headless
+    ``ConnectionRepository``. Launch and secret behavior come from the daemon
+    compatibility providers (which may still use legacy helpers under
+    importer-specific debt).
+    """
     # Imports stay here so transport modules remain frontend-neutral and tests
     # can inject a headless core without importing PyGObject.
     from sshpilot.core.connection_application_service import ConnectionApplicationService
-    from sshpilot.config import Config
-    from sshpilot.connection_manager import ConnectionManager
-    from sshpilot.groups import GroupManager
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
 
-    from .config_reload import AuthoritativeConfigurationBackend
+    from .bootstrap_settings import DaemonBootstrapSettings
+    from .connection_launch_provider import DaemonConnectionLaunchProvider
+    from .connection_secret_provider import DaemonConnectionSecretProvider
     from .key_service import DaemonKeyService
     from .known_hosts_service import KnownHostsService
     from .server import CoreServices
@@ -282,45 +291,40 @@ def _production_core_services():
             return get_config_dir()
         raise ValueError("unsupported key store scope")
 
-    config = Config()
-    connection_manager = ConnectionManager(config)
-    # Daemon has no GLib main loop, so the idle-deferred secret/identity init
-    # from ConnectionManager.__init__ never runs unless we call it here.
-    try:
-        connection_manager._post_init_slow_path()
-    except Exception:
-        logging.getLogger(__name__).debug(
-            "daemon secret/identity slow-path init failed",
-            exc_info=True,
-        )
-    if connection_manager.identity_migration_error is not None:
-        raise RuntimeError("connection identity migration failed")
-    group_manager = GroupManager(
-        config,
-        connection_manager=connection_manager,
+    def _resolve_ssh_root(isolated: bool):
+        if isolated:
+            return get_config_dir() / "ssh_config"
+        return get_ssh_dir() / "config"
+
+    settings = DaemonBootstrapSettings()
+    isolated = settings.use_isolated_config
+    ssh_root = _resolve_ssh_root(isolated)
+    ssh_store = SshConfigStore(ssh_root, isolated=isolated)
+    repository = ConnectionRepository(
+        ssh_store=ssh_store,
+        state_path=get_config_dir() / "connections.json",
+        legacy_config_path=get_config_dir() / "config.json",
+        isolated=isolated,
     )
-    # Protocol launch providers must live with the process-owning daemon.
-    # Headless loading deliberately omits PluginHost/UI integration.
-    from sshpilot.plugins.loader import load_plugins
-    load_plugins(
-        app_config=config,
-        connection_manager=connection_manager,
-        plugin_host=None,
+    secret_provider = DaemonConnectionSecretProvider(repository.get_record)
+    launch_provider = DaemonConnectionLaunchProvider(
+        repository.get_record,
+        secret_provider=secret_provider,
+        app_config=settings,
     )
     connections = ConnectionApplicationService(
-        connection_manager,
-        group_manager=group_manager,
+        repository,
+        launch_provider=launch_provider,
+        secret_provider=secret_provider,
         client_name="sshpilotd",
         allow_cross_thread_commands=True,
     )
     return CoreServices(
         connections=connections,
-        configuration_backend=AuthoritativeConfigurationBackend(
-            connections,
-            connection_manager,
-            group_manager,
-            config,
-        ),
+        # Authoritative external reloads are re-composed over the repository
+        # in the M3 reload migration (Task 14); until then the daemon serves
+        # its own authoritative store snapshot without a legacy watcher.
+        configuration_backend=None,
         known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
         keys=DaemonKeyService(_resolve_key_root),
     )

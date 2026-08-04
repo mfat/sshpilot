@@ -1,6 +1,5 @@
 """Daemon SSH-key service composition tests."""
 
-import sys
 from unittest import mock
 
 from sshpilot.api.models.common import ClientId
@@ -13,31 +12,22 @@ from sshpilot.daemon.server import CoreServices
 from sshpilot.platform.paths import get_config_dir, get_ssh_dir
 
 
-def _call_production_composition():
-    """Run ``cli._production_core_services`` with GI adapters faked out."""
+def _call_production_composition(tmp_path, monkeypatch):
+    """Run ``cli._production_core_services`` against isolated headless paths.
 
-    fake_config = mock.Mock()
-    fake_manager = mock.Mock()
-    fake_manager.identity_migration_error = None
-    fake_groups = mock.Mock()
-    fake_modules = {
-        "sshpilot.config": mock.Mock(Config=lambda: fake_config),
-        "sshpilot.connection_manager": mock.Mock(
-            ConnectionManager=lambda config: fake_manager
-        ),
-        "sshpilot.groups": mock.Mock(
-            GroupManager=lambda config, connection_manager: fake_groups
-        ),
-        "sshpilot.plugins.loader": mock.Mock(load_plugins=mock.Mock()),
-    }
-    with mock.patch.dict(sys.modules, fake_modules):
-        from sshpilot.daemon import cli
+    The composition reads no GI adapters, so no module faking is needed; we
+    isolate ``SSHPILOT_SSH_DIR`` and ``XDG_CONFIG_HOME`` so the headless
+    repository never touches a developer's real config.
+    """
+    monkeypatch.setenv("SSHPILOT_SSH_DIR", str(tmp_path / "ssh"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    from sshpilot.daemon import cli
 
-        return cli._production_core_services()
+    return cli._production_core_services()
 
 
-def test_production_composition_installs_key_service():
-    services = _call_production_composition()
+def test_production_composition_installs_key_service(tmp_path, monkeypatch):
+    services = _call_production_composition(tmp_path, monkeypatch)
     assert isinstance(services.keys, DaemonKeyService)
     assert services.keys is not None
 
@@ -45,7 +35,7 @@ def test_production_composition_installs_key_service():
 def test_production_resolver_uses_headless_path_helpers(monkeypatch, tmp_path):
     override = tmp_path / "ssh"
     monkeypatch.setenv("SSHPILOT_SSH_DIR", str(override))
-    services = _call_production_composition()
+    services = _call_production_composition(tmp_path, monkeypatch)
     resolver = services.keys._path_resolver
     assert resolver(KeyStoreScope.DEFAULT) == get_ssh_dir() == override
     assert resolver(KeyStoreScope.ISOLATED) == get_config_dir()

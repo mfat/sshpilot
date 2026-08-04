@@ -48,9 +48,10 @@ ROOT = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
 # migration replaces the adapter with a headless daemon service. Any *other*
 # importer of the same module fails the suite.
 DAEMON_DEBT: dict[tuple[str, str], str] = {
+    # daemon idle/service settings still read through ``Config`` (M4). Plugin
+    # loading moved out of the daemon composition with the legacy managers
+    # (M3): cli.py composes the headless repository only.
     ("daemon/cli.py", "sshpilot.config"): "M4",  # Config -> daemon settings
-    ("daemon/cli.py", "sshpilot.connection_manager"): "M3",  # ConnectionManager
-    ("daemon/cli.py", "sshpilot.groups"): "M3",  # GroupManager
     # Launch/secret compatibility moved out of core into daemon providers
     # (Task 12). Each provider file registers the exact legacy helper it still
     # uses, tagged with the migration that will remove it.
@@ -60,7 +61,6 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     ("daemon/connection_secret_provider.py", "sshpilot.credential_model"): "M5",
     ("daemon/connection_secret_provider.py", "sshpilot.secret_storage"): "M5",
     ("daemon/connection_secret_provider.py", "sshpilot.askpass_utils"): "M5",
-    ("daemon/cli.py", "sshpilot.plugins.loader"): "M8",  # load_plugins -> daemon host
     # get_state_dir is used for the daemon log. platform_utils imports GI, so the
     # daemon runtime depends on GI for its log path; switch to the GI-free
     # sshpilot.platform.paths.get_state_dir helper when the log lands behind it.
