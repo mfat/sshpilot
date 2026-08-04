@@ -80,6 +80,7 @@ from .dispatch import (
 )
 from .forward_runtime import ForwardRuntime, SubprocessForwardProcessRunner
 from .interaction_broker import InteractionBroker
+from .key_service import DaemonKeyService
 from .known_hosts_service import KnownHostsService
 from .lifecycle import (
     DaemonAlreadyRunningError,
@@ -163,6 +164,7 @@ class CoreServices:
     connections: ConnectionApplicationService
     configuration_backend: Optional[AuthoritativeConfigurationBackend] = None
     known_hosts: Optional[KnownHostsService] = None
+    keys: Optional[DaemonKeyService] = None
 
 
 @dataclass
@@ -276,6 +278,7 @@ class DaemonServer:
         self._wakeup_write: Optional[socket.socket] = None
         self._connection_service: Optional[ConnectionApplicationService] = None
         self._known_hosts_service: Optional[KnownHostsService] = None
+        self._key_service: Optional[DaemonKeyService] = None
         self._session_runtime: Optional[SessionRuntime] = None
         self._sftp_runtime: Optional[SftpServiceRuntime] = None
         self._transfer_runtime: Optional[TransferRuntime] = None
@@ -521,6 +524,7 @@ class DaemonServer:
                 self._connection_service = core.connections
                 configuration_backend = core.configuration_backend
                 self._known_hosts_service = core.known_hosts
+                self._key_service = core.keys
             else:
                 self._connection_service = core
             enable_workers = getattr(
@@ -622,6 +626,7 @@ class DaemonServer:
                 transfer_runtime=self._transfer_runtime,
                 forward_runtime=self._forward_runtime,
                 known_hosts_service=self._known_hosts_service,
+                key_service=self._key_service,
                 lifecycle_controller=self._lifecycle,
                 diagnostics_provider=self.build_diagnostics,
             )

@@ -96,6 +96,7 @@ from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
 from sshpilot.daemon.forward_runtime import ForwardRuntime
 from sshpilot.daemon.interaction_broker import InteractionBroker
+from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.known_hosts_service import KnownHostsService
 from sshpilot.daemon.session_runtime import SessionRuntime
 from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
@@ -297,6 +298,7 @@ class RequestDispatcher:
         transfer_runtime: Optional[TransferRuntime] = None,
         forward_runtime: Optional[ForwardRuntime] = None,
         known_hosts_service: Optional[KnownHostsService] = None,
+        key_service: Optional[DaemonKeyService] = None,
         *,
         lifecycle_controller: Any = None,
         diagnostics_provider: Optional[Callable[[], Any]] = None,
@@ -308,6 +310,7 @@ class RequestDispatcher:
         self._transfer_runtime = transfer_runtime
         self._forward_runtime = forward_runtime
         self._known_hosts_service = known_hosts_service
+        self._key_service = key_service
         self._lifecycle = lifecycle_controller
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
@@ -1832,6 +1835,14 @@ class RequestDispatcher:
                 "Known-hosts management is unavailable",
             )
         return self._known_hosts_service
+
+    def _required_key_service(self) -> DaemonKeyService:
+        if self._key_service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "SSH-key management is unavailable",
+            )
+        return self._key_service
 
     def _required_interaction_broker(self) -> InteractionBroker:
         if self._interaction_broker is None:

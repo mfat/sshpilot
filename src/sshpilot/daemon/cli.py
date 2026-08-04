@@ -19,7 +19,7 @@ from sshpilot.api.transport.codec import (
     daemon_status_to_wire,
     daemon_stop_result_to_wire,
 )
-from sshpilot.platform.paths import get_ssh_dir
+from sshpilot.platform.paths import get_config_dir, get_ssh_dir
 
 from .lifecycle import resolve_socket_path
 
@@ -269,8 +269,18 @@ def _production_core_services():
     from sshpilot.groups import GroupManager
 
     from .config_reload import AuthoritativeConfigurationBackend
+    from .key_service import DaemonKeyService
     from .known_hosts_service import KnownHostsService
     from .server import CoreServices
+
+    def _resolve_key_root(scope):
+        from sshpilot.api.models.keys import KeyStoreScope
+
+        if scope is KeyStoreScope.DEFAULT:
+            return get_ssh_dir()
+        if scope is KeyStoreScope.ISOLATED:
+            return get_config_dir()
+        raise ValueError("unsupported key store scope")
 
     config = Config()
     connection_manager = ConnectionManager(config)
@@ -312,6 +322,7 @@ def _production_core_services():
             config,
         ),
         known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
+        keys=DaemonKeyService(_resolve_key_root),
     )
 
 
