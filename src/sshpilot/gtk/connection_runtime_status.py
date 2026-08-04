@@ -8,7 +8,7 @@ from typing import Callable, Dict, Optional
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.sessions import SessionExitInfo, SessionState, SessionSummary
-from sshpilot.connection_manager import ConnectionState
+from sshpilot.connection_model import ConnectionState
 
 
 _SESSION_EVENTS = frozenset(

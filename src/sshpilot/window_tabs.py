@@ -21,7 +21,7 @@ from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
 from gettext import gettext as _
 
 from sshpilot import icon_utils
-from .connection_manager import Connection
+from .connection_model import Connection
 from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 from .terminal import TerminalWidget
 from .plugins.api import Capability

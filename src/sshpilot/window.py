@@ -43,7 +43,7 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
-from .connection_manager import Connection, ConnectionState
+from .connection_model import Connection, ConnectionState
 from .gtk.connection_store import ConnectionPresentationStore
 from .gtk.daemon_connection_services import DaemonConnectionServices
 from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore

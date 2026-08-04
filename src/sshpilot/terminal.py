@@ -107,7 +107,7 @@ class TerminalWidget(Gtk.Box):
         # is aggregated from all its terminals by
         # ``window._recompute_connection_state``. ``is_connected`` stays as the
         # boolean compat view (True only when CONNECTED).
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         self.connection_state = ConnectionState.UNKNOWN
         self.connection_state_reason = ''
         self._connect_grace_timer_id = None  # evidence poller: promotes CONNECTING→CONNECTED
@@ -1933,7 +1933,7 @@ class TerminalWidget(Gtk.Box):
             # the process is still alive after a short grace period. A fast
             # failure (auth/refused/unreachable) exits first and is classified
             # as FAILED, so the indicator never flashes green on a dead link.
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
             is_remote = (
                 hasattr(self, 'connection') and self.connection
                 and getattr(self.connection, 'hostname', None) != 'localhost'
@@ -1986,7 +1986,7 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Fallback timer triggered after connection failure; ignoring")
             return False
 
-        from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
         if self.connection_state == ConnectionState.CONNECTED:
             return False
 
@@ -2056,7 +2056,7 @@ class TerminalWidget(Gtk.Box):
 
     def _on_connect_grace_elapsed(self):
         # Repeating timer: return True to keep polling, False to stop.
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         if getattr(self, '_is_quitting', False) or self.connection_state != ConnectionState.CONNECTING:
             self._connect_grace_timer_id = None
             return False
@@ -2094,7 +2094,7 @@ class TerminalWidget(Gtk.Box):
     def _mark_connected(self):
         """Promote a CONNECTING session to CONNECTED (idempotent). Called only on
         real evidence: termprops, or remote output seen by the evidence poller."""
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         if self.connection_state == ConnectionState.CONNECTED:
             return
         self._cancel_connect_grace()
@@ -2280,7 +2280,7 @@ class TerminalWidget(Gtk.Box):
         instant real remote output appears, instead of waiting for the 1 s poller.
         Uses the same evidence matcher as the poller, so ssh's own local-side
         chatter never falsely promotes; failures are left to the poller/child-exit."""
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         if self.connection_state != ConnectionState.CONNECTING:
             return
         if self._scan_connect_evidence() == 'connected':
@@ -2304,7 +2304,7 @@ class TerminalWidget(Gtk.Box):
         # A non-empty remote title is login evidence — promote a CONNECTING remote
         # session, mirroring VTE's termprops path.
         try:
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
             if self.connection_state == ConnectionState.CONNECTING and not self._is_local_terminal():
                 self._mark_connected()
         except Exception:
@@ -2314,7 +2314,7 @@ class TerminalWidget(Gtk.Box):
         """Map an ssh exit into (ConnectionState, reason) from the exit code and
         the captured error text. Distinguishes auth/unreachable failures from a
         clean disconnect or a dropped-after-connected session."""
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         # Include any failure line the connect-evidence poller captured, so the
         # precise reason survives even if ssh's final output isn't in the buffer
         # by the time the child-exit handler scrapes it.
@@ -4071,7 +4071,7 @@ class TerminalWidget(Gtk.Box):
 
             # Mark the connection FAILED so the sidebar reflects it (classify the
             # message into a concise reason where we can).
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
             _state, _reason = self._classify_exit(255, False)
             self.connection_state = ConnectionState.FAILED
             self.connection_state_reason = _reason or error_message
@@ -4158,7 +4158,7 @@ class TerminalWidget(Gtk.Box):
         # Capture whether the session was ever confirmed connected (before we
         # reset state below) and stop any pending promotion — the process is
         # gone, so it must never be promoted to CONNECTED after this.
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         was_connected = (self.connection_state == ConnectionState.CONNECTED)
         self._cancel_connect_grace()
 
@@ -4474,7 +4474,7 @@ class TerminalWidget(Gtk.Box):
         if not event:
             return
         try:
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
             if (self.connection_state == ConnectionState.CONNECTING
                     and not self._is_local_terminal()):
                 self._mark_connected()

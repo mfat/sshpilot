@@ -2138,7 +2138,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         """
         try:
             from sshpilot import icon_utils
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
 
             state, reason = self._resolve_status()
 
@@ -2196,13 +2196,13 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._refresh_compact_status()
 
     def _is_online(self) -> bool:
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         state, _reason = self._resolve_status()
         return state == ConnectionState.CONNECTED
 
     def _resolve_status(self):
         """Resolve daemon runtime projection first, then legacy object state."""
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
 
         resolver = getattr(self, '_status_resolver', None)
         if callable(resolver):
