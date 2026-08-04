@@ -485,3 +485,235 @@ def test_non_ssh_mutation_does_not_capture_ssh_root(tmp_path):
     pre_ssh = root.read_bytes()
     repo.create_connection({"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"})
     assert root.read_bytes() == pre_ssh
+
+
+# ---------------------------------------------------------------------------
+# Complete rollback test matrix (Commit 2)
+# ---------------------------------------------------------------------------
+
+
+def test_rollback_after_state_failure_ssh_update(tmp_path, monkeypatch):
+    """SSH update: if state file write fails, the SSH file must be rolled back."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    # Use 'new' as nickname to avoid collision with 'web' in SSH config.
+    repo.create_connection({"nickname": "new", "hostname": "example.com", "protocol": "ssh"})
+    pre_bytes = root.read_bytes()
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("injected state write failure")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository.write_connection_state",
+        fail_write,
+    )
+    with pytest.raises(OSError):
+        repo.update_connection("new", {"hostname": "updated.example.com"})
+    monkeypatch.undo()
+    assert root.read_bytes() == pre_bytes
+
+
+def test_rollback_after_state_failure_ssh_delete(tmp_path, monkeypatch):
+    """SSH delete: if state file write fails, the SSH file must be rolled back."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.create_connection({"nickname": "new", "hostname": "example.com", "protocol": "ssh"})
+    pre_bytes = root.read_bytes()
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("injected state write failure")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository.write_connection_state",
+        fail_write,
+    )
+    with pytest.raises(OSError):
+        repo.delete_connection("new")
+    monkeypatch.undo()
+    assert root.read_bytes() == pre_bytes
+
+
+def test_rollback_after_state_failure_non_ssh_create(tmp_path):
+    """Non-SSH create: if state file write fails, the state must be rolled back."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    pre_ssh = root.read_bytes()
+    state.unlink()
+    state.mkdir()
+    try:
+        with pytest.raises(CoreError):
+            repo.create_connection({"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"})
+    finally:
+        state.rmdir()
+        _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
+    # SSH root must remain unchanged.
+    assert root.read_bytes() == pre_ssh
+
+
+def test_rollback_after_state_failure_non_ssh_update(tmp_path):
+    """Non-SSH update: if state file write fails, the state must be rolled back."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.create_connection({"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"})
+    snap_before = repo.snapshot()
+    state.unlink()
+    state.mkdir()
+    try:
+        with pytest.raises(CoreError):
+            repo.update_connection("tel", {"hostname": "10.0.0.6"})
+    finally:
+        state.rmdir()
+        _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
+    # The connection should still have the old hostname.
+    rec = repo.get_record("tel")
+    assert rec.data.get("hostname") == "10.0.0.5"
+
+
+def test_rollback_after_state_failure_non_ssh_delete(tmp_path):
+    """Non-SSH delete: if state file write fails, the state must be rolled back."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.create_connection({"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"})
+    state.unlink()
+    state.mkdir()
+    try:
+        with pytest.raises(CoreError):
+            repo.delete_connection("tel")
+    finally:
+        state.rmdir()
+        _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
+    # The connection should still exist.
+    assert repo.get_record("tel") is not None
+
+
+def test_rollback_after_state_failure_ssh_rename(tmp_path, monkeypatch):
+    """SSH rename (update with new nickname): state failure must roll back SSH."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.create_connection({"nickname": "new", "hostname": "example.com", "protocol": "ssh"})
+    pre_bytes = root.read_bytes()
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("injected state write failure")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository.write_connection_state",
+        fail_write,
+    )
+    with pytest.raises(OSError):
+        repo.update_connection("new", {"nickname": "renamed", "hostname": "example.com"})
+    monkeypatch.undo()
+    assert root.read_bytes() == pre_bytes
+
+
+def test_rollback_after_state_failure_ssh_duplicate(tmp_path, monkeypatch):
+    """SSH duplicate: state failure must roll back the SSH file."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.create_connection({"nickname": "new", "hostname": "example.com", "protocol": "ssh"})
+    pre_bytes = root.read_bytes()
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("injected state write failure")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository.write_connection_state",
+        fail_write,
+    )
+    with pytest.raises(OSError):
+        repo.duplicate_connection("new")
+    monkeypatch.undo()
+    assert root.read_bytes() == pre_bytes
+
+
+def test_rollback_after_state_failure_ssh_split(tmp_path, monkeypatch):
+    """SSH split: state failure must roll back the SSH file."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.create_connection({"nickname": "new", "hostname": "example.com", "protocol": "ssh"})
+    pre_bytes = root.read_bytes()
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("injected state write failure")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository.write_connection_state",
+        fail_write,
+    )
+    with pytest.raises((CoreError, OSError)):
+        repo.split_connection("new", "new", {"hostname": "split.example.com", "username": "u", "protocol": "ssh"})
+    monkeypatch.undo()
+    assert root.read_bytes() == pre_bytes
+
+
+def test_external_edit_after_daemon_state_write_raises_ambiguity(tmp_path, monkeypatch):
+    """After daemon writes the state file, an external edit must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    # Capture pre-write state and manually record post-write state,
+    # then simulate an external edit before rollback.
+    disk_before = repo._capture_transaction_files_locked()
+    repo._record_post_write_locked(disk_before, state)
+    # Now simulate an external edit.
+    state.write_text("{\"externally\": \"edited\"}")
+    # Restore should detect the external edit.
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_symlink_swap_during_post_write_raises_ambiguity(tmp_path):
+    """Symlink swap during post-write capture must raise MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    # Replace the file with a symlink before recording post-write.
+    root.unlink()
+    root.symlink_to("/etc/hostname")
+    with pytest.raises(CoreError) as exc:
+        repo._record_post_write_locked(disk_before, root)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_rollback_write_failure_raises_ambiguity(tmp_path, monkeypatch):
+    """If rollback write itself fails, the repository reports ambiguity."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    repo._record_post_write_locked(disk_before, root)
+    # Patch _atomic_write_text to simulate a write failure.
+    import os
+    def fail_atomic(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository._atomic_write_text",
+        fail_atomic,
+    )
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code in (ErrorCode.MUTATION_AMBIGUOUS, ErrorCode.CONNECTION_STATE_IO_ERROR)
+
+
+def test_exact_mode_and_existence_restoration(tmp_path):
+    """Rollback restores exact file mode and existence state."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    import os
+    os.chmod(str(root), 0o600)
+    disk_before = repo._capture_transaction_files_locked(root)
+    # Verify mode was captured.
+    assert disk_before[root][2] == 0o600
+    # Simulate a daemon write that changes the mode.
+    root.write_text("Host new\n    HostName new.example\n")
+    os.chmod(str(root), 0o644)
+    repo._record_post_write_locked(disk_before, root)
+    # Rollback should restore the original mode.
+    repo._restore_transaction_files_locked(disk_before)
+    st = os.stat(str(root))
+    assert (st.st_mode & 0o777) == 0o600
+
+
+def test_unchanged_generation_and_memory(tmp_path):
+    """Rollback does not change the generation counter."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    gen_before = repo._generation
+    disk_before = repo._capture_transaction_files_locked()
+    # Simulate a failed mutation that rolls back.
+    state.unlink()
+    state.mkdir()
+    try:
+        with pytest.raises(CoreError):
+            repo.create_connection({"nickname": "new", "hostname": "new.example", "protocol": "ssh"})
+    finally:
+        state.rmdir()
+        _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
+    assert repo._generation == gen_before

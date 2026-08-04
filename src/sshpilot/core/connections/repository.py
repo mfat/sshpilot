@@ -582,9 +582,14 @@ class ConnectionRepository:
             pre_existed: bool,
             pre_bytes: bytes,
             pre_mode: int,
-            post_bytes: Optional[bytes],   # daemon-written content (filled after write)
-            post_identity: Optional[tuple], # (dev, inode) after write (filled after write)
+            touched_by_daemon: bool,        # True only after confirmed daemon write
+            post_bytes: Optional[bytes],     # daemon-written content (filled after write)
+            post_identity: Optional[tuple],  # (dev, inode) after write (filled after write)
         )``
+
+        ``touched_by_daemon`` starts ``False`` and becomes ``True`` only after
+        a confirmed daemon write.  Recording the post-write token uses
+        non-following ``open``/``fstat`` checks.
 
         Non-SSH mutations must not capture or restore the SSH root, so
         callers must only pass ``ssh_target`` for SSH mutations.
@@ -598,7 +603,7 @@ class ConnectionRepository:
             try:
                 info = os.lstat(path)
             except FileNotFoundError:
-                captured[path] = (False, b"", 0, None, None)
+                captured[path] = (False, b"", 0, False, None, None)
                 continue
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
                 raise CoreError(
@@ -624,43 +629,102 @@ class ConnectionRepository:
                     True,
                     b"".join(chunks),
                     stat.S_IMODE(opened.st_mode),
-                    None,  # post_bytes filled after write
-                    None,  # post_identity filled after write
+                    False,    # touched_by_daemon starts False
+                    None,     # post_bytes filled after write
+                    None,     # post_identity filled after write
                 )
             finally:
                 os.close(fd)
         return captured
 
     def _record_post_write_locked(self, captured, path: Path) -> None:
-        """Record the daemon-written file identity and bytes for later verification."""
+        """Record the daemon-written file identity and bytes for later verification.
+
+        Uses non-following ``open``/``fstat`` checks.  If the daemon wrote the
+        file but cannot securely record its post state, raises
+        ``MUTATION_AMBIGUOUS``.
+        """
         if path not in captured:
             return
         try:
-            st = os.lstat(path)
-            if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-                return
-            with open(path, "rb") as fh:
-                post_bytes = fh.read()
-            entry = captured[path]
-            captured[path] = (
-                entry[0], entry[1], entry[2],
-                post_bytes,
-                (st.st_dev, st.st_ino),
-            )
-        except OSError:
-            pass
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(str(path), flags)
+            try:
+                st = os.fstat(fd)
+                if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+                    raise CoreError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "The mutation target became unsafe after daemon write",
+                    )
+                post_bytes = b""
+                while True:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:
+                        break
+                    post_bytes += chunk
+                entry = captured[path]
+                captured[path] = (
+                    entry[0], entry[1], entry[2],
+                    True,  # touched_by_daemon
+                    post_bytes,
+                    (st.st_dev, st.st_ino),
+                )
+            finally:
+                os.close(fd)
+        except CoreError:
+            raise
+        except OSError as exc:
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "Could not record post-write state for rollback verification",
+            ) from exc
 
     def _restore_transaction_files_locked(self, captured) -> None:
         """Restore pre-write bytes.  Rejects symlinks and verifies the
         current file is still the daemon-written version before overwriting.
+
+        For ``touched_by_daemon=False``: do not restore or delete the file;
+        preserve any external change and resynchronize from disk.
         """
-        for path, (existed, data, mode, post_bytes, post_identity) in captured.items():
+        for path, (existed, data, mode, touched, post_bytes, post_identity) in captured.items():
+            if not touched:
+                # The daemon never wrote this file — preserve external changes.
+                # Do not restore or delete it.
+                continue
             if not existed:
+                # The file did not exist before the mutation, and the daemon
+                # created it.  Delete only when the current file exactly
+                # matches the daemon-created post-write token.
+                try:
+                    st = os.lstat(path)
+                except FileNotFoundError:
+                    continue  # Already gone — fine.
+                if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+                    raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
+                if post_identity is not None and (st.st_dev, st.st_ino) != post_identity:
+                    raise CoreError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "The mutation target was replaced externally",
+                    )
+                if post_bytes is not None:
+                    try:
+                        current_bytes = path.read_bytes()
+                    except OSError as exc:
+                        raise CoreError(
+                            ErrorCode.MUTATION_AMBIGUOUS,
+                            "Could not verify the mutation target for rollback",
+                        ) from exc
+                    if current_bytes != post_bytes:
+                        raise CoreError(
+                            ErrorCode.MUTATION_AMBIGUOUS,
+                            "The mutation target was modified externally",
+                        )
                 try:
                     path.unlink()
                 except FileNotFoundError:
                     pass
                 continue
+            # File pre-existed and was touched by daemon.
             # Verify the file hasn't been externally modified since the daemon wrote it.
             if post_bytes is not None and post_identity is not None:
                 try:
@@ -691,12 +755,17 @@ class ConnectionRepository:
                         ErrorCode.MUTATION_AMBIGUOUS,
                         "The mutation target was modified externally",
                     )
-            else:
-                # No post-write state recorded (pre-existing file wasn't touched).
-                if os.path.islink(path):
-                    raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
-            _atomic_write_text(path, data.decode("utf-8"))
-            os.chmod(path, mode, follow_symlinks=False)
+            try:
+                _atomic_write_text(path, data.decode("utf-8"))
+            except OSError as exc:
+                raise CoreError(
+                    ErrorCode.MUTATION_AMBIGUOUS,
+                    "Could not restore the mutation target",
+                ) from exc
+            try:
+                os.chmod(path, mode, follow_symlinks=False)
+            except OSError:
+                pass  # Best-effort mode restoration.
 
     def _rollback_after_failure_locked(self, captured, ssh_target: Optional[Path] = None) -> None:
         try:
