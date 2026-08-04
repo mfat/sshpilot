@@ -64,7 +64,6 @@ KNOWN_TAGS = frozenset({"frontend"} | {"M%d" % i for i in range(1, 9)})
 ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
     {
         # -- error mapping (presentation) -------------------------------
-        ("connection_manager.py", "errors", "CoreError"),
         ("backup_manager.py", "errors", "CoreError"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
@@ -88,7 +87,6 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("gtk/interaction.py", "interaction", "decide_headless"),
         ("gtk/interaction.py", "interaction", "validate_response"),
         # -- pure naming helpers ----------------------------------------
-        ("connection_manager.py", "connections", "generate_duplicate_nickname"),
         ("backup_manager.py", "connections.models", "generate_group_slug"),
         # -- pure key sniffing (no directory discovery / generation) ----
         ("key_utils.py", "keys", "SKIPPED_FILENAMES"),
@@ -118,7 +116,6 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
 # ---------------------------------------------------------------------------
 PENDING: dict[tuple[str, str, str], tuple[str, str]] = {
     # === M3 — connections store ========================================
-    ("connection_manager.py", "connections", "ConnectionService"): ("M3", "in-GTK store -> daemon"),
     # === M4 — settings / config JSON ownership ==========================
     ("config.py", "settings", "CONFIG_VERSION"): ("M4", "config version -> daemon"),
     ("config.py", "settings", "ensure_config_defaults"): ("M4", "defaults write -> daemon"),
@@ -175,7 +172,6 @@ SERVICE_CLASSES = {"SecretManager", "ConnectionService", "KeyService", "BackupMa
 
 BACKEND_OPS: dict[tuple[str, str], str] = {
     # -- M3 connections --------------------------------------------------
-    ("connection_manager.py", "ConnectionService"): "M3",
     # -- M5 secrets ------------------------------------------------------
     ("secret_storage.py", "subprocess"): "M5",
     ("secret_storage.py", "SecretManager"): "M5",

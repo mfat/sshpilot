@@ -22,6 +22,13 @@ class GroupManager:
         self.connections = {}
         self.root_connections = []
         self._expanded = {}
+        self._projection_handler = None
+        if connection_manager is not None:
+            connect_after = getattr(connection_manager, "connect_after", None)
+            if callable(connect_after):
+                self._projection_handler = connect_after(
+                    "projection-reset", lambda *_args: self._refresh()
+                )
         self._refresh()
 
     def attach_client(self, client) -> None:
@@ -182,8 +189,11 @@ class GroupManager:
     def get_group_hierarchy(self):
         return [group for group in self.groups.values() if group.get("parent_id") is None]
 
-    def resolve_display_group_id(self, group_id):
-        return group_id
+    def resolve_display_group_id(self, connection_reference, context_group_id=None):
+        if context_group_id is not None:
+            if context_group_id in self.get_connection_groups(connection_reference):
+                return context_group_id
+        return self.get_connection_group(connection_reference)
 
     def get_ordered_siblings(self, group_id=None):
         return sorted(

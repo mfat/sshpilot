@@ -19,7 +19,7 @@ from .dnd_payload import (
     set_internal_drag_icon,
 )
 from .platform_utils import is_macos
-from .connection_manager import Connection
+from .connection_model import Connection
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,

@@ -69,8 +69,6 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     # These edges were hidden by the old broken _module_files (double-dot names);
     # the fixed scanner reveals them. They are pre-existing coupling, not new debt.
     ("askpass_utils.py", "sshpilot.secret_storage"): "M5",
-    ("connection_manager.py", "sshpilot.secret_storage"): "M5",
-    ("connection_manager.py", "sshpilot.plugins"): "M8",  # plugin launch runtime
     ("credential_model.py", "sshpilot.secret_storage"): "M5",
     ("plugins/api.py", "sshpilot.plugins.host"): "M8",
 }
