@@ -47,6 +47,15 @@ from .models.connections import (
     StoreKeyPassphraseRequest,
     UpdateConnectionRequest,
 )
+from .models.connection_store import (
+    ConnectionStoreSnapshot,
+    SetGroupColorRequest,
+    PlaceGroupRequest,
+    CopyConnectionToGroupRequest,
+    RemoveConnectionFromGroupRequest,
+    ReorderConnectionRequest,
+    RenameTagRequest,
+)
 from .models.daemon import (
     DaemonDiagnostics,
     DaemonStatus,
@@ -135,6 +144,7 @@ from .transport.codec import (
     connection_details_from_wire,
     connection_editor_details_from_wire,
     connection_summary_from_wire,
+    connection_store_snapshot_from_wire,
     create_connection_request_to_wire,
     create_group_request_to_wire,
     daemon_diagnostics_from_wire,
@@ -191,6 +201,12 @@ from .transport.codec import (
     transfer_summary_from_wire,
     update_connection_metadata_request_to_wire,
     update_connection_request_to_wire,
+    set_group_color_request_to_wire,
+    place_group_request_to_wire,
+    copy_connection_to_group_request_to_wire,
+    remove_connection_from_group_request_to_wire,
+    reorder_connection_request_to_wire,
+    rename_tag_request_to_wire,
 )
 from .transport.envelopes import (
     ErrorResponseEnvelope,
@@ -232,6 +248,13 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "detach_session": Capability.SESSIONS_WRITE,
     "get_daemon_diagnostics": Capability.DAEMON_STATUS,
     "get_daemon_status": Capability.DAEMON_STATUS,
+    "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
+    "set_group_color": Capability.CONNECTIONS_GROUPS,
+    "place_group": Capability.CONNECTIONS_GROUPS,
+    "copy_connection_to_group": Capability.CONNECTIONS_GROUPS,
+    "remove_connection_from_group": Capability.CONNECTIONS_GROUPS,
+    "reorder_connection": Capability.CONNECTIONS_GROUPS,
+    "rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "get_session": Capability.SESSIONS_READ,
     "get_interaction": Capability.INTERACTIONS_READ,
     "claim_interaction": Capability.INTERACTIONS_RESPOND,
@@ -515,6 +538,14 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid connection list")
 
+    def get_connection_store_snapshot(self) -> ConnectionStoreSnapshot:
+        self._require_capability(Capability.CONNECTIONS_READ)
+        result = self._request("connections.snapshot", {})
+        try:
+            return connection_store_snapshot_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid connection-store snapshot")
+
     def get_connection(self, connection_id: ConnectionId) -> ConnectionDetails:
         result = self._request(
             "connections.get",
@@ -692,6 +723,80 @@ class DaemonClient:
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid metadata update result")
+        return result
+
+    def set_group_color(self, request: SetGroupColorRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("group change")
+        result = self._request(
+            "groups.set_color",
+            set_group_color_request_to_wire(request),
+            mutation_description="group change",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group change result")
+        return result
+
+    def place_group(self, request: PlaceGroupRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("group change")
+        result = self._request(
+            "groups.place",
+            place_group_request_to_wire(request),
+            mutation_description="group change",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group change result")
+        return result
+
+    def copy_connection_to_group(self, request: CopyConnectionToGroupRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("group change")
+        result = self._request(
+            "groups.copy_connection",
+            copy_connection_to_group_request_to_wire(request),
+            mutation_description="group change",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group change result")
+        return result
+
+    def remove_connection_from_group(
+        self, request: RemoveConnectionFromGroupRequest
+    ) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("group change")
+        result = self._request(
+            "groups.remove_connection",
+            remove_connection_from_group_request_to_wire(request),
+            mutation_description="group change",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group change result")
+        return result
+
+    def reorder_connection(self, request: ReorderConnectionRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("group change")
+        result = self._request(
+            "groups.reorder_connection",
+            reorder_connection_request_to_wire(request),
+            mutation_description="group change",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group change result")
+        return result
+
+    def rename_tag(self, request: RenameTagRequest) -> int:
+        self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
+        self._require_write_compatibility("tag rename")
+        result = self._request(
+            "connections.metadata.rename_tag",
+            rename_tag_request_to_wire(request),
+            mutation_description="tag rename",
+        )
+        if type(result) is not int:
+            self._fail_protocol("The daemon returned an invalid tag rename result")
         return result
 
     def assign_connection_to_group(

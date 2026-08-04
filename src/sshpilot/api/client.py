@@ -26,6 +26,15 @@ from .models.connections import (
     SplitConnectionRequest,
     UpdateConnectionRequest,
 )
+from .models.connection_store import (
+    ConnectionStoreSnapshot,
+    SetGroupColorRequest,
+    PlaceGroupRequest,
+    CopyConnectionToGroupRequest,
+    RemoveConnectionFromGroupRequest,
+    ReorderConnectionRequest,
+    RenameTagRequest,
+)
 from .models.interactions import (
     InteractionClaim,
     InteractionDecisionRequest,
@@ -108,6 +117,9 @@ class SshPilotClient(Protocol):
     def list_connections(self) -> List[ConnectionSummary]:
         ...
 
+    def get_connection_store_snapshot(self) -> ConnectionStoreSnapshot:
+        ...
+
     def get_connection(self, connection_id: ConnectionId) -> ConnectionDetails:
         ...
 
@@ -157,6 +169,26 @@ class SshPilotClient(Protocol):
     def update_connection_metadata(
         self, connection_id: ConnectionId, meta: 'Dict[str, Any]'
     ) -> bool:
+        ...
+
+    def set_group_color(self, request: SetGroupColorRequest) -> bool:
+        ...
+
+    def place_group(self, request: PlaceGroupRequest) -> bool:
+        ...
+
+    def copy_connection_to_group(self, request: CopyConnectionToGroupRequest) -> bool:
+        ...
+
+    def remove_connection_from_group(
+        self, request: RemoveConnectionFromGroupRequest
+    ) -> bool:
+        ...
+
+    def reorder_connection(self, request: ReorderConnectionRequest) -> bool:
+        ...
+
+    def rename_tag(self, request: RenameTagRequest) -> int:
         ...
 
     def assign_connection_to_group(

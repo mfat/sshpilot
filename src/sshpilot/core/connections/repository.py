@@ -806,7 +806,7 @@ class ConnectionRepository:
             self._commit(before)
             return copy.deepcopy(self._metadata.get(connection_id, {}))
 
-    def rename_tag(self, old_tag: str, new_tag: str) -> None:
+    def rename_tag(self, old_tag: str, new_tag: str) -> int:
         """Rename a tag across every connection (case-insensitive, deduped)."""
         if not isinstance(old_tag, str) or not old_tag.strip():
             raise ValueError("old tag must be a non-empty string")
@@ -816,6 +816,7 @@ class ConnectionRepository:
             before = self._begin()
             old_lower = old_tag.lower()
             changed = False
+            renamed = 0
             try:
                 for values in self._metadata.values():
                     tags = values.get("tags")
@@ -827,6 +828,7 @@ class ConnectionRepository:
                         tag_str = str(tag)
                         if tag_str.lower() == old_lower:
                             tag_str = new_tag
+                            renamed += 1
                         lowered = tag_str.lower()
                         if lowered not in seen:
                             seen.add(lowered)
@@ -841,6 +843,7 @@ class ConnectionRepository:
                 raise
             if changed:
                 self._commit(before)
+            return renamed
 
     # ------------------------------------------------------------------
     # Event dispatch (outside the lock)

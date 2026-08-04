@@ -58,6 +58,31 @@ from sshpilot import __version__ as sshpilot_version
 
 logger = logging.getLogger(__name__)
 
+IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
+    "close": None,
+    "get_capabilities": None,
+    "get_connection": Capability.CONNECTIONS_READ,
+    "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
+    "list_connections": Capability.CONNECTIONS_READ,
+    "create_connection": Capability.CONNECTIONS_WRITE,
+    "duplicate_connection": Capability.CONNECTIONS_WRITE,
+    "delete_connection": Capability.CONNECTIONS_WRITE,
+    "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "lookup_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "lookup_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "update_connection_metadata": Capability.CONNECTIONS_METADATA_WRITE,
+    "assign_connection_to_group": Capability.CONNECTIONS_GROUPS,
+    "create_group": Capability.CONNECTIONS_GROUPS,
+    "delete_group": Capability.CONNECTIONS_GROUPS,
+    "rename_group": Capability.CONNECTIONS_GROUPS,
+    "split_connection": Capability.CONNECTIONS_SPLIT,
+    "subscribe_events": Capability.CONNECTIONS_EVENTS,
+    "update_connection": Capability.CONNECTIONS_WRITE,
+}
+
 
 class ConnectionApplicationService:
     """Provide daemon application operations over the connection repository.
@@ -479,11 +504,10 @@ class ConnectionApplicationService:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
         try:
-            self._repository.rename_tag(old_tag, new_tag)
-            return True
+            return bool(self._repository.rename_tag(old_tag, new_tag))
         except Exception:
             logger.exception("Failed to rename tag via daemon RPC")
-            return False
+            return 0
 
     def split_connection(self, request: SplitConnectionRequest) -> ConnectionMutationResult:
         self._assert_command_thread()
