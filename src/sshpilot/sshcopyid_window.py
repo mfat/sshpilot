@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import threading
 from gettext import gettext as _
 from typing import Callable, Optional, Tuple
 
@@ -8,6 +9,7 @@ import gi
 from gi.repository import Adw, GLib, Gio, Gtk
 
 
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from .command_progress_dialog import (
     build_progress_status_row,
     build_terminal_disclosure,
@@ -155,6 +157,16 @@ class SshCopyIdWindow(Adw.Window):
         self._conn = connection
         self._km = key_manager
         self._cm = connection_manager
+
+        # Async-operation guards: no background work may start new work after
+        # the window closes, and repeated clicks are ignored while running.
+        self._closed = False
+        self._loading_keys = False
+        self._generating = False
+        try:
+            self.connect("close-request", self._on_close_request)
+        except Exception:
+            logger.debug("SshCopyIdWindow: close-request hook unavailable", exc_info=True)
 
         # Static chrome (header Cancel/OK, keychain illustration) lives in the
         # template; the server picker, key mode, and generator form are built
@@ -423,22 +435,66 @@ class SshCopyIdWindow(Adw.Window):
         self.pass_box.set_visible(self.row_pass_toggle.get_active())
 
     def _reload_existing_keys(self):
-        logger.info("SshCopyIdWindow: Reloading existing keys")
-        logger.debug("SshCopyIdWindow: Calling key_manager.discover_keys()")
+        """Start a background key listing; never block the GTK thread."""
+        if self._loading_keys or self._closed:
+            return
+        self._loading_keys = True
+        self._set_key_loading_state(True)
+        km = self._km
         try:
-            keys = self._km.discover_keys()
-            logger.info(f"SshCopyIdWindow: Discovered {len(keys)} keys")
-            self._existing_keys_cache = list(keys)
-            names = [os.path.basename(k.private_path) for k in keys] or [_("No keys found")]
-            self._last_real_selection = 0
-            self._rebuild_existing_dropdown(names, 0)
-            logger.info(f"SshCopyIdWindow: Dropdown populated with {len(names)} key item(s)")
-        except Exception as e:
-            logger.error(f"SshCopyIdWindow: Failed to load existing keys: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
-            self._existing_keys_cache = []
-            self._last_real_selection = 0
-            self._rebuild_existing_dropdown([_("Error loading keys")], 0)
+            thread = threading.Thread(
+                target=self._load_keys_worker,
+                args=(km,),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.error("SshCopyIdWindow: Could not start key loading: %s", type(exc).__name__)
+            self._loading_keys = False
+            self._set_key_loading_state(False)
+
+    def _load_keys_worker(self, km):
+        """Daemon/client call off the GTK thread; result delivered via idle."""
+        try:
+            keys = km.discover_keys() or []
+        except BaseException as exc:  # noqa: BLE001 - marshalled to the GTK thread
+            GLib.idle_add(self._on_keys_load_failed, exc)
+            return
+        GLib.idle_add(self._on_keys_loaded, keys)
+
+    def _on_keys_loaded(self, keys):
+        self._loading_keys = False
+        self._set_key_loading_state(False)
+        if self._closed:
+            return
+        logger.info("SshCopyIdWindow: Discovered %d keys", len(keys))
+        self._existing_keys_cache = list(keys)
+        self._last_real_selection = 0
+        names = [k.name for k in keys] or [_("No keys found")]
+        self._rebuild_existing_dropdown(names, 0)
+
+    def _on_keys_load_failed(self, exc):
+        self._loading_keys = False
+        self._set_key_loading_state(False)
+        if self._closed:
+            return
+        logger.error("SshCopyIdWindow: Failed to load existing keys: %s", type(exc).__name__)
+        self._existing_keys_cache = []
+        self._last_real_selection = 0
+        self._rebuild_existing_dropdown([_("Error loading keys")], 0)
+        self._error(_("Key Loading Failed"), _("Could not load the local keys."))
+
+    def _set_key_loading_state(self, loading):
+        """Disable/re-enable the existing-key controls while listing keys."""
+        try:
+            self.dropdown_existing.set_sensitive(not loading)
+            if loading:
+                if self.radio_existing.get_active():
+                    self.btn_ok.set_sensitive(False)
+            else:
+                self.btn_ok.set_sensitive(self._conn is not None)
+        except Exception:
+            pass
 
     def _rebuild_existing_dropdown(self, names, select_index):
         """Set the dropdown model to *names* plus a trailing Browse item.
@@ -538,9 +594,7 @@ class SshCopyIdWindow(Adw.Window):
         for i, key in enumerate(cache):
             if getattr(key, "public_path", None) == path:
                 self._last_real_selection = i
-                self._rebuild_existing_dropdown(
-                    [os.path.basename(k.private_path) for k in cache], i
-                )
+                self._rebuild_existing_dropdown([k.name for k in cache], i)
                 self.radio_existing.set_active(True)
                 return
 
@@ -548,9 +602,7 @@ class SshCopyIdWindow(Adw.Window):
         self._existing_keys_cache = cache
         new_idx = len(cache) - 1
         self._last_real_selection = new_idx
-        self._rebuild_existing_dropdown(
-            [os.path.basename(k.private_path) for k in cache], new_idx
-        )
+        self._rebuild_existing_dropdown([k.name for k in cache], new_idx)
         # Browsing implies copying an existing key.
         self.radio_existing.set_active(True)
 
@@ -575,8 +627,13 @@ class SshCopyIdWindow(Adw.Window):
         except Exception:
             logger.error("%s: %s | %s", title, body, detail)
 
+    def _on_close_request(self, *_args):
+        self._closed = True
+        return False
+
     def _on_close_clicked(self, *_):
         logger.info("SshCopyIdWindow: Close button clicked")
+        self._closed = True
         self.close()
 
     # ---------- OK (main action) ----------
@@ -626,9 +683,7 @@ class SshCopyIdWindow(Adw.Window):
                 raise RuntimeError("Please select a key to copy")
             
             ssh_key = keys[idx]
-            logger.info(f"SshCopyIdWindow: Selected key: {ssh_key.private_path}")
-            logger.debug(f"SshCopyIdWindow: Selected key details - private_path='{ssh_key.private_path}', "
-                       f"public_path='{ssh_key.public_path}', exists={os.path.exists(ssh_key.private_path)}")
+            logger.info("SshCopyIdWindow: Selected key: %s", ssh_key.name)
             
             # Launch your existing terminal ssh-copy-id flow
             logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
@@ -638,99 +693,161 @@ class SshCopyIdWindow(Adw.Window):
             logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
             self.close()
         except Exception as e:
-            logger.error(f"SshCopyIdWindow: Copy existing failed: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
+            logger.error("SshCopyIdWindow: Copy existing failed: %s", type(e).__name__)
             self._error("Copy failed", "Could not copy the selected key to the server.", str(e))
 
     # ---------- Mode: generate ----------
     def _do_generate_and_copy(self):
-        logger.info("SshCopyIdWindow: Starting generate and copy operation")
-        logger.debug("SshCopyIdWindow: Processing key generation request")
-        
+        """Validate the form, then run generation off the GTK thread.
+
+        A second click while generation is running is ignored. The passphrase
+        lives only in the worker-local request dict and is not retained.
+        """
+        if self._generating:
+            return
         try:
             key_name = (self.row_key_name.get_text() or "").strip()
-            logger.info(f"SshCopyIdWindow: Key name: '{key_name}'")
-            logger.debug(f"SshCopyIdWindow: Raw key name from UI: '{self.row_key_name.get_text()}'")
-            
             if not key_name:
-                logger.debug("SshCopyIdWindow: Empty key name provided")
-                raise ValueError("Enter a key file name (e.g. id_ed25519)")
+                raise ValueError(_("Enter a key file name (e.g. id_ed25519)"))
             if "/" in key_name or key_name.startswith("."):
-                logger.debug(f"SshCopyIdWindow: Invalid key name '{key_name}' - contains '/' or starts with '.'")
-                raise ValueError("Key file name must not contain '/' or start with '.'")
+                raise ValueError(_("Key file name must not contain '/' or start with '.'"))
 
-            # Key type
             type_selection = self.type_dropdown.get_selected()
             kt = "ed25519" if type_selection == 0 else "rsa"
-            logger.info(f"SshCopyIdWindow: Key type: {kt}")
-            logger.debug(f"SshCopyIdWindow: Type selection index: {type_selection}, resolved to: {kt}")
 
             passphrase = None
-            passphrase_enabled = self.row_pass_toggle.get_active()
-            logger.debug(f"SshCopyIdWindow: Passphrase toggle state: {passphrase_enabled}")
-            
-            if passphrase_enabled:
+            if self.row_pass_toggle.get_active():
                 p1 = self.pass1.get_text() or ""
                 p2 = self.pass2.get_text() or ""
-                logger.debug(f"SshCopyIdWindow: Passphrase lengths - p1: {len(p1)}, p2: {len(p2)}")
                 if p1 != p2:
-                    logger.debug("SshCopyIdWindow: Passphrases do not match")
-                    raise ValueError("Passphrases do not match")
+                    raise ValueError(_("Passphrases do not match"))
                 passphrase = p1
-                logger.info("SshCopyIdWindow: Passphrase enabled")
-                logger.debug("SshCopyIdWindow: Passphrase validation successful")
+        except ValueError as exc:
+            self._error(_("Key Generation Failed"), str(exc))
+            return
 
-            logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
-            logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
-                       f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
-            
-            new_key = self._km.generate_key(
-                key_name=key_name,
-                key_type=kt,
-                key_size=3072 if kt == "rsa" else 0,
-                comment=None,
-                passphrase=passphrase,
+        logger.info("SshCopyIdWindow: Starting generate and copy operation")
+        self._generating = True
+        self._set_generating_state(True)
+        request = {
+            "key_name": key_name,
+            "key_type": kt,
+            "key_size": 3072 if kt == "rsa" else 0,
+            "comment": None,
+            "passphrase": passphrase,
+        }
+        try:
+            thread = threading.Thread(
+                target=self._generate_worker,
+                args=(self._km, self._parent, self._conn, request),
+                daemon=True,
             )
-            
-            if not new_key:
-                logger.debug("SshCopyIdWindow: Key generation returned None")
-                raise RuntimeError("Key generation failed. See logs for details.")
+            thread.start()
+        except Exception as exc:
+            logger.error(
+                "SshCopyIdWindow: Could not start generation: %s", type(exc).__name__
+            )
+            self._generating = False
+            self._set_generating_state(False)
+            self._error(
+                _("Key Generation Failed"),
+                _("Could not start key generation."),
+            )
 
-            logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
-            logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
-                       f"public_path='{new_key.public_path}'")
-            
-            # Ensure the key files are properly written and accessible
-            import time
-            logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
-            time.sleep(0.5)  # Small delay to ensure files are written
-            
-            # Verify the key files exist and are accessible
-            private_exists = os.path.exists(new_key.private_path)
-            public_exists = os.path.exists(new_key.public_path)
-            logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
-            
-            if not private_exists:
-                logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
-                raise RuntimeError(f"Private key file not found: {new_key.private_path}")
-            if not public_exists:
-                logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
-                raise RuntimeError(f"Public key file not found: {new_key.public_path}")
-            
-            logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
-            logger.debug("SshCopyIdWindow: All key files verified successfully")
-            
-            # Run your terminal ssh-copy-id flow
-            logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
+    def _generate_worker(self, km, parent, conn, request):
+        """Daemon/client call off the GTK thread; result delivered via idle."""
+        try:
+            new_key = km.generate_key(**request)
+        except SshPilotError as exc:
+            if exc.code == ErrorCode.MUTATION_AMBIGUOUS:
+                GLib.idle_add(self._on_key_mutation_ambiguous, exc)
+            else:
+                GLib.idle_add(self._on_key_generation_failed, exc)
+            return
+        except BaseException as exc:  # noqa: BLE001 - marshalled to the GTK thread
+            GLib.idle_add(self._on_key_generation_failed, exc)
+            return
+        if new_key is None:
+            GLib.idle_add(
+                self._on_key_generation_failed,
+                RuntimeError("Key generation returned no result"),
+            )
+            return
+        GLib.idle_add(self._on_key_generated, new_key, conn)
+
+    def _on_key_generated(self, new_key, conn):
+        self._generating = False
+        self._set_generating_state(False)
+        if self._closed:
+            return
+        logger.info("SshCopyIdWindow: Key generated successfully")
+        # The daemon result is authoritative; no local file checks or delays.
+        try:
             force_enabled = self.force_toggle.get_active()
-            logger.debug(f"SshCopyIdWindow: Force option enabled: {force_enabled}")
-            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key, force_enabled)
-            logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
-            self.close()
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(
+                conn, new_key, force_enabled
+            )
+        except Exception as exc:
+            logger.error(
+                "SshCopyIdWindow: Could not start ssh-copy-id: %s", type(exc).__name__
+            )
+            self._error(
+                _("Key Generation Failed"),
+                _("The key was generated, but copying it to the server could not start."),
+            )
+            return
+        logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
+        self.close()
 
-        except Exception as e:
-            logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
+    def _on_key_mutation_ambiguous(self, exc):
+        self._generating = False
+        self._set_generating_state(False)
+        if self._closed:
+            return
+        logger.warning(
+            "SshCopyIdWindow: Key generation outcome unknown: %s", type(exc).__name__
+        )
+        self._info(
+            _("Key May Have Been Generated"),
+            _(
+                "The connection was lost while generating the key. The key may "
+                "have been created. Check the key list; generation was not retried."
+            ),
+        )
+        # Reload once; do not automatically resubmit the mutation.
+        self._reload_existing_keys()
+
+    def _on_key_generation_failed(self, exc):
+        self._generating = False
+        self._set_generating_state(False)
+        if self._closed:
+            return
+        logger.error(
+            "SshCopyIdWindow: Generate failed: %s", type(exc).__name__
+        )
+        if isinstance(exc, FileExistsError):
+            message = _("A key with that name already exists.")
+        elif isinstance(exc, ValueError):
+            message = str(exc) or _("The key name is invalid.")
+        else:
+            message = _("Could not generate the SSH key.")
+        self._error(_("Key Generation Failed"), message)
+
+    def _set_generating_state(self, generating):
+        """Disable/re-enable the form while a generation is running."""
+        try:
+            self.btn_ok.set_sensitive(not generating and self._conn is not None)
+            self.row_key_name.set_sensitive(not generating)
+            self.type_dropdown.set_sensitive(not generating)
+            self.row_pass_toggle.set_sensitive(
+                not generating and self.radio_generate.get_active()
+            )
+            self.pass_box.set_sensitive(
+                not generating and self.radio_generate.get_active()
+            )
+            self.force_toggle.set_sensitive(not generating)
+        except Exception:
+            pass
 
 
 class SshCopyIdRunner:
@@ -874,9 +991,7 @@ class SshCopyIdRunner:
             getattr(connection, 'port', 22),
         )
         logger.debug(
-            "Main window: SSH key details - private_path: %s, public_path: %s",
-            getattr(ssh_key, 'private_path', 'unknown'),
-            getattr(ssh_key, 'public_path', 'unknown'),
+            "Main window: SSH key details - key: %s", getattr(ssh_key, 'name', 'unknown')
         )
 
         try:
@@ -1043,9 +1158,7 @@ class SshCopyIdRunner:
                 auth=auth,
                 config_file=config_file,
             )
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
-            logger.debug("Main window: Shell-quoted command: %s", cmdline)
+            logger.info("Starting ssh-copy-id for key: %s", getattr(ssh_key, 'name', 'unknown'))
 
             def _feed_colored_line(text: str, color: str):
                 colors = {
@@ -1286,22 +1399,17 @@ class SshCopyIdRunner:
         PreferredAuthentications choice is driven off it (single shared auth
         decision) instead of recomputing saved-password state here.
         """
-        logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
+        logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'name', 'unknown')}")
         logger.debug(f"Main window: Building ssh-copy-id command arguments")
         logger.debug(f"Main window: Connection object: {type(connection)}")
         logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
         logger.debug(f"Main window: Force option: {force}")
-        logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)
         
         # Verify the public key file exists
-        logger.debug(f"Main window: Checking if public key file exists: {ssh_key.public_path}")
         if not os.path.exists(ssh_key.public_path):
-            logger.error(f"Public key file does not exist: {ssh_key.public_path}")
-            logger.debug(f"Main window: Public key file missing: {ssh_key.public_path}")
-            raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
-        
-        logger.debug(f"Main window: Public key file verified: {ssh_key.public_path}")
+            logger.error("Public key file does not exist")
+            raise RuntimeError("Public key file not found")
 
         # Shared command prefix via the single option builder (same one the SCP
         # paths use): app-level -o options, strict-host policy, port and
@@ -1335,7 +1443,6 @@ class SshCopyIdRunner:
             logger.debug("Main window: Added force option (-f) to ssh-copy-id")
 
         argv.extend(['-i', ssh_key.public_path])
-        logger.debug(f"Main window: Base command: {argv}")
 
         if known_hosts_path:
             argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
@@ -1418,5 +1525,4 @@ class SshCopyIdRunner:
         target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
         argv.append(target)
         logger.debug(f"Main window: Added target: {target}")
-        logger.debug(f"Main window: Final argv: {argv}")
         return argv

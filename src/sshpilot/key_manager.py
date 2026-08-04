@@ -125,6 +125,10 @@ class KeyManager(GObject.Object):
                 passphrase=passphrase or "",
             )
         except SshPilotError as exc:
+            if exc.code == ErrorCode.MUTATION_AMBIGUOUS:
+                # Structured ambiguity: the mutation may have completed. The
+                # caller decides how to recover (reload, no automatic retry).
+                raise
             raise self._map_error(exc) from exc
         key = SSHKey.from_summary(result.key)
         try:
