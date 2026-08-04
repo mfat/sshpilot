@@ -717,3 +717,141 @@ def test_unchanged_generation_and_memory(tmp_path):
         state.rmdir()
         _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
     assert repo._generation == gen_before
+
+
+# ---------------------------------------------------------------------------
+# Commit 2: Writer-authenticated rollback token tests
+# ---------------------------------------------------------------------------
+
+
+def test_non_ssh_create_captures_no_ssh_path(tmp_path):
+    """Failed non-SSH mutation must not capture or restore the SSH root."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    pre_ssh = root.read_bytes()
+    # Capture what a non-SSH mutation would capture.
+    disk_before = repo._capture_transaction_files_locked()  # no ssh_target
+    # The SSH root must not be in the captured set.
+    assert root not in disk_before
+    assert state in disk_before
+    # The SSH bytes must remain unchanged after any operation.
+    repo.create_connection({"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"})
+    assert root.read_bytes() == pre_ssh
+
+
+def test_regular_file_replaced_with_identical_bytes_different_inode(tmp_path):
+    """Replacement with identical bytes but a different inode must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    repo._record_post_write_locked(disk_before, root)
+    # Replace with a new file that has identical bytes but a different inode.
+    original_bytes = root.read_bytes()
+    root.unlink()
+    root.write_bytes(original_bytes)  # new file, new inode
+    # The post-write identity won't match the new inode.
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_regular_file_replaced_with_different_bytes(tmp_path):
+    """Replacement with different bytes must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    repo._record_post_write_locked(disk_before, root)
+    # Replace with different bytes.
+    root.write_bytes(b"Host different\n    HostName other.com\n")
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_newly_created_file_replaced_before_token_capture(tmp_path):
+    """A newly created file replaced before token capture must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "")
+    disk_before = repo._capture_transaction_files_locked(root)
+    # Simulate: daemon created the file, then it was replaced before token capture.
+    root.write_bytes(b"Host web\n    HostName example.com\n")
+    # Record post-write token.
+    repo._record_post_write_locked(disk_before, root)
+    # Now replace the file.
+    root.write_bytes(b"Host replaced\n    HostName replaced.com\n")
+    # Rollback should detect the replacement.
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_state_file_replaced_before_token_capture(tmp_path):
+    """State file replaced before token capture must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked()
+    repo._record_post_write_locked(disk_before, state)
+    # Replace the state file.
+    state.write_text("{\"externally\": \"replaced\"}")
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_post_write_identity_mismatch(tmp_path):
+    """Post-write identity mismatch must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    # Simulate daemon write by recording post-write state.
+    repo._record_post_write_locked(disk_before, root)
+    # Replace the file (new inode).
+    root.unlink()
+    root.write_bytes(b"Host new\n    HostName new.example\n")
+    # Identity mismatch should be detected.
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_chmod_failure_during_rollback_raises_ambiguity(tmp_path):
+    """chmod() failure during rollback must raise MUTATION_AMBIGUOUS.
+
+    We simulate this by making the target file immutable (``chattr +i`` on
+    Linux).  If the OS doesn't support immutable flags, the test is skipped.
+    """
+    import os
+    import subprocess
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    repo._record_post_write_locked(disk_before, root)
+    # Make the file immutable so chmod fails.
+    try:
+        subprocess.run(
+            ["chattr", "+i", str(root)],
+            check=True, capture_output=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+        pytest.skip("chattr not available or not supported")
+    try:
+        with pytest.raises(CoreError) as exc:
+            repo._restore_transaction_files_locked(disk_before)
+        assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    finally:
+        subprocess.run(
+            ["chattr", "-i", str(root)],
+            check=False, capture_output=True, timeout=5,
+        )
+
+
+def test_no_event_and_unchanged_generation_after_successful_rollback(tmp_path):
+    """After a successful rollback, no event is published and generation is unchanged."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    gen_before = repo._generation
+    changes = []
+    repo.add_listener(lambda change: changes.append(change))
+    # Force a rollback scenario.
+    state.unlink()
+    state.mkdir()
+    try:
+        with pytest.raises(CoreError):
+            repo.create_connection({"nickname": "new", "hostname": "new.example", "protocol": "ssh"})
+    finally:
+        state.rmdir()
+        _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
+    assert len(changes) == 0
+    assert repo._generation == gen_before

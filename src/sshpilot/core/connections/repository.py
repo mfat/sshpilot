@@ -585,6 +585,7 @@ class ConnectionRepository:
             touched_by_daemon: bool,        # True only after confirmed daemon write
             post_bytes: Optional[bytes],     # daemon-written content (filled after write)
             post_identity: Optional[tuple],  # (dev, inode) after write (filled after write)
+            post_mode: Optional[int],        # mode after write (filled after write)
         )``
 
         ``touched_by_daemon`` starts ``False`` and becomes ``True`` only after
@@ -603,7 +604,7 @@ class ConnectionRepository:
             try:
                 info = os.lstat(path)
             except FileNotFoundError:
-                captured[path] = (False, b"", 0, False, None, None)
+                captured[path] = (False, b"", 0, False, None, None, None)
                 continue
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
                 raise CoreError(
@@ -632,16 +633,18 @@ class ConnectionRepository:
                     False,    # touched_by_daemon starts False
                     None,     # post_bytes filled after write
                     None,     # post_identity filled after write
+                    None,     # post_mode filled after write
                 )
             finally:
                 os.close(fd)
         return captured
 
     def _record_post_write_locked(self, captured, path: Path) -> None:
-        """Record the daemon-written file identity and bytes for later verification.
+        """Record the daemon-written file identity, bytes, and mode for later verification.
 
         Uses non-following ``open``/``fstat`` checks.  If the daemon wrote the
-        file but cannot securely record its post state, raises
+        file but cannot securely record its post state, or if a regular file
+        was replaced between the daemon write and post-write capture, raises
         ``MUTATION_AMBIGUOUS``.
         """
         if path not in captured:
@@ -652,6 +655,8 @@ class ConnectionRepository:
             try:
                 st = os.fstat(fd)
                 if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+                    # File was replaced with a symlink or non-regular file.
+                    # Do not mark as daemon-owned.
                     raise CoreError(
                         ErrorCode.MUTATION_AMBIGUOUS,
                         "The mutation target became unsafe after daemon write",
@@ -668,6 +673,7 @@ class ConnectionRepository:
                     True,  # touched_by_daemon
                     post_bytes,
                     (st.st_dev, st.st_ino),
+                    stat.S_IMODE(st.st_mode),  # post_mode
                 )
             finally:
                 os.close(fd)
@@ -680,13 +686,18 @@ class ConnectionRepository:
             ) from exc
 
     def _restore_transaction_files_locked(self, captured) -> None:
-        """Restore pre-write bytes.  Rejects symlinks and verifies the
-        current file is still the daemon-written version before overwriting.
+        """Restore pre-write bytes, existence, and mode.  Rejects symlinks
+        and verifies the current file is still the daemon-written version
+        before overwriting.
 
         For ``touched_by_daemon=False``: do not restore or delete the file;
         preserve any external change and resynchronize from disk.
+
+        A rollback is successful only when original bytes, existence, and
+        mode are all restored.  If mode cannot be restored, raises
+        ``MUTATION_AMBIGUOUS``.
         """
-        for path, (existed, data, mode, touched, post_bytes, post_identity) in captured.items():
+        for path, (existed, data, mode, touched, post_bytes, post_identity, post_mode) in captured.items():
             if not touched:
                 # The daemon never wrote this file — preserve external changes.
                 # Do not restore or delete it.
@@ -764,8 +775,16 @@ class ConnectionRepository:
                 ) from exc
             try:
                 os.chmod(path, mode, follow_symlinks=False)
-            except OSError:
-                pass  # Best-effort mode restoration.
+            except OSError as exc:
+                # Mode restoration failed — resynchronize and report ambiguity.
+                try:
+                    self._resync_from_files()
+                except Exception:
+                    pass
+                raise CoreError(
+                    ErrorCode.MUTATION_AMBIGUOUS,
+                    "Could not restore the mutation target mode",
+                ) from exc
 
     def _rollback_after_failure_locked(self, captured, ssh_target: Optional[Path] = None) -> None:
         try:
