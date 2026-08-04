@@ -32,6 +32,20 @@ class DummyConfig:
     def set_setting(self, key, value):
         self.settings[key] = value
 
+    def get_connection_meta(self, key):
+        meta_all = self.get_setting('connections_meta', {})
+        if isinstance(meta_all, dict):
+            value = meta_all.get(str(key or ''), {})
+            return value if isinstance(value, dict) else {}
+        return {}
+
+    def set_connection_meta(self, key, meta):
+        meta_all = self.get_setting('connections_meta', {})
+        if not isinstance(meta_all, dict):
+            meta_all = {}
+        meta_all[str(key or '')] = meta or {}
+        self.set_setting('connections_meta', meta_all)
+
 
 def test_edit_host_preserves_group_membership(tmp_path):
     """Test that editing a Host entry in SSH config preserves group membership."""
@@ -217,6 +231,58 @@ Host server2
     assert "server2" in gm.groups[group_id]['connections']
     assert "server1" not in gm.groups[group_id]['connections']
     assert len(gm.groups[group_id]['connections']) == 2
+
+
+def test_delete_removes_group_and_metadata_references(tmp_path):
+    """Characterization: deleting a connection removes its group membership
+    and its per-connection metadata; other connections are untouched."""
+    import os
+    import sys
+
+    config_path = tmp_path / "config"
+    config_path.write_text("""Host server1
+    HostName server1.example.com
+    User alice
+    Port 22
+
+Host server2
+    HostName server2.example.com
+    User bob
+    Port 22
+""")
+
+    cm = ConnectionManager.__new__(ConnectionManager)
+    cm.config = DummyConfig()
+    cm.connections = []
+    cm.ssh_config_path = str(config_path)
+    cm.known_hosts_path = str(tmp_path / "known_hosts")
+    cm.emitted = []
+    cm.emit = lambda *args: cm.emitted.append(args)
+    cm.store_password = lambda *args, **kwargs: True
+    cm.delete_password = lambda *args, **kwargs: True
+    cm.delete_connection_passwords = lambda *args, **kwargs: True
+    cm.load_ssh_config()
+
+    cfg = cm.config
+    gm = GroupManager(cfg)
+    group_id = gm.create_group("Web Servers")
+    gm.move_connection("server1", group_id)
+    gm.move_connection("server2", group_id)
+    cfg.set_connection_meta("server1", {"pinned": True})
+
+    conn = cm.find_connection_by_nickname("server1")
+    ok = cm.remove_connection(conn, reload_config=False)
+    assert ok is True
+
+    # Group reference is dropped by the legacy GroupManager only when the
+    # connection is forgotten; the manager never auto-forgets, so the group
+    # still lists the deleted alias. The canonical repository must remove it.
+    assert "server1" in gm.groups[group_id]['connections']
+    # Metadata is removed from the JSON store by the manager on delete.
+    assert cfg.get_connection_meta("server1") == {}
+    assert cfg.get_connection_meta("server2") == {}
+    # Other connection stays in the group.
+    assert "server2" in gm.groups[group_id]['connections']
 
 
 

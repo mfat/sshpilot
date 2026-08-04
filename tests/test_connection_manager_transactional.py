@@ -264,3 +264,84 @@ def test_successful_dialog_create_emits_only_connection_added(tmp_path):
         if signal[0] in {"connection-added", "connection-updated"}
     ]
     assert mutation_signals == [("connection-added", result)]
+
+
+def test_failed_split_preserves_memory_and_disk(tmp_path, monkeypatch):
+    """A split whose config write fails must leave the multi-host block and
+    the in-memory connection untouched (transactional characterization)."""
+    cm = make_cm(tmp_path)
+    config = tmp_path / "config"
+    config.write_text("Host db jump\n    HostName=db.internal\n    User dbuser\n")
+    cm.load_ssh_config()
+    conn = cm.find_connection_by_nickname("jump")
+    before = config.read_text()
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cm, "_safe_write_config", _boom)
+    ok = cm.update_connection(
+        conn,
+        {
+            "nickname": "jump2",
+            "hostname": "jump.example",
+            "username": "j",
+            "protocol": "ssh",
+            "__split_from_group": True,
+            "__split_source": str(config),
+            "__split_original_nickname": "jump",
+        },
+    )
+    assert ok is False
+    assert cm.find_connection_by_nickname("jump") is not None
+    assert cm.find_connection_by_nickname("jump2") is None
+    assert config.read_text() == before
+
+
+def test_successful_split_keeps_other_alias_block(tmp_path):
+    """Splitting one alias out of a multi-host block preserves the remaining
+    aliases in the original block (characterization)."""
+    cm = make_cm(tmp_path)
+    config = tmp_path / "config"
+    config.write_text("Host db jump\n    HostName=db.internal\n    User dbuser\n")
+    cm.load_ssh_config()
+    conn = cm.find_connection_by_nickname("jump")
+    ok = cm.update_connection(
+        conn,
+        {
+            "nickname": "jump2",
+            "hostname": "jump.example",
+            "username": "j",
+            "protocol": "ssh",
+            "__split_from_group": True,
+            "__split_source": str(config),
+            "__split_original_nickname": "jump",
+        },
+    )
+    assert ok is True
+    text = config.read_text()
+    assert "Host db" in text
+    assert "Host jump2" in text
+    assert "HostName jump.example" in text
+
+
+def test_non_ssh_create_persists_and_keeps_ssh_config_untouched(tmp_path):
+    """Creating a non-SSH connection persists to the JSON store only."""
+    cm = make_cm(tmp_path)
+    cm.config = types.SimpleNamespace(
+        get_setting=lambda *a, **k: [],
+        set_setting=lambda *a, **k: None,
+    )
+    config = tmp_path / "config"
+    config.write_text("Host web\n    HostName example.com\n")
+    cm.load_ssh_config()
+    before = config.read_text()
+    conn = Connection(
+        {"nickname": "tel", "protocol": "telnet", "host": "10.0.0.5", "port": 2323}
+    )
+    ok = cm.update_connection(
+        conn,
+        {"nickname": "tel", "protocol": "telnet", "host": "10.0.0.5", "port": 2323},
+    )
+    assert ok is True
+    assert config.read_text() == before
