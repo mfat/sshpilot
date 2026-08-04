@@ -34,8 +34,10 @@ from sshpilot.api.models.connections import (
 )
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
+    key_list_to_wire,
     known_hosts_mutation_result_to_wire,
     known_hosts_snapshot_to_wire,
+    list_keys_request_from_wire,
     remove_known_host_entries_request_from_wire,
     attach_session_request_from_wire,
     attach_session_result_to_wire,
@@ -175,6 +177,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "forwards.claim": Capability.FORWARDS_WRITE,
     "known_hosts.list": Capability.KNOWN_HOSTS_READ,
     "known_hosts.remove": Capability.KNOWN_HOSTS_WRITE,
+    "keys.list": Capability.KEYS_READ,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -239,6 +242,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "forwards.close",
         "known_hosts.list",
         "known_hosts.remove",
+        "keys.list",
     }
 )
 
@@ -412,6 +416,7 @@ class RequestDispatcher:
             "forwards.claim": self._handle_claim_forward,
             "known_hosts.list": self._handle_list_known_hosts,
             "known_hosts.remove": self._handle_remove_known_host_entries,
+            "keys.list": self._handle_list_keys,
         }
 
     def begin_shutdown(self) -> None:
@@ -544,6 +549,7 @@ class RequestDispatcher:
                 transfers=self._transfer_runtime is not None,
                 forwards=self._forward_runtime is not None,
                 known_hosts=self._known_hosts_service is not None,
+                keys=self._key_service is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -1688,6 +1694,20 @@ class RequestDispatcher:
             on_rejected=lambda: None,
         )
 
+    # -- keys ----------------------------------------------------------
+    def _handle_list_keys(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = list_keys_request_from_wire(request.params)
+        service = self._required_key_service()
+        return DeferredResult(
+            operation=lambda: key_list_to_wire(service.list_keys(typed_request)),
+            command_key=("keys", typed_request.scope.value),
+            on_rejected=lambda: None,
+        )
+
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
         if metadata is None or state.client_id is None:
@@ -1723,6 +1743,7 @@ class RequestDispatcher:
                 transfers=self._transfer_runtime is not None,
                 forwards=self._forward_runtime is not None,
                 known_hosts=self._known_hosts_service is not None,
+                keys=self._key_service is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -1740,6 +1761,7 @@ class RequestDispatcher:
         transfers: bool = False,
         forwards: bool = False,
         known_hosts: bool = False,
+        keys: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -1824,6 +1846,12 @@ class RequestDispatcher:
                 {
                     Capability.KNOWN_HOSTS_READ,
                     Capability.KNOWN_HOSTS_WRITE,
+                }
+            )
+        if keys:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.KEYS_READ,
                 }
             )
         return daemon_capabilities
