@@ -33,6 +33,7 @@ from ...api.models.connection_store import (
     ConnectionMetadataSummary,
     ConnectionStoreSnapshot,
     GroupSummary,
+    thaw_safe_metadata,
     validate_safe_metadata,
 )
 from ...api.models.connections import (
@@ -171,7 +172,7 @@ class ConnectionRepositoryProtocol(Protocol):
         self, connection_id: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]: ...
 
-    def rename_tag(self, old_tag: str, new_tag: str) -> None: ...
+    def rename_tag(self, old_tag: str, new_tag: str) -> int: ...
 
 
 def _repository_error(message: str) -> CoreError:
@@ -548,7 +549,7 @@ class ConnectionRepository:
             non_ssh_connections=non_ssh,
             groups=groups,
             root_connections=tuple(self._service.root_order()),
-            metadata=copy.deepcopy(self._metadata),
+            metadata=thaw_safe_metadata(self._metadata),
         )
 
     # ------------------------------------------------------------------
@@ -954,7 +955,7 @@ class ConnectionRepository:
                     )
                 if not isinstance(values, Mapping):
                     raise TypeError("metadata values must be a mapping")
-                current = dict(self._metadata.get(connection_id, {}))
+                current = thaw_safe_metadata(self._metadata.get(connection_id, {}))
                 for key, value in values.items():
                     if value is None:
                         current.pop(key, None)
@@ -969,7 +970,7 @@ class ConnectionRepository:
                 self._resync_from_files()
                 raise
             self._commit(before)
-            return copy.deepcopy(self._metadata.get(connection_id, {}))
+            return thaw_safe_metadata(self._metadata.get(connection_id, {}))
 
     def rename_tag(self, old_tag: str, new_tag: str) -> int:
         """Rename a tag across every connection (case-insensitive, deduped)."""
@@ -983,9 +984,12 @@ class ConnectionRepository:
             changed = False
             renamed = 0
             try:
-                for values in self._metadata.values():
+                updated_metadata = {}
+                for connection_id, stored_values in self._metadata.items():
+                    values = thaw_safe_metadata(stored_values)
                     tags = values.get("tags")
                     if not isinstance(tags, list):
+                        updated_metadata[connection_id] = values
                         continue
                     new_tags: List[str] = []
                     seen = set()
@@ -1001,6 +1005,12 @@ class ConnectionRepository:
                     if new_tags != tags:
                         values["tags"] = new_tags
                         changed = True
+                    updated_metadata[connection_id] = values
+                if changed:
+                    self._metadata = {
+                        connection_id: validate_safe_metadata(values)
+                        for connection_id, values in updated_metadata.items()
+                    }
                 if changed:
                     self._persist_state_file_locked()
             except Exception:

@@ -1006,12 +1006,8 @@ class RequestDispatcher:
     ) -> DeferredResult:
         typed_request = rename_tag_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: int(
-                bool(
-                    self._connections.rename_tag_rpc(
-                        typed_request.old_tag, typed_request.new_tag
-                    )
-                )
+            operation=lambda: self._connections.rename_tag_rpc(
+                typed_request.old_tag, typed_request.new_tag
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,

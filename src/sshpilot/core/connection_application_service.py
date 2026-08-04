@@ -500,11 +500,14 @@ class ConnectionApplicationService:
             logger.exception("Failed to reorder connection via daemon RPC")
             return False
 
-    def rename_tag_rpc(self, old_tag: str, new_tag: str) -> bool:
+    def rename_tag_rpc(self, old_tag: str, new_tag: str) -> int:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
         try:
-            return bool(self._repository.rename_tag(old_tag, new_tag))
+            count = self._repository.rename_tag(old_tag, new_tag)
+            if type(count) is not int or count < 0:
+                raise TypeError("repository returned an invalid tag rename count")
+            return count
         except Exception:
             logger.exception("Failed to rename tag via daemon RPC")
             return 0

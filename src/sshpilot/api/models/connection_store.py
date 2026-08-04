@@ -6,8 +6,7 @@ The frontend receives immutable snapshots and never treats client-supplied
 paths as authority. Group expansion is deliberately absent because it is
 visual frontend state.
 
-This module is not yet registered in the API generator's ``MODEL_MODULES``;
-it is published (exported + scanned) in a later task.
+These models are part of the published frontend-neutral API schema.
 """
 
 from __future__ import annotations
@@ -34,6 +33,18 @@ _SECRET_KEY_FRAGMENTS = (
 
 _MAX_METADATA_DEPTH = 8
 _MAX_METADATA_BYTES = 256 * 1024
+
+
+class _FrozenDict(dict):
+    """Read-only dict subclass that remains compatible with DTO validation."""
+
+    def _readonly(self, *args, **kwargs):
+        raise TypeError("metadata mappings are immutable")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _readonly
+
+    def __ior__(self, other):
+        self._readonly(other)
 
 
 def _looks_like_secret_key(key: str) -> bool:
@@ -73,6 +84,15 @@ def _validate_metadata_node(value: Any, depth: int) -> None:
     raise TypeError("connection metadata contains a non-JSON-safe value")
 
 
+def thaw_safe_metadata(value: Any) -> Any:
+    """Convert immutable metadata values into ordinary JSON containers."""
+    if isinstance(value, Mapping):
+        return {key: thaw_safe_metadata(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [thaw_safe_metadata(item) for item in value]
+    return copy.deepcopy(value)
+
+
 def validate_safe_metadata(mapping: Mapping[str, Any]) -> Mapping[str, Any]:
     """Validate and deep-copy a safe connection-metadata mapping.
 
@@ -83,7 +103,7 @@ def validate_safe_metadata(mapping: Mapping[str, Any]) -> Mapping[str, Any]:
     """
     if not isinstance(mapping, Mapping):
         raise TypeError("metadata must be a mapping")
-    copied = copy.deepcopy(dict(mapping))
+    copied = thaw_safe_metadata(mapping)
     for key in copied:
         if type(key) is not str:
             raise TypeError("connection metadata keys must be strings")
@@ -101,7 +121,14 @@ def validate_safe_metadata(mapping: Mapping[str, Any]) -> Mapping[str, Any]:
     )
     if encoded > _MAX_METADATA_BYTES:
         raise ValueError("connection metadata exceeds the size limit")
-    return copied
+    def freeze(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return _FrozenDict({key: freeze(item) for key, item in value.items()})
+        if isinstance(value, (list, tuple)):
+            return tuple(freeze(item) for item in value)
+        return value
+
+    return freeze(copied)
 
 
 @dataclass(frozen=True)

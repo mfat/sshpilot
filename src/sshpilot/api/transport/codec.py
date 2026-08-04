@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import AbstractSet, Any, Dict, Iterable, Optional, Union
+from typing import AbstractSet, Any, Dict, Iterable, Mapping, Optional, Union
 
 from .._safe_values import copy_transport_value
 from ..capabilities import Capabilities, Capability
@@ -990,9 +990,16 @@ def connection_metadata_summary_to_wire(
 ) -> Dict[str, Any]:
     if type(summary) is not ConnectionMetadataSummary:
         raise TypeError("connection metadata summary is required")
+    def thaw(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {key: thaw(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [thaw(item) for item in value]
+        return value
+
     return {
         "connection_id": summary.connection_id,
-        "values": dict(summary.values),
+        "values": thaw(summary.values),
     }
 
 

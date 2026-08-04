@@ -250,7 +250,7 @@ def test_metadata_mutations_route(tmp_path):
     )
     snap = service.snapshot_connection_store()
     meta = next(m for m in snap.metadata if m.connection_id == "web")
-    assert meta.values["tags"] == ["prod"]
+    assert meta.values["tags"] == ("prod",)
     assert meta.values["pinned"] is True
 
 
@@ -258,10 +258,10 @@ def test_rename_tag_routes(tmp_path):
     repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n")
     service = _service(repo)
     service.update_connection_metadata(ConnectionId("web"), {"tags": ["old"]})
-    assert service.rename_tag_rpc("old", "new") is True
+    assert service.rename_tag_rpc("old", "new") == 1
     snap = service.snapshot_connection_store()
     meta = next(m for m in snap.metadata if m.connection_id == "web")
-    assert meta.values["tags"] == ["new"]
+    assert meta.values["tags"] == ("new",)
 
 
 # ---------------------------------------------------------------------------

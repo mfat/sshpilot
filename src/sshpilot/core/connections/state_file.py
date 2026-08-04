@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
 
-from ...api.models.connection_store import validate_safe_metadata
+from ...api.models.connection_store import thaw_safe_metadata, validate_safe_metadata
 from ..errors import CoreError, ErrorCode
 
 _MAX_STATE_BYTES = 16 * 1024 * 1024
@@ -203,7 +203,7 @@ class ConnectionFileState:
                 },
                 "root_connections": list(self.root_connections),
             },
-            "metadata": copy.deepcopy(dict(self.metadata)),
+            "metadata": thaw_safe_metadata(self.metadata),
         }
 
     @classmethod

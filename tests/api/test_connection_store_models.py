@@ -14,6 +14,7 @@ from sshpilot.api.models.connection_store import (
     RenameTagRequest,
     ReorderConnectionRequest,
     SetGroupColorRequest,
+    thaw_safe_metadata,
     validate_safe_metadata,
 )
 from sshpilot.api.models.connections import (
@@ -122,7 +123,7 @@ def test_metadata_constructs_with_safe_values():
         values={"tags": ["prod", "web"], "pinned": True, "wol": {"port": 9}},
     )
     assert meta.connection_id == "web"
-    assert meta.values["tags"] == ["prod", "web"]
+    assert meta.values["tags"] == ("prod", "web")
     assert meta.values["pinned"] is True
 
 
@@ -130,7 +131,7 @@ def test_metadata_deep_copies_values():
     original = {"nested": {"list": [1, 2]}}
     meta = ConnectionMetadataSummary(connection_id=ConnectionId("web"), values=original)
     original["nested"]["list"].append(3)
-    assert meta.values["nested"]["list"] == [1, 2]
+    assert meta.values["nested"]["list"] == (1, 2)
 
 
 def test_metadata_values_absent_from_repr():
@@ -157,7 +158,20 @@ def test_metadata_rejects_non_json_safe_value():
 )
 def test_metadata_accepts_json_safe_values(value):
     meta = ConnectionMetadataSummary(connection_id=ConnectionId("web"), values={"x": value})
-    assert meta.values["x"] == value
+    assert thaw_safe_metadata(meta.values["x"]) == value
+
+
+def test_metadata_is_recursively_immutable():
+    meta = ConnectionMetadataSummary(
+        connection_id=ConnectionId("web"),
+        values={"nested": {"items": [1, {"enabled": True}]}},
+    )
+    with pytest.raises(TypeError):
+        meta.values["nested"] = {}
+    with pytest.raises(TypeError):
+        meta.values["nested"]["items"][1]["enabled"] = False
+    with pytest.raises(AttributeError):
+        meta.values["nested"]["items"].append(2)
 
 
 def test_metadata_rejects_nan_float():
@@ -403,7 +417,7 @@ def test_update_metadata_uses_safe_validation():
         connection_id=ConnectionId("web"),
         meta={"tags": ["prod"]},
     )
-    assert request.meta == {"tags": ["prod"]}
+    assert thaw_safe_metadata(request.meta) == {"tags": ["prod"]}
 
 
 def test_update_metadata_rejects_secret_keys():
@@ -426,7 +440,7 @@ def test_update_metadata_deep_copies_input():
     original = {"tags": ["prod"]}
     request = UpdateConnectionMetadataRequest(connection_id=ConnectionId("web"), meta=original)
     original["tags"].append("extra")
-    assert request.meta["tags"] == ["prod"]
+    assert request.meta["tags"] == ("prod",)
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +454,6 @@ def test_require_identifier_rejects_empty():
 def test_validate_safe_metadata_returns_fresh_copy():
     original = {"a": {"b": [1]}}
     result = validate_safe_metadata(original)
-    assert result == original
+    assert thaw_safe_metadata(result) == original
     original["a"]["b"].append(2)
-    assert result["a"]["b"] == [1]
+    assert result["a"]["b"] == (1,)

@@ -48,6 +48,7 @@ class ConnectionPresentationStore:
         self._last_sequence = -1
         self._buffering = False
         self._pending_events: list[CoreEvent] = []
+        self._coherent_events = False
         self._on_changed = on_changed
         self._dispatch = dispatch or (lambda callback: callback())
         self._handlers = {}
@@ -146,6 +147,9 @@ class ConnectionPresentationStore:
         if old_subscription is not None:
             old_subscription.unsubscribe()
         instance_id = getattr(client, "server_instance_id", None)
+        self._coherent_events = callable(
+            getattr(client, "get_connection_store_snapshot", None)
+        )
         subscription = client.subscribe_events(
             lambda event: self._accept_event(event, generation, instance_id)
         )
@@ -154,6 +158,7 @@ class ConnectionPresentationStore:
             self._install_fetched_snapshot(snapshot, client, generation, instance_id)
         except BaseException:
             with self._lock:
+                self._client = None
                 self._buffering = False
                 self._pending_events = []
             subscription.unsubscribe()
@@ -181,10 +186,13 @@ class ConnectionPresentationStore:
         except BaseException:
             with self._lock:
                 pending = tuple(self._pending_events)
-                self._pending_events = []
+                self._pending_events = list(pending)
                 self._buffering = False
-            for event in sorted(pending, key=lambda item: item.sequence):
-                self._accept_event(event, generation, instance_id)
+            if not self._coherent_events:
+                with self._lock:
+                    self._pending_events = []
+                for event in sorted(pending, key=lambda item: item.sequence):
+                    self._accept_event(event, generation, instance_id)
             raise
 
     @staticmethod
@@ -216,8 +224,16 @@ class ConnectionPresentationStore:
             pending = sorted(self._pending_events, key=lambda item: item.sequence)
             self._pending_events = []
             self._buffering = False
-            for event in pending:
-                self._apply_event_locked(event)
+            if self._coherent_events:
+                coherent = [
+                    event for event in pending
+                    if event.type is EventType.CONNECTION_STORE_CHANGED
+                ]
+                if coherent:
+                    self._apply_event_locked(coherent[-1])
+            else:
+                for event in pending:
+                    self._apply_event_locked(event)
             current = self._store_snapshot
         self._notify(current)
         self._emit("projection-reset", None)
@@ -243,6 +259,11 @@ class ConnectionPresentationStore:
             if self._buffering:
                 self._pending_events.append(event)
                 return
+            if self._coherent_events and event.type is not EventType.CONNECTION_STORE_CHANGED:
+                self._pending_events.append(event)
+                return
+            if self._coherent_events and event.type is EventType.CONNECTION_STORE_CHANGED:
+                self._pending_events = []
             if not self._apply_event_locked(event):
                 return
             snapshot = self._store_snapshot
@@ -264,7 +285,7 @@ class ConnectionPresentationStore:
         if event.type is EventType.CONNECTION_STORE_CHANGED:
             if type(event.payload) is not ConnectionStoreSnapshot:
                 return False
-            if event.payload.generation < self._store_snapshot.generation:
+            if event.payload.generation <= self._store_snapshot.generation:
                 return False
             self._store_snapshot = event.payload
             return True
@@ -283,7 +304,7 @@ class ConnectionPresentationStore:
             cid for group in current.groups for cid in group.connection_ids
         }:
             root_ids = current.root_connection_ids
-        elif event.type is EventType.CONNECTION_CREATED:
+        elif event.type is EventType.CONNECTION_CREATED and not event.payload.groups:
             root_ids = root_ids + (ConnectionId(item_id),)
         groups = current.groups
         if event.type is EventType.CONNECTION_DELETED:
@@ -296,9 +317,11 @@ class ConnectionPresentationStore:
                 )
                 for group in groups
             )
-        metadata = tuple(
-            item for item in current.metadata if item.connection_id != item_id
-        )
+        metadata = current.metadata
+        if event.type is EventType.CONNECTION_DELETED:
+            metadata = tuple(
+                item for item in current.metadata if item.connection_id != item_id
+            )
         self._store_snapshot = ConnectionStoreSnapshot(
             generation=current.generation,
             connections=tuple(values),
