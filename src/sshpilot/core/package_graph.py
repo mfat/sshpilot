@@ -31,6 +31,8 @@ ALLOWED_EDGES = {
         "sshpilot.api",  # API model layer is shared language (GTK-free leaf)
         "sshpilot.runtime_identity",
         "sshpilot.platform.paths",  # path helpers used by CLI
+        "sshpilot.ssh_config_document",  # GI-free lossless config document
+        "sshpilot.ssh_config_formatter",  # GI-free managed-option registry
     ),
     "api": (
         "sshpilot.api",
