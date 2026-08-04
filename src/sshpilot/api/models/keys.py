@@ -21,6 +21,15 @@ KeyId = NewType("KeyId", str)
 _ALLOWED_KEY_TYPES = ("ed25519", "rsa")
 _MIN_RSA_BITS = 1024
 
+# Recognizable PEM/OpenSSH private-key headers. Public-key text must never
+# contain any of these markers (private material must not cross the API).
+_PRIVATE_KEY_MARKERS = (
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN EC PRIVATE KEY-----",
+    "-----BEGIN PRIVATE KEY-----",
+)
+
 
 class KeyStoreScope(str, Enum):
     """Semantic key-store location; never a filesystem path."""
@@ -115,8 +124,12 @@ class PublicKeyResult:
             raise TypeError("public key text must be a string")
         if "\x00" in self.text:
             raise ValueError("public key text must not contain NUL")
-        if not self.text:
+        if not self.text.strip():
             raise ValueError("public key text must be a non-empty string")
+        if any(marker in self.text for marker in _PRIVATE_KEY_MARKERS):
+            raise ValueError(
+                "public key text must not contain private-key material"
+            )
 
 
 @dataclass(frozen=True)

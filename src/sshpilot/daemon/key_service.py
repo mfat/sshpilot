@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -28,6 +29,7 @@ from sshpilot.api.models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    _PRIVATE_KEY_MARKERS,
 )
 from sshpilot.core.errors import CoreError, ErrorCode as CoreErrorCode
 from sshpilot.core.keys import KeyGenerateSpec, KeyService, SSHKeyInfo
@@ -70,32 +72,8 @@ class DaemonKeyService:
                     ErrorCode.KEY_NOT_FOUND,
                     "The requested SSH key was not found",
                 )
-            public_path = Path(info.public_path)
-            if not self._safe_public_path(public_path, root):
-                raise SshPilotError(
-                    ErrorCode.KEY_PUBLIC_UNAVAILABLE,
-                    "The key's public file is unavailable",
-                )
-            try:
-                if public_path.stat().st_size > _MAX_PUBLIC_KEY_BYTES:
-                    raise SshPilotError(
-                        ErrorCode.KEY_PUBLIC_UNAVAILABLE,
-                        "The key's public file is unavailable",
-                    )
-                data = public_path.read_bytes()
-            except OSError:
-                raise SshPilotError(
-                    ErrorCode.KEY_PUBLIC_UNAVAILABLE,
-                    "The key's public file is unavailable",
-                ) from None
-            try:
-                text = data.decode("utf-8")
-            except UnicodeDecodeError:
-                raise SshPilotError(
-                    ErrorCode.KEY_PUBLIC_UNAVAILABLE,
-                    "The key's public file is unavailable",
-                ) from None
-            if "\x00" in text:
+            text = self._read_public_text(Path(info.public_path), root)
+            if text is None:
                 raise SshPilotError(
                     ErrorCode.KEY_PUBLIC_UNAVAILABLE,
                     "The key's public file is unavailable",
@@ -180,24 +158,84 @@ class DaemonKeyService:
         except ValueError:
             return False
 
-    def _safe_public_path(self, public_path: Path, root: Path) -> bool:
+    def _read_public_text(self, public_path: Path, root: Path) -> Optional[str]:
+        """Read one public key through a single safely-opened descriptor.
+
+        Returns the decoded text, or ``None`` when the file is unsafe, missing,
+        unreadable, empty, oversized, malformed, symlinked, or private-key-like.
+        The lexical path must sit beneath *root*; symbolic links are rejected
+        outright (``lstat`` and ``O_NOFOLLOW`` where available). Size limits are
+        enforced on the *opened* descriptor via ``fstat`` and a bounded read
+        loop, so a file swapped between metadata and open cannot smuggle data.
+        Never exposes paths or OS exception text.
+        """
         if not self._is_within(public_path, root):
-            return False
+            return None
+        fd: Optional[int] = None
         try:
-            real_root = os.path.realpath(root)
-            real_public = os.path.realpath(public_path)
-        except OSError:
+            lst = os.lstat(public_path)
+            if stat.S_ISLNK(lst.st_mode):
+                return None
+            flags = os.O_RDONLY
+            for extra in (getattr(os, "O_CLOEXEC", 0), getattr(os, "O_NOFOLLOW", 0)):
+                flags |= extra
+            fd = os.open(public_path, flags)
+            fst = os.fstat(fd)
+            if not stat.S_ISREG(fst.st_mode):
+                return None
+            if fst.st_size < 1 or fst.st_size > _MAX_PUBLIC_KEY_BYTES:
+                return None
+            chunks: list[bytes] = []
+            total = 0
+            limit = _MAX_PUBLIC_KEY_BYTES + 1
+            while total < limit:
+                chunk = os.read(fd, min(64 * 1024, limit - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            if total > _MAX_PUBLIC_KEY_BYTES:
+                return None
+            if total == 0:
+                return None
+            text = b"".join(chunks).decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        if not self._public_text_is_valid(text):
+            return None
+        return text
+
+    @staticmethod
+    def _public_text_is_valid(text: str) -> bool:
+        """Same content rules as ``PublicKeyResult`` (mirrored pre-construction)."""
+        if not text.strip():
             return False
-        return Path(real_public).is_relative_to(Path(real_root))
+        if "\x00" in text:
+            return False
+        if any(marker in text for marker in _PRIVATE_KEY_MARKERS):
+            return False
+        return True
 
     def _public_available(self, public_path: str, root: Path) -> bool:
+        """Metadata-only availability: no symlink, regular, non-empty, bounded."""
         path = Path(public_path)
-        if not self._safe_public_path(path, root):
+        if not self._is_within(path, root):
             return False
         try:
-            return path.is_file()
+            lst = os.lstat(path)
+            if stat.S_ISLNK(lst.st_mode) or not stat.S_ISREG(lst.st_mode):
+                return False
+            if lst.st_size < 1 or lst.st_size > _MAX_PUBLIC_KEY_BYTES:
+                return False
         except OSError:
             return False
+        return True
 
     @staticmethod
     def _map_generate_error(exc: CoreError) -> SshPilotError:

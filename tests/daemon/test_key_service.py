@@ -1,7 +1,10 @@
 """Daemon-owned SSH-key service tests."""
 
 import logging
+import os
+import stat
 import threading
+import types
 from pathlib import Path
 
 import pytest
@@ -227,6 +230,216 @@ def test_read_public_key_rejects_nul(tmp_path):
             ReadPublicKeyRequest(key_id=key_list.keys[0].key_id)
         )
     assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN PRIVATE KEY-----",
+    ],
+)
+def test_read_public_key_rejects_private_key_markers(tmp_path, marker):
+    service = _service(tmp_path)
+    private = _write_key(tmp_path / "default", "id_ed25519")
+    private.with_suffix(".pub").write_text(
+        f"{marker}\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAFzAAAC\n"
+    )
+    key_list = service.list_keys(ListKeysRequest())
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(
+            ReadPublicKeyRequest(key_id=key_list.keys[0].key_id)
+        )
+    assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+    assert marker not in str(excinfo.value)
+
+
+def test_read_public_key_rejects_empty_file(tmp_path):
+    service = _service(tmp_path)
+    private = _write_key(tmp_path / "default", "id_ed25519")
+    private.with_suffix(".pub").write_bytes(b"")
+    key_list = service.list_keys(ListKeysRequest())
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(
+            ReadPublicKeyRequest(key_id=key_list.keys[0].key_id)
+        )
+    assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+
+
+def test_read_public_key_rejects_whitespace_only_file(tmp_path):
+    service = _service(tmp_path)
+    private = _write_key(tmp_path / "default", "id_ed25519")
+    private.with_suffix(".pub").write_bytes(b"   \n\t\n")
+    key_list = service.list_keys(ListKeysRequest())
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(
+            ReadPublicKeyRequest(key_id=key_list.keys[0].key_id)
+        )
+    assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+
+
+def test_read_public_key_rejects_symlink_within_root(tmp_path):
+    service = _service(tmp_path)
+    _write_key(tmp_path / "default", "id_ed25519")
+    key_list = service.list_keys(ListKeysRequest())
+    key_id = key_list.keys[0].key_id
+    public = tmp_path / "default" / "id_ed25519.pub"
+    inside = tmp_path / "default" / "other.pub"
+    inside.write_text("ssh-ed25519 AAAA-inside\n")
+    public.unlink()
+    public.symlink_to(inside)
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(ReadPublicKeyRequest(key_id=key_id))
+    assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+
+
+def test_read_public_key_handles_short_partial_reads(tmp_path, monkeypatch):
+    """os.read may return partial data; the loop must assemble it correctly."""
+    service = _service(tmp_path)
+    _write_key(tmp_path / "default", "id_ed25519")
+    key_list = service.list_keys(ListKeysRequest())
+    key_id = key_list.keys[0].key_id
+    real_read = os.read
+
+    def _short_read(fd, n):
+        return real_read(fd, min(n, 3))
+
+    monkeypatch.setattr(os, "read", _short_read)
+    result = service.read_public_key(ReadPublicKeyRequest(key_id=key_id))
+    assert result.text == "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI example\n"
+
+
+def test_read_public_key_rejects_oversized_despite_misleading_metadata(
+    tmp_path, monkeypatch
+):
+    """A file that grows past the limit after fstat must still be rejected."""
+    monkeypatch.setattr(key_service_module, "_MAX_PUBLIC_KEY_BYTES", 8)
+    service = _service(tmp_path)
+    _write_key(tmp_path / "default", "id_ed25519")
+    key_list = service.list_keys(ListKeysRequest())
+    key_id = key_list.keys[0].key_id
+    real_read = os.read
+
+    def _oversized_read(fd, n):
+        data = real_read(fd, n)
+        if data:
+            return data + b"padding-over-the-limit"
+        return data
+
+    monkeypatch.setattr(os, "read", _oversized_read)
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(ReadPublicKeyRequest(key_id=key_id))
+    assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+
+
+def test_read_public_key_rejects_symlink_swapped_before_open(tmp_path, monkeypatch):
+    """A target swapped to a symlink before os.open must be refused."""
+    service = _service(tmp_path)
+    _write_key(tmp_path / "default", "id_ed25519")
+    key_list = service.list_keys(ListKeysRequest())
+    key_id = key_list.keys[0].key_id
+    real_open = os.open
+
+    def _refuse_follow(public_path, flags, *a):
+        # Simulate O_NOFOLLOW's ELOOP rejection for a now-symlinked target.
+        try:
+            mode = os.lstat(public_path).st_mode
+        except OSError:
+            mode = 0
+        if stat.S_ISLNK(mode):
+            raise OSError(40, "Too many levels of symbolic links")
+        return real_open(public_path, flags, *a)
+
+    monkeypatch.setattr(os, "open", _refuse_follow)
+    public = tmp_path / "default" / "id_ed25519.pub"
+    public.unlink()
+    public.symlink_to(tmp_path / "elsewhere.pub")
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(ReadPublicKeyRequest(key_id=key_id))
+    assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+
+
+def test_read_public_key_rejects_non_regular_descriptor(tmp_path, monkeypatch):
+    """A non-regular opened descriptor (e.g. FIFO/dir) is refused via fstat."""
+    service = _service(tmp_path)
+    _write_key(tmp_path / "default", "id_ed25519")
+    key_list = service.list_keys(ListKeysRequest())
+    key_id = key_list.keys[0].key_id
+    real_fstat = os.fstat
+
+    def _fake_fstat(fd):
+        st = real_fstat(fd)
+        return types.SimpleNamespace(
+            st_mode=stat.S_IFDIR, st_size=st.st_size
+        )
+
+    monkeypatch.setattr(os, "fstat", _fake_fstat)
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(ReadPublicKeyRequest(key_id=key_id))
+    assert excinfo.value.code is ApiErrorCode.KEY_PUBLIC_UNAVAILABLE
+
+
+def test_read_public_key_closes_descriptor_on_success_and_failure(
+    tmp_path, monkeypatch
+):
+    """The opened descriptor is closed after success and every failure path."""
+    service = _service(tmp_path)
+    _write_key(tmp_path / "default", "id_ed25519")
+    key_list = service.list_keys(ListKeysRequest())
+    key_id = key_list.keys[0].key_id
+    closed: list[int] = []
+    real_close = os.close
+    monkeypatch.setattr(
+        os, "close", lambda fd: (closed.append(fd), real_close(fd))[1]
+    )
+
+    service.read_public_key(ReadPublicKeyRequest(key_id=key_id))
+    assert closed, "descriptor was never closed after a successful read"
+
+    # Failure path: an unreadable/empty public file must also close its fd.
+    closed.clear()
+    monkeypatch.setattr(key_service_module, "_MAX_PUBLIC_KEY_BYTES", 8)
+    with pytest.raises(SshPilotError):
+        service.read_public_key(ReadPublicKeyRequest(key_id=key_id))
+    assert closed, "descriptor was never closed after a failed read"
+
+
+def test_public_key_available_false_for_unsafe_files(tmp_path):
+    service = _service(tmp_path)
+    _write_key(tmp_path / "default", "good")
+    _write_key(tmp_path / "default", "no_pub", with_pub=False)
+    empty = _write_key(tmp_path / "default", "empty")
+    empty.with_suffix(".pub").write_bytes(b"")
+    linked = _write_key(tmp_path / "default", "linked")
+    target = tmp_path / "default" / "target.pub"
+    target.write_text("ssh-ed25519 AAAA-target\n")
+    linked.with_suffix(".pub").unlink()
+    linked.with_suffix(".pub").symlink_to(target)
+
+    key_list = service.list_keys(ListKeysRequest())
+    by_name = {k.name: k.public_key_available for k in key_list.keys}
+    assert by_name["good"] is True
+    assert by_name["no_pub"] is False
+    assert by_name["empty"] is False
+    assert by_name["linked"] is False
+
+
+def test_public_key_errors_expose_no_paths(tmp_path):
+    """Every failure keeps targets, roots, and temp paths out of errors/logs."""
+    service = _service(tmp_path)
+    private = _write_key(tmp_path / "default", "id_ed25519")
+    private.with_suffix(".pub").write_bytes(b"")
+    key_list = service.list_keys(ListKeysRequest())
+    with pytest.raises(SshPilotError) as excinfo:
+        service.read_public_key(
+            ReadPublicKeyRequest(key_id=key_list.keys[0].key_id)
+        )
+    rendered = str(excinfo.value)
+    assert str(private) not in rendered
+    assert str(tmp_path) not in rendered
+    assert ".pub" not in rendered
 
 
 # ---------------------------------------------------------------------------

@@ -188,6 +188,27 @@ def test_public_key_result_rejects_nul():
         PublicKeyResult(key_id=KeyId("key-1"), text="ssh-ed25519 \x00 AAAA")
 
 
+@pytest.mark.parametrize("text", ["", "   ", "\n", "\t \n"])
+def test_public_key_result_rejects_blank_text(text):
+    with pytest.raises(ValueError):
+        PublicKeyResult(key_id=KeyId("key-1"), text=text)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN PRIVATE KEY-----",
+    ],
+)
+def test_public_key_result_rejects_private_key_markers(marker):
+    text = f"{marker}\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAFzAAAC\n"
+    with pytest.raises(ValueError):
+        PublicKeyResult(key_id=KeyId("key-1"), text=text)
+
+
 # ---------------------------------------------------------------------------
 # Generate name rules
 # ---------------------------------------------------------------------------

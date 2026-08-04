@@ -93,7 +93,8 @@ class KeyService:
                             keys.append(SSHKeyInfo(key_path))
                             seen.add(key_path)
         except OSError as exc:
-            logger.error("Failed to discover SSH keys: %s", exc)
+            # Type-only message: the exception text may embed full paths.
+            logger.error("SSH key discovery failed (%s)", type(exc).__name__)
         return keys
 
     def validate_generate_spec(self, spec: KeyGenerateSpec) -> None:
@@ -158,7 +159,11 @@ class KeyService:
             if os.path.exists(pub_path):
                 os.chmod(pub_path, 0o644)
         except OSError as perm_err:
-            logger.warning("Failed setting permissions on key files: %s", perm_err)
+            # Type-only message: the exception text may embed full paths.
+            logger.warning(
+                "Failed setting permissions on key files (%s)",
+                type(perm_err).__name__,
+            )
         return SSHKeyInfo(str(key_path))
 
     def fingerprint(self, public_or_private_path: str) -> Optional[str]:
