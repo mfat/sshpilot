@@ -167,7 +167,20 @@ class ConnectionRepository:
         """
         ssh_config = self._ssh_store.load()
         file_state, migrated = self._read_state()
+        self._publish_state_locked(ssh_config, file_state, migrated=migrated)
 
+    def _publish_state_locked(
+        self,
+        ssh_config: LoadedSshConfiguration,
+        file_state: ConnectionFileState,
+        *,
+        migrated: bool = False,
+    ) -> None:
+        """Swap in validated in-memory state for the given sources.
+
+        Cross-validation runs through the snapshot constructor before any
+        field is reassigned, so a bad source set never publishes partial state.
+        """
         connections = list(ssh_config.connections)
         for raw in file_state.non_ssh_connections:
             record = ConnectionRecord.from_dict(raw)
@@ -194,23 +207,32 @@ class ConnectionRepository:
                 metadata[cid] = validate_safe_metadata(values)
 
         non_ssh_generations: Dict[str, int] = {}
-        for record in connections:
+        ssh_generations = {
+            record.id: record.generation for record in ssh_config.connections
+        }
+        for record in service.ordered_records():
             if record.protocol != "ssh":
-                non_ssh_generations[record.id] = record.generation or 0
+                non_ssh_generations[record.id] = self._non_ssh_generations.get(
+                    record.id, 0
+                )
+            else:
+                record.generation = ssh_generations.get(record.id, 0)
 
-        # Cross-validation: the snapshot constructor enforces referential
-        # integrity (unknown members, orphan parents, cycles, root rules).
-        candidate = ConnectionRepository._assemble(
-            service,
-            metadata,
-            self._generation,
-        )
+        ConnectionRepository._assemble(service, metadata, self._generation)
 
         self._service = service
         self._metadata = metadata
         self._non_ssh_generations = non_ssh_generations
-        self._migrated_legacy = migrated
-        candidate  # validated above; published implicitly by assignment
+        self._migrated_legacy = migrated or self._migrated_legacy
+
+    def _overlay_ssh_generations(self, config: LoadedSshConfiguration) -> None:
+        """Copy the store's per-connection generations onto service records."""
+        generations = {
+            record.id: record.generation for record in config.connections
+        }
+        for record in self._service.ordered_records():
+            if record.protocol == "ssh" and record.id in generations:
+                record.generation = generations[record.id]
 
     def _generation_for_locked(self, connection_id: str) -> int:
         record = self._service.get(connection_id)
@@ -313,6 +335,236 @@ class ConnectionRepository:
             root_connections=tuple(self._service.root_order()),
             metadata=copy.deepcopy(self._metadata),
         )
+
+    # ------------------------------------------------------------------
+    # Transactional CRUD
+    # ------------------------------------------------------------------
+
+    def _begin(self) -> ConnectionStoreSnapshot:
+        return self._build_snapshot_locked()
+
+    def _commit(self, before: ConnectionStoreSnapshot) -> None:
+        self._notify(before, self._build_snapshot_locked())
+
+    def _resync_from_files(self) -> None:
+        """Restore in-memory state to match the persisted files after a failure."""
+        ssh_config = self._ssh_store.load()
+        file_state, _migrated = self._read_state()
+        self._publish_state_locked(ssh_config, file_state)
+
+    def _validate_new_nickname(self, nickname: str) -> str:
+        nickname = (nickname or "").strip()
+        if not nickname:
+            raise CoreError(
+                ErrorCode.VALIDATION_ERROR,
+                "A nickname is required",
+            )
+        existing = {c.id for c in self._service.ordered_records()}
+        if nickname in existing:
+            raise CoreError(
+                ErrorCode.CONNECTION_ALREADY_EXISTS,
+                "A connection with this name already exists",
+            )
+        return nickname
+
+    def create_connection(self, data: Mapping[str, Any]) -> ConnectionRecord:
+        with self._lock:
+            before = self._begin()
+            payload = dict(data)
+            payload.pop("uuid", None)
+            protocol = str(payload.get("protocol") or "ssh").strip() or "ssh"
+            try:
+                if protocol == "ssh":
+                    result = self._ssh_store.create(payload)
+                    fresh = next(
+                        r for r in result.config.connections
+                        if r.id == result.connection_id
+                    )
+                    created = self._service.create(fresh.data)
+                    self._overlay_ssh_generations(result.config)
+                else:
+                    nickname = self._validate_new_nickname(
+                        str(payload.get("nickname") or "")
+                    )
+                    payload["id"] = nickname
+                    payload["nickname"] = nickname
+                    created = self._service.create(payload)
+                    self._non_ssh_generations[created.id] = 1
+                    self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return self._service.get(created.id)
+
+    def update_connection(
+        self,
+        connection_id: str,
+        data: Mapping[str, Any],
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord:
+        with self._lock:
+            before = self._begin()
+            existing = self._service.get(connection_id)
+            if existing is None:
+                raise CoreError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The connection does not exist",
+                )
+            payload = dict(data)
+            payload.pop("uuid", None)
+            protocol = str(
+                payload.get("protocol") or existing.protocol or "ssh"
+            ).strip() or "ssh"
+            new_nick = str(payload.get("nickname") or "").strip()
+            if new_nick and new_nick != connection_id:
+                self._validate_new_nickname(new_nick)
+            try:
+                if protocol == "ssh":
+                    result = self._ssh_store.update(
+                        connection_id,
+                        payload,
+                        expected_generation=expected_generation,
+                    )
+                    new_id = result.connection_id
+                    fresh = next(
+                        r for r in result.config.connections
+                        if r.id == new_id
+                    )
+                    updated = self._service.update(connection_id, fresh.data)
+                    self._overlay_ssh_generations(result.config)
+                else:
+                    nickname = new_nick or connection_id
+                    payload["id"] = nickname
+                    payload["nickname"] = nickname
+                    updated = self._service.update(connection_id, payload)
+                    if new_nick and new_nick != connection_id:
+                        gen = self._non_ssh_generations.pop(connection_id, 0)
+                        self._non_ssh_generations[new_nick] = gen + 1
+                    else:
+                        self._non_ssh_generations[connection_id] = (
+                            self._non_ssh_generations.get(connection_id, 0) + 1
+                        )
+                    self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._migrate_metadata_on_rename(connection_id, updated.id)
+            self._commit(before)
+            return self._service.get(updated.id)
+
+    def duplicate_connection(self, connection_id: str) -> ConnectionRecord:
+        with self._lock:
+            before = self._begin()
+            existing = self._service.get(connection_id)
+            if existing is None:
+                raise CoreError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The connection does not exist",
+                )
+            try:
+                if existing.protocol == "ssh":
+                    result = self._ssh_store.duplicate(connection_id)
+                    fresh = next(
+                        r for r in result.config.connections
+                        if r.id == result.connection_id
+                    )
+                    created = self._service.create(fresh.data)
+                    self._overlay_ssh_generations(result.config)
+                else:
+                    created = self._service.duplicate(connection_id)
+                    self._non_ssh_generations[created.id] = 1
+                    self._persist_state_file_locked()
+                # Mirror the source's group placement on the duplicate.
+                for gid in self._service.group_ids_of(connection_id):
+                    self._service.copy_connection_to_group(created.id, gid)
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return self._service.get(created.id)
+
+    def delete_connection(self, connection_id: str) -> None:
+        with self._lock:
+            before = self._begin()
+            existing = self._service.get(connection_id)
+            if existing is None:
+                raise CoreError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The connection does not exist",
+                )
+            try:
+                if existing.protocol == "ssh":
+                    self._ssh_store.delete(connection_id)
+                    self._service.delete(connection_id)
+                else:
+                    self._service.delete(connection_id)
+                    self._non_ssh_generations.pop(connection_id, None)
+                    self._persist_state_file_locked()
+                if connection_id in self._metadata:
+                    self._metadata.pop(connection_id, None)
+                    self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+
+    def split_connection(
+        self,
+        connection_id: str,
+        original_host_token: str,
+        data: Mapping[str, Any],
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord:
+        with self._lock:
+            before = self._begin()
+            existing = self._service.get(connection_id)
+            if existing is None:
+                raise CoreError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The connection does not exist",
+                )
+            try:
+                result = self._ssh_store.split(
+                    connection_id,
+                    original_host_token,
+                    data,
+                    expected_generation=expected_generation,
+                )
+                fresh_ids = {r.id for r in result.config.connections}
+                new_record = next(
+                    r for r in result.config.connections
+                    if r.id == result.connection_id
+                )
+                if connection_id in fresh_ids:
+                    # A different alias was split out: the original survives
+                    # and the new standalone connection is created.
+                    created = self._service.create(new_record.data)
+                    result_id = created.id
+                else:
+                    # The split removed the original token: rename the old
+                    # record into the new standalone connection.
+                    updated = self._service.update(connection_id, new_record.data)
+                    result_id = updated.id
+                self._overlay_ssh_generations(result.config)
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._migrate_metadata_on_rename(connection_id, result_id)
+            self._commit(before)
+            return self._service.get(result_id)
+
+    def _persist_state_file_locked(self) -> None:
+        write_connection_state(self._state_path, self._build_file_state_locked())
+
+    def _migrate_metadata_on_rename(self, old_id: str, new_id: str) -> None:
+        if old_id == new_id:
+            return
+        if old_id in self._metadata:
+            self._metadata[new_id] = self._metadata.pop(old_id)
+            self._persist_state_file_locked()
 
     # ------------------------------------------------------------------
     # Event dispatch (outside the lock)
