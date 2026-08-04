@@ -85,10 +85,6 @@
       "capability": "connections.write",
       "status": "implemented"
     },
-    "generate_key": {
-      "capability": "keys.write",
-      "status": "schema-only"
-    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -141,10 +137,6 @@
       "capability": "interactions.read",
       "status": "daemon-only"
     },
-    "list_keys": {
-      "capability": "keys.read",
-      "status": "schema-only"
-    },
     "list_sessions": {
       "capability": "sessions.read",
       "status": "daemon-only"
@@ -176,10 +168,6 @@
     "open_sftp": {
       "capability": "sftp.write",
       "status": "daemon-only"
-    },
-    "read_public_key": {
-      "capability": "keys.read",
-      "status": "schema-only"
     },
     "release_interaction": {
       "capability": "interactions.respond",

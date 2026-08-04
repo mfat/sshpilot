@@ -51,7 +51,4 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "open_forward": Capability.FORWARDS_WRITE,
     "claim_forward": Capability.FORWARDS_WRITE,
     "close_forward": Capability.FORWARDS_WRITE,
-    "list_keys": Capability.KEYS_READ,
-    "read_public_key": Capability.KEYS_READ,
-    "generate_key": Capability.KEYS_WRITE,
 }

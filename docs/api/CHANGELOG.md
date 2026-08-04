@@ -5,11 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- Implemented `DaemonClient.list_keys`, `DaemonClient.read_public_key`, and
+  `DaemonClient.generate_key` over the `keys.list`, `keys.get_public`, and
+  `keys.generate` RPCs. Key generation uses a safe mutation-ambiguity
+  description (`MUTATION_AMBIGUOUS` when the request may have been sent), and
+  `known_hosts.remove` now carries the generic description as well.
 - Published the `list_keys`, `read_public_key`, and `generate_key` client
   contract methods plus their models. The contract is daemon-only: local
   clients report the methods as unsupported with canonical
-  `unsupported_capability` errors, and `DaemonClient` implementation lands
-  next.
+  `unsupported_capability` errors and never fall back to local key I/O.
 - Declared `keys.read` and `keys.write` capability enum values and published
   the SSH-key schema: `KeyId`, `KeyStoreScope`, `KeySummary`, `KeyList`,
   `ListKeysRequest`, `ReadPublicKeyRequest`, `PublicKeyResult`,

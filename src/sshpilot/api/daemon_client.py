@@ -60,6 +60,14 @@ from .models.interactions import (
     InteractionId,
     InteractionSummary,
 )
+from .models.keys import (
+    GenerateKeyRequest,
+    GenerateKeyResult,
+    KeyList,
+    ListKeysRequest,
+    PublicKeyResult,
+    ReadPublicKeyRequest,
+)
 from .models.known_hosts import (
     KnownHostEntryId,
     KnownHostsMutationResult,
@@ -142,13 +150,19 @@ from .transport.codec import (
     encode_envelope,
     error_from_wire,
     forward_summary_from_wire,
+    generate_key_request_to_wire,
+    generate_key_result_from_wire,
     handshake_request_to_wire,
     handshake_result_from_wire,
     interaction_claim_from_wire,
     interaction_decision_to_wire,
     interaction_summary_from_wire,
+    key_list_from_wire,
     known_hosts_mutation_result_from_wire,
     known_hosts_snapshot_from_wire,
+    list_keys_request_to_wire,
+    public_key_result_from_wire,
+    read_public_key_request_to_wire,
     list_directory_request_to_wire,
     list_directory_result_from_wire,
     open_forward_request_to_wire,
@@ -263,6 +277,9 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "close_forward": Capability.FORWARDS_WRITE,
     "list_known_hosts": Capability.KNOWN_HOSTS_READ,
     "remove_known_host_entries": Capability.KNOWN_HOSTS_WRITE,
+    "list_keys": Capability.KEYS_READ,
+    "read_public_key": Capability.KEYS_READ,
+    "generate_key": Capability.KEYS_WRITE,
 }
 
 
@@ -1098,12 +1115,50 @@ class DaemonClient:
         result = self._request(
             "known_hosts.remove",
             remove_known_host_entries_request_to_wire(request),
+            mutation_description="known-hosts removal",
         )
         try:
             return known_hosts_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol(
                 "The daemon returned an invalid known-hosts mutation result"
+            )
+
+    # -- SSH keys ------------------------------------------------------
+    def list_keys(self, request: ListKeysRequest) -> KeyList:
+        self._require_capability(Capability.KEYS_READ)
+        result = self._request("keys.list", list_keys_request_to_wire(request))
+        try:
+            return key_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid key list")
+
+    def read_public_key(self, request: ReadPublicKeyRequest) -> PublicKeyResult:
+        self._require_capability(Capability.KEYS_READ)
+        result = self._request(
+            "keys.get_public",
+            read_public_key_request_to_wire(request),
+        )
+        try:
+            return public_key_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned an invalid public key result"
+            )
+
+    def generate_key(self, request: GenerateKeyRequest) -> GenerateKeyResult:
+        self._require_capability(Capability.KEYS_WRITE)
+        self._require_write_compatibility("generate SSH key")
+        result = self._request(
+            "keys.generate",
+            generate_key_request_to_wire(request),
+            mutation_description="SSH key generation",
+        )
+        try:
+            return generate_key_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned an invalid key generation result"
             )
 
     def send_terminal_input(self, request: TerminalInput) -> None:
@@ -1449,6 +1504,7 @@ class DaemonClient:
         mutation_connection_id: Optional[ConnectionId] = None,
         mutation_session_id: Optional[SessionId] = None,
         session_mutation: bool = False,
+        mutation_description: Optional[str] = None,
     ):
         with self._request_lock:
             with self._state_lock:
@@ -1486,6 +1542,7 @@ class DaemonClient:
                         mutation_connection_id is not None
                         or method == "connections.create"
                         or session_mutation
+                        or mutation_description is not None
                     )
                     transport.sendall(frame)
                     sent = True
@@ -1544,6 +1601,13 @@ class DaemonClient:
                         ErrorCode.TRANSPORT_TIMEOUT,
                     }
                 ):
+                    if mutation_description is not None:
+                        raise SshPilotError(
+                            ErrorCode.MUTATION_AMBIGUOUS,
+                            f"The {mutation_description} may have completed",
+                            retryable=False,
+                            request_id=request_id,
+                        )
                     if session_mutation:
                         raise SshPilotError(
                             ErrorCode.MUTATION_AMBIGUOUS,

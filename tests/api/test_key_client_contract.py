@@ -7,6 +7,7 @@ import pytest
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.daemon_client import DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES
 from sshpilot.api.method_capabilities import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
@@ -26,16 +27,22 @@ def test_protocol_declares_key_methods():
         assert callable(getattr(SshPilotClient, method_name))
 
 
-def test_unsupported_map_registers_key_methods():
-    assert UNSUPPORTED_CLIENT_METHOD_CAPABILITIES["list_keys"] is Capability.KEYS_READ
+def test_daemon_client_registers_key_methods():
     assert (
-        UNSUPPORTED_CLIENT_METHOD_CAPABILITIES["read_public_key"]
+        DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["list_keys"]
         is Capability.KEYS_READ
     )
     assert (
-        UNSUPPORTED_CLIENT_METHOD_CAPABILITIES["generate_key"]
+        DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["read_public_key"]
+        is Capability.KEYS_READ
+    )
+    assert (
+        DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["generate_key"]
         is Capability.KEYS_WRITE
     )
+    # Daemon-only methods leave the unsupported (schema-only) map.
+    for name in ("list_keys", "read_public_key", "generate_key"):
+        assert name not in UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 
 
 def _in_process_client():

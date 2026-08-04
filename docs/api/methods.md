@@ -24,9 +24,9 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `lookup_key_passphrase` | Implemented | `connections.secrets.write` |
 | `list_known_hosts` | Daemon only | `known_hosts.read` |
 | `remove_known_host_entries` | Daemon only | `known_hosts.write` |
-| `list_keys` | Schema only | `keys.read` |
-| `read_public_key` | Schema only | `keys.read` |
-| `generate_key` | Schema only | `keys.write` |
+| `list_keys` | Daemon only | `keys.read` |
+| `read_public_key` | Daemon only | `keys.read` |
+| `generate_key` | Daemon only | `keys.write` |
 | `list_sessions` | Daemon only | `sessions.read` |
 | `get_session` | Daemon only | `sessions.read` |
 | `open_session` | Daemon only | `sessions.write` |
@@ -95,9 +95,6 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: close_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: duplicate_connection status=implemented capability=connections.write -->
-<!-- api-method-contract: generate_key status=schema-only capability=keys.write -->
-<!-- api-method-contract: list_keys status=schema-only capability=keys.read -->
-<!-- api-method-contract: read_public_key status=schema-only capability=keys.read -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
@@ -878,21 +875,21 @@ Requests bounded closure of one runtime forward.
 <!-- api-method: list_keys -->
 ## `list_keys`
 
-- **Status / introduced:** Schema only / Protocol v1, API 0.15.
+- **Status / introduced:** Daemon only / Protocol v1, API 0.15.
 - **Capability / purpose:** `keys.read`; list key metadata from the
   daemon-owned selected key store scope. Daemon RPC `keys.list`.
 
 <!-- api-method: read_public_key -->
 ## `read_public_key`
 
-- **Status / introduced:** Schema only / Protocol v1, API 0.15.
+- **Status / introduced:** Daemon only / Protocol v1, API 0.15.
 - **Capability / purpose:** `keys.read`; return public-key text for an opaque
   key ID from the daemon-owned key store. Daemon RPC `keys.get_public`.
 
 <!-- api-method: generate_key -->
 ## `generate_key`
 
-- **Status / introduced:** Schema only / Protocol v1, API 0.15.
+- **Status / introduced:** Daemon only / Protocol v1, API 0.15.
 - **Capability / purpose:** `keys.write`; generate a keypair in the
   daemon-owned selected key store scope. Daemon RPC `keys.generate`.
 
