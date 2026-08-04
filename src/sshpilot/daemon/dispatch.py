@@ -38,6 +38,8 @@ from sshpilot.api.transport.codec import (
     known_hosts_mutation_result_to_wire,
     known_hosts_snapshot_to_wire,
     list_keys_request_from_wire,
+    public_key_result_to_wire,
+    read_public_key_request_from_wire,
     remove_known_host_entries_request_from_wire,
     attach_session_request_from_wire,
     attach_session_result_to_wire,
@@ -178,6 +180,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "known_hosts.list": Capability.KNOWN_HOSTS_READ,
     "known_hosts.remove": Capability.KNOWN_HOSTS_WRITE,
     "keys.list": Capability.KEYS_READ,
+    "keys.get_public": Capability.KEYS_READ,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -243,6 +246,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "known_hosts.list",
         "known_hosts.remove",
         "keys.list",
+        "keys.get_public",
     }
 )
 
@@ -417,6 +421,7 @@ class RequestDispatcher:
             "known_hosts.list": self._handle_list_known_hosts,
             "known_hosts.remove": self._handle_remove_known_host_entries,
             "keys.list": self._handle_list_keys,
+            "keys.get_public": self._handle_get_public_key,
         }
 
     def begin_shutdown(self) -> None:
@@ -1695,6 +1700,21 @@ class RequestDispatcher:
         )
 
     # -- keys ----------------------------------------------------------
+    def _handle_get_public_key(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = read_public_key_request_from_wire(request.params)
+        service = self._required_key_service()
+        return DeferredResult(
+            operation=lambda: public_key_result_to_wire(
+                service.read_public_key(typed_request)
+            ),
+            command_key=("keys", typed_request.scope.value),
+            on_rejected=lambda: None,
+        )
+
     def _handle_list_keys(
         self,
         request: RequestEnvelope,

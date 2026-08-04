@@ -13,6 +13,8 @@ from sshpilot.api.models.keys import (
     KeyStoreScope,
     KeySummary,
     ListKeysRequest,
+    PublicKeyResult,
+    ReadPublicKeyRequest,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, RequestEnvelope
 from sshpilot.core.connection_application_service import ConnectionApplicationService
@@ -68,11 +70,20 @@ def _summary(key_id="key-1", name="id_ed25519"):
 class _FakeKeyService:
     def __init__(self):
         self.list_calls: list[KeyStoreScope] = []
+        self.read_calls: list[ReadPublicKeyRequest] = []
         self.result = KeyList(keys=(_summary(),))
+        self.public_result = PublicKeyResult(
+            key_id=KeyId("key-1"),
+            text="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI public\n",
+        )
 
     def list_keys(self, request: ListKeysRequest):
         self.list_calls.append(request.scope)
         return self.result
+
+    def read_public_key(self, request: ReadPublicKeyRequest):
+        self.read_calls.append(request)
+        return self.public_result
 
 
 def _dispatcher(with_service=True):
@@ -90,9 +101,16 @@ def test_list_maps_to_read_capability():
     assert "keys.list" not in DRAIN_REJECTED_METHODS
 
 
+def test_get_public_maps_to_read_capability():
+    assert DAEMON_METHOD_CAPABILITIES["keys.get_public"] is Capability.KEYS_READ
+    assert "keys.get_public" in DEFERRED_DAEMON_METHODS
+    assert "keys.get_public" not in DRAIN_REJECTED_METHODS
+
+
 def test_list_handler_is_registered():
     dispatcher, _service = _dispatcher()
     assert "keys.list" in dispatcher.HANDLERS
+    assert "keys.get_public" in dispatcher.HANDLERS
 
 
 # ---------------------------------------------------------------------------
@@ -207,3 +225,80 @@ def test_different_scopes_have_distinct_command_keys():
     assert default_result.command_key == ("keys", "default")
     assert isolated_result.command_key == ("keys", "isolated")
     assert default_result.command_key != isolated_result.command_key
+
+
+# ---------------------------------------------------------------------------
+# keys.get_public dispatch behaviour
+# ---------------------------------------------------------------------------
+def test_get_public_returns_deferred_execution_with_wire_result():
+    dispatcher, service = _dispatcher()
+    result = dispatcher.dispatch(
+        _envelope("keys.get_public", {"key_id": "key-1", "scope": "default"}),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+    assert service.read_calls == []  # deferred: not executed yet
+    wire = result.operation()
+    assert service.read_calls == [
+        ReadPublicKeyRequest(key_id=KeyId("key-1"), scope=KeyStoreScope.DEFAULT)
+    ]
+    assert wire == {
+        "key_id": "key-1",
+        "text": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI public\n",
+    }
+
+
+def test_get_public_rejects_missing_fields():
+    dispatcher, _service = _dispatcher()
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(
+            _envelope("keys.get_public", {"scope": "default"}),
+            _state(),
+        )
+    assert excinfo.value.code is ErrorCode.INVALID_REQUEST
+
+
+def test_get_public_rejects_extra_fields():
+    dispatcher, _service = _dispatcher()
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(
+            _envelope(
+                "keys.get_public",
+                {"key_id": "key-1", "scope": "default", "path": "/etc"},
+            ),
+            _state(),
+        )
+    assert excinfo.value.code is ErrorCode.INVALID_REQUEST
+
+
+def test_get_public_missing_service_raises_unsupported_capability():
+    dispatcher, _service = _dispatcher(with_service=False)
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(
+            _envelope("keys.get_public", {"key_id": "key-1", "scope": "default"}),
+            _state(),
+        )
+    assert excinfo.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+
+
+def test_get_public_allowed_during_drain():
+    dispatcher, _service = _dispatcher()
+    dispatcher.begin_shutdown()
+    result = dispatcher.dispatch(
+        _envelope("keys.get_public", {"key_id": "key-1", "scope": "default"}),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+
+
+def test_get_public_command_key_matches_list_for_same_scope():
+    dispatcher, _service = _dispatcher()
+    list_result = dispatcher.dispatch(
+        _envelope("keys.list", {"scope": "default"}),
+        _state(),
+    )
+    read_result = dispatcher.dispatch(
+        _envelope("keys.get_public", {"key_id": "key-1", "scope": "default"}),
+        _state(),
+    )
+    assert list_result.command_key == read_result.command_key == ("keys", "default")
