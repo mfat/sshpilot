@@ -267,6 +267,7 @@ class SshConfigMutationResult:
 
     config: LoadedSshConfiguration
     connection_id: str
+    touched_path: Optional[str] = None
 
 
 class SshConfigStore:
@@ -392,7 +393,7 @@ class SshConfigStore:
 
         self._generations[nickname] = 1
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=nickname)
+        return SshConfigMutationResult(config=fresh, connection_id=nickname, touched_path=str(self._root_path))
 
     def update(
         self,
@@ -456,7 +457,7 @@ class SshConfigStore:
             self._generations.pop(connection_id, None)
         self._generations[new_name] = old_generation + 1
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=new_name)
+        return SshConfigMutationResult(config=fresh, connection_id=new_name, touched_path=source)
 
     def delete(self, connection_id: str) -> SshConfigMutationResult:
         self._refuse_symlinked_root()
@@ -497,7 +498,7 @@ class SshConfigStore:
 
         self._generations.pop(connection_id, None)
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=connection_id)
+        return SshConfigMutationResult(config=fresh, connection_id=connection_id, touched_path=source)
 
     def duplicate(self, connection_id: str) -> SshConfigMutationResult:
         self._refuse_symlinked_root()
@@ -531,7 +532,7 @@ class SshConfigStore:
 
         self._generations[new_nickname] = 1
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=new_nickname)
+        return SshConfigMutationResult(config=fresh, connection_id=new_nickname, touched_path=source)
 
     def split(
         self,
@@ -619,4 +620,4 @@ class SshConfigStore:
             # The original connection survived the split (a different alias
             # was split out): keep its generation counter intact.
             self._generations[connection_id] = old_generation
-        return SshConfigMutationResult(config=fresh, connection_id=new_name)
+        return SshConfigMutationResult(config=fresh, connection_id=new_name, touched_path=source)

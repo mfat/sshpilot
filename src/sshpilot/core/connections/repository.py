@@ -575,6 +575,20 @@ class ConnectionRepository:
         self._publish_state_locked(ssh_config, file_state)
 
     def _capture_transaction_files_locked(self, ssh_target: Optional[Path] = None):
+        """Capture pre-write state for every file the mutation will touch.
+
+        Returns a dict mapping each ``Path`` to a tuple of:
+        ``(
+            pre_existed: bool,
+            pre_bytes: bytes,
+            pre_mode: int,
+            post_bytes: Optional[bytes],   # daemon-written content (filled after write)
+            post_identity: Optional[tuple], # (dev, inode) after write (filled after write)
+        )``
+
+        Non-SSH mutations must not capture or restore the SSH root, so
+        callers must only pass ``ssh_target`` for SSH mutations.
+        """
         paths = {self._state_path}
         if ssh_target is not None:
             paths.add(Path(ssh_target))
@@ -584,7 +598,7 @@ class ConnectionRepository:
             try:
                 info = os.lstat(path)
             except FileNotFoundError:
-                captured[path] = (False, b"", 0)
+                captured[path] = (False, b"", 0, None, None)
                 continue
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
                 raise CoreError(
@@ -610,28 +624,100 @@ class ConnectionRepository:
                     True,
                     b"".join(chunks),
                     stat.S_IMODE(opened.st_mode),
+                    None,  # post_bytes filled after write
+                    None,  # post_identity filled after write
                 )
             finally:
                 os.close(fd)
         return captured
 
+    def _record_post_write_locked(self, captured, path: Path) -> None:
+        """Record the daemon-written file identity and bytes for later verification."""
+        if path not in captured:
+            return
+        try:
+            st = os.lstat(path)
+            if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+                return
+            with open(path, "rb") as fh:
+                post_bytes = fh.read()
+            entry = captured[path]
+            captured[path] = (
+                entry[0], entry[1], entry[2],
+                post_bytes,
+                (st.st_dev, st.st_ino),
+            )
+        except OSError:
+            pass
+
     def _restore_transaction_files_locked(self, captured) -> None:
-        for path, (existed, data, mode) in captured.items():
+        """Restore pre-write bytes.  Rejects symlinks and verifies the
+        current file is still the daemon-written version before overwriting.
+        """
+        for path, (existed, data, mode, post_bytes, post_identity) in captured.items():
             if not existed:
                 try:
                     path.unlink()
                 except FileNotFoundError:
                     pass
                 continue
-            if os.path.islink(path):
-                raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
+            # Verify the file hasn't been externally modified since the daemon wrote it.
+            if post_bytes is not None and post_identity is not None:
+                try:
+                    st = os.lstat(path)
+                except FileNotFoundError:
+                    # File was externally deleted — treat as ambiguity.
+                    raise CoreError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "The mutation target changed during rollback",
+                    )
+                if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+                    raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
+                if (st.st_dev, st.st_ino) != post_identity:
+                    # File identity changed — an external edit occurred.
+                    raise CoreError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "The mutation target was modified externally",
+                    )
+                try:
+                    current_bytes = path.read_bytes()
+                except OSError as exc:
+                    raise CoreError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "Could not verify the mutation target for rollback",
+                    ) from exc
+                if current_bytes != post_bytes:
+                    raise CoreError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "The mutation target was modified externally",
+                    )
+            else:
+                # No post-write state recorded (pre-existing file wasn't touched).
+                if os.path.islink(path):
+                    raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
             _atomic_write_text(path, data.decode("utf-8"))
             os.chmod(path, mode, follow_symlinks=False)
 
-    def _rollback_after_failure_locked(self, captured) -> None:
+    def _rollback_after_failure_locked(self, captured, ssh_target: Optional[Path] = None) -> None:
         try:
             self._restore_transaction_files_locked(captured)
             self._resync_from_files()
+        except CoreError as rollback_error:
+            if rollback_error.code is ErrorCode.MUTATION_AMBIGUOUS:
+                # External edit detected — resync from disk and report ambiguity.
+                try:
+                    self._resync_from_files()
+                except Exception:
+                    pass
+                raise
+            try:
+                self._resync_from_files()
+            except Exception:
+                pass
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection mutation outcome could not be determined",
+            ) from rollback_error
         except Exception as rollback_error:
             try:
                 self._resync_from_files()
@@ -673,6 +759,11 @@ class ConnectionRepository:
                     )
                     created = self._service.create(fresh.data)
                     self._overlay_ssh_generations(result.config)
+                    # Record the daemon-written SSH file for rollback verification.
+                    if result.touched_path:
+                        self._record_post_write_locked(
+                            disk_before, Path(result.touched_path),
+                        )
                 else:
                     nickname = self._validate_new_nickname(
                         str(payload.get("nickname") or "")
@@ -684,6 +775,8 @@ class ConnectionRepository:
                 # Root order / membership / metadata always live in
                 # connections.json; persist it after every committed mutation.
                 self._persist_state_file_locked()
+                # Record the daemon-written state file for rollback verification.
+                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -730,6 +823,10 @@ class ConnectionRepository:
                     )
                     updated = self._service.update(connection_id, fresh.data)
                     self._overlay_ssh_generations(result.config)
+                    if result.touched_path:
+                        self._record_post_write_locked(
+                            disk_before, Path(result.touched_path),
+                        )
                 else:
                     if (
                         expected_generation is not None
@@ -753,6 +850,7 @@ class ConnectionRepository:
                         )
                 self._migrate_metadata_on_rename(connection_id, updated.id)
                 self._persist_state_file_locked()
+                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -780,6 +878,10 @@ class ConnectionRepository:
                     )
                     created = self._service.create(fresh.data)
                     self._overlay_ssh_generations(result.config)
+                    if result.touched_path:
+                        self._record_post_write_locked(
+                            disk_before, Path(result.touched_path),
+                        )
                 else:
                     created = self._service.duplicate(connection_id)
                     self._non_ssh_generations[created.id] = 1
@@ -787,6 +889,7 @@ class ConnectionRepository:
                 for gid in self._service.group_ids_of(connection_id):
                     self._service.copy_connection_to_group(created.id, gid)
                 self._persist_state_file_locked()
+                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -807,13 +910,18 @@ class ConnectionRepository:
             )
             try:
                 if existing.protocol == "ssh":
-                    self._ssh_store.delete(connection_id)
+                    result = self._ssh_store.delete(connection_id)
                     self._service.delete(connection_id)
+                    if result.touched_path:
+                        self._record_post_write_locked(
+                            disk_before, Path(result.touched_path),
+                        )
                 else:
                     self._service.delete(connection_id)
                     self._non_ssh_generations.pop(connection_id, None)
                 self._metadata.pop(connection_id, None)
                 self._persist_state_file_locked()
+                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -851,20 +959,19 @@ class ConnectionRepository:
                     if r.id == result.connection_id
                 )
                 if connection_id in fresh_ids:
-                    # A different alias was split out: the original survives
-                    # and the new standalone connection is created (its
-                    # metadata starts fresh).
                     created = self._service.create(new_record.data)
                     result_id = created.id
                 else:
-                    # The split removed the original token: rename the old
-                    # record into the new standalone connection and carry its
-                    # metadata over.
                     updated = self._service.update(connection_id, new_record.data)
                     result_id = updated.id
                     self._migrate_metadata_on_rename(connection_id, result_id)
                 self._overlay_ssh_generations(result.config)
+                if result.touched_path:
+                    self._record_post_write_locked(
+                        disk_before, Path(result.touched_path),
+                    )
                 self._persist_state_file_locked()
+                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise

@@ -434,3 +434,54 @@ def test_no_uuid_anywhere(tmp_path):
     assert "deadbeef" not in root.read_text()
     for record in repo.list_records():
         assert "uuid" not in record.data
+
+
+def test_rollback_after_state_persistence_failure_ssh_create(tmp_path):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    pre_bytes = root.read_bytes()
+    state.unlink()
+    state.mkdir()
+    try:
+        with pytest.raises(CoreError):
+            repo.create_connection({"nickname": "new", "hostname": "new.example", "protocol": "ssh"})
+    finally:
+        state.rmdir()
+        _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
+    assert root.read_bytes() == pre_bytes
+
+
+def test_external_edit_during_rollback_raises_ambiguity(tmp_path):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    repo._record_post_write_locked(disk_before, root)
+    root.write_bytes(b"# externally edited")
+    with pytest.raises(CoreError) as exc:
+        repo._restore_transaction_files_locked(disk_before)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    # After ambiguity + resync, the repo reflects disk (externally edited).
+    repo._resync_from_files()
+    snap = repo.snapshot()
+    # The externally edited file has no valid hosts, so connections is empty.
+    assert snap.connections == ()
+
+
+def test_no_event_on_rollback(tmp_path):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    changes = []
+    repo.add_listener(lambda change: changes.append(change))
+    state.unlink()
+    state.mkdir()
+    try:
+        with pytest.raises(CoreError):
+            repo.create_connection({"nickname": "new", "hostname": "new.example", "protocol": "ssh"})
+    finally:
+        state.rmdir()
+        _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
+    assert len(changes) == 0
+
+
+def test_non_ssh_mutation_does_not_capture_ssh_root(tmp_path):
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    pre_ssh = root.read_bytes()
+    repo.create_connection({"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"})
+    assert root.read_bytes() == pre_ssh
