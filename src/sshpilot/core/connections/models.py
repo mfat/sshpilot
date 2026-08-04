@@ -48,6 +48,11 @@ class ConnectionRecord:
     # stale-editor detection. Both are internal; clients never supply them.
     source: str = ""
     generation: int = 0
+    # Identity remains the SSH ``Host`` alias (``id``/``nickname``). ``host``
+    # is the first Host token and ``aliases`` the remaining tokens (or empty
+    # when the host is the alias itself). No UUID fields are produced.
+    host: str = ""
+    aliases: tuple = ()
 
     def normalized_nickname(self) -> str:
         return (self.nickname or "").strip()
@@ -76,6 +81,13 @@ class ConnectionRecord:
         raw.pop("uuid", None)
         nick = str(raw.get("nickname") or raw.get("id") or raw.get("host") or "").strip()
         cid = connection_id or str(raw.get("id") or nick).strip()
+        raw_aliases = raw.get("aliases") or raw.get("__host_tokens") or ()
+        if isinstance(raw_aliases, (tuple, list)):
+            aliases = tuple(
+                str(a) for a in raw_aliases if a and str(a) != nick
+            )
+        else:
+            aliases = ()
         if not cid:
             cid = nick
         try:
@@ -98,6 +110,8 @@ class ConnectionRecord:
             data=raw,
             source=str(raw.get("source") or "").strip(),
             generation=generation,
+            host=str(raw.get("host") or nick or cid).strip(),
+            aliases=aliases,
         )
 
     def with_updates(self, updates: Mapping[str, Any]) -> "ConnectionRecord":

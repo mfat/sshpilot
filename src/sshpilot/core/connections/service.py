@@ -1,4 +1,19 @@
-"""GTK-free connection domain service (canonical reusable state)."""
+"""GTK-free connection domain service (canonical reusable state).
+
+In-memory only: ``ConnectionService`` owns no filesystem persistence by
+itself (repository persistence lands in the daemon connection repository).
+Optional JSON export/import remains for CLI/backup compatibility.
+
+Group membership is derived from ``GroupRecord.connection_ids``; a
+connection may belong to any number of groups. ``ConnectionRecord.group_id``
+is a compatibility *projection* (the first group containing the connection,
+ordered by group order then id) and is never authoritative. The root order
+holds only ungrouped connections.
+
+The service never imports GI, never runs subprocesses, and never touches
+secret material.
+"""
+
 from __future__ import annotations
 
 import copy
@@ -22,12 +37,12 @@ from .models import (
 Listener = Callable[[MutationEvent], None]
 
 
-class ConnectionService:
-    """In-memory connection/group store with optional JSON persistence.
+def _validation_error(message: str) -> CoreError:
+    return CoreError(ErrorCode.VALIDATION_ERROR, message)
 
-    GTK adapters may wrap this and emit GObject signals from listeners.
-    The service itself never imports GI.
-    """
+
+class ConnectionService:
+    """In-memory connection/group store with optional JSON export/import."""
 
     def __init__(
         self,
@@ -58,7 +73,6 @@ class ConnectionService:
                 pass
 
     def _emit(self, event: MutationEvent) -> None:
-        # Snapshot outside lock so listeners can re-enter safely.
         with self._lock:
             listeners = list(self._listeners)
         for cb in listeners:
@@ -68,6 +82,65 @@ class ConnectionService:
         if not self._autosave or self._store_path is None:
             return
         self.save(self._store_path)
+
+    # --- membership helpers (groups are the source of truth) ---------------
+
+    def _group_ids_of(self, connection_id: str) -> List[str]:
+        """Group ids containing *connection_id*, ordered by (order, id)."""
+        return [
+            gid
+            for gid, g in sorted(
+                self._groups.items(), key=lambda kv: (kv[1].order, kv[0])
+            )
+            if connection_id in g.connection_ids
+        ]
+
+    def _sync_connection(self, connection_id: str) -> None:
+        """Recompute the ``group_id`` projection and root-order membership."""
+        record = self._connections.get(connection_id)
+        if record is None:
+            return
+        groups = self._group_ids_of(connection_id)
+        record.group_id = groups[0] if groups else None
+        if groups:
+            if connection_id in self._root_order:
+                self._root_order = [
+                    cid for cid in self._root_order if cid != connection_id
+                ]
+        else:
+            if connection_id not in self._root_order:
+                self._root_order.append(connection_id)
+
+    def _ensure_group(self, group_id: str, name: str = "") -> GroupRecord:
+        """Internal auto-create of a group with a known id (never errors)."""
+        existing = self._groups.get(group_id)
+        if existing is not None:
+            return existing
+        record = GroupRecord(id=group_id, name=name or group_id)
+        self._groups[group_id] = record
+        return record
+
+    def _add_membership(self, connection_id: str, group_id: str) -> None:
+        if connection_id not in self._connections:
+            raise _validation_error(f"Unknown connection {connection_id!r}")
+        group = self._ensure_group(group_id)
+        if connection_id not in group.connection_ids:
+            group.connection_ids.append(connection_id)
+        if connection_id in self._root_order:
+            self._root_order = [i for i in self._root_order if i != connection_id]
+
+    def _remove_membership(self, connection_id: str, group_id: str) -> None:
+        group = self._groups.get(group_id)
+        if group is not None:
+            group.connection_ids = [
+                cid for cid in group.connection_ids if cid != connection_id
+            ]
+
+    def _remove_from_all_groups(self, connection_id: str) -> None:
+        for group in self._groups.values():
+            group.connection_ids = [
+                cid for cid in group.connection_ids if cid != connection_id
+            ]
 
     # --- queries -----------------------------------------------------------
 
@@ -104,11 +177,16 @@ class ConnectionService:
                 if exclude_id is None or c.id != exclude_id
             }
 
-    # --- mutations ---------------------------------------------------------
+    # --- connection mutations ----------------------------------------------
 
     def create(self, data: Mapping[str, Any]) -> ConnectionRecord:
         payload = dict(data or {})
-        nickname = str(payload.get("nickname") or payload.get("id") or payload.get("host") or "").strip()
+        nickname = str(
+            payload.get("nickname")
+            or payload.get("id")
+            or payload.get("host")
+            or ""
+        ).strip()
         hostname = str(payload.get("hostname") or payload.get("host") or "").strip()
         username = str(payload.get("username") or "").strip()
         try:
@@ -116,7 +194,9 @@ class ConnectionService:
         except (TypeError, ValueError):
             port = 22
 
-        self._validator.set_existing_names({n.lower() for n in self.existing_nicknames()})
+        self._validator.set_existing_names(
+            {n.lower() for n in self.existing_nicknames()}
+        )
         errors: List[str] = []
         if not nickname:
             errors.append("Connection name is required")
@@ -130,7 +210,7 @@ class ConnectionService:
             if result is not None and not result.is_valid and result.severity == "error":
                 errors.append(result.message)
         if errors:
-            raise CoreError(ErrorCode.VALIDATION_ERROR, "; ".join(errors))
+            raise _validation_error("; ".join(errors))
 
         connection_id = nickname
         payload.pop("uuid", None)
@@ -141,23 +221,25 @@ class ConnectionService:
         payload["port"] = port
         payload.setdefault("protocol", "ssh")
 
+        group_ids = payload.pop("group_ids", None)
+        group_id = payload.pop("group_id", None)
+
         with self._lock:
             order = len(self._connections)
-            group_id = payload.get("group_id")
-            if group_id:
-                group_id = str(group_id)
-                if group_id not in self._groups:
-                    self._groups[group_id] = GroupRecord(id=group_id, name=group_id)
             record = ConnectionRecord.from_dict(payload, connection_id=connection_id)
             record.order = order
-            record.group_id = group_id
             self._connections[connection_id] = record
-            if group_id:
-                grp = self._groups[group_id]
-                if connection_id not in grp.connection_ids:
-                    grp.connection_ids.append(connection_id)
-            else:
-                self._root_order.append(connection_id)
+
+            requested: List[str] = []
+            if isinstance(group_ids, (list, tuple)):
+                requested = [str(g) for g in group_ids if str(g)]
+            elif group_id:
+                requested = [str(group_id)]
+            for gid in requested:
+                if gid not in self._groups:
+                    self._ensure_group(gid)
+                self._add_membership(connection_id, gid)
+            self._sync_connection(connection_id)
             saved = copy.deepcopy(record)
         self._persist()
         self._emit(MutationEvent(MutationKind.CREATED, connection_id=connection_id))
@@ -166,7 +248,12 @@ class ConnectionService:
     def upsert(self, data: Mapping[str, Any]) -> ConnectionRecord:
         """Create or update by nickname / alias."""
         payload = dict(data or {})
-        connection_id = str(payload.get("nickname") or payload.get("id") or payload.get("host") or "").strip()
+        connection_id = str(
+            payload.get("nickname")
+            or payload.get("id")
+            or payload.get("host")
+            or ""
+        ).strip()
         if not connection_id:
             return self.create(payload)
         with self._lock:
@@ -184,22 +271,22 @@ class ConnectionService:
 
     def update(self, connection_id: str, updates: Mapping[str, Any]) -> ConnectionRecord:
         if not connection_id:
-            raise CoreError(ErrorCode.VALIDATION_ERROR, "connection id is required")
+            raise _validation_error("connection id is required")
         with self._lock:
             existing = self._connections.get(connection_id)
             if existing is None:
-                raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown connection {connection_id!r}")
+                raise _validation_error(f"Unknown connection {connection_id!r}")
             payload = dict(updates or {})
             payload.pop("uuid", None)
             new_nick = None
             if "nickname" in payload:
                 nick = str(payload["nickname"]).strip()
                 if not nick:
-                    raise CoreError(ErrorCode.VALIDATION_ERROR, "Connection name is required")
+                    raise _validation_error("Connection name is required")
                 lowered = nick.lower()
                 for other_id, other in self._connections.items():
                     if other_id != connection_id and other.nickname.lower() == lowered:
-                        raise CoreError(ErrorCode.VALIDATION_ERROR, "Nickname already exists")
+                        raise _validation_error("Nickname already exists")
                 payload = dict(payload)
                 payload["nickname"] = nick
                 if nick != connection_id:
@@ -212,35 +299,34 @@ class ConnectionService:
 
             if new_nick:
                 self._connections.pop(connection_id, None)
+                # Rename every reference in every group and the root order.
+                for group in self._groups.values():
+                    group.connection_ids = [
+                        target_id if i == connection_id else i
+                        for i in group.connection_ids
+                    ]
+                self._root_order = [
+                    target_id if i == connection_id else i for i in self._root_order
+                ]
+                existing.group_id = None  # projection recomputed below
 
-            # Preserve group/order unless explicitly changed
-            if "group_id" in payload:
+            if "group_id" in payload or "group_ids" in payload:
                 new_gid = payload.get("group_id")
-                new_gid = str(new_gid) if new_gid else None
-                if new_gid and new_gid not in self._groups:
-                    self._groups[new_gid] = GroupRecord(id=new_gid, name=new_gid)
-                old_gid = existing.group_id
-                if old_gid and old_gid in self._groups:
-                    ids = self._groups[old_gid].connection_ids
-                    self._groups[old_gid].connection_ids = [i for i in ids if i != connection_id and i != target_id]
-                if existing.id in self._root_order and new_gid:
-                    self._root_order = [i for i in self._root_order if i != connection_id and i != target_id]
-                if new_gid:
-                    grp = self._groups[new_gid]
-                    if target_id not in grp.connection_ids:
-                        grp.connection_ids.append(target_id)
-                elif target_id not in self._root_order:
-                    self._root_order.append(target_id)
-                updated.group_id = new_gid
-            elif new_nick:
-                if existing.group_id and existing.group_id in self._groups:
-                    grp = self._groups[existing.group_id]
-                    grp.connection_ids = [target_id if i == connection_id else i for i in grp.connection_ids]
-                if connection_id in self._root_order:
-                    self._root_order = [target_id if i == connection_id else i for i in self._root_order]
+                new_gids: List[str] = []
+                raw_multi = payload.get("group_ids")
+                if isinstance(raw_multi, (list, tuple)):
+                    new_gids = [str(g) for g in raw_multi if str(g)]
+                elif new_gid:
+                    new_gids = [str(new_gid)]
+                self._remove_from_all_groups(connection_id)
+                for gid in new_gids:
+                    if gid not in self._groups:
+                        self._ensure_group(gid)
+                    self._add_membership(connection_id, gid)
 
             updated.order = existing.order
             self._connections[target_id] = updated
+            self._sync_connection(target_id)
             saved = copy.deepcopy(updated)
 
         self._persist()
@@ -255,12 +341,8 @@ class ConnectionService:
         with self._lock:
             existing = self._connections.pop(connection_id, None)
             if existing is None:
-                raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown connection {connection_id!r}")
-            if existing.group_id and existing.group_id in self._groups:
-                ids = self._groups[existing.group_id].connection_ids
-                self._groups[existing.group_id].connection_ids = [
-                    i for i in ids if i != connection_id
-                ]
+                raise _validation_error(f"Unknown connection {connection_id!r}")
+            self._remove_from_all_groups(connection_id)
             self._root_order = [i for i in self._root_order if i != connection_id]
         self._persist()
         self._emit(MutationEvent(MutationKind.DELETED, connection_id=connection_id))
@@ -269,7 +351,7 @@ class ConnectionService:
         with self._lock:
             existing = self._connections.get(connection_id)
             if existing is None:
-                raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown connection {connection_id!r}")
+                raise _validation_error(f"Unknown connection {connection_id!r}")
             source = copy.deepcopy(existing)
             nicknames = {c.nickname for c in self._connections.values()}
         new_nick = generate_duplicate_nickname(source.nickname, nicknames)
@@ -277,8 +359,7 @@ class ConnectionService:
         payload.pop("uuid", None)
         payload["id"] = new_nick
         payload["nickname"] = new_nick
-        if source.group_id:
-            payload["group_id"] = source.group_id
+        payload["group_ids"] = self._group_ids_of(connection_id)
         created = self.create(payload)
         self._emit(
             MutationEvent(
@@ -289,13 +370,78 @@ class ConnectionService:
         )
         return created
 
-    def assign_group(self, connection_id: str, group_id: Optional[str]) -> ConnectionRecord:
-        return self.update(connection_id, {"group_id": group_id})
+    # --- membership mutations ----------------------------------------------
+
+    def assign_group(
+        self, connection_id: str, group_id: Optional[str]
+    ) -> ConnectionRecord:
+        """Move *connection_id* into exactly one group (removes all others)."""
+        with self._lock:
+            if self._connections.get(connection_id) is None:
+                raise _validation_error(f"Unknown connection {connection_id!r}")
+            self._remove_from_all_groups(connection_id)
+            if group_id:
+                if group_id not in self._groups:
+                    self._ensure_group(group_id)
+                self._add_membership(connection_id, str(group_id))
+            self._sync_connection(connection_id)
+            saved = copy.deepcopy(self._connections[connection_id])
+        self._persist()
+        self._emit(
+            MutationEvent(
+                MutationKind.GROUP_ASSIGNED,
+                connection_id=connection_id,
+                group_id=group_id,
+            )
+        )
+        return saved
 
     def remove_from_group(self, connection_id: str) -> ConnectionRecord:
+        """Remove *connection_id* from every group (moves to root)."""
         return self.assign_group(connection_id, None)
 
+    def copy_connection_to_group(
+        self, connection_id: str, group_id: str
+    ) -> ConnectionRecord:
+        """Add one membership without removing existing ones."""
+        with self._lock:
+            if self._connections.get(connection_id) is None:
+                raise _validation_error(f"Unknown connection {connection_id!r}")
+            self._add_membership(connection_id, str(group_id))
+            self._sync_connection(connection_id)
+            saved = copy.deepcopy(self._connections[connection_id])
+        self._persist()
+        self._emit(
+            MutationEvent(
+                MutationKind.GROUP_ASSIGNED,
+                connection_id=connection_id,
+                group_id=str(group_id),
+            )
+        )
+        return saved
+
+    def remove_connection_from_group(
+        self, connection_id: str, group_id: str
+    ) -> ConnectionRecord:
+        """Remove exactly one membership."""
+        with self._lock:
+            if self._connections.get(connection_id) is None:
+                raise _validation_error(f"Unknown connection {connection_id!r}")
+            self._remove_membership(connection_id, str(group_id))
+            self._sync_connection(connection_id)
+            saved = copy.deepcopy(self._connections[connection_id])
+        self._persist()
+        self._emit(
+            MutationEvent(
+                MutationKind.GROUP_REMOVED,
+                connection_id=connection_id,
+                group_id=str(group_id),
+            )
+        )
+        return saved
+
     def reorder(self, connection_ids: Sequence[str]) -> None:
+        """Replace the global ordering; root order keeps only ungrouped ones."""
         with self._lock:
             seen = set()
             ordered: List[str] = []
@@ -304,14 +450,70 @@ class ConnectionService:
                     ordered.append(cid)
                     seen.add(cid)
             missing = [cid for cid in self._connections if cid not in seen]
-            ordered.extend(sorted(missing, key=lambda i: self._connections[i].nickname.lower()))
+            ordered.extend(
+                sorted(missing, key=lambda i: self._connections[i].nickname.lower())
+            )
             for index, cid in enumerate(ordered):
                 self._connections[cid].order = index
             self._root_order = [
-                cid for cid in ordered if self._connections[cid].group_id is None
+                cid for cid in ordered if not self._group_ids_of(cid)
             ]
         self._persist()
         self._emit(MutationEvent(MutationKind.REORDERED, detail={"order": list(ordered)}))
+
+    def reorder_connection(
+        self,
+        connection_id: str,
+        target_connection_id: str,
+        group_id: Optional[str],
+        position: str,
+    ) -> None:
+        """Place *connection_id* above/below *target_connection_id*.
+
+        Ordering applies within a group when *group_id* is given, otherwise
+        within the root list. ``position`` is exactly ``"above"`` or
+        ``"below"``.
+        """
+        if position not in ("above", "below"):
+            raise _validation_error("position must be 'above' or 'below'")
+        with self._lock:
+            if self._connections.get(connection_id) is None:
+                raise _validation_error(f"Unknown connection {connection_id!r}")
+            if group_id:
+                if group_id not in self._groups:
+                    raise _validation_error(f"Unknown group {group_id!r}")
+                if connection_id not in self._groups[group_id].connection_ids:
+                    # The connection is being placed into this group.
+                    self._add_membership(connection_id, group_id)
+                container = self._groups[group_id].connection_ids
+            else:
+                if connection_id not in self._root_order:
+                    self._remove_from_all_groups(connection_id)
+                    self._root_order.append(connection_id)
+                container = self._root_order
+
+            container = [cid for cid in container if cid != connection_id]
+            try:
+                target_index = container.index(target_connection_id)
+            except ValueError:
+                target_index = len(container)
+            insert_at = target_index if position == "above" else target_index + 1
+            container.insert(insert_at, connection_id)
+
+            if group_id:
+                self._groups[group_id].connection_ids = container
+            else:
+                self._root_order = container
+            self._sync_connection(connection_id)
+        self._persist()
+        self._emit(
+            MutationEvent(
+                MutationKind.REORDERED,
+                connection_id=connection_id,
+                group_id=group_id,
+                detail={"position": position},
+            )
+        )
 
     # --- groups ------------------------------------------------------------
 
@@ -326,11 +528,13 @@ class ConnectionService:
     ) -> GroupRecord:
         name = (name or "").strip()
         if not name:
-            raise CoreError(ErrorCode.VALIDATION_ERROR, "Group name is required")
+            raise _validation_error("Group name is required")
         with self._lock:
-            gid = str(group_id or generate_group_slug(name, set(self._groups.keys()))).strip()
             if parent_id and parent_id not in self._groups:
-                raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown parent group {parent_id!r}")
+                raise _validation_error(f"Unknown parent group {parent_id!r}")
+            gid = str(
+                group_id or generate_group_slug(name, set(self._groups.keys()))
+            ).strip()
             if gid in self._groups:
                 existing = self._groups[gid]
                 existing.name = name
@@ -365,7 +569,7 @@ class ConnectionService:
         """Create a group with a known id if missing (GTK GroupManager sync)."""
         gid = str(group_id or "").strip()
         if not gid:
-            raise CoreError(ErrorCode.VALIDATION_ERROR, "Group id is required")
+            raise _validation_error("Group id is required")
         if parent_id:
             parent_id = str(parent_id)
             with self._lock:
@@ -384,25 +588,89 @@ class ConnectionService:
             order=order,
         )
 
+    def _would_create_cycle(self, group_id: str, parent_id: Optional[str]) -> bool:
+        if parent_id is None or parent_id == group_id:
+            return parent_id == group_id
+        seen = {group_id}
+        current = parent_id
+        while current is not None:
+            if current in seen:
+                return True
+            seen.add(current)
+            group = self._groups.get(current)
+            current = group.parent_id if group is not None else None
+        return False
+
+    def place_group(
+        self,
+        group_id: str,
+        parent_id: Optional[str],
+        index: int,
+    ) -> GroupRecord:
+        """Move *group_id* beneath *parent_id* at sibling *index*.
+
+        Rejects parent cycles (a group may never be its own ancestor).
+        """
+        if type(index) is not int or index < 0:
+            raise _validation_error("index must be a non-negative integer")
+        with self._lock:
+            group = self._groups.get(group_id)
+            if group is None:
+                raise _validation_error(f"Unknown group {group_id!r}")
+            if parent_id and parent_id not in self._groups:
+                raise _validation_error(f"Unknown parent group {parent_id!r}")
+            if self._would_create_cycle(group_id, parent_id):
+                raise _validation_error("Group placement would create a parent cycle")
+            group.parent_id = parent_id
+            siblings = [
+                g
+                for g in self._groups.values()
+                if g.id != group_id and g.parent_id == parent_id
+            ]
+            siblings.sort(key=lambda g: (g.order, g.id))
+            siblings.insert(min(index, len(siblings)), group)
+            for i, sibling in enumerate(siblings):
+                sibling.order = i
+            saved = copy.deepcopy(group)
+        self._persist()
+        self._emit(MutationEvent(MutationKind.GROUP_CREATED, group_id=group_id))
+        return saved
+
+    def set_group_color(self, group_id: str, color: str) -> GroupRecord:
+        """Update a group's color (empty string clears it)."""
+        with self._lock:
+            group = self._groups.get(group_id)
+            if group is None:
+                raise _validation_error(f"Unknown group {group_id!r}")
+            group.color = str(color or "")
+            saved = copy.deepcopy(group)
+        self._persist()
+        return saved
+
     def delete_group(self, group_id: str, *, move_connections_to_root: bool = True) -> None:
+        """Delete *group_id*.
+
+        Children move to the deleted group's parent; connections keep every
+        other membership and move to root only when this was their last group.
+        """
         with self._lock:
             group = self._groups.pop(group_id, None)
             if group is None:
-                raise CoreError(ErrorCode.VALIDATION_ERROR, f"Unknown group {group_id!r}")
+                raise _validation_error(f"Unknown group {group_id!r}")
+            # Detach the group's own connections (preserving other memberships).
             for cid in list(group.connection_ids):
-                rec = self._connections.get(cid)
-                if rec is None:
-                    continue
-                if move_connections_to_root:
-                    rec.group_id = None
-                    if cid not in self._root_order:
-                        self._root_order.append(cid)
-                else:
+                if cid in self._connections and not move_connections_to_root:
                     self._connections.pop(cid, None)
-            # Detach children groups
+                    self._remove_from_all_groups(cid)
+                    self._root_order = [i for i in self._root_order if i != cid]
+            # Children move to the deleted group's parent.
             for child in self._groups.values():
                 if child.parent_id == group_id:
-                    child.parent_id = None
+                    child.parent_id = group.parent_id
+            if move_connections_to_root:
+                for cid in list(group.connection_ids):
+                    if cid in self._connections:
+                        self._sync_connection(cid)
         self._persist()
         self._emit(MutationEvent(MutationKind.GROUP_DELETED, group_id=group_id))
 
@@ -427,41 +695,83 @@ class ConnectionService:
     def load_export_dict(self, data: Mapping[str, Any], *, replace: bool = True) -> None:
         if not isinstance(data, Mapping):
             raise CoreError(ErrorCode.IMPORT_ERROR, "Export payload must be a mapping")
-        connections = data.get("connections") or []
-        if not isinstance(connections, list):
+        connections_raw = data.get("connections") or []
+        if not isinstance(connections_raw, list):
             raise CoreError(ErrorCode.IMPORT_ERROR, "connections must be a list")
         groups_blob = data.get("groups") or {}
+
+        # Build a candidate state first; publish only when every step succeeds.
+        connections: Dict[str, ConnectionRecord] = {}
+        groups: Dict[str, GroupRecord] = {}
+        if isinstance(groups_blob, Mapping):
+            raw_groups = groups_blob.get("groups") or {}
+            if isinstance(raw_groups, Mapping):
+                for gid, gdata in raw_groups.items():
+                    if isinstance(gdata, Mapping):
+                        payload = dict(gdata)
+                        payload.setdefault("id", gid)
+                        groups[str(payload["id"])] = GroupRecord.from_dict(payload)
+
         with self._lock:
-            if replace:
-                self._connections.clear()
-                self._groups.clear()
-                self._root_order.clear()
-            if isinstance(groups_blob, Mapping):
-                raw_groups = groups_blob.get("groups") or {}
-                if isinstance(raw_groups, Mapping):
-                    for gid, gdata in raw_groups.items():
-                        if isinstance(gdata, Mapping):
-                            payload = dict(gdata)
-                            payload.setdefault("id", gid)
-                            self._groups[str(payload["id"])] = GroupRecord.from_dict(payload)
-            for item in connections:
+            if not replace:
+                connections = dict(self._connections)
+                groups = dict(self._groups)
+            for item in connections_raw:
                 if not isinstance(item, Mapping):
                     continue
                 rec = ConnectionRecord.from_dict(item)
                 if not rec.id:
                     continue
-                if not replace and rec.id in self._connections:
+                if not replace and rec.id in connections:
                     continue
                 if not replace and self.find_by_nickname(rec.nickname):
                     continue
-                self._connections[rec.id] = rec
-            root = groups_blob.get("root_connections") if isinstance(groups_blob, Mapping) else None
-            if isinstance(root, list):
-                self._root_order = [str(x) for x in root if str(x) in self._connections]
-            else:
-                self._root_order = [
-                    cid for cid, rec in self._connections.items() if rec.group_id is None
-                ]
+                connections[rec.id] = rec
+
+            # Reconcile membership from every legacy encoding.
+            for cid, rec in connections.items():
+                requested: List[str] = []
+                multi = rec.data.get("group_ids") if isinstance(rec.data, dict) else None
+                if isinstance(multi, (list, tuple)):
+                    requested = [str(g) for g in multi if str(g)]
+                elif rec.data.get("group_id"):
+                    requested = [str(rec.data["group_id"])]
+                if requested:
+                    for gid in requested:
+                        group = groups.get(gid)
+                        if group is None:
+                            group = GroupRecord(id=gid, name=gid)
+                            groups[gid] = group
+                        if cid not in group.connection_ids:
+                            group.connection_ids.append(cid)
+            if isinstance(groups_blob, Mapping):
+                legacy_map = groups_blob.get("connections") or {}
+                if isinstance(legacy_map, Mapping):
+                    for cid, gid in legacy_map.items():
+                        cid, gid = str(cid), str(gid)
+                        if cid not in connections:
+                            continue
+                        group = groups.get(gid)
+                        if group is None:
+                            group = GroupRecord(id=gid, name=gid)
+                            groups[gid] = group
+                        if cid not in group.connection_ids:
+                            group.connection_ids.append(cid)
+
+            root_raw = (
+                groups_blob.get("root_connections")
+                if isinstance(groups_blob, Mapping)
+                else None
+            )
+            root_order: List[str] = []
+            if isinstance(root_raw, list):
+                root_order = [str(x) for x in root_raw if str(x) in connections]
+
+            self._connections = connections
+            self._groups = groups
+            self._root_order = root_order
+            for cid in list(self._connections):
+                self._sync_connection(cid)
         self._persist()
 
     def save(self, path: os.PathLike) -> None:
@@ -485,6 +795,13 @@ class ConnectionService:
         *,
         groups: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        """Replace domain state from external authoritative sources (e.g. SSH config load)."""
-        payload: Dict[str, Any] = {"connections": list(connections), "groups": groups or {}}
+        """Replace domain state from external authoritative sources.
+
+        Transactional: a candidate state is validated and only published when
+        every record and group parses successfully.
+        """
+        payload: Dict[str, Any] = {
+            "connections": list(connections),
+            "groups": groups or {},
+        }
         self.load_export_dict(payload, replace=True)
