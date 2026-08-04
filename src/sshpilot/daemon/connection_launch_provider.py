@@ -267,7 +267,7 @@ class DaemonConnectionLaunchProvider:
             raise ValueError("a connection resolver is required")
         self._resolver = resolver
         self._secret_provider = secret_provider
-        self._app_config = app_config
+        self._app_config_view = app_config
 
     def _resolve(self, connection_id: ConnectionId) -> ConnectionRecord:
         record = self._resolver(connection_id)
@@ -320,9 +320,9 @@ class DaemonConnectionLaunchProvider:
 
         return _ManagerShim()
 
-    def _app_config(self):
-        if self._app_config is not None:
-            return self._app_config
+    def _get_app_config(self):
+        if self._app_config_view is not None:
+            return self._app_config_view
         try:
             from ..config import Config
 
@@ -340,7 +340,7 @@ class DaemonConnectionLaunchProvider:
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
-        app_config = self._app_config()
+        app_config = self._get_app_config()
         connection.resolved_identity_files = (
             connection.collect_identity_file_candidates()
         )
@@ -499,7 +499,7 @@ class DaemonConnectionLaunchProvider:
         plugin_id = registry.plugin_id_for(protocol) or protocol
         ctx = PluginContext.for_spawn(
             plugin_id=plugin_id,
-            app_config=self._app_config(),
+            app_config=self._get_app_config(),
             connection_manager=None,
             protocol_registry=registry,
         )

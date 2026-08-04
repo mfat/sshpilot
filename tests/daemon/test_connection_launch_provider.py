@@ -109,7 +109,29 @@ def test_no_client_path_authority(provider):
 def test_local_command_injected_only_when_present(provider):
     prov, records = provider
     records["web"] = _record(data={"local_command": "echo hi"})
-    with pytest.raises(Exception):
-        # ssh executable unavailable in the test environment; the failure must
-        # not come from argv assembly but from the missing binary.
-        prov.prepare_terminal_launch("web", interaction_policy="none")
+    command, _environment = prov.prepare_terminal_launch(
+        "web", interaction_policy="none"
+    )
+    assert "PermitLocalCommand=yes" in command
+
+
+def test_production_settings_view_is_not_called_as_a_function(provider, monkeypatch):
+    class SettingsView:
+        def get_setting(self, _key, default=None):
+            return default
+
+    class Prepared:
+        command = ("ssh", "web")
+        env = {}
+        use_askpass = False
+
+    import sshpilot.ssh_connection_builder as builder
+
+    monkeypatch.setattr(builder, "build_ssh_connection", lambda _context: Prepared())
+    prov, _records = provider
+    prov = DaemonConnectionLaunchProvider(
+        lambda cid: _record(cid),
+        app_config=SettingsView(),
+    )
+    command, _environment = prov.prepare_terminal_launch("web")
+    assert command[0].endswith("/ssh")
