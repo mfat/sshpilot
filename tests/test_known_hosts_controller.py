@@ -1,6 +1,8 @@
 """KnownHostsController tests (GTK-free)."""
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from sshpilot.api.models.known_hosts import (
@@ -28,6 +30,32 @@ class _FakeClient:
     def remove_known_host_entries(self, request):
         self.removed += 1
         self.last_request = request
+        if self.remove_error is not None:
+            raise self.remove_error
+        return KnownHostsMutationResult(
+            revision="revision-2",
+            removed_count=len(request.entry_ids),
+            entries=tuple(
+                entry
+                for entry in self.snapshot.entries
+                if entry.entry_id not in request.entry_ids
+            ),
+        )
+
+
+class _BlockingClient(_FakeClient):
+    """Blocks inside the mutation call until released, to hold a Save open."""
+
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def remove_known_host_entries(self, request):
+        self.removed += 1
+        self.last_request = request
+        self.started.set()
+        self.release.wait(timeout=5)
         if self.remove_error is not None:
             raise self.remove_error
         return KnownHostsMutationResult(
@@ -152,3 +180,165 @@ def test_clear_pending_removes_staged_ids():
     controller.stage_remove(KnownHostEntryId("a"))
     controller.clear_pending()
     assert controller.pending_entry_ids() == ()
+
+
+def test_save_with_no_pending_ids_makes_zero_mutation_calls():
+    client = _FakeClient()
+    client.snapshot = _snapshot(_entry("a"), _entry("b"))
+    controller = KnownHostsController(client)
+    controller.load()
+
+    result = controller.save()
+
+    assert client.removed == 0
+    assert client.listed == 1  # load only; no mutation RPC
+    assert result.removed_count == 0
+    assert result.revision == "revision-1"
+    assert [e.entry_id for e in result.entries] == [
+        KnownHostEntryId("a"),
+        KnownHostEntryId("b"),
+    ]
+
+
+def test_noop_save_returns_zero_removed_count():
+    client = _FakeClient()
+    client.snapshot = _snapshot(_entry("a"))
+    controller = KnownHostsController(client)
+    controller.load()
+
+    result = controller.save()
+
+    assert isinstance(result, KnownHostsMutationResult)
+    assert result.removed_count == 0
+    assert result.revision == "revision-1"
+
+
+def test_second_save_while_first_is_blocked_is_rejected():
+    client = _BlockingClient()
+    client.snapshot = _snapshot(_entry("a"))
+    controller = KnownHostsController(client)
+    controller.load()
+    controller.stage_remove(KnownHostEntryId("a"))
+
+    outcome = {}
+
+    def _save():
+        try:
+            outcome["result"] = controller.save()
+        except Exception as exc:  # pragma: no cover - guard for test cleanup
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_save)
+    thread.start()
+    assert client.started.wait(timeout=2)
+
+    with pytest.raises(RuntimeError):
+        controller.save()
+
+    client.release.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert client.removed == 1
+    assert "error" not in outcome
+
+
+def test_stage_while_save_is_blocked_is_rejected():
+    client = _BlockingClient()
+    client.snapshot = _snapshot(_entry("a"), _entry("b"))
+    controller = KnownHostsController(client)
+    controller.load()
+    controller.stage_remove(KnownHostEntryId("a"))
+
+    thread = threading.Thread(target=controller.save)
+    thread.start()
+    assert client.started.wait(timeout=2)
+
+    with pytest.raises(RuntimeError):
+        controller.stage_remove(KnownHostEntryId("b"))
+
+    client.release.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    # "b" was rejected during the blocked save, so it was never staged; the
+    # successful save cleared the pre-block ID "a".
+    assert KnownHostEntryId("b") not in controller.pending_entry_ids()
+
+
+def test_load_while_save_is_blocked_is_rejected():
+    client = _BlockingClient()
+    client.snapshot = _snapshot(_entry("a"))
+    controller = KnownHostsController(client)
+    controller.load()
+    controller.stage_remove(KnownHostEntryId("a"))
+
+    thread = threading.Thread(target=controller.save)
+    thread.start()
+    assert client.started.wait(timeout=2)
+
+    with pytest.raises(RuntimeError):
+        controller.load()
+
+    client.release.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+
+
+def test_failed_save_resets_busy_flag():
+    client = _FakeClient()
+    client.snapshot = _snapshot(_entry("a"))
+    controller = KnownHostsController(client)
+    controller.load()
+    controller.stage_remove(KnownHostEntryId("a"))
+    client.remove_error = RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        controller.save()
+
+    assert controller._saving is False
+    assert controller._loading is False
+    # The controller accepts a subsequent save after the failure.
+    client.remove_error = None
+    controller.save()
+    assert client.removed == 2
+
+
+def test_failed_save_retains_pending_ids():
+    client = _FakeClient()
+    client.snapshot = _snapshot(_entry("a"), _entry("b"))
+    controller = KnownHostsController(client)
+    controller.load()
+    controller.stage_remove(KnownHostEntryId("a"))
+    controller.stage_remove(KnownHostEntryId("b"))
+    client.remove_error = RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        controller.save()
+
+    assert controller.pending_entry_ids() == (
+        KnownHostEntryId("a"),
+        KnownHostEntryId("b"),
+    )
+
+
+def test_successful_save_keeps_ids_not_in_request():
+    client = _FakeClient()
+    client.snapshot = _snapshot(_entry("a"), _entry("b"))
+    controller = KnownHostsController(client)
+    controller.load()
+    controller.stage_remove(KnownHostEntryId("a"))
+
+    # Simulate an ID arriving while the save is in flight (it was not part of
+    # this save's request); it must survive the successful save.
+    client_side_pending = [KnownHostEntryId("b")]
+    original_remove = client.remove_known_host_entries
+
+    def _remove_with_race(request):
+        result = original_remove(request)
+        controller._pending.extend(client_side_pending)
+        return result
+
+    client.remove_known_host_entries = _remove_with_race
+
+    controller.save()
+
+    assert controller.pending_entry_ids() == (KnownHostEntryId("b"),)

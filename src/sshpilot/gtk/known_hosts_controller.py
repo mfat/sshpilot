@@ -3,10 +3,11 @@
 Stages removal decisions and performs one batched, revision-checked mutation
 through a daemon-backed ``SshPilotClient``. No filesystem or GTK imports.
 
-Threading: a single ``RLock`` guards the snapshot/pending state so a worker
-thread (``load``/``save``) can never interleave with the GTK main thread
-(``stage_remove``/``pending_entry_ids``/``clear_pending``). Calls into the
-client happen while holding the lock.
+Threading: one ``RLock`` guards the snapshot/pending state and the
+``_loading``/``_saving`` busy flags so overlapping operations are rejected
+deterministically. Client RPCs run *outside* the lock so a blocked request
+never stalls other controller callers. A save with nothing staged is a
+successful no-op that never touches the client.
 """
 from __future__ import annotations
 
@@ -29,9 +30,22 @@ class KnownHostsController:
         self._lock = threading.RLock()
         self._snapshot: KnownHostsSnapshot | None = None
         self._pending: list[KnownHostEntryId] = []
+        self._loading = False
+        self._saving = False
+
+    def _ensure_idle(self) -> None:
+        if self._loading or self._saving:
+            raise RuntimeError("a known-hosts operation is already in progress")
 
     def load(self) -> KnownHostsSnapshot:
-        snapshot = self._client.list_known_hosts()
+        with self._lock:
+            self._ensure_idle()
+            self._loading = True
+        try:
+            snapshot = self._client.list_known_hosts()
+        finally:
+            with self._lock:
+                self._loading = False
         with self._lock:
             self._snapshot = snapshot
             self._pending = []
@@ -39,6 +53,7 @@ class KnownHostsController:
 
     def stage_remove(self, entry_id: KnownHostEntryId) -> None:
         with self._lock:
+            self._ensure_idle()
             if entry_id in self._pending:
                 return
             self._pending.append(entry_id)
@@ -49,24 +64,47 @@ class KnownHostsController:
 
     def save(self) -> KnownHostsMutationResult:
         with self._lock:
+            self._ensure_idle()
             snapshot = self._snapshot
             if snapshot is None:
                 raise RuntimeError(
                     "known-hosts snapshot must be loaded before saving"
                 )
+            saved_ids = tuple(self._pending)
+            self._saving = True
+        try:
+            if not saved_ids:
+                # Unchanged save is a successful no-op: keep the loaded
+                # revision and entries, and never touch the client.
+                return KnownHostsMutationResult(
+                    revision=snapshot.revision,
+                    removed_count=0,
+                    entries=snapshot.entries,
+                )
             request = RemoveKnownHostEntriesRequest(
                 revision=snapshot.revision,
-                entry_ids=tuple(self._pending),
+                entry_ids=saved_ids,
             )
-        result = self._client.remove_known_host_entries(request)
+            result = self._client.remove_known_host_entries(request)
+        finally:
+            with self._lock:
+                self._saving = False
         with self._lock:
             self._snapshot = KnownHostsSnapshot(
                 revision=result.revision,
                 entries=result.entries,
             )
-            self._pending = []
+            # Clear only the IDs this save sent; never discard a staged ID
+            # that was not part of the request.
+            self._pending = [
+                entry_id
+                for entry_id in self._pending
+                if entry_id not in saved_ids
+            ]
         return result
 
     def clear_pending(self) -> None:
         with self._lock:
+            if self._saving:
+                raise RuntimeError("a known-hosts save is in progress")
             self._pending = []

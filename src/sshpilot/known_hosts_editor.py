@@ -22,6 +22,10 @@ class KnownHostsEditorWindow(Adw.Window):
 
     search_entry = Gtk.Template.Child()
     listbox = Gtk.Template.Child()
+    save_button = Gtk.Template.Child()
+
+    # Class-level default so stub-built instances (tests) start idle.
+    _operation_in_flight = False
 
     def __init__(self, parent, client: SshPilotClient, on_saved: Optional[Callable] = None):
         super().__init__()
@@ -32,6 +36,7 @@ class KnownHostsEditorWindow(Adw.Window):
         self._on_saved = on_saved
         self._controller = KnownHostsController(client)
         self._all_entries = []  # List[KnownHostEntrySummary] for filtering
+        self._operation_in_flight = False
 
         # Populate after present() so the window appears immediately
         # (matches AuthorizedKeysWindow's deferred load).
@@ -41,8 +46,20 @@ class KnownHostsEditorWindow(Adw.Window):
     def _on_cancel_clicked(self, _btn):
         self.close()
 
+    def _set_operation_in_flight(self, in_flight: bool) -> None:
+        """Update the UI busy state for the interactive controls."""
+        self._operation_in_flight = in_flight
+        sensitive = not in_flight
+        for widget in (self.save_button, self.listbox, self.search_entry):
+            set_sensitive = getattr(widget, "set_sensitive", None)
+            if set_sensitive is not None:
+                set_sensitive(sensitive)
+
     def _load_entries(self):
         """Load known_hosts entries through the daemon client on a worker thread."""
+        # Ignore a second load request while any operation is running.
+        if self._operation_in_flight:
+            return
         # Drop any previously rendered rows so a failed reload never shows
         # stale data as current.
         self._all_entries = []
@@ -51,6 +68,11 @@ class KnownHostsEditorWindow(Adw.Window):
             if child is None:
                 break
             self.listbox.remove(child)
+        self._set_operation_in_flight(True)
+        self._start_load_worker()
+
+    def _start_load_worker(self):
+        """Start one load worker thread; the busy state stays on until it reports."""
 
         def worker():
             try:
@@ -65,10 +87,14 @@ class KnownHostsEditorWindow(Adw.Window):
 
     def _on_load_finished(self, payload):
         if payload[0] != "ok":
+            self._set_operation_in_flight(False)
             self._show_error(_("Could not load known hosts"), payload[1])
             return
         self._all_entries = list(payload[1])
         self._display_entries(self._all_entries)
+        # Save stays enabled even with no staged changes: an unchanged Save is
+        # a valid successful no-op.
+        self._set_operation_in_flight(False)
 
     def _display_entries(self, entries):
         """Display the given entry summaries in the listbox."""
@@ -139,10 +165,17 @@ class KnownHostsEditorWindow(Adw.Window):
             self.listbox.append(list_row)
 
     def _on_remove_clicked(self, _btn, row):
+        if self._operation_in_flight:
+            return
         entry_id = getattr(row, '_entry_id', None)
         if entry_id is None:
             return
-        self._controller.stage_remove(entry_id)
+        try:
+            self._controller.stage_remove(entry_id)
+        except RuntimeError:
+            # A load/save is running; the list is disabled so this is defensive.
+            logger.info("Ignored remove click while a known-hosts operation runs")
+            return
         try:
             # Add visual feedback before removal
             from sshpilot import icon_utils
@@ -203,6 +236,11 @@ class KnownHostsEditorWindow(Adw.Window):
 
     @Gtk.Template.Callback()
     def _on_save_clicked(self, _btn):
+        # Ignore another Save click while loading or saving.
+        if self._operation_in_flight:
+            return
+        self._set_operation_in_flight(True)
+
         def worker():
             try:
                 self._controller.save()
@@ -227,15 +265,20 @@ class KnownHostsEditorWindow(Adw.Window):
     def _on_save_finished(self, payload):
         status = payload[0]
         if status == "ok":
+            self._set_operation_in_flight(False)
             if self._on_saved:
                 self._on_saved()
             self.close()
             return
         if status == "stale":
-            # Show the message and reload; never retry automatically.
+            # Show the message and start exactly one reload; keep the controls
+            # disabled until that reload finishes. Never retry the mutation.
             self._show_error(_("Known hosts changed"), payload[1])
-            self._load_entries()
+            self._start_load_worker()
             return
+        # Non-stale error: restore the controls and keep staged removals so the
+        # user can retry manually.
+        self._set_operation_in_flight(False)
         self._show_error(_("Could not save known hosts"), payload[1])
 
     def _show_error(self, heading: str, body: str):

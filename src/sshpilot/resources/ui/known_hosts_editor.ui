@@ -27,7 +27,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child type="end">
-              <object class="GtkButton">
+              <object class="GtkButton" id="save_button">
                 <property name="label" translatable="yes">Save</property>
                 <style>
                   <class name="suggested-action"/>
