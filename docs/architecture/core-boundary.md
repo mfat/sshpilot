@@ -94,9 +94,9 @@ Two AST test modules enforce rules 1, 3, 4, 5 and the package direction:
 The registries are the migration backlog for `core-ownership-migration.md`;
 each migration M1–M8 removes its rows as it lands, and registering a new
 backend call, operation or dependency edge in frontend/daemon code fails the
-suite. M1 (key ownership) and M2 (known-hosts file ownership) are
-**complete**; the remaining debt is M3–M8. The daemon *runtime* is **not yet
-GI-free** — its composition of GObject adapters is registered debt (see
+suite. M1, M2, and M3 connection-store ownership are
+**complete**; M4–M8 remain deferred. The daemon *runtime* is **not yet
+GI-free** where explicitly registered compatibility debt remains (see
 `core-ownership-migration.md`).
 
 Phase 13.2 runtime ownership (sessions/SFTP/transfers/forwards/interactions) remains in `sshpilot.daemon` consuming core models; see `docs/api/` topic guides.

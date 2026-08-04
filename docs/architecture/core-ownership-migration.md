@@ -141,6 +141,11 @@ advertised only when the daemon service is installed.
 
 ### M3 — Connections
 
+**Status: Complete.** The daemon owns SSH configuration, included fragments,
+`connections.json`, groups, ordering, and safe metadata. SSH `Host` aliases
+remain connection identity. GTK receives immutable snapshots and retains only
+visual group expansion state. M4–M8 remain deferred.
+
 **Registered in `PENDING_MIGRATIONS`:** `connection_manager.py` ×
 `core.connections.ConnectionService`.
 

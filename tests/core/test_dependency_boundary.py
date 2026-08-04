@@ -51,7 +51,6 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     # daemon idle/service settings still read through ``Config`` (M4). Plugin
     # loading moved out of the daemon composition with the legacy managers
     # (M3): cli.py composes the headless repository only.
-    ("daemon/cli.py", "sshpilot.config"): "M4",  # Config -> daemon settings
     # Launch/secret compatibility moved out of core into daemon providers
     # (Task 12). Each provider file registers the exact legacy helper it still
     # uses, tagged with the migration that will remove it.

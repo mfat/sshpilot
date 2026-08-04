@@ -381,7 +381,6 @@ def test_frontend_core_imports_are_categorised():
 
 # Baseline diag for macros below.
 _PENDING_EXPECTED = {
-    "M3": 1,
     "M4": 3,
     "M5": 4,
     "M6": 4,
@@ -496,7 +495,7 @@ def test_backend_ops_debt_matches_exact_baseline():
     from collections import Counter
 
     debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
-    expected = {"M3": 1, "M5": 4, "M6": 1, "M7": 19, "M8": 1}
+    expected = {"M5": 4, "M6": 1, "M7": 19, "M8": 1}
     assert dict(debt) == expected, (
         f"BACKEND_OPS debt changed; expected {expected}, got {dict(debt)}. "
         "Only remove rows as the owning migration lands."

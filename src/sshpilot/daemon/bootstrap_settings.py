@@ -97,6 +97,17 @@ class DaemonBootstrapSettings:
         return bool(self.get_ssh_config().get("agent_preload_keys", True))
 
     @property
+    def idle_shutdown_seconds(self):
+        return self.get_setting("daemon.idle_shutdown_seconds", None)
+
+    @property
+    def service_mode(self) -> bool:
+        return bool(
+            self.get_setting("daemon.service_mode", False)
+            or os.environ.get("SSHPILOT_DAEMON_SERVICE_MODE")
+        )
+
+    @property
     def config_file(self) -> Optional[str]:
         raw = self._raw()
         value = raw.get("config_file")

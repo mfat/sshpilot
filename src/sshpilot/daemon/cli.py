@@ -220,16 +220,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         service_mode = False
         packaged = False
         try:
-            from sshpilot.config import Config
+            from .bootstrap_settings import DaemonBootstrapSettings
 
-            app_config = Config()
-            raw_idle = app_config.get_setting("daemon.idle_shutdown_seconds", None)
+            app_config = DaemonBootstrapSettings()
+            raw_idle = app_config.idle_shutdown_seconds
             if raw_idle is not None:
                 idle_shutdown_seconds = float(raw_idle)
-            service_mode = bool(
-                app_config.get_setting("daemon.service_mode", False)
-                or os.environ.get("SSHPILOT_DAEMON_SERVICE_MODE")
-            )
+            service_mode = app_config.service_mode
             packaged = bool(os.environ.get("SSHPILOT_PACKAGED"))
         except Exception:
             logging.getLogger(__name__).debug(
