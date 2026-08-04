@@ -445,6 +445,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         self.connection_manager.attach_client(self.client)
         self.group_manager.attach_client(self.client)
+        from .gtk.group_store import GroupMutationController
+        if getattr(self, "_group_mutation_controller", None) is None:
+            self._group_mutation_controller = GroupMutationController(
+                self.client,
+                bridge=self.client_bridge,
+                refresh=self.connection_manager.refresh,
+                dispatch=lambda callback: GLib.idle_add(
+                    lambda: (callback(), GLib.SOURCE_REMOVE)[1]
+                ),
+            )
+            self.group_manager.set_mutation_controller(self._group_mutation_controller)
         self.connection_runtime_status.attach_client(self.client)
         self.plugin_connection_services.attach_client(self.client)
         self.key_manager = KeyManager(self.client, self._key_scope)
@@ -484,6 +495,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_request = None
         self.client = None
         self.key_manager = None
+        controller = getattr(self, "_group_mutation_controller", None)
+        if controller is not None:
+            controller.close()
+            self._group_mutation_controller = None
         self.plugin_connection_services.detach_client()
         self.connection_runtime_status.close()
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)

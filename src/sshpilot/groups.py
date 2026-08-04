@@ -13,10 +13,11 @@ from typing import Optional
 class GroupManager:
     """Snapshot-backed compatibility adapter for legacy GTK call sites."""
 
-    def __init__(self, config=None, connection_manager=None, *, client=None):
+    def __init__(self, config=None, connection_manager=None, *, client=None, controller=None):
         del config
         self.connection_manager = connection_manager
         self.client = client
+        self.controller = controller
         self.config = None
         self.groups = {}
         self.connections = {}
@@ -34,6 +35,9 @@ class GroupManager:
     def attach_client(self, client) -> None:
         self.client = client
         self._refresh()
+
+    def set_mutation_controller(self, controller) -> None:
+        self.controller = controller
 
     def bind_connections(self, _connections) -> None:
         self._refresh()
@@ -95,16 +99,22 @@ class GroupManager:
         return any(item["name"].lower() == name.lower() for item in self.groups.values())
 
     def create_group(self, name: str, parent_id: Optional[str] = None, color: Optional[str] = None):
+        if self.controller is not None:
+            return self.controller.create_group(name, parent_id, color or "")
         result = self._require_client().create_group(name, parent_id or "", color or "")
         self._refresh()
         return result
 
     def delete_group(self, group_id: str):
+        if self.controller is not None:
+            return self.controller.delete_group(group_id)
         result = self._require_client().delete_group(group_id)
         self._refresh()
         return result
 
     def rename_group(self, group_id: str, new_name: str):
+        if self.controller is not None:
+            return self.controller.rename_group(group_id, new_name)
         result = self._require_client().rename_group(group_id, new_name)
         self._refresh()
         return result
@@ -112,6 +122,10 @@ class GroupManager:
     def set_group_color(self, group_id: str, color: Optional[str]):
         from sshpilot.api.models.connection_store import GroupId, SetGroupColorRequest
 
+        if self.controller is not None:
+            return self.controller.set_group_color(
+                SetGroupColorRequest(group_id=GroupId(group_id), color=color or "")
+            )
         result = self._require_client().set_group_color(
             SetGroupColorRequest(group_id=GroupId(group_id), color=color or "")
         )
@@ -119,6 +133,10 @@ class GroupManager:
         return result
 
     def move_connection(self, connection, target_group_id: Optional[str] = None):
+        if self.controller is not None:
+            return self.controller.move_connection(
+                self.connection_key(connection), target_group_id
+            )
         result = self._require_client().assign_connection_to_group(
             self.connection_key(connection), target_group_id or ""
         )
@@ -132,11 +150,14 @@ class GroupManager:
             GroupId,
         )
 
+        request = CopyConnectionToGroupRequest(
+            connection_id=ConnectionId(self.connection_key(connection)),
+            group_id=GroupId(group_id),
+        )
+        if self.controller is not None:
+            return self.controller.copy_connection_to_group(request)
         result = self._require_client().copy_connection_to_group(
-            CopyConnectionToGroupRequest(
-                connection_id=ConnectionId(self.connection_key(connection)),
-                group_id=GroupId(group_id),
-            )
+            request
         )
         self._refresh()
         return result
@@ -148,12 +169,13 @@ class GroupManager:
             RemoveConnectionFromGroupRequest,
         )
 
-        result = self._require_client().remove_connection_from_group(
-            RemoveConnectionFromGroupRequest(
-                connection_id=ConnectionId(self.connection_key(connection)),
-                group_id=GroupId(group_id),
-            )
+        request = RemoveConnectionFromGroupRequest(
+            connection_id=ConnectionId(self.connection_key(connection)),
+            group_id=GroupId(group_id),
         )
+        if self.controller is not None:
+            return self.controller.remove_connection_from_group(request)
+        result = self._require_client().remove_connection_from_group(request)
         self._refresh()
         return result
 
@@ -164,14 +186,15 @@ class GroupManager:
             ReorderConnectionRequest,
         )
 
-        result = self._require_client().reorder_connection(
-            ReorderConnectionRequest(
-                connection_id=ConnectionId(self.connection_key(connection)),
-                target_connection_id=ConnectionId(self.connection_key(target)),
-                group_id=GroupId(group_id) if group_id else None,
-                position=position,
-            )
+        request = ReorderConnectionRequest(
+            connection_id=ConnectionId(self.connection_key(connection)),
+            target_connection_id=ConnectionId(self.connection_key(target)),
+            group_id=GroupId(group_id) if group_id else None,
+            position=position,
         )
+        if self.controller is not None:
+            return self.controller.reorder_connection(request)
+        result = self._require_client().reorder_connection(request)
         self._refresh()
         return result
 
