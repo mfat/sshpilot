@@ -382,9 +382,11 @@ class ConnectionApplicationService:
             return True
         except SshPilotError:
             raise
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to update connection metadata via daemon RPC")
-            return False
+            raise self._persistence_error(connection_id) from error
 
     def assign_connection_to_group(
         self, connection_id: ConnectionId, group_id: str
@@ -396,9 +398,11 @@ class ConnectionApplicationService:
                 connection_id, group_id or None
             )
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to assign connection to group via daemon RPC")
-            return False
+            raise self._persistence_error(connection_id) from error
 
     def create_group_rpc(
         self, name: str, parent_id: str = "", color: str = ""
@@ -412,9 +416,11 @@ class ConnectionApplicationService:
                 color=color or "",
             )
             return group.id if group is not None else None
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to create group via daemon RPC")
-            return None
+            raise self._persistence_error() from error
 
     def delete_group_rpc(self, group_id: str) -> bool:
         self._assert_command_thread()
@@ -422,9 +428,11 @@ class ConnectionApplicationService:
         try:
             self._repository.delete_group(group_id)
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to delete group via daemon RPC")
-            return False
+            raise self._persistence_error() from error
 
     def rename_group_rpc(self, group_id: str, new_name: str) -> bool:
         self._assert_command_thread()
@@ -432,9 +440,11 @@ class ConnectionApplicationService:
         try:
             self._repository.rename_group(group_id, new_name)
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to rename group via daemon RPC")
-            return False
+            raise self._persistence_error() from error
 
     def set_group_color_rpc(self, group_id: str, color: str) -> bool:
         self._assert_command_thread()
@@ -442,9 +452,11 @@ class ConnectionApplicationService:
         try:
             self._repository.set_group_color(group_id, color)
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to set group color via daemon RPC")
-            return False
+            raise self._persistence_error() from error
 
     def place_group_rpc(
         self, group_id: str, parent_id: Optional[str], index: int
@@ -454,9 +466,11 @@ class ConnectionApplicationService:
         try:
             self._repository.place_group(group_id, parent_id, index)
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to place group via daemon RPC")
-            return False
+            raise self._persistence_error() from error
 
     def copy_connection_to_group_rpc(
         self, connection_id: ConnectionId, group_id: str
@@ -466,9 +480,11 @@ class ConnectionApplicationService:
         try:
             self._repository.copy_connection_to_group(connection_id, group_id)
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to copy connection to group via daemon RPC")
-            return False
+            raise self._persistence_error(connection_id) from error
 
     def remove_connection_from_group_rpc(
         self, connection_id: ConnectionId, group_id: str
@@ -478,9 +494,11 @@ class ConnectionApplicationService:
         try:
             self._repository.remove_connection_from_group(connection_id, group_id)
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to remove connection from group via daemon RPC")
-            return False
+            raise self._persistence_error(connection_id) from error
 
     def reorder_connection_rpc(
         self,
@@ -496,9 +514,11 @@ class ConnectionApplicationService:
                 connection_id, target_connection_id, group_id, position
             )
             return True
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to reorder connection via daemon RPC")
-            return False
+            raise self._persistence_error(connection_id) from error
 
     def rename_tag_rpc(self, old_tag: str, new_tag: str) -> int:
         self._assert_command_thread()
@@ -508,9 +528,11 @@ class ConnectionApplicationService:
             if type(count) is not int or count < 0:
                 raise TypeError("repository returned an invalid tag rename count")
             return count
-        except Exception:
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
             logger.exception("Failed to rename tag via daemon RPC")
-            return 0
+            raise self._persistence_error() from error
 
     def split_connection(self, request: SplitConnectionRequest) -> ConnectionMutationResult:
         self._assert_command_thread()
@@ -1108,7 +1130,12 @@ def _map_core_error(error: Any) -> SshPilotError:
     if code is CoreErrorCode.VALIDATION_ERROR:
         return SshPilotError(
             ErrorCode.VALIDATION_FAILED,
-            str(error.message) or "The connection data is invalid",
+            "The requested connection-store change is invalid",
+        )
+    if code is CoreErrorCode.MUTATION_AMBIGUOUS:
+        return SshPilotError(
+            ErrorCode.MUTATION_AMBIGUOUS,
+            "The connection-store change may have completed",
         )
     if code is CoreErrorCode.CONNECTION_STATE_IO_ERROR:
         return SshPilotError(

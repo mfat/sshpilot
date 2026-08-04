@@ -574,18 +574,45 @@ class ConnectionRepository:
         file_state, _migrated = self._read_state()
         self._publish_state_locked(ssh_config, file_state)
 
-    def _capture_transaction_files_locked(self):
-        paths = {self._state_path, self._ssh_store.root_path}
-        paths.update(self._ssh_store.load().source_paths)
+    def _capture_transaction_files_locked(self, ssh_target: Optional[Path] = None):
+        paths = {self._state_path}
+        if ssh_target is not None:
+            paths.add(Path(ssh_target))
         captured = {}
         for path in paths:
             path = Path(path)
             try:
-                info = path.stat()
+                info = os.lstat(path)
             except FileNotFoundError:
                 captured[path] = (False, b"", 0)
                 continue
-            captured[path] = (True, path.read_bytes(), stat.S_IMODE(info.st_mode))
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise CoreError(
+                    ErrorCode.CONNECTION_STATE_IO_ERROR,
+                    "The mutation target is unsafe",
+                )
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(path, flags)
+            try:
+                opened = os.fstat(fd)
+                if opened.st_dev != info.st_dev or opened.st_ino != info.st_ino:
+                    raise CoreError(
+                        ErrorCode.MUTATION_AMBIGUOUS,
+                        "The mutation target changed during capture",
+                    )
+                chunks = []
+                while True:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                captured[path] = (
+                    True,
+                    b"".join(chunks),
+                    stat.S_IMODE(opened.st_mode),
+                )
+            finally:
+                os.close(fd)
         return captured
 
     def _restore_transaction_files_locked(self, captured) -> None:
@@ -596,6 +623,8 @@ class ConnectionRepository:
                 except FileNotFoundError:
                     pass
                 continue
+            if os.path.islink(path):
+                raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
             _atomic_write_text(path, data.decode("utf-8"))
             os.chmod(path, mode, follow_symlinks=False)
 
@@ -631,7 +660,7 @@ class ConnectionRepository:
     def create_connection(self, data: Mapping[str, Any]) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
-            disk_before = self._capture_transaction_files_locked()
+            disk_before = self._capture_transaction_files_locked(self._ssh_store.root_path)
             payload = dict(data)
             payload.pop("uuid", None)
             protocol = str(payload.get("protocol") or "ssh").strip() or "ssh"
@@ -670,13 +699,15 @@ class ConnectionRepository:
     ) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
-            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
                     ErrorCode.CONNECTION_NOT_FOUND,
                     "The connection does not exist",
                 )
+            disk_before = self._capture_transaction_files_locked(
+                Path(existing.source) if existing.protocol == "ssh" and existing.source else None
+            )
             payload = dict(data)
             payload.pop("uuid", None)
             protocol = str(
@@ -731,13 +762,15 @@ class ConnectionRepository:
     def duplicate_connection(self, connection_id: str) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
-            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
                     ErrorCode.CONNECTION_NOT_FOUND,
                     "The connection does not exist",
                 )
+            disk_before = self._capture_transaction_files_locked(
+                Path(existing.source) if existing.protocol == "ssh" and existing.source else None
+            )
             try:
                 if existing.protocol == "ssh":
                     result = self._ssh_store.duplicate(connection_id)
@@ -763,13 +796,15 @@ class ConnectionRepository:
     def delete_connection(self, connection_id: str) -> None:
         with self._mutation_scope():
             before = self._begin()
-            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
                     ErrorCode.CONNECTION_NOT_FOUND,
                     "The connection does not exist",
                 )
+            disk_before = self._capture_transaction_files_locked(
+                Path(existing.source) if existing.protocol == "ssh" and existing.source else None
+            )
             try:
                 if existing.protocol == "ssh":
                     self._ssh_store.delete(connection_id)
@@ -794,13 +829,15 @@ class ConnectionRepository:
     ) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
-            disk_before = self._capture_transaction_files_locked()
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
                     ErrorCode.CONNECTION_NOT_FOUND,
                     "The connection does not exist",
                 )
+            disk_before = self._capture_transaction_files_locked(
+                Path(existing.source) if existing.protocol == "ssh" and existing.source else None
+            )
             try:
                 result = self._ssh_store.split(
                     connection_id,
