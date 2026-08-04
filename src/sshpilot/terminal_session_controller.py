@@ -546,6 +546,19 @@ class DaemonTerminalSessionController:
 
     def _on_attach_error(self, error) -> None:
         """Handle session attach error."""
+        if getattr(getattr(error, "code", None), "value", None) == "session_already_closed":
+            # Restore metadata can outlive a daemon session that failed or was
+            # closed between discovery and the asynchronous attach request.
+            # This is stale restore state, not a connection failure.
+            logger.info("Discarding stale daemon session attachment")
+            self._tab_state.state = TerminalSessionState.CLOSED
+            self._tab_state.attachment_id = None
+            self._tab_state.input_owner = False
+            if self._stream is not None:
+                self._stream.close()
+                self._stream = None
+            self._notify_state_changed()
+            return
         self._tab_state.state = TerminalSessionState.FAILED
         self._on_error(error)
 
