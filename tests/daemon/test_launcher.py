@@ -171,6 +171,7 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.KNOWN_HOSTS_READ,
                 Capability.KNOWN_HOSTS_WRITE,
                 Capability.KEYS_READ,
+                Capability.KEYS_WRITE,
                 Capability.DAEMON_STATUS,
                 Capability.DAEMON_CONTROL,
                 Capability.DAEMON_EVENTS,

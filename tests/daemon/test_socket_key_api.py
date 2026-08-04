@@ -183,6 +183,96 @@ def test_public_key_text_never_appears_in_logs(tmp_path, key_server, caplog):
         client.close()
 
 
+def _generate_wire(name="new_key", passphrase=""):
+    return {
+        "name": name,
+        "key_type": "ed25519",
+        "key_size": 0,
+        "comment": "",
+        "passphrase": passphrase,
+        "scope": "default",
+    }
+
+
+def test_generate_key_over_socket(tmp_path, key_server):
+    keys_dir = tmp_path / "keys"
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        caps = client.get_capabilities()
+        assert caps.supports("keys.write")
+        result = client._request("keys.generate", _generate_wire("brand_new"))
+        assert result["key"]["name"] == "brand_new"
+        # The generated key is discoverable afterwards.
+        key_list = _list_keys(client)
+        assert any(k["name"] == "brand_new" for k in key_list["keys"])
+    finally:
+        client.close()
+
+
+def test_generate_key_passphrase_absent_from_logs_and_result(tmp_path, key_server, caplog):
+    import logging
+
+    keys_dir = tmp_path / "keys"
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            result = client._request(
+                "keys.generate",
+                _generate_wire("new_key", passphrase="super-secret-passphrase"),
+            )
+        assert "super-secret-passphrase" not in caplog.text
+        assert "super-secret-passphrase" not in repr(result)
+        assert "super-secret-passphrase" not in str(result)
+    finally:
+        client.close()
+
+
+def test_generate_key_duplicate_mapping(tmp_path, key_server):
+    keys_dir = tmp_path / "keys"
+    _write_key(keys_dir, "existing", "ssh-ed25519 AAAA-existing\n")
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        with pytest.raises(SshPilotError) as excinfo:
+            client._request("keys.generate", _generate_wire("existing"))
+        assert excinfo.value.code is ErrorCode.KEY_ALREADY_EXISTS
+    finally:
+        client.close()
+
+
+def test_generate_key_validation_error_mapping(tmp_path, key_server):
+    keys_dir = tmp_path / "keys"
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        # Name with a path separator is rejected at model validation.
+        with pytest.raises(SshPilotError) as excinfo:
+            client._request(
+                "keys.generate",
+                {**_generate_wire(), "name": "bad/name"},
+            )
+        assert excinfo.value.code is ErrorCode.INVALID_REQUEST
+    finally:
+        client.close()
+
+
+def test_generate_emits_exactly_one_response(tmp_path, key_server):
+    keys_dir = tmp_path / "keys"
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        result = client._request("keys.generate", _generate_wire("once"))
+        assert result["key"]["name"] == "once"
+        # The request id must not produce a second, stale response; a fresh
+        # follow-up request still works on the same connection.
+        again = client._request("keys.list", {"scope": "default"})
+        assert any(k["name"] == "once" for k in again["keys"])
+    finally:
+        client.close()
+
+
 def test_isolated_scope_listing_over_socket(tmp_path, key_server):
     default_dir = tmp_path / "default"
     isolated_dir = tmp_path / "isolated"

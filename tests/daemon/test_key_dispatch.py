@@ -8,6 +8,8 @@ from sshpilot.api.capabilities import Capability
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ClientId, RequestId
 from sshpilot.api.models.keys import (
+    GenerateKeyRequest,
+    GenerateKeyResult,
     KeyId,
     KeyList,
     KeyStoreScope,
@@ -71,6 +73,7 @@ class _FakeKeyService:
     def __init__(self):
         self.list_calls: list[KeyStoreScope] = []
         self.read_calls: list[ReadPublicKeyRequest] = []
+        self.generate_calls: list[GenerateKeyRequest] = []
         self.result = KeyList(keys=(_summary(),))
         self.public_result = PublicKeyResult(
             key_id=KeyId("key-1"),
@@ -84,6 +87,10 @@ class _FakeKeyService:
     def read_public_key(self, request: ReadPublicKeyRequest):
         self.read_calls.append(request)
         return self.public_result
+
+    def generate_key(self, request: GenerateKeyRequest):
+        self.generate_calls.append(request)
+        return GenerateKeyResult(key=_summary())
 
 
 def _dispatcher(with_service=True):
@@ -107,21 +114,27 @@ def test_get_public_maps_to_read_capability():
     assert "keys.get_public" not in DRAIN_REJECTED_METHODS
 
 
+def test_generate_maps_to_write_capability():
+    assert DAEMON_METHOD_CAPABILITIES["keys.generate"] is Capability.KEYS_WRITE
+    assert "keys.generate" in DEFERRED_DAEMON_METHODS
+    assert "keys.generate" in DRAIN_REJECTED_METHODS
+
+
 def test_list_handler_is_registered():
     dispatcher, _service = _dispatcher()
     assert "keys.list" in dispatcher.HANDLERS
     assert "keys.get_public" in dispatcher.HANDLERS
+    assert "keys.generate" in dispatcher.HANDLERS
 
 
 # ---------------------------------------------------------------------------
 # Capability advertisement
 # ---------------------------------------------------------------------------
-def test_installed_service_advertises_read():
+def test_installed_service_advertises_read_and_write():
     dispatcher, _service = _dispatcher()
     capabilities = dispatcher._capabilities_for(_state())
     assert Capability.KEYS_READ in capabilities.supported
-    # Write is not advertised until the generate RPC lands.
-    assert Capability.KEYS_WRITE not in capabilities.supported
+    assert Capability.KEYS_WRITE in capabilities.supported
 
 
 def test_missing_service_does_not_advertise_read():
@@ -302,3 +315,92 @@ def test_get_public_command_key_matches_list_for_same_scope():
         _state(),
     )
     assert list_result.command_key == read_result.command_key == ("keys", "default")
+
+
+# ---------------------------------------------------------------------------
+# keys.generate dispatch behaviour
+# ---------------------------------------------------------------------------
+def _generate_wire():
+    return {
+        "name": "id_ed25519",
+        "key_type": "ed25519",
+        "key_size": 0,
+        "comment": "",
+        "passphrase": "",
+        "scope": "default",
+    }
+
+
+def test_generate_returns_deferred_execution_with_wire_result():
+    dispatcher, service = _dispatcher()
+    result = dispatcher.dispatch(
+        _envelope("keys.generate", _generate_wire()),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+    assert service.generate_calls == []  # deferred: not executed yet
+    wire = result.operation()
+    assert service.generate_calls == [
+        GenerateKeyRequest(name="id_ed25519", scope=KeyStoreScope.DEFAULT)
+    ]
+    assert wire == {
+        "key": {
+            "key_id": "key-1",
+            "name": "id_ed25519",
+            "private_path": "/home/user/.ssh/id_ed25519",
+            "public_path": "/home/user/.ssh/id_ed25519.pub",
+            "public_key_available": True,
+        }
+    }
+    assert result.command_key == ("keys", "default")
+
+
+def test_generate_rejects_missing_fields():
+    dispatcher, _service = _dispatcher()
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(
+            _envelope("keys.generate", {"name": "id_ed25519"}),
+            _state(),
+        )
+    assert excinfo.value.code is ErrorCode.INVALID_REQUEST
+
+
+def test_generate_rejects_extra_fields():
+    dispatcher, _service = _dispatcher()
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(
+            _envelope("keys.generate", {**_generate_wire(), "path": "/x"}),
+            _state(),
+        )
+    assert excinfo.value.code is ErrorCode.INVALID_REQUEST
+
+
+def test_generate_missing_service_raises_unsupported_capability():
+    dispatcher, _service = _dispatcher(with_service=False)
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(_envelope("keys.generate", _generate_wire()), _state())
+    assert excinfo.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+
+
+def test_generate_rejected_during_drain():
+    dispatcher, _service = _dispatcher()
+    dispatcher.begin_shutdown()
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(_envelope("keys.generate", _generate_wire()), _state())
+    assert excinfo.value.code is ErrorCode.DAEMON_SHUTTING_DOWN
+
+
+def test_list_and_read_remain_available_during_drain():
+    dispatcher, _service = _dispatcher()
+    dispatcher.begin_shutdown()
+    assert isinstance(
+        dispatcher.dispatch(_envelope("keys.list", {"scope": "default"}), _state()),
+        DeferredResult,
+    )
+    assert isinstance(
+        dispatcher.dispatch(
+            _envelope("keys.get_public", {"key_id": "key-1", "scope": "default"}),
+            _state(),
+        ),
+        DeferredResult,
+    )

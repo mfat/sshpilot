@@ -34,6 +34,8 @@ from sshpilot.api.models.connections import (
 )
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
+    generate_key_request_from_wire,
+    generate_key_result_to_wire,
     key_list_to_wire,
     known_hosts_mutation_result_to_wire,
     known_hosts_snapshot_to_wire,
@@ -181,6 +183,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "known_hosts.remove": Capability.KNOWN_HOSTS_WRITE,
     "keys.list": Capability.KEYS_READ,
     "keys.get_public": Capability.KEYS_READ,
+    "keys.generate": Capability.KEYS_WRITE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -205,6 +208,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "transfers.start",
         "forwards.open",
         "known_hosts.remove",
+        "keys.generate",
     }
 )
 
@@ -247,6 +251,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "known_hosts.remove",
         "keys.list",
         "keys.get_public",
+        "keys.generate",
     }
 )
 
@@ -422,6 +427,7 @@ class RequestDispatcher:
             "known_hosts.remove": self._handle_remove_known_host_entries,
             "keys.list": self._handle_list_keys,
             "keys.get_public": self._handle_get_public_key,
+            "keys.generate": self._handle_generate_key,
         }
 
     def begin_shutdown(self) -> None:
@@ -1700,6 +1706,21 @@ class RequestDispatcher:
         )
 
     # -- keys ----------------------------------------------------------
+    def _handle_generate_key(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = generate_key_request_from_wire(request.params)
+        service = self._required_key_service()
+        return DeferredResult(
+            operation=lambda: generate_key_result_to_wire(
+                service.generate_key(typed_request)
+            ),
+            command_key=("keys", typed_request.scope.value),
+            on_rejected=lambda: None,
+        )
+
     def _handle_get_public_key(
         self,
         request: RequestEnvelope,
@@ -1872,6 +1893,7 @@ class RequestDispatcher:
             daemon_capabilities |= frozenset(
                 {
                     Capability.KEYS_READ,
+                    Capability.KEYS_WRITE,
                 }
             )
         return daemon_capabilities
