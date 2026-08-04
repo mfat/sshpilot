@@ -60,7 +60,7 @@ def test_write_then_read_round_trip(tmp_path):
     assert state.non_ssh_connections == _state().non_ssh_connections
     assert state.groups == _state().groups
     assert state.root_connections == ("gateway",)
-    assert state.metadata == {"switch": {"tags": ["network"], "pinned": True}}
+    assert state.metadata == {"switch": {"tags": ("network",), "pinned": True}}
 
 
 def test_written_file_has_expected_schema(tmp_path):
@@ -139,7 +139,7 @@ def test_legacy_migration_normalizes_all_sections(tmp_path):
     assert group.color == "#ff0000"
     assert group.connection_ids == ("switch",)
     assert state.root_connections == ("gateway",)
-    assert state.metadata == {"switch": {"tags": ["network"], "pinned": True}}
+    assert state.metadata == {"switch": {"tags": ("network",), "pinned": True}}
 
 
 def test_migration_does_not_modify_legacy_config(tmp_path):
@@ -152,7 +152,7 @@ def test_migration_does_not_modify_legacy_config(tmp_path):
 def test_migration_ignores_unrelated_legacy_fields(tmp_path):
     config = _legacy_config(tmp_path)
     state = read_legacy_connection_state(config)
-    assert state.metadata == {"switch": {"tags": ["network"], "pinned": True}}
+    assert state.metadata == {"switch": {"tags": ("network",), "pinned": True}}
 
 
 def test_missing_legacy_config_yields_defaults(tmp_path):
@@ -169,8 +169,9 @@ def test_migration_rejects_secret_like_metadata_keys(tmp_path):
             "switch": {"api_password": "hunter2", "tags": ["network"]},
         },
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(CoreError) as excinfo:
         read_legacy_connection_state(config)
+    assert excinfo.value.diagnostic_category == "invalid_metadata"
 
 
 def test_migration_rejects_unusable_metadata_entries(tmp_path):
@@ -180,7 +181,7 @@ def test_migration_rejects_unusable_metadata_entries(tmp_path):
             "switch": {"tags": [1, 2, 3], "bad": {"nested": float("nan")}},
         },
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(CoreError):
         read_legacy_connection_state(config)
 
 
@@ -193,6 +194,8 @@ def test_malformed_json_is_an_error(tmp_path):
     with pytest.raises(CoreError) as excinfo:
         read_connection_state(path)
     assert excinfo.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
+    assert excinfo.value.diagnostic_category == "invalid_json"
+    assert excinfo.value.diagnostic_reason == "state file contains invalid JSON"
 
 
 def test_non_object_root_is_an_error(tmp_path):

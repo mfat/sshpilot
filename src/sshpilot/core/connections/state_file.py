@@ -47,6 +47,17 @@ def _core_error(exc: BaseException) -> CoreError:
     return CoreError(
         ErrorCode.CONNECTION_STATE_IO_ERROR,
         "Connection-state file operation failed",
+        diagnostic_category="io_error",
+        diagnostic_reason="state file I/O failed",
+    )
+
+
+def _state_rejected(category: str, reason: str) -> CoreError:
+    return CoreError(
+        ErrorCode.CONNECTION_STATE_IO_ERROR,
+        "Connection-state file rejected",
+        diagnostic_category=category,
+        diagnostic_reason=reason,
     )
 
 
@@ -70,6 +81,8 @@ def _refuse_symlink(path: os.PathLike) -> None:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Refusing to operate through a symbolic link",
+            diagnostic_category="unsafe_file",
+            diagnostic_reason="unsafe state-file target",
         )
 
 
@@ -263,11 +276,15 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Refusing to read through a symbolic link",
+            diagnostic_category="unsafe_file",
+            diagnostic_reason="unsafe state-file target",
         )
     if st.st_size > _MAX_STATE_BYTES:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Connection-state file exceeds the size limit",
+            diagnostic_category="unsafe_file",
+            diagnostic_reason="state file exceeds size limit",
         )
 
     flags = os.O_RDONLY
@@ -283,6 +300,8 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
             raise CoreError(
                 ErrorCode.CONNECTION_STATE_IO_ERROR,
                 "Connection-state file is not a regular file",
+                diagnostic_category="unsafe_file",
+                diagnostic_reason="state file is not a regular file",
             )
         chunks: list = []
         total = 0
@@ -295,6 +314,8 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
                 raise CoreError(
                     ErrorCode.CONNECTION_STATE_IO_ERROR,
                     "Connection-state file exceeds the size limit",
+                    diagnostic_category="unsafe_file",
+                    diagnostic_reason="state file exceeds size limit",
                 )
             chunks.append(chunk)
     except CoreError:
@@ -317,6 +338,8 @@ def _parse_state_bytes(raw: bytes) -> ConnectionFileState:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Connection-state file is not valid UTF-8",
+            diagnostic_category="invalid_utf8",
+            diagnostic_reason="state file is not valid UTF-8",
         ) from exc
     try:
         data = json.loads(text)
@@ -324,19 +347,32 @@ def _parse_state_bytes(raw: bytes) -> ConnectionFileState:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Connection-state file is malformed",
+            diagnostic_category="invalid_json",
+            diagnostic_reason="state file contains invalid JSON",
         ) from exc
     if type(data) is not dict:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Connection-state file must contain a JSON object",
+            diagnostic_category="wrong_root_type",
+            diagnostic_reason="state file root is not an object",
         )
     try:
         return ConnectionFileState.from_dict(data)
     except (TypeError, ValueError) as exc:
-        raise CoreError(
-            ErrorCode.CONNECTION_STATE_IO_ERROR,
-            "Connection-state file is malformed",
-        ) from exc
+        category = "invalid_metadata"
+        reason = "state metadata is invalid"
+        if data.get("version") != _STATE_VERSION:
+            category, reason = "unsupported_version", "state-file version is unsupported"
+        elif type(data.get("non_ssh_connections")) is not list:
+            category, reason = "invalid_non_ssh", "non-SSH connection data is invalid"
+        elif type(data.get("groups")) is not dict:
+            category, reason = "invalid_groups", "group data is invalid"
+        elif type(data.get("groups", {}).get("root_connections")) is not list:
+            category, reason = "invalid_root_order", "root connection order is invalid"
+        elif type(data.get("metadata")) is not dict:
+            category, reason = "invalid_metadata", "metadata container is invalid"
+        raise _state_rejected(category, reason) from exc
 
 
 def read_connection_state(path: Path) -> ConnectionFileState:
@@ -461,7 +497,12 @@ def read_legacy_connection_state(config_path: Path) -> ConnectionFileState:
         for cid, meta in meta_blob.items():
             if not isinstance(meta, dict):
                 continue
-            sanitized = _sanitize_legacy_metadata(meta)
+            try:
+                sanitized = _sanitize_legacy_metadata(meta)
+            except (TypeError, ValueError) as exc:
+                raise _state_rejected(
+                    "invalid_metadata", "legacy metadata is unsafe or invalid"
+                ) from exc
             if sanitized is not None:
                 metadata[str(cid)] = sanitized
 

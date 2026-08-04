@@ -123,7 +123,7 @@ def test_legacy_migration_failure_does_not_create_canonical_state(tmp_path):
         encoding="utf-8",
     )
     before = legacy.read_bytes()
-    with pytest.raises(ValueError):
+    with pytest.raises(CoreError):
         ConnectionRepository(
             ssh_store=SshConfigStore(root),
             state_path=state,

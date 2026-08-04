@@ -20,6 +20,7 @@ from typing import Any, Callable, Deque, Dict, Optional, Set, Tuple, Union
 from sshpilot.runtime_identity import new_server_instance_id
 
 from sshpilot import __version__ as sshpilot_version
+from sshpilot.core.errors import CoreError
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
@@ -349,10 +350,14 @@ class DaemonServer:
         try:
             self._setup()
         except BaseException as exc:
-            logger.error(
-                "Daemon startup failed type=%s",
-                type(exc).__name__,
-            )
+            if isinstance(exc, CoreError) and exc.code.value == "CONNECTION_STATE_IO_ERROR":
+                logger.error(
+                    "connection state rejected category=%s reason=%s",
+                    exc.diagnostic_category,
+                    exc.diagnostic_reason,
+                )
+            else:
+                logger.error("Daemon startup failed type=%s", type(exc).__name__)
             frames = traceback.extract_tb(exc.__traceback__)
             if frames:
                 logger.debug(

@@ -42,6 +42,8 @@ class CoreError(Exception):
     code: ErrorCode
     message: str = ""
     details: Mapping[str, Any] = field(default_factory=dict)
+    diagnostic_category: str = "io_error"
+    diagnostic_reason: str = "operation rejected"
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         if self.message:
