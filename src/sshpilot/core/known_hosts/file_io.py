@@ -66,7 +66,7 @@ def read_known_hosts_bytes(path: Path) -> bytes:
 def atomic_write_known_hosts_bytes(path: Path, content: bytes) -> None:
     """Atomically write *content* to *path*, preserving mode and refusing symlinks."""
 
-    if not isinstance(content, bytes):
+    if type(content) is not bytes:
         raise TypeError("content must be bytes")
     path = Path(path)
 

@@ -16,6 +16,10 @@ from sshpilot.core.known_hosts.file_io import (
 CONTENT = b"example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI\n"
 
 
+class _BytesSubclass(bytes):
+    pass
+
+
 def _temp_files(path):
     return [p for p in path.parent.iterdir() if p.name.startswith(".known_hosts-")]
 
@@ -153,7 +157,9 @@ def test_write_converts_parent_fsync_errors(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Hardening: input validation, safe errors, and failure cleanup
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("bad", [bytearray(b"x"), "text", 123, None])
+@pytest.mark.parametrize(
+    "bad", [bytearray(b"x"), "text", 123, None, _BytesSubclass(b"x")]
+)
 def test_write_rejects_non_bytes_content(tmp_path, bad):
     path = tmp_path / "known_hosts"
     with pytest.raises(TypeError):
