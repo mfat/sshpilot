@@ -145,6 +145,15 @@ def test_generate_key_none_comment_and_passphrase_become_empty():
     assert request.passphrase == ""
 
 
+def test_generate_key_rsa_defaults_to_historical_3072():
+    """RSA callers that omit key_size keep the historical adapter contract."""
+    manager, client = _manager()
+    manager.generate_key(key_name="id_rsa", key_type="rsa")
+    request = client.generate_requests[0]
+    assert request.key_size == 3072
+    assert request.key_type == "rsa"
+
+
 def test_generate_key_emits_key_generated_signal():
     client = _FakeClient()
     manager = _RecordingKeyManager(client)

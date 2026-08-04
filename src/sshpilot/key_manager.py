@@ -115,7 +115,14 @@ class KeyManager(GObject.Object):
         comment: Optional[str] = None,
         passphrase: Optional[str] = None,
     ) -> Optional[SSHKey]:
-        """Generate a key via the daemon; emit ``key-generated`` on success."""
+        """Generate a key via the daemon; emit ``key-generated`` on success.
+
+        Compatibility: RSA callers that omit ``key_size`` (the historical
+        adapter default) get 3072, matching the old local ``KeyService``
+        contract. Ed25519 always uses size 0.
+        """
+        if key_type == "rsa" and not key_size:
+            key_size = 3072
         try:
             result = self._controller.generate_key(
                 name=key_name,

@@ -1,7 +1,5 @@
-import os
 import shutil
 import subprocess
-import textwrap
 
 import pytest
 from sshpilot.connection_manager import ConnectionManager

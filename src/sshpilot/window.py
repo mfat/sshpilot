@@ -3822,6 +3822,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if intent == 'ssh-copy-id':
             if connection is None:
                 self.show_connection_selection_for_ssh_copy()
+            elif self.key_manager is None:
+                self._show_key_service_unavailable()
             else:
                 from .sshcopyid_window import SshCopyIdWindow
                 SshCopyIdWindow(
