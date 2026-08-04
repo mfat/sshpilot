@@ -172,6 +172,7 @@ def test_session_cancel_and_close_leave_no_active_interactions(
     assert tuple(broker.active_ids()) == ()
 
 
+@pytest.mark.integration
 def test_private_askpass_helper_delivers_only_one_brokered_secret(
     broker: InteractionBroker,
     monkeypatch,
@@ -419,6 +420,7 @@ def test_daemon_routes_interactive_and_presence_prompts(
     assert broker.list(CLIENT_A)[-1].type is expected_type
 
 
+@pytest.mark.integration
 def test_askpass_helper_disconnect_cancels_pending_interaction(
     broker: InteractionBroker,
     monkeypatch,

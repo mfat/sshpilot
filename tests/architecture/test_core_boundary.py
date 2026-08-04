@@ -42,6 +42,13 @@ from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 
+import pytest
+
+# Run every scan in this module on a single xdist worker so the process-local
+# parse/analysis caches are built once, not once per worker (see
+# ``--dist=loadgroup`` in pytest.ini).
+pytestmark = pytest.mark.xdist_group("core-boundary")
+
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
 
 # Top-level packages excluded from the "frontend" scan (internal layers).
@@ -212,7 +219,9 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
 # ---------------------------------------------------------------------------
 # Scan helpers
 # ---------------------------------------------------------------------------
-def _frontend_modules() -> list[Path]:
+@lru_cache(maxsize=1)
+def _frontend_modules() -> tuple[Path, ...]:
+    """Cached frontend module list; the source tree is immutable during a run."""
     paths: list[Path] = []
     for path in SOURCE.rglob("*.py"):
         if "__pycache__" in path.parts:
@@ -220,7 +229,7 @@ def _frontend_modules() -> list[Path]:
         if path.relative_to(SOURCE).parts[0] in _INTERNAL:
             continue
         paths.append(path)
-    return paths
+    return tuple(paths)
 
 
 def _rel(path: Path) -> str:
@@ -337,6 +346,25 @@ def _backend_ops(tree: ast.Module) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Per-file analysis caches (the source tree is immutable during a run, so a
+# file's imports/ops never change between scans).
+# ---------------------------------------------------------------------------
+@lru_cache(maxsize=None)
+def _core_imports_for(path: Path) -> tuple[tuple[str, str], ...]:
+    return tuple(_core_imports(_parse_source(path), _rel(path)))
+
+
+@lru_cache(maxsize=None)
+def _daemon_imports_for(path: Path) -> tuple[str, ...]:
+    return tuple(_daemon_imports(_parse_source(path), _rel(path)))
+
+
+@lru_cache(maxsize=None)
+def _backend_ops_for(path: Path) -> tuple[str, ...]:
+    return tuple(_backend_ops(_parse_source(path)))
+
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 def test_frontend_core_imports_are_categorised():
@@ -344,9 +372,8 @@ def test_frontend_core_imports_are_categorised():
     violations: list[str] = []
     registry = set(ALLOWED) | set(PENDING)
     for path in _frontend_modules():
-        tree = _parse_source(path)
         rel = _rel(path)
-        for sub, symbol in _core_imports(tree, rel):
+        for sub, symbol in _core_imports_for(path):
             if (rel, sub, symbol) not in registry:
                 violations.append(f"  {rel}: core.{sub}.{symbol}")
     assert not violations, (
@@ -377,9 +404,8 @@ def test_registry_matches_the_source_tree():
     """Every ALLOWED/PENDING entry must resolve (no stale, no phantom)."""
     seen: set[tuple[str, str, str]] = set()
     for path in _frontend_modules():
-        tree = _parse_source(path)
         rel = _rel(path)
-        for sub, symbol in _core_imports(tree, rel):
+        for sub, symbol in _core_imports_for(path):
             seen.add((rel, sub, symbol))
 
     stale = (set(ALLOWED) | set(PENDING)) - seen
@@ -425,9 +451,8 @@ def test_frontend_daemon_imports_are_allowlisted():
     allowed = set(DAEMON_ALLOWLIST)
     violations: list[str] = []
     for path in _frontend_modules():
-        tree = _parse_source(path)
         rel = _rel(path)
-        for symbol in _daemon_imports(tree, rel):
+        for symbol in _daemon_imports_for(path):
             if (rel, symbol) not in allowed:
                 violations.append(f"  {rel}: sshpilot.daemon.{symbol}")
     assert not violations, (
@@ -441,9 +466,8 @@ def test_frontend_backend_operations_are_registered():
     violations: list[str] = []
     stale: list[str] = []
     for path in _frontend_modules():
-        tree = _parse_source(path)
         rel = _rel(path)
-        detected = _backend_ops(tree)
+        detected = _backend_ops_for(path)
         for op in detected:
             if (rel, op) not in BACKEND_OPS:
                 violations.append(f"  {rel}: {op}")
@@ -513,9 +537,7 @@ def test_core_does_not_import_daemon():
     for path in (SOURCE / "core").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
-        tree = _parse_source(path)
-        rel = _rel(path)
-        hits = _daemon_imports(tree, rel)
+        hits = _daemon_imports_for(path)
         assert not hits, f"{path}: core imports daemon: {hits}"
 
 

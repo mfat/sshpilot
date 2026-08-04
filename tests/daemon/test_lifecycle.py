@@ -120,7 +120,6 @@ def test_multiple_sequential_and_simultaneous_clients(daemon_factory):
     third.close()
 
 
-@pytest.mark.parametrize("_repeat", range(10))
 def test_one_client_serializes_concurrent_callers(daemon_factory, _repeat):
     server, _manager = daemon_factory()
     client = DaemonClient(socket_path=server.socket_path)

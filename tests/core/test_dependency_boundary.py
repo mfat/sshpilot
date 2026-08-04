@@ -24,6 +24,8 @@ from collections import deque
 from functools import lru_cache
 from pathlib import Path
 
+import pytest
+
 from sshpilot.core.package_graph import (
     ALLOWED_EDGES,
     BOUNDARY_PACKAGES,
@@ -32,6 +34,11 @@ from sshpilot.core.package_graph import (
     FORBIDDEN_GOBJECT_ADAPTERS,
     FORBIDDEN_UI_PREFIXES,
 )
+
+# Run every scan in this module on a single xdist worker so the process-local
+# parse/analysis caches are built once, not once per worker (see
+# ``--dist=loadgroup`` in pytest.ini).
+pytestmark = pytest.mark.xdist_group("dependency-boundary")
 
 ROOT = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
 
@@ -162,7 +169,7 @@ def _collect_imports(
 
 def _forbidden_gi(path: Path) -> list[str]:
     hits: list[str] = []
-    for kind, name in _collect_imports(path):
+    for kind, name in _imports_for(path):
         root = name.split(".", 1)[0]
         if name in FORBIDDEN_GI_MODULES or root == "gi":
             hits.append(f"{kind} {name}")
@@ -179,7 +186,7 @@ def _forbidden_gi(path: Path) -> list[str]:
 
 def _forbidden_ui(path: Path) -> list[str]:
     hits: list[str] = []
-    for _kind, name in _collect_imports(path):
+    for _kind, name in _imports_for(path):
         if any(name == p or name.startswith(p + ".") for p in FORBIDDEN_UI_PREFIXES):
             hits.append(name)
     return hits
@@ -192,6 +199,7 @@ def _matches(prefix: str, name: str) -> bool:
 # ---------------------------------------------------------------------------
 # Project import-graph closure (for the daemon runtime)
 # ---------------------------------------------------------------------------
+@lru_cache(maxsize=1)
 def _module_files() -> dict[str, Path]:
     """Map every sshpilot Python source file to its dotted module name.
 
@@ -199,6 +207,10 @@ def _module_files() -> dict[str, Path]:
     top-level files (e.g. ``config.py``) produce ``sshpilot.config`` and not
     the double-dot form ``sshpilot..config`` that the old concatenation yielded
     when ``parts[:-1]`` was empty.
+
+    Cached: the source tree is immutable during a run. Tests that create
+    temporary probe files pass those paths directly to ``_collect_imports`` and
+    never rely on them appearing in this map.
     """
     mapping: dict[str, Path] = {}
     for path in ROOT.rglob("*.py"):
@@ -212,6 +224,12 @@ def _module_files() -> dict[str, Path]:
         mod = ".".join(name_parts)
         mapping[mod] = path
     return mapping
+
+
+@lru_cache(maxsize=None)
+def _imports_for(path: Path) -> tuple[tuple[str, str], ...]:
+    """Cached import hits for one file (resolved against the module map)."""
+    return tuple(_collect_imports(path, _module_files()))
 
 
 def _deepest_existing(full: str, module_files: dict[str, Path]) -> str | None:
@@ -241,7 +259,7 @@ def _project_closure(roots: list[str], module_files: dict[str, Path]):
         path = module_files.get(mod)
         if path is None:
             continue
-        for _kind, name in sorted(set(_collect_imports(path, module_files))):
+        for _kind, name in sorted(set(_imports_for(path))):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue
             target = _deepest_existing(name, module_files)
@@ -277,15 +295,14 @@ def test_package_graph_manifest_lists_boundary_packages():
     assert "sshpilot.gtk" in FORBIDDEN_UI_PREFIXES
 
 
-def _importer_edges(rel: str, module_files: "dict[str, Path] | None" = None) -> list[str]:
+def _importer_edges(rel: str) -> list[str]:
     """All absolute module names imported by one file.
 
-    Pass *module_files* to also detect sub-module aliases such as
-    ``from sshpilot import config`` while still ignoring pure symbol names
-    like ``__version__``.
+    Sub-module aliases such as ``from sshpilot import config`` are detected
+    while pure symbol names like ``__version__`` are ignored. Uses the cached
+    per-file import analysis against ``_module_files()``.
     """
-    mf = module_files if module_files is not None else _module_files()
-    return [name for _kind, name in _collect_imports(ROOT / rel, mf)]
+    return [name for _kind, name in _imports_for(ROOT / rel)]
 
 
 def _allowed_or_debt(name: str, allowed: tuple, debt: dict, importer: str) -> bool:
@@ -300,11 +317,10 @@ def _allowed_or_debt(name: str, allowed: tuple, debt: dict, importer: str) -> bo
 def test_daemon_imports_only_allowed_edges():
     """The daemon must not reach GObject/GTK adapters; new edges are rejected."""
     allowed = ALLOWED_EDGES["daemon"]
-    module_files = _module_files()
     failures: list[str] = []
     for path in sorted((ROOT / "daemon").rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
-        for name in _importer_edges(rel, module_files):
+        for name in _importer_edges(rel):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue  # bare package ``__version__`` import is GI-free
             if not _allowed_or_debt(name, allowed, DAEMON_DEBT, rel):
@@ -319,13 +335,12 @@ def test_daemon_imports_only_allowed_edges():
 
 def test_daemon_debt_edges_are_importer_specific_and_exact():
     """Registered debt is per-importer; stale/phantom edges fail."""
-    module_files = _module_files()
     failures: list[str] = []
     for (imp, prefix), _tag in sorted(DAEMON_DEBT.items()):
         if not (ROOT / imp).exists():
             failures.append(f"deleted importer: {imp}")
             continue
-        seen = [n for n in _importer_edges(imp, module_files) if n.startswith("sshpilot")]
+        seen = [n for n in _importer_edges(imp) if n.startswith("sshpilot")]
         if not any(_matches(prefix, n) for n in seen):
             failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
     assert not failures, "\n".join(failures)
@@ -373,11 +388,10 @@ def test_daemon_closure_has_no_cycle_beyond_scc():
 def test_core_imports_only_allowed_edges():
     """core is the bottom layer; it may only link core + shared model leaves."""
     allowed = ALLOWED_EDGES["core"]
-    module_files = _module_files()
     failures: list[str] = []
     for path in sorted((ROOT / "core").rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
-        for name in _importer_edges(rel, module_files):
+        for name in _importer_edges(rel):
             if not name.startswith("sshpilot") or name == "sshpilot":
                 continue
             if not _allowed_or_debt(name, allowed, CORE_DEBT, rel):
@@ -391,13 +405,12 @@ def test_core_imports_only_allowed_edges():
 
 
 def test_core_debt_edges_are_importer_specific_and_exact():
-    module_files = _module_files()
     failures: list[str] = []
     for (imp, prefix), _tag in sorted(CORE_DEBT.items()):
         if not (ROOT / imp).exists():
             failures.append(f"deleted importer: {imp}")
             continue
-        seen = [n for n in _importer_edges(imp, module_files) if n.startswith("sshpilot")]
+        seen = [n for n in _importer_edges(imp) if n.startswith("sshpilot")]
         if not any(_matches(prefix, n) for n in seen):
             failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
     assert not failures, "\n".join(failures)
@@ -463,13 +476,12 @@ def test_stale_exact_debt_entry_is_detected():
     phantom_debt: dict[tuple[str, str], str] = {
         ("core/connection_application_service.py", "sshpilot.nonexistent.module"): "M8",
     }
-    module_files = _module_files()
     failures = []
     for (imp, prefix), _tag in phantom_debt.items():
         if not (ROOT / imp).exists():
             failures.append(f"deleted importer: {imp}")
             continue
-        seen = [n for n in _importer_edges(imp, module_files) if n.startswith("sshpilot")]
+        seen = [n for n in _importer_edges(imp) if n.startswith("sshpilot")]
         if not any(_matches(prefix, n) for n in seen):
             failures.append(f"stale debt edge: {imp} -> {prefix} (no such import)")
     assert failures, "Expected stale-debt detection to fail for a phantom entry"

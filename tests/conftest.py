@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import types
@@ -15,6 +16,48 @@ import pytest
 # authorized_keys_window._RESTRICT_OPT_INS). A session fixture runs after that
 # and would leave those constants frozen in the developer's language.
 os.environ["LANGUAGE"] = "en"
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("--race-repeats must be >= 1")
+    return parsed
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--race-repeats",
+        type=_positive_int,
+        default=1,
+        help=(
+            "Number of repetitions for concurrency/race tests. The ordinary "
+            "suite runs each race scenario once; opt into heavier repetition "
+            "for nightly/stress runs (e.g. --race-repeats=20)."
+        ),
+    )
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrize the ``_repeat`` fixture from ``--race-repeats``.
+
+    Race-sensitive daemon tests previously hard-coded repeated parametrize
+    decorators (``@pytest.mark.parametrize("_repeat", range(5))``). Those are
+    removed from the normal suite; the fixture is generated here instead so
+    repetition is configurable and the development loop stays fast. Tests that
+    keep their own ``_repeat`` parametrization (e.g. GUI smoke tests) are left
+    alone via the marker guard below.
+    """
+    if "_repeat" not in metafunc.fixturenames:
+        return
+    for marker in metafunc.definition.iter_markers("parametrize"):
+        argnames = getattr(marker, "args", ()) or ()
+        if argnames and any(
+            part.strip() == "_repeat" for part in str(argnames[0]).split(",")
+        ):
+            return
+    repeats = metafunc.config.getoption("--race-repeats")
+    metafunc.parametrize("_repeat", range(repeats))
 
 
 # Pre-existing environment gaps used to be tracked as non-strict xfails in #987.

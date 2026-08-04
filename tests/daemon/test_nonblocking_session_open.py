@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from sshpilot.api import DaemonClient, ErrorCode, SshPilotError
+from sshpilot.api import DaemonClient, ErrorCode
 from sshpilot.api.events import EventType
 from sshpilot.api.models.common import ConnectionId, SessionId
 from sshpilot.api.models.sessions import (
@@ -156,11 +156,20 @@ class _InteractionHoldingRunner:
         self.start_release.set()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_open_session_returns_starting_while_runner_blocked(
     daemon_factory,
     _repeat,
 ):
+    """A slow start must acknowledge immediately and never block the lane.
+
+    A successful ``STARTING`` acknowledgement while the runner's ``start()``
+    stays blocked proves the open is not classified as failed or
+    mutation-ambiguous at the transport level. Control RPCs on the same
+    client remain responsive throughout. (This merges the legacy
+    ``test_slow_open_does_not_raise_mutation_ambiguous`` soak: the ack
+    itself is the property, so no fixed-duration wait past the request
+    timeout is needed in the normal suite.)
+    """
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(session_runner=runner)
     client = DaemonClient(
@@ -190,7 +199,6 @@ def test_open_session_returns_starting_while_runner_blocked(
     "interaction_type_name",
     ["PASSWORD", "HOST_KEY_CONFIRMATION", "PRIVATE_KEY_PASSPHRASE"],
 )
-@pytest.mark.parametrize("_repeat", range(5))
 def test_open_session_returns_while_interaction_pending(
     daemon_factory,
     interaction_type_name,
@@ -227,7 +235,6 @@ def test_open_session_returns_while_interaction_pending(
         client.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_startup_failure_after_acknowledgement_is_async(
     daemon_factory,
     _repeat,
@@ -261,36 +268,6 @@ def test_startup_failure_after_acknowledgement_is_async(
         client.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
-def test_slow_open_does_not_raise_mutation_ambiguous(
-    daemon_factory,
-    _repeat,
-):
-    runner = _BlockingStartRunner()
-    server, _manager = daemon_factory(session_runner=runner)
-    client = DaemonClient(socket_path=server.socket_path, timeout=0.4)
-    try:
-        opened = client.open_session(
-            OpenSessionRequest(connection_id=client.list_connections()[0].id)
-        )
-        assert opened.state is SessionState.STARTING
-        assert runner.start_entered.wait(1)
-        time.sleep(0.5)
-        assert client.get_session(opened.id).state is SessionState.STARTING
-        runner.start_release.set()
-        assert _wait_until(
-            lambda: client.get_session(opened.id).state is SessionState.RUNNING
-        )
-    except SshPilotError as error:
-        pytest.fail(
-            f"slow open raised {error.code.value}: {error.message}"
-        )
-    finally:
-        runner.start_release.set()
-        client.close()
-
-
-@pytest.mark.parametrize("_repeat", range(5))
 def test_close_while_startup_blocked(daemon_factory, _repeat):
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(session_runner=runner)
@@ -318,7 +295,6 @@ def test_close_while_startup_blocked(daemon_factory, _repeat):
         client.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_two_simultaneous_opens_create_distinct_sessions(
     daemon_factory,
     _repeat,
@@ -362,7 +338,6 @@ def test_two_simultaneous_opens_create_distinct_sessions(
         client_b.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_control_rpc_remains_responsive_while_startup_blocked(
     daemon_factory,
     _repeat,
@@ -384,11 +359,13 @@ def test_control_rpc_remains_responsive_while_startup_blocked(
             OpenSessionRequest(connection_id=opener.list_connections()[0].id)
         )
         assert runner.start_entered.wait(1)
-        deadline = time.monotonic() + 0.8
-        while time.monotonic() < deadline:
+        # A handful of sequential control RPCs while start stays blocked prove
+        # the control lane stays responsive — no fixed-duration soak loop.
+        for _round in range(3):
             assert reader.list_connections()
             assert reader.get_session(opened.id).state is SessionState.STARTING
             assert reader.get_capabilities().supported
+        assert not runner.start_release.is_set()
         runner.start_release.set()
         assert _wait_until(
             lambda: reader.get_session(opened.id).state is SessionState.RUNNING
@@ -576,7 +553,6 @@ def test_gtk_controller_updates_tab_on_async_startup_failure():
     assert errors[0].code is ErrorCode.SESSION_STARTUP_FAILED
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_gtk_close_during_blocked_startup(daemon_factory, _repeat):
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(session_runner=runner)

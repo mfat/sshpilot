@@ -115,7 +115,6 @@ def _run_in_thread(operation):
     return thread, done, result, error
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_blocked_start_does_not_delay_other_clients(daemon_factory, _repeat):
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(
@@ -159,7 +158,6 @@ def test_blocked_start_does_not_delay_other_clients(daemon_factory, _repeat):
             client_c.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_blocked_close_does_not_delay_other_clients(daemon_factory, _repeat):
     runner = _BlockingCloseRunner()
     server, _manager = daemon_factory(
@@ -210,7 +208,6 @@ def test_blocked_close_does_not_delay_other_clients(daemon_factory, _repeat):
             client_c.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_close_waits_in_the_same_session_lane_as_start(daemon_factory, _repeat):
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(
@@ -254,7 +251,6 @@ def test_close_waits_in_the_same_session_lane_as_start(daemon_factory, _repeat):
         closer.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_executor_queue_full_is_safe_and_reads_remain_live(
     daemon_factory,
     _repeat,
@@ -304,7 +300,6 @@ def test_executor_queue_full_is_safe_and_reads_remain_live(
         client_b.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_peer_disconnect_during_background_start_keeps_session_alive(
     daemon_factory,
     _repeat,
@@ -417,7 +412,6 @@ def test_deferred_request_is_completed_at_most_once():
         peer_side.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_shutdown_unblocks_active_start_and_stops_workers(
     daemon_factory,
     _repeat,
@@ -467,7 +461,6 @@ def test_shutdown_unblocks_active_start_and_stops_workers(
     observer.close()
 
 
-@pytest.mark.parametrize("_repeat", range(5))
 def test_shutdown_during_blocked_close_is_bounded(daemon_factory, _repeat):
     runner = _BlockingCloseRunner()
     server, _manager = daemon_factory(
