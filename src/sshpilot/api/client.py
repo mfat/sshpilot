@@ -32,6 +32,14 @@ from .models.interactions import (
     InteractionId,
     InteractionSummary,
 )
+from .models.keys import (
+    GenerateKeyRequest,
+    GenerateKeyResult,
+    KeyList,
+    ListKeysRequest,
+    PublicKeyResult,
+    ReadPublicKeyRequest,
+)
 from .models.known_hosts import (
     KnownHostsMutationResult,
     KnownHostsSnapshot,
@@ -345,6 +353,15 @@ class SshPilotClient(Protocol):
         self,
         request: RemoveKnownHostEntriesRequest,
     ) -> KnownHostsMutationResult:
+        ...
+
+    def list_keys(self, request: ListKeysRequest) -> KeyList:
+        ...
+
+    def read_public_key(self, request: ReadPublicKeyRequest) -> PublicKeyResult:
+        ...
+
+    def generate_key(self, request: GenerateKeyRequest) -> GenerateKeyResult:
         ...
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:

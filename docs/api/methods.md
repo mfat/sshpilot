@@ -24,6 +24,9 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `lookup_key_passphrase` | Implemented | `connections.secrets.write` |
 | `list_known_hosts` | Daemon only | `known_hosts.read` |
 | `remove_known_host_entries` | Daemon only | `known_hosts.write` |
+| `list_keys` | Schema only | `keys.read` |
+| `read_public_key` | Schema only | `keys.read` |
+| `generate_key` | Schema only | `keys.write` |
 | `list_sessions` | Daemon only | `sessions.read` |
 | `get_session` | Daemon only | `sessions.read` |
 | `open_session` | Daemon only | `sessions.write` |
@@ -92,6 +95,9 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: close_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: duplicate_connection status=implemented capability=connections.write -->
+<!-- api-method-contract: generate_key status=schema-only capability=keys.write -->
+<!-- api-method-contract: list_keys status=schema-only capability=keys.read -->
+<!-- api-method-contract: read_public_key status=schema-only capability=keys.read -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: detach_session status=daemon-only capability=sessions.write -->
@@ -185,6 +191,9 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `interactions.cancel` | `interactions.respond` | Implemented |
 | `known_hosts.list` | `known_hosts.read` | Implemented |
 | `known_hosts.remove` | `known_hosts.write` | Implemented |
+| `keys.list` | `keys.read` | Implemented |
+| `keys.get_public` | `keys.read` | Implemented |
+| `keys.generate` | `keys.write` | Implemented |
 | `sessions.list` | `sessions.read` | Implemented |
 | `sessions.get` | `sessions.read` | Implemented |
 | `sessions.open` | `sessions.write` | Implemented |
@@ -263,6 +272,9 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: interactions.respond capability=interactions.respond -->
 <!-- api-daemon-method: known_hosts.list capability=known_hosts.read -->
 <!-- api-daemon-method: known_hosts.remove capability=known_hosts.write -->
+<!-- api-daemon-method: keys.generate capability=keys.write -->
+<!-- api-daemon-method: keys.get_public capability=keys.read -->
+<!-- api-daemon-method: keys.list capability=keys.read -->
 <!-- api-daemon-method: sessions.attach capability=sessions.write -->
 <!-- api-daemon-method: sessions.close capability=sessions.write -->
 <!-- api-daemon-method: sessions.detach capability=sessions.write -->
@@ -862,6 +874,27 @@ Requests bounded closure of one runtime forward.
 - **Status / introduced:** Daemon only / Protocol v1, API 0.14.
 - **Capability / purpose:** `known_hosts.write`; batch-remove entries by ID
   with an optimistic revision check against the daemon-owned file.
+
+<!-- api-method: list_keys -->
+## `list_keys`
+
+- **Status / introduced:** Schema only / Protocol v1, API 0.15.
+- **Capability / purpose:** `keys.read`; list key metadata from the
+  daemon-owned selected key store scope. Daemon RPC `keys.list`.
+
+<!-- api-method: read_public_key -->
+## `read_public_key`
+
+- **Status / introduced:** Schema only / Protocol v1, API 0.15.
+- **Capability / purpose:** `keys.read`; return public-key text for an opaque
+  key ID from the daemon-owned key store. Daemon RPC `keys.get_public`.
+
+<!-- api-method: generate_key -->
+## `generate_key`
+
+- **Status / introduced:** Schema only / Protocol v1, API 0.15.
+- **Capability / purpose:** `keys.write`; generate a keypair in the
+  daemon-owned selected key store scope. Daemon RPC `keys.generate`.
 
 <!-- api-method: get_daemon_status -->
 ## `get_daemon_status`

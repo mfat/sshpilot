@@ -1234,6 +1234,18 @@ class ConnectionApplicationService:
         if not self._capabilities.supports(capability):
             raise unsupported_capability(capability)
 
+    # -- daemon-only protocol surface (canonical unsupported errors) ------
+    # The in-process client never owns key stores; these methods exist so the
+    # frontend receives canonical unsupported-capability errors instead of
+    # AttributeError, and there is no local filesystem fallback.
+    def list_keys(self, request: Any) -> None:
+        raise unsupported_capability(Capability.KEYS_READ)
+
+    def read_public_key(self, request: Any) -> None:
+        raise unsupported_capability(Capability.KEYS_READ)
+
+    def generate_key(self, request: Any) -> None:
+        raise unsupported_capability(Capability.KEYS_WRITE)
 
     def _manager_connections(self) -> List[Any]:
         getter = getattr(self._connection_manager, "get_connections", None)

@@ -153,6 +153,10 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "generate_key": {
+      "capability": "keys.write",
+      "status": "schema-only"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -205,6 +209,10 @@
       "capability": "interactions.read",
       "status": "daemon-only"
     },
+    "list_keys": {
+      "capability": "keys.read",
+      "status": "schema-only"
+    },
     "list_sessions": {
       "capability": "sessions.read",
       "status": "daemon-only"
@@ -236,6 +244,10 @@
     "open_sftp": {
       "capability": "sftp.write",
       "status": "daemon-only"
+    },
+    "read_public_key": {
+      "capability": "keys.read",
+      "status": "schema-only"
     },
     "release_interaction": {
       "capability": "interactions.respond",
@@ -376,6 +388,7 @@
     "detach_session",
     "detach_sftp",
     "duplicate_connection",
+    "generate_key",
     "get_capabilities",
     "get_connection",
     "get_connection_editor",
@@ -389,6 +402,7 @@
     "list_connections",
     "list_forwards",
     "list_interactions",
+    "list_keys",
     "list_known_hosts",
     "list_sessions",
     "list_sftp_services",
@@ -398,6 +412,7 @@
     "open_forward",
     "open_session",
     "open_sftp",
+    "read_public_key",
     "release_interaction",
     "release_terminal_input",
     "remove_known_host_entries",
@@ -649,6 +664,16 @@
       ],
       "return": "ConnectionMutationResult"
     },
+    "generate_key": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "GenerateKeyRequest"
+        }
+      ],
+      "return": "GenerateKeyResult"
+    },
     "get_capabilities": {
       "parameters": [],
       "return": "Capabilities"
@@ -743,6 +768,16 @@
       "parameters": [],
       "return": "list[InteractionSummary]"
     },
+    "list_keys": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ListKeysRequest"
+        }
+      ],
+      "return": "KeyList"
+    },
     "list_known_hosts": {
       "parameters": [],
       "return": "KnownHostsSnapshot"
@@ -808,6 +843,16 @@
         }
       ],
       "return": "SftpServiceSummary"
+    },
+    "read_public_key": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ReadPublicKeyRequest"
+        }
+      ],
+      "return": "PublicKeyResult"
     },
     "release_interaction": {
       "parameters": [
@@ -1263,6 +1308,15 @@
     },
     "interactions.respond": {
       "capability": "interactions.respond"
+    },
+    "keys.generate": {
+      "capability": "keys.write"
+    },
+    "keys.get_public": {
+      "capability": "keys.read"
+    },
+    "keys.list": {
+      "capability": "keys.read"
     },
     "known_hosts.list": {
       "capability": "known_hosts.read"
