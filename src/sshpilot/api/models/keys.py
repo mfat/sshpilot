@@ -31,6 +31,16 @@ _PRIVATE_KEY_MARKERS = (
 )
 
 
+def contains_private_key_material(text: str) -> bool:
+    """True when *text* contains a recognizable private-key header.
+
+    Single source of truth shared by :class:`PublicKeyResult` validation and
+    the daemon's pre-construction public-key read check, so the two sites can
+    never drift apart.
+    """
+    return any(marker in text for marker in _PRIVATE_KEY_MARKERS)
+
+
 class KeyStoreScope(str, Enum):
     """Semantic key-store location; never a filesystem path."""
 
@@ -126,7 +136,7 @@ class PublicKeyResult:
             raise ValueError("public key text must not contain NUL")
         if not self.text.strip():
             raise ValueError("public key text must be a non-empty string")
-        if any(marker in self.text for marker in _PRIVATE_KEY_MARKERS):
+        if contains_private_key_material(self.text):
             raise ValueError(
                 "public key text must not contain private-key material"
             )

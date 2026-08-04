@@ -738,10 +738,12 @@ class SshCopyIdWindow(Adw.Window):
     def _do_generate_and_copy(self):
         """Validate the form, then run generation off the GTK thread.
 
-        A second click while generation is running is ignored. The passphrase
-        lives only in the worker-local request dict and is not retained.
+        A second click while generation is running is ignored, and nothing
+        starts after the window closes (defense in depth: ``_on_ok_clicked``
+        also guards closed/loading/generating). The passphrase lives only in
+        the worker-local request dict and is not retained.
         """
-        if self._generating:
+        if self._closed or self._generating:
             return
         try:
             key_name = (self.row_key_name.get_text() or "").strip()

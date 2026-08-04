@@ -29,7 +29,7 @@ from sshpilot.api.models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
-    _PRIVATE_KEY_MARKERS,
+    contains_private_key_material,
 )
 from sshpilot.core.errors import CoreError, ErrorCode as CoreErrorCode
 from sshpilot.core.keys import KeyGenerateSpec, KeyService, SSHKeyInfo
@@ -213,12 +213,12 @@ class DaemonKeyService:
 
     @staticmethod
     def _public_text_is_valid(text: str) -> bool:
-        """Same content rules as ``PublicKeyResult`` (mirrored pre-construction)."""
+        """Same content rules as ``PublicKeyResult`` (shared pre-construction)."""
         if not text.strip():
             return False
         if "\x00" in text:
             return False
-        if any(marker in text for marker in _PRIVATE_KEY_MARKERS):
+        if contains_private_key_material(text):
             return False
         return True
 
