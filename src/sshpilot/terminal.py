@@ -1156,6 +1156,13 @@ class TerminalWidget(Gtk.Box):
             )
             return True
         except Exception as error:
+            if getattr(getattr(error, "code", None), "value", None) == "session_already_closed":
+                logger.info("Discarding stale daemon session attachment")
+                self._uninstall_daemon_backend_io()
+                self._daemon_mode = False
+                self._daemon_controller = None
+                self._daemon_tab_state = None
+                return False
             logger.error("Failed to attach daemon session: %s", error)
             self._uninstall_daemon_backend_io()
             self._daemon_mode = False

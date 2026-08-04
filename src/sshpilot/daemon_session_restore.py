@@ -169,15 +169,16 @@ class DaemonSessionRestoreManager:
             )
             window.show_tab_view()
             terminal.apply_theme()
-            return bool(
-                terminal.attach_daemon_session(
-                    client,
-                    bridge,
-                    SessionId(metadata.session_id),
-                    connection_id=ConnectionId(metadata.connection_id),
-                    from_sequence=max(0, int(metadata.last_sequence or 0)),
-                )
+            attached = terminal.attach_daemon_session(
+                client,
+                bridge,
+                SessionId(metadata.session_id),
+                connection_id=ConnectionId(metadata.connection_id),
+                from_sequence=max(0, int(metadata.last_sequence or 0)),
             )
+            if not attached:
+                self.remove_session_metadata(metadata.session_id)
+            return bool(attached)
         except Exception:
             logger.error("Failed to restore daemon session tab", exc_info=True)
             return False
