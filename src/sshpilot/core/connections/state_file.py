@@ -27,6 +27,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 from ...api.models.connection_store import thaw_safe_metadata, validate_safe_metadata
 from ..errors import CoreError, ErrorCode
+from .writer_receipt import WriteReceipt, issue_receipt
 
 _MAX_STATE_BYTES = 16 * 1024 * 1024
 _STATE_VERSION = 1
@@ -519,8 +520,13 @@ def read_legacy_connection_state(config_path: Path) -> ConnectionFileState:
 # Atomic write
 # ---------------------------------------------------------------------------
 
-def write_connection_state(path: Path, state: ConnectionFileState) -> None:
-    """Atomically persist *state* to *path* with full durability hardening."""
+def write_connection_state(path: Path, state: ConnectionFileState) -> WriteReceipt:
+    """Atomically persist *state* to *path* with full durability hardening.
+
+    Returns an immutable :class:`WriteReceipt` identifying the freshly
+    written file (exact bytes, device, inode, mode).  Callers verify the
+    receipt instead of trusting whatever is later found at the path.
+    """
     if type(state) is not ConnectionFileState:
         raise TypeError("connection state must be a ConnectionFileState")
     path = Path(path)
@@ -596,3 +602,9 @@ def write_connection_state(path: Path, state: ConnectionFileState) -> None:
     finally:
         if dir_fd is not None:
             os.close(dir_fd)
+
+    # Issue an immutable write receipt identifying this writer's product
+    # (exact bytes, device, inode, mode).  Callers verify it before trusting
+    # the path rather than reopening the path and accepting whatever is
+    # found there.
+    return issue_receipt(path, content, mode)

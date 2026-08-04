@@ -54,6 +54,7 @@ from .state_file import (
     read_legacy_connection_state,
     write_connection_state,
 )
+from .writer_receipt import WriteReceipt, verify_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,10 @@ class ConnectionRepository:
         self._generation = 0
         self._migrated_legacy = False
         self._legacy_migration_result = LegacyMigrationResult()
+        # Test-only injection point invoked between an atomic writer
+        # issuing a receipt and the repository verifying that receipt.
+        # See ``_verify_write_receipt_locked``.
+        self._pre_verify_hook: Optional[Callable[[WriteReceipt], None]] = None
         self._initial_load()
 
     # ------------------------------------------------------------------
@@ -582,15 +587,13 @@ class ConnectionRepository:
             pre_existed: bool,
             pre_bytes: bytes,
             pre_mode: int,
-            touched_by_daemon: bool,        # True only after confirmed daemon write
-            post_bytes: Optional[bytes],     # daemon-written content (filled after write)
-            post_identity: Optional[tuple],  # (dev, inode) after write (filled after write)
-            post_mode: Optional[int],        # mode after write (filled after write)
+            receipt: Optional[WriteReceipt],   # writer-issued receipt, verified after write
         )``
 
-        ``touched_by_daemon`` starts ``False`` and becomes ``True`` only after
-        a confirmed daemon write.  Recording the post-write token uses
-        non-following ``open``/``fstat`` checks.
+        ``receipt`` starts ``None`` and is filled only after a real atomic
+        writer returns one and :meth:`_verify_write_receipt_locked`
+        authenticates that the file currently at the path still matches the
+        receipt.  Capture uses non-following ``open``/``fstat`` checks.
 
         Non-SSH mutations must not capture or restore the SSH root, so
         callers must only pass ``ssh_target`` for SSH mutations.
@@ -604,7 +607,7 @@ class ConnectionRepository:
             try:
                 info = os.lstat(path)
             except FileNotFoundError:
-                captured[path] = (False, b"", 0, False, None, None, None)
+                captured[path] = (False, b"", 0, None)
                 continue
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
                 raise CoreError(
@@ -630,142 +633,113 @@ class ConnectionRepository:
                     True,
                     b"".join(chunks),
                     stat.S_IMODE(opened.st_mode),
-                    False,    # touched_by_daemon starts False
-                    None,     # post_bytes filled after write
-                    None,     # post_identity filled after write
-                    None,     # post_mode filled after write
+                    None,   # receipt filled by _verify_write_receipt_locked
                 )
             finally:
                 os.close(fd)
         return captured
 
-    def _record_post_write_locked(self, captured, path: Path) -> None:
-        """Record the daemon-written file identity, bytes, and mode for later verification.
+    def _verify_write_receipt_locked(
+        self, captured, receipt: Optional[WriteReceipt],
+    ) -> None:
+        """Authenticate a writer-issued receipt against the current file.
 
-        Uses non-following ``open``/``fstat`` checks.  If the daemon wrote the
-        file but cannot securely record its post state, or if a regular file
-        was replaced between the daemon write and post-write capture, raises
-        ``MUTATION_AMBIGUOUS``.
+        The repository must not rediscovers the post-write file by reopening
+        the path and trusting whatever is there.  Instead it asks the writer
+        for a :class:`WriteReceipt` (exact bytes, device, inode, mode) and
+        verifies the file currently at the path still matches it:
+
+        * the receipt is present (a missing receipt is never trusted);
+        * the current file is a regular file (no symlinks, no directories);
+        * the device/inode matches the receipt identity;
+        * the current bytes equal the receipt ``expected_bytes``;
+        * the current mode equals the receipt mode.
+
+        On success the file is marked daemon-owned (the receipt is stored for
+        rollback verification).  On failure: do not mark daemon-owned, do
+        not overwrite or delete the file, resynchronize from disk where
+        possible, and raise ``MUTATION_AMBIGUOUS``.
+
+        A test-only ``_pre_verify_hook`` is invoked at the very start (after
+        the writer has already issued the receipt) so deterministic races
+        between writer completion and receipt verification can be exercised.
         """
-        if path not in captured:
-            return
-        try:
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(str(path), flags)
-            try:
-                st = os.fstat(fd)
-                if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-                    # File was replaced with a symlink or non-regular file.
-                    # Do not mark as daemon-owned.
-                    raise CoreError(
-                        ErrorCode.MUTATION_AMBIGUOUS,
-                        "The mutation target became unsafe after daemon write",
-                    )
-                post_bytes = b""
-                while True:
-                    chunk = os.read(fd, 65536)
-                    if not chunk:
-                        break
-                    post_bytes += chunk
-                entry = captured[path]
-                captured[path] = (
-                    entry[0], entry[1], entry[2],
-                    True,  # touched_by_daemon
-                    post_bytes,
-                    (st.st_dev, st.st_ino),
-                    stat.S_IMODE(st.st_mode),  # post_mode
-                )
-            finally:
-                os.close(fd)
-        except CoreError:
-            raise
-        except OSError as exc:
+        if receipt is None:
+            self._safe_resync_from_files()
             raise CoreError(
                 ErrorCode.MUTATION_AMBIGUOUS,
-                "Could not record post-write state for rollback verification",
-            ) from exc
+                "The daemon write has no authenticated receipt",
+            )
+        if Path(receipt.path) not in captured:
+            self._safe_resync_from_files()
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The daemon write receipt does not match the captured target",
+            )
+        if self._pre_verify_hook is not None:
+            hook = self._pre_verify_hook
+            self._pre_verify_hook = None  # one-shot
+            hook(receipt)
+        try:
+            verify_receipt(receipt)
+        except CoreError:
+            self._safe_resync_from_files()
+            raise
+        entry = captured[Path(receipt.path)]
+        captured[Path(receipt.path)] = (
+            entry[0], entry[1], entry[2], receipt,
+        )
+
+    def _safe_resync_from_files(self) -> None:
+        """Best-effort disk resynchronization; never raises."""
+        try:
+            self._resync_from_files()
+        except Exception:
+            pass
 
     def _restore_transaction_files_locked(self, captured) -> None:
-        """Restore pre-write bytes, existence, and mode.  Rejects symlinks
-        and verifies the current file is still the daemon-written version
-        before overwriting.
+        """Restore pre-write bytes, existence, and mode.
 
-        For ``touched_by_daemon=False``: do not restore or delete the file;
-        preserve any external change and resynchronize from disk.
+        Before restoring or deleting a daemon-touched file, verifies the file
+        still matches the writer-issued receipt:
 
-        A rollback is successful only when original bytes, existence, and
-        mode are all restored.  If mode cannot be restored, raises
-        ``MUTATION_AMBIGUOUS``.
+        * current device/inode equals the receipt identity;
+        * current bytes equal the receipt ``expected_bytes``;
+        * current mode equals the receipt mode.
+
+        A mode-only external edit, identity swap, or content change produces
+        ``MUTATION_AMBIGUOUS`` without modifying the file.  For files the
+        daemon never wrote (no receipt) nothing is restored or deleted.
+
+        A rollback succeeds only when original bytes, existence, and mode are
+        all restored.  If mode cannot be restored, raises ``MUTATION_AMBIGUOUS``.
         """
-        for path, (existed, data, mode, touched, post_bytes, post_identity, post_mode) in captured.items():
-            if not touched:
+        for path, (existed, data, mode, receipt) in captured.items():
+            if receipt is None:
                 # The daemon never wrote this file — preserve external changes.
                 # Do not restore or delete it.
                 continue
+            path = Path(path)
+            # Verify the file at the path still matches the writer receipt.
+            # This is the same authentication performed at post-write time,
+            # repeated now so an external edit between the write and the
+            # rollback is detected before the daemon touches the file again.
+            try:
+                verify_receipt(receipt)
+            except CoreError:
+                self._safe_resync_from_files()
+                raise
             if not existed:
                 # The file did not exist before the mutation, and the daemon
-                # created it.  Delete only when the current file exactly
-                # matches the daemon-created post-write token.
-                try:
-                    st = os.lstat(path)
-                except FileNotFoundError:
-                    continue  # Already gone — fine.
-                if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-                    raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
-                if post_identity is not None and (st.st_dev, st.st_ino) != post_identity:
-                    raise CoreError(
-                        ErrorCode.MUTATION_AMBIGUOUS,
-                        "The mutation target was replaced externally",
-                    )
-                if post_bytes is not None:
-                    try:
-                        current_bytes = path.read_bytes()
-                    except OSError as exc:
-                        raise CoreError(
-                            ErrorCode.MUTATION_AMBIGUOUS,
-                            "Could not verify the mutation target for rollback",
-                        ) from exc
-                    if current_bytes != post_bytes:
-                        raise CoreError(
-                            ErrorCode.MUTATION_AMBIGUOUS,
-                            "The mutation target was modified externally",
-                        )
+                # created it.  Delete now that the receipt still matches.
                 try:
                     path.unlink()
                 except FileNotFoundError:
                     pass
                 continue
-            # File pre-existed and was touched by daemon.
-            # Verify the file hasn't been externally modified since the daemon wrote it.
-            if post_bytes is not None and post_identity is not None:
-                try:
-                    st = os.lstat(path)
-                except FileNotFoundError:
-                    # File was externally deleted — treat as ambiguity.
-                    raise CoreError(
-                        ErrorCode.MUTATION_AMBIGUOUS,
-                        "The mutation target changed during rollback",
-                    )
-                if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-                    raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
-                if (st.st_dev, st.st_ino) != post_identity:
-                    # File identity changed — an external edit occurred.
-                    raise CoreError(
-                        ErrorCode.MUTATION_AMBIGUOUS,
-                        "The mutation target was modified externally",
-                    )
-                try:
-                    current_bytes = path.read_bytes()
-                except OSError as exc:
-                    raise CoreError(
-                        ErrorCode.MUTATION_AMBIGUOUS,
-                        "Could not verify the mutation target for rollback",
-                    ) from exc
-                if current_bytes != post_bytes:
-                    raise CoreError(
-                        ErrorCode.MUTATION_AMBIGUOUS,
-                        "The mutation target was modified externally",
-                    )
+            # File pre-existed and was touched by daemon.  Restore the
+            # original bytes; the verification above guarantees the file is
+            # still the daemon-written version.
             try:
                 _atomic_write_text(path, data.decode("utf-8"))
             except OSError as exc:
@@ -834,10 +808,16 @@ class ConnectionRepository:
     def create_connection(self, data: Mapping[str, Any]) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
-            disk_before = self._capture_transaction_files_locked(self._ssh_store.root_path)
             payload = dict(data)
             payload.pop("uuid", None)
             protocol = str(payload.get("protocol") or "ssh").strip() or "ssh"
+            # Determine the protocol BEFORE capturing transaction files so a
+            # non-SSH creation never captures (and thus never restores) the
+            # SSH root.  Only SSH creation touches the SSH configuration file.
+            ssh_target = (
+                Path(self._ssh_store.root_path) if protocol == "ssh" else None
+            )
+            disk_before = self._capture_transaction_files_locked(ssh_target)
             try:
                 if protocol == "ssh":
                     result = self._ssh_store.create(payload)
@@ -847,11 +827,8 @@ class ConnectionRepository:
                     )
                     created = self._service.create(fresh.data)
                     self._overlay_ssh_generations(result.config)
-                    # Record the daemon-written SSH file for rollback verification.
-                    if result.touched_path:
-                        self._record_post_write_locked(
-                            disk_before, Path(result.touched_path),
-                        )
+                    # Authenticate the SSH writer receipt before trusting it.
+                    self._verify_write_receipt_locked(disk_before, result.receipt)
                 else:
                     nickname = self._validate_new_nickname(
                         str(payload.get("nickname") or "")
@@ -862,9 +839,9 @@ class ConnectionRepository:
                     self._non_ssh_generations[created.id] = 1
                 # Root order / membership / metadata always live in
                 # connections.json; persist it after every committed mutation.
-                self._persist_state_file_locked()
-                # Record the daemon-written state file for rollback verification.
-                self._record_post_write_locked(disk_before, self._state_path)
+                state_receipt = self._persist_state_file_locked()
+                # Authenticate the state writer receipt before trusting it.
+                self._verify_write_receipt_locked(disk_before, state_receipt)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -911,10 +888,8 @@ class ConnectionRepository:
                     )
                     updated = self._service.update(connection_id, fresh.data)
                     self._overlay_ssh_generations(result.config)
-                    if result.touched_path:
-                        self._record_post_write_locked(
-                            disk_before, Path(result.touched_path),
-                        )
+                    # Authenticate the SSH writer receipt before trusting it.
+                    self._verify_write_receipt_locked(disk_before, result.receipt)
                 else:
                     if (
                         expected_generation is not None
@@ -937,8 +912,9 @@ class ConnectionRepository:
                             self._non_ssh_generations.get(connection_id, 0) + 1
                         )
                 self._migrate_metadata_on_rename(connection_id, updated.id)
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                state_receipt = self._persist_state_file_locked()
+                # Authenticate the state writer receipt before trusting it.
+                self._verify_write_receipt_locked(disk_before, state_receipt)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -966,18 +942,17 @@ class ConnectionRepository:
                     )
                     created = self._service.create(fresh.data)
                     self._overlay_ssh_generations(result.config)
-                    if result.touched_path:
-                        self._record_post_write_locked(
-                            disk_before, Path(result.touched_path),
-                        )
+                    # Authenticate the SSH writer receipt before trusting it.
+                    self._verify_write_receipt_locked(disk_before, result.receipt)
                 else:
                     created = self._service.duplicate(connection_id)
                     self._non_ssh_generations[created.id] = 1
                 # Mirror the source's group placement on the duplicate.
                 for gid in self._service.group_ids_of(connection_id):
                     self._service.copy_connection_to_group(created.id, gid)
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                state_receipt = self._persist_state_file_locked()
+                # Authenticate the state writer receipt before trusting it.
+                self._verify_write_receipt_locked(disk_before, state_receipt)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1000,16 +975,15 @@ class ConnectionRepository:
                 if existing.protocol == "ssh":
                     result = self._ssh_store.delete(connection_id)
                     self._service.delete(connection_id)
-                    if result.touched_path:
-                        self._record_post_write_locked(
-                            disk_before, Path(result.touched_path),
-                        )
+                    # Authenticate the SSH writer receipt before trusting it.
+                    self._verify_write_receipt_locked(disk_before, result.receipt)
                 else:
                     self._service.delete(connection_id)
                     self._non_ssh_generations.pop(connection_id, None)
                 self._metadata.pop(connection_id, None)
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                state_receipt = self._persist_state_file_locked()
+                # Authenticate the state writer receipt before trusting it.
+                self._verify_write_receipt_locked(disk_before, state_receipt)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1054,20 +1028,19 @@ class ConnectionRepository:
                     result_id = updated.id
                     self._migrate_metadata_on_rename(connection_id, result_id)
                 self._overlay_ssh_generations(result.config)
-                if result.touched_path:
-                    self._record_post_write_locked(
-                        disk_before, Path(result.touched_path),
-                    )
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                # Authenticate the SSH writer receipt before trusting it.
+                self._verify_write_receipt_locked(disk_before, result.receipt)
+                state_receipt = self._persist_state_file_locked()
+                # Authenticate the state writer receipt before trusting it.
+                self._verify_write_receipt_locked(disk_before, state_receipt)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
             return self._service.get(result_id)
 
-    def _persist_state_file_locked(self) -> None:
-        write_connection_state(self._state_path, self._build_file_state_locked())
+    def _persist_state_file_locked(self) -> WriteReceipt:
+        return write_connection_state(self._state_path, self._build_file_state_locked())
 
     def _migrate_metadata_on_rename(self, old_id: str, new_id: str) -> None:
         """Move metadata to the new id (in-memory; the caller persists once)."""
@@ -1088,11 +1061,14 @@ class ConnectionRepository:
         """
         with self._mutation_scope():
             before = self._begin()
+            disk_before = self._capture_transaction_files_locked()
             try:
                 result = mutation()
-                self._persist_state_file_locked()
+                state_receipt = self._persist_state_file_locked()
+                # Authenticate the state writer receipt before trusting it.
+                self._verify_write_receipt_locked(disk_before, state_receipt)
             except Exception:
-                self._resync_from_files()
+                self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
             return result

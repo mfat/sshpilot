@@ -17,6 +17,8 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
+from sshpilot.core.connections.ssh_config_store import _atomic_write_text  # noqa: E402
+from sshpilot.core.connections.writer_receipt import WriteReceipt  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 
 
@@ -30,6 +32,27 @@ def _repo(tmp_path, ssh_text: str = ""):
         legacy_config_path=tmp_path / "config.json",
         isolated=False,
     ), root, tmp_path / "connections.json"
+
+
+def _daemon_ssh_write_and_verify(repo, root, text):
+    """Perform a real SSH atomic write and verify its receipt.
+
+    Returns the captured-disk state (post-verification) so rollback tests can
+    exercise the production authentication flow rather than trusting whatever
+    `_record_post_write_locked` happens to find at the path.
+    """
+    disk_before = repo._capture_transaction_files_locked(Path(root))
+    receipt = _atomic_write_text(Path(root), text)
+    repo._verify_write_receipt_locked(disk_before, receipt)
+    return disk_before
+
+
+def _daemon_state_write_and_verify(repo, state_path):
+    """Perform a real state-file write and verify its receipt."""
+    disk_before = repo._capture_transaction_files_locked()
+    receipt = repo._persist_state_file_locked()
+    repo._verify_write_receipt_locked(disk_before, receipt)
+    return disk_before
 
 
 def _write_state(path: Path, payload: dict) -> None:
@@ -452,8 +475,9 @@ def test_rollback_after_state_persistence_failure_ssh_create(tmp_path):
 
 def test_external_edit_during_rollback_raises_ambiguity(tmp_path):
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
-    disk_before = repo._capture_transaction_files_locked(root)
-    repo._record_post_write_locked(disk_before, root)
+    disk_before = _daemon_ssh_write_and_verify(
+        repo, root, "Host web\n    HostName example.com\n"
+    )
     root.write_bytes(b"# externally edited")
     with pytest.raises(CoreError) as exc:
         repo._restore_transaction_files_locked(disk_before)
@@ -641,10 +665,9 @@ def test_rollback_after_state_failure_ssh_split(tmp_path, monkeypatch):
 def test_external_edit_after_daemon_state_write_raises_ambiguity(tmp_path, monkeypatch):
     """After daemon writes the state file, an external edit must cause MUTATION_AMBIGUOUS."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
-    # Capture pre-write state and manually record post-write state,
-    # then simulate an external edit before rollback.
-    disk_before = repo._capture_transaction_files_locked()
-    repo._record_post_write_locked(disk_before, state)
+    # Perform a real state-file write via the production writer and verify
+    # the receipt, then simulate an external edit before rollback.
+    disk_before = _daemon_state_write_and_verify(repo, state)
     # Now simulate an external edit.
     state.write_text("{\"externally\": \"edited\"}")
     # Restore should detect the external edit.
@@ -654,24 +677,27 @@ def test_external_edit_after_daemon_state_write_raises_ambiguity(tmp_path, monke
 
 
 def test_symlink_swap_during_post_write_raises_ambiguity(tmp_path):
-    """Symlink swap during post-write capture must raise MUTATION_AMBIGUOUS."""
+    """Symlink swap during receipt verification must raise MUTATION_AMBIGUOUS."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     disk_before = repo._capture_transaction_files_locked(root)
-    # Replace the file with a symlink before recording post-write.
+    # Daemon writes the file (producing a receipt)...
+    receipt = _atomic_write_text(root, "Host web\n    HostName example.com\n")
+    # ...then a symlink is swapped in between writer completion and
+    # the repository's receipt verification.
     root.unlink()
     root.symlink_to("/etc/hostname")
     with pytest.raises(CoreError) as exc:
-        repo._record_post_write_locked(disk_before, root)
+        repo._verify_write_receipt_locked(disk_before, receipt)
     assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
 
 
 def test_rollback_write_failure_raises_ambiguity(tmp_path, monkeypatch):
     """If rollback write itself fails, the repository reports ambiguity."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
-    disk_before = repo._capture_transaction_files_locked(root)
-    repo._record_post_write_locked(disk_before, root)
-    # Patch _atomic_write_text to simulate a write failure.
-    import os
+    disk_before = _daemon_ssh_write_and_verify(
+        repo, root, "Host web\n    HostName example.com\n"
+    )
+    # Patch _atomic_write_text to simulate a write failure during restore.
     def fail_atomic(*_args, **_kwargs):
         raise OSError("disk full")
 
@@ -692,10 +718,9 @@ def test_exact_mode_and_existence_restoration(tmp_path):
     disk_before = repo._capture_transaction_files_locked(root)
     # Verify mode was captured.
     assert disk_before[root][2] == 0o600
-    # Simulate a daemon write that changes the mode.
-    root.write_text("Host new\n    HostName new.example\n")
-    os.chmod(str(root), 0o644)
-    repo._record_post_write_locked(disk_before, root)
+    # Daemon write via the real atomic writer (preserves the existing 0o600 mode).
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
+    repo._verify_write_receipt_locked(disk_before, receipt)
     # Rollback should restore the original mode.
     repo._restore_transaction_files_locked(disk_before)
     st = os.stat(str(root))
@@ -738,104 +763,311 @@ def test_non_ssh_create_captures_no_ssh_path(tmp_path):
     assert root.read_bytes() == pre_ssh
 
 
+def test_non_ssh_create_production_path_captures_no_ssh_root(tmp_path, monkeypatch):
+    """Production-path test intercepting the SSH capture for non-SSH create.
+
+    We monkeypatch ``_capture_transaction_files_locked`` to record the
+    ``ssh_target`` argument it was called with from the production
+    ``create_connection`` flow, then force the state-file write to fail so
+    the mutation rolls back.  The intercepted capture must prove the SSH
+    root was *never* captured for a non-SSH creation.
+    """
+    import os as _os
+
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    pre_ssh = root.read_bytes()
+
+    capture_calls = []
+    original_capture = repo._capture_transaction_files_locked
+
+    def capturing(ssh_target=None):
+        capture_calls.append(ssh_target)
+        return original_capture(ssh_target)
+
+    repo._capture_transaction_files_locked = capturing
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("injected state write failure")
+
+    monkeypatch.setattr(
+        "sshpilot.core.connections.repository.write_connection_state",
+        fail_write,
+    )
+
+    with pytest.raises(OSError):
+        repo.create_connection(
+            {"nickname": "telnet-1", "protocol": "telnet", "hostname": "10.0.0.5"}
+        )
+    # The production path must capture only the state file (ssh_target=None);
+    # the SSH root must never be captured for a non-SSH creation.
+    assert all(call is None for call in capture_calls)
+    assert root.read_bytes() == pre_ssh
+
+
+def _hook_replace_into_regular(path: Path, content: bytes) -> Path:
+    """Replace *path* with a fresh regular file holding *content* (new inode)."""
+    path.unlink()
+    path.write_bytes(content)
+    return path
+
+
+def _hook_replace_into_symlink(path: Path, target: str) -> Path:
+    path.unlink()
+    path.symlink_to(target)
+    return path
+
+
+def _hook_replace_into_directory(path: Path) -> Path:
+    path.unlink()
+    path.mkdir()
+    return path
+
+
+def _install_race_hook(repo, hook):
+    """Install a one-shot ``_pre_verify_hook`` on a repository."""
+    def _trigger(receipt):
+        # Reset before invoking so the hook itself can resubmit if desired.
+        repo._pre_verify_hook = None
+        hook(receipt)
+    repo._pre_verify_hook = _trigger
+
+
 def test_regular_file_replaced_with_identical_bytes_different_inode(tmp_path):
-    """Replacement with identical bytes but a different inode must cause MUTATION_AMBIGUOUS."""
+    """Replacement with identical bytes but a different inode must cause MUTATION_AMBIGUOUS
+    at receipt-verification time, before the file is marked daemon-owned."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     disk_before = repo._capture_transaction_files_locked(root)
-    repo._record_post_write_locked(disk_before, root)
-    # Replace with a new file that has identical bytes but a different inode.
-    original_bytes = root.read_bytes()
-    root.unlink()
-    root.write_bytes(original_bytes)  # new file, new inode
-    # The post-write identity won't match the new inode.
+
+    original_bytes = b"Host new\n    HostName new.example\n"
+
+    def hook(receipt):
+        _hook_replace_into_regular(receipt.path, receipt.expected_bytes)
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, original_bytes.decode("utf-8"))
     with pytest.raises(CoreError) as exc:
-        repo._restore_transaction_files_locked(disk_before)
+        repo._verify_write_receipt_locked(disk_before, receipt)
     assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
 
 
 def test_regular_file_replaced_with_different_bytes(tmp_path):
-    """Replacement with different bytes must cause MUTATION_AMBIGUOUS."""
+    """Replacement with different bytes at the hook must cause MUTATION_AMBIGUOUS."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     disk_before = repo._capture_transaction_files_locked(root)
-    repo._record_post_write_locked(disk_before, root)
-    # Replace with different bytes.
-    root.write_bytes(b"Host different\n    HostName other.com\n")
+
+    def hook(receipt):
+        _hook_replace_into_regular(
+            receipt.path, b"Host different\n    HostName other.com\n",
+        )
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
     with pytest.raises(CoreError) as exc:
-        repo._restore_transaction_files_locked(disk_before)
+        repo._verify_write_receipt_locked(disk_before, receipt)
     assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
 
 
-def test_newly_created_file_replaced_before_token_capture(tmp_path):
-    """A newly created file replaced before token capture must cause MUTATION_AMBIGUOUS."""
+def test_regular_file_replaced_with_same_bytes_different_mode(tmp_path):
+    """A same-bytes, different-mode replacement must cause MUTATION_AMBIGUOUS."""
+    import os as _os
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+
+    def hook(receipt):
+        _hook_replace_into_regular(receipt.path, receipt.expected_bytes)
+        _os.chmod(str(receipt.path), 0o644)
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
+    with pytest.raises(CoreError) as exc:
+        repo._verify_write_receipt_locked(disk_before, receipt)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_regular_file_replaced_with_symlink_at_hook(tmp_path):
+    """A symlink replacement before receipt verification must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+
+    def hook(receipt):
+        _hook_replace_into_symlink(receipt.path, "/etc/hostname")
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
+    with pytest.raises(CoreError) as exc:
+        repo._verify_write_receipt_locked(disk_before, receipt)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_regular_file_replaced_with_directory_at_hook(tmp_path):
+    """A directory replacement before receipt verification must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+
+    def hook(receipt):
+        _hook_replace_into_directory(receipt.path)
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
+    with pytest.raises(CoreError) as exc:
+        repo._verify_write_receipt_locked(disk_before, receipt)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_newly_created_file_replaced_at_hook(tmp_path):
+    """A newly created file replaced at the hook must cause MUTATION_AMBIGUOUS."""
     repo, root, state = _repo(tmp_path, "")
     disk_before = repo._capture_transaction_files_locked(root)
-    # Simulate: daemon created the file, then it was replaced before token capture.
-    root.write_bytes(b"Host web\n    HostName example.com\n")
-    # Record post-write token.
-    repo._record_post_write_locked(disk_before, root)
-    # Now replace the file.
-    root.write_bytes(b"Host replaced\n    HostName replaced.com\n")
-    # Rollback should detect the replacement.
+
+    def hook(receipt):
+        _hook_replace_into_regular(
+            receipt.path, b"Host replaced\n    HostName replaced.com\n",
+        )
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host web\n    HostName example.com\n")
     with pytest.raises(CoreError) as exc:
-        repo._restore_transaction_files_locked(disk_before)
+        repo._verify_write_receipt_locked(disk_before, receipt)
     assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
 
 
-def test_state_file_replaced_before_token_capture(tmp_path):
-    """State file replaced before token capture must cause MUTATION_AMBIGUOUS."""
+def test_state_file_replaced_at_hook(tmp_path):
+    """State file replacement at the hook must cause MUTATION_AMBIGUOUS."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     disk_before = repo._capture_transaction_files_locked()
-    repo._record_post_write_locked(disk_before, state)
-    # Replace the state file.
-    state.write_text("{\"externally\": \"replaced\"}")
+
+    def hook(receipt):
+        _hook_replace_into_regular(
+            receipt.path, b"{\"externally\": \"replaced\"}",
+        )
+
+    _install_race_hook(repo, hook)
+    receipt = repo._persist_state_file_locked()
     with pytest.raises(CoreError) as exc:
-        repo._restore_transaction_files_locked(disk_before)
+        repo._verify_write_receipt_locked(disk_before, receipt)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_post_write_digest_mismatch(tmp_path):
+    """A digest (bytes-) mismatch at receipt verification must cause MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+
+    def hook(receipt):
+        # Overwrite same file in-place so dev/inode/mode are unchanged but
+        # the bytes differ — exercises the digest check specifically.
+        receipt.path.write_bytes(b"# rewritten bytes")
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
+    with pytest.raises(CoreError) as exc:
+        repo._verify_write_receipt_locked(disk_before, receipt)
     assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
 
 
 def test_post_write_identity_mismatch(tmp_path):
-    """Post-write identity mismatch must cause MUTATION_AMBIGUOUS."""
+    """A device/inode replacement at the hook must cause MUTATION_AMBIGUOUS."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     disk_before = repo._capture_transaction_files_locked(root)
-    # Simulate daemon write by recording post-write state.
-    repo._record_post_write_locked(disk_before, root)
-    # Replace the file (new inode).
-    root.unlink()
-    root.write_bytes(b"Host new\n    HostName new.example\n")
-    # Identity mismatch should be detected.
+
+    def hook(receipt):
+        # Replace with a new file having the same bytes (digest matches) but
+        # a different inode — exercises the identity check specifically.
+        _hook_replace_into_regular(receipt.path, receipt.expected_bytes)
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
     with pytest.raises(CoreError) as exc:
-        repo._restore_transaction_files_locked(disk_before)
+        repo._verify_write_receipt_locked(disk_before, receipt)
     assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
 
 
-def test_chmod_failure_during_rollback_raises_ambiguity(tmp_path):
-    """chmod() failure during rollback must raise MUTATION_AMBIGUOUS.
-
-    We simulate this by making the target file immutable (``chattr +i`` on
-    Linux).  If the OS doesn't support immutable flags, the test is skipped.
-    """
-    import os
-    import subprocess
+def test_post_write_mode_mismatch(tmp_path):
+    """A mode-only external edit at the hook must cause MUTATION_AMBIGUOUS."""
+    import os as _os
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     disk_before = repo._capture_transaction_files_locked(root)
-    repo._record_post_write_locked(disk_before, root)
-    # Make the file immutable so chmod fails.
-    try:
-        subprocess.run(
-            ["chattr", "+i", str(root)],
-            check=True, capture_output=True, timeout=5,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError, OSError):
-        pytest.skip("chattr not available or not supported")
-    try:
-        with pytest.raises(CoreError) as exc:
+
+    def hook(receipt):
+        # Same file (same dev/inode/bytes), only the mode changed.
+        _os.chmod(str(receipt.path), 0o644)
+
+    _install_race_hook(repo, hook)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
+    with pytest.raises(CoreError) as exc:
+        repo._verify_write_receipt_locked(disk_before, receipt)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_missing_receipt_rejected(tmp_path):
+    """A missing receipt (None) must never be trusted — MUTATION_AMBIGUOUS."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    with pytest.raises(CoreError) as exc:
+        repo._verify_write_receipt_locked(disk_before, None)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_chmod_failure_during_rollback_raises_ambiguity(tmp_path, monkeypatch):
+    """chmod() failure during rollback must raise MUTATION_AMBIGUOUS.
+
+    Deterministic — monkeypatches ``os.chmod`` so the failure occurs only
+    during the rollback mode restoration.  No chattr, no filesystem support,
+    no privileges, no skips.
+    """
+    import os as _os
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = _daemon_ssh_write_and_verify(
+        repo, root, "Host web\n    HostName example.com\n",
+    )
+    orig_chmod = _os.chmod
+    rollback_in_progress = []
+
+    def fail_chmod(path, mode, *args, **kwargs):
+        # The repository's mode-restoration chmod is the only chmod call
+        # that passes ``follow_symlinks=False``; the atomic writer's own
+        # chmod uses a positional mode.  Failing only the rollback chmod
+        # isolates the ambiguity deterministically.
+        if rollback_in_progress and kwargs.get("follow_symlinks") is False:
+            raise OSError("chmod failed during rollback")
+        return orig_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(_os, "chmod", fail_chmod)
+
+    def _restore_and_mark():
+        rollback_in_progress.append(True)
+        try:
             repo._restore_transaction_files_locked(disk_before)
-        assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
-    finally:
-        subprocess.run(
-            ["chattr", "-i", str(root)],
-            check=False, capture_output=True, timeout=5,
-        )
+        finally:
+            rollback_in_progress.pop()
+
+    with pytest.raises(CoreError) as exc:
+        _restore_and_mark()
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+
+
+def test_successful_receipt_verification_ssh_write(tmp_path):
+    """A successful SSH write must pass receipt verification and mark daemon-owned."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked(root)
+    receipt = _atomic_write_text(root, "Host new\n    HostName new.example\n")
+    # Must not raise.
+    repo._verify_write_receipt_locked(disk_before, receipt)
+    # The receipt is recorded for rollback verification.
+    assert disk_before[root][3] is receipt
+    # Rollback restores the original content (using the production path).
+    repo._restore_transaction_files_locked(disk_before)
+    assert root.read_text() == "Host web\n    HostName example.com\n"
+
+
+def test_successful_receipt_verification_state_write(tmp_path):
+    """A successful state-file write must pass receipt verification."""
+    repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    disk_before = repo._capture_transaction_files_locked()
+    receipt = repo._persist_state_file_locked()
+    # Must not raise.
+    repo._verify_write_receipt_locked(disk_before, receipt)
+    assert disk_before[state][3] is receipt
 
 
 def test_no_event_and_unchanged_generation_after_successful_rollback(tmp_path):

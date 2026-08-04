@@ -44,6 +44,7 @@ from .ssh_config_loader import (
     _resolve_config_files,
     load_ssh_configuration,
 )
+from .writer_receipt import WriteReceipt, issue_receipt
 
 _SSH_CONFIG_HEADER = "# SSH configuration file\n\n"
 
@@ -82,7 +83,7 @@ def _atomic_write_text(
     text: str,
     *,
     expected_bytes: Optional[bytes] = None,
-) -> None:
+) -> WriteReceipt:
     """Atomically replace *path* with *text* using a same-directory temp file.
 
     - Rejects exact ``str`` input only.
@@ -95,7 +96,11 @@ def _atomic_write_text(
     - Flushes and ``fsync``s the temporary file, then the parent directory.
     - When *expected_bytes* is supplied, the target's current bytes must
       equal it immediately before replacement or a stale-state error is
-      raised (closes the read→write TOCTOU window).
+      raised (closes the read->write TOCTOU window).
+    - Returns an immutable :class:`WriteReceipt` identifying the freshly
+      written file (device, inode, mode, exact committed bytes).  The
+      repository verifies the receipt instead of trusting whatever it finds
+      at the path later.
     - All public errors are generic (no paths, no OS text, no contents).
     """
     if type(text) is not str:
@@ -168,6 +173,7 @@ def _atomic_write_text(
             os.chmod(target, stat.S_IMODE(st.st_mode))
         else:
             os.chmod(target, 0o600)
+        applied_mode = stat.S_IMODE(st.st_mode) if st is not None else 0o600
 
         # Parent-directory durability (the rename itself must be durable).
         flags = os.O_RDONLY
@@ -182,6 +188,12 @@ def _atomic_write_text(
         except OSError as exc:
             # The replacement may already have succeeded; report generically.
             raise _store_error("The connection configuration could not be saved") from exc
+
+        # Issue an immutable write receipt identifying the file this writer
+        # produced (exact bytes, device, inode, mode).  Callers verify this
+        # receipt before trusting the path rather than reopening the path and
+        # accepting whatever is found there.
+        receipt = issue_receipt(target, text.encode("utf-8"), applied_mode)
     except CoreError:
         raise
     except OSError as exc:
@@ -197,6 +209,7 @@ def _atomic_write_text(
                 os.unlink(tmp_name)
             except OSError:
                 pass
+    return receipt
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +281,7 @@ class SshConfigMutationResult:
     config: LoadedSshConfiguration
     connection_id: str
     touched_path: Optional[str] = None
+    receipt: Optional[WriteReceipt] = None
 
 
 class SshConfigStore:
@@ -341,7 +355,7 @@ class SshConfigStore:
         data: Mapping[str, Any],
         *,
         expected_bytes: Optional[bytes] = None,
-    ) -> None:
+    ) -> WriteReceipt:
         """Append a new standalone Host block to *path* (create/duplicate)."""
         target = Path(path)
         if target.exists():
@@ -350,13 +364,12 @@ class SshConfigStore:
             doc.nodes.append(
                 RawSpan(lines=doc.render_lines(["\n"] + block_lines))
             )
-            _atomic_write_text(
+            return _atomic_write_text(
                 target, doc.text(), expected_bytes=expected_bytes
             )
-        else:
-            block_lines = merged_block_lines(None, dict(data))
-            text = _SSH_CONFIG_HEADER + "".join(block_lines)
-            _atomic_write_text(target, text)
+        block_lines = merged_block_lines(None, dict(data))
+        text = _SSH_CONFIG_HEADER + "".join(block_lines)
+        return _atomic_write_text(target, text)
 
     def _check_stale(self, connection_id: str, expected_generation: Optional[int]) -> None:
         if expected_generation is None:
@@ -387,13 +400,18 @@ class SshConfigStore:
         )
         if not self._revision_matches(expected_revision):
             raise _stale_error()
-        self._append_new_block(
+        receipt = self._append_new_block(
             str(self._root_path), payload, expected_bytes=expected_bytes
         )
 
         self._generations[nickname] = 1
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=nickname, touched_path=str(self._root_path))
+        return SshConfigMutationResult(
+            config=fresh,
+            connection_id=nickname,
+            touched_path=str(self._root_path),
+            receipt=receipt,
+        )
 
     def update(
         self,
@@ -450,14 +468,19 @@ class SshConfigStore:
 
         if not self._revision_matches(expected_revision):
             raise _stale_error()
-        _atomic_write_text(target, doc.text(), expected_bytes=expected_bytes)
+        receipt = _atomic_write_text(target, doc.text(), expected_bytes=expected_bytes)
 
         old_generation = self._generations.get(connection_id, 0)
         if new_name != connection_id:
             self._generations.pop(connection_id, None)
         self._generations[new_name] = old_generation + 1
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=new_name, touched_path=source)
+        return SshConfigMutationResult(
+            config=fresh,
+            connection_id=new_name,
+            touched_path=source,
+            receipt=receipt,
+        )
 
     def delete(self, connection_id: str) -> SshConfigMutationResult:
         self._refuse_symlinked_root()
@@ -494,11 +517,16 @@ class SshConfigStore:
             raise _not_found_error()
         if not self._revision_matches(expected_revision):
             raise _stale_error()
-        _atomic_write_text(target, doc.text(), expected_bytes=expected_bytes)
+        receipt = _atomic_write_text(target, doc.text(), expected_bytes=expected_bytes)
 
         self._generations.pop(connection_id, None)
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=connection_id, touched_path=source)
+        return SshConfigMutationResult(
+            config=fresh,
+            connection_id=connection_id,
+            touched_path=source,
+            receipt=receipt,
+        )
 
     def duplicate(self, connection_id: str) -> SshConfigMutationResult:
         self._refuse_symlinked_root()
@@ -526,13 +554,18 @@ class SshConfigStore:
         )
         if not self._revision_matches(expected_revision):
             raise _stale_error()
-        self._append_new_block(
+        receipt = self._append_new_block(
             source, base, expected_bytes=expected_bytes
         )
 
         self._generations[new_nickname] = 1
         fresh = self._reload_after_write()
-        return SshConfigMutationResult(config=fresh, connection_id=new_nickname, touched_path=source)
+        return SshConfigMutationResult(
+            config=fresh,
+            connection_id=new_nickname,
+            touched_path=source,
+            receipt=receipt,
+        )
 
     def split(
         self,
@@ -610,7 +643,7 @@ class SshConfigStore:
 
         if not self._revision_matches(expected_revision):
             raise _stale_error()
-        _atomic_write_text(target, doc.text(), expected_bytes=expected_bytes)
+        receipt = _atomic_write_text(target, doc.text(), expected_bytes=expected_bytes)
 
         old_generation = self._generations.get(connection_id, 0)
         self._generations.pop(connection_id, None)
@@ -620,4 +653,9 @@ class SshConfigStore:
             # The original connection survived the split (a different alias
             # was split out): keep its generation counter intact.
             self._generations[connection_id] = old_generation
-        return SshConfigMutationResult(config=fresh, connection_id=new_name, touched_path=source)
+        return SshConfigMutationResult(
+            config=fresh,
+            connection_id=new_name,
+            touched_path=source,
+            receipt=receipt,
+        )
