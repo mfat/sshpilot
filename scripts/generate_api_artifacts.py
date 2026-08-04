@@ -42,7 +42,7 @@ from sshpilot.api.method_capabilities import (  # noqa: E402
 )
 from sshpilot.api.models import __all__ as MODEL_EXPORTS  # noqa: E402
 from sshpilot.api.models import common, connections, interactions, operations  # noqa: E402
-from sshpilot.api.models import daemon, sessions, terminal, transfers, known_hosts  # noqa: E402
+from sshpilot.api.models import daemon, sessions, terminal, transfers, known_hosts, keys  # noqa: E402
 from sshpilot.api.transport import __all__ as TRANSPORT_EXPORTS  # noqa: E402
 from sshpilot.api.transport import envelopes  # noqa: E402
 from sshpilot.daemon.dispatch import DAEMON_METHOD_CAPABILITIES  # noqa: E402
@@ -58,6 +58,7 @@ MODEL_MODULES = (
     operations,
     daemon,
     known_hosts,
+    keys,
     envelopes,
 )
 EXTRA_MODELS = (Capabilities, CoreEvent)

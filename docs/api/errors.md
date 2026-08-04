@@ -571,6 +571,33 @@ implementation, or required capability). Restart or upgrade is required.
 The client detected a stale or mismatched daemon and requires an explicit
 restart before continuing.
 
+<!-- api-error: key_not_found -->
+## `key_not_found`
+
+The requested opaque key ID does not exist in the selected key store scope.
+The message never contains filesystem paths, private-key contents, or
+passphrases.
+
+<!-- api-error: key_already_exists -->
+## `key_already_exists`
+
+A key with the requested name already exists in the daemon-owned key store.
+Structured details may carry a safe suggested filename. The message never
+contains filesystem paths, private-key contents, or passphrases.
+
+<!-- api-error: key_public_unavailable -->
+## `key_public_unavailable`
+
+The requested key's public file is missing, unsafe, unreadable, oversized, or
+invalid. The message never contains filesystem paths, private-key contents, or
+passphrases.
+
+<!-- api-error: key_generation_failed -->
+## `key_generation_failed`
+
+The daemon-owned `ssh-keygen` invocation failed. The message never contains the
+full command line, private-key contents, or passphrases.
+
 <!-- api-error: server_busy -->
 ## `server_busy`
 

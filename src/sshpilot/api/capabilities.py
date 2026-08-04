@@ -58,6 +58,8 @@ class Capability(str, Enum):
     DAEMON_EVENTS = "daemon.events"
     KNOWN_HOSTS_READ = "known_hosts.read"
     KNOWN_HOSTS_WRITE = "known_hosts.write"
+    KEYS_READ = "keys.read"
+    KEYS_WRITE = "keys.write"
     PLUGINS = "plugins"
     SECRETS = "secrets"
 

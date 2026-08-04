@@ -441,6 +441,21 @@ batch of occurrence-specific entry IDs using an optimistic revision check.
 Gated behind `KNOWN_HOSTS_WRITE`. Mutation is unavailable while the daemon is
 draining.
 
+<!-- api-capability: keys.read -->
+## `keys.read`
+
+Schema only. Lists key metadata from the daemon-owned selected key store scope
+and returns public-key text for an opaque key ID. Gated behind `KEYS_READ`.
+Runtime support depends on daemon capability negotiation; providers do not
+advertise it yet.
+
+<!-- api-capability: keys.write -->
+## `keys.write`
+
+Schema only. Generates keypairs through the daemon-owned `ssh-keygen` in the
+selected key store scope. Gated behind `KEYS_WRITE`. Runtime support depends on
+daemon capability negotiation; providers do not advertise it yet.
+
 ## Frontend behaviour
 
 Check capabilities before displaying or enabling optional actions. A frontend

@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.14",
+  "api_implementation_version": "0.15",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -40,6 +40,8 @@
     "interactions.password",
     "interactions.read",
     "interactions.respond",
+    "keys.read",
+    "keys.write",
     "known_hosts.read",
     "known_hosts.write",
     "plugins",
@@ -1400,6 +1402,10 @@
     "internal_error",
     "invalid_frame",
     "invalid_request",
+    "key_already_exists",
+    "key_generation_failed",
+    "key_not_found",
+    "key_public_unavailable",
     "mutation_ambiguous",
     "operation_cancelled",
     "operation_timed_out",
@@ -1548,6 +1554,8 @@
     "ForwardSummary",
     "ForwardType",
     "ForwardingRule",
+    "GenerateKeyRequest",
+    "GenerateKeyResult",
     "GetPluginSecretRequest",
     "GroupReference",
     "HostKeyDecision",
@@ -1568,12 +1576,17 @@
     "InteractionSummary",
     "InteractionTimeout",
     "InteractionType",
+    "KeyId",
+    "KeyList",
+    "KeyStoreScope",
+    "KeySummary",
     "KnownHostEntryId",
     "KnownHostEntrySummary",
     "KnownHostsMutationResult",
     "KnownHostsSnapshot",
     "ListDirectoryRequest",
     "ListDirectoryResult",
+    "ListKeysRequest",
     "LookupKeyPassphraseRequest",
     "OpenForwardRequest",
     "OpenSessionRequest",
@@ -1585,6 +1598,8 @@
     "PluginOperationResult",
     "PortForwardSummary",
     "PresencePrompt",
+    "PublicKeyResult",
+    "ReadPublicKeyRequest",
     "ReleaseTerminalInputRequest",
     "RememberPolicy",
     "RemoteFileEntry",
@@ -1957,6 +1972,17 @@
       "enabled",
       "socks"
     ],
+    "GenerateKeyRequest": [
+      "name",
+      "key_type",
+      "key_size",
+      "comment",
+      "passphrase",
+      "scope"
+    ],
+    "GenerateKeyResult": [
+      "key"
+    ],
     "GetPluginSecretRequest": [
       "plugin_id",
       "key"
@@ -2051,6 +2077,16 @@
       "interaction_id",
       "expired_at"
     ],
+    "KeyList": [
+      "keys"
+    ],
+    "KeySummary": [
+      "key_id",
+      "name",
+      "private_path",
+      "public_path",
+      "public_key_available"
+    ],
     "KnownHostEntrySummary": [
       "entry_id",
       "hostname",
@@ -2078,6 +2114,9 @@
       "entries",
       "truncated",
       "next_cursor"
+    ],
+    "ListKeysRequest": [
+      "scope"
     ],
     "LookupKeyPassphraseRequest": [
       "key_path"
@@ -2140,6 +2179,14 @@
     ],
     "PresencePrompt": [
       "text"
+    ],
+    "PublicKeyResult": [
+      "key_id",
+      "text"
+    ],
+    "ReadPublicKeyRequest": [
+      "key_id",
+      "scope"
     ],
     "ReleaseTerminalInputRequest": [
       "session_id",
@@ -2414,6 +2461,8 @@
       "daemon.events",
       "known_hosts.read",
       "known_hosts.write",
+      "keys.read",
+      "keys.write",
       "plugins",
       "secrets"
     ],
@@ -2511,6 +2560,10 @@
       "internal_error",
       "daemon_unavailable",
       "stale_editor",
+      "key_not_found",
+      "key_already_exists",
+      "key_public_unavailable",
+      "key_generation_failed",
       "transport_closed",
       "transport_timeout",
       "frame_too_large",
@@ -2617,6 +2670,10 @@
       "keyboard_interactive",
       "security_key_presence",
       "confirmation"
+    ],
+    "KeyStoreScope": [
+      "default",
+      "isolated"
     ],
     "RememberPolicy": [
       "do_not_store",

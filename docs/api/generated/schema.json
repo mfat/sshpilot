@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.14",
+  "api_implementation_version": "0.15",
   "client_method_contract": {
     "assign_connection_to_group": {
       "capability": "connections.groups",
@@ -555,6 +555,8 @@
       "daemon.events",
       "known_hosts.read",
       "known_hosts.write",
+      "keys.read",
+      "keys.write",
       "plugins",
       "secrets"
     ],
@@ -652,6 +654,10 @@
       "internal_error",
       "daemon_unavailable",
       "stale_editor",
+      "key_not_found",
+      "key_already_exists",
+      "key_public_unavailable",
+      "key_generation_failed",
       "transport_closed",
       "transport_timeout",
       "frame_too_large",
@@ -758,6 +764,10 @@
       "keyboard_interactive",
       "security_key_presence",
       "confirmation"
+    ],
+    "KeyStoreScope": [
+      "default",
+      "isolated"
     ],
     "RememberPolicy": [
       "do_not_store",
@@ -2671,6 +2681,65 @@
       ],
       "status": "Schema only"
     },
+    "GenerateKeyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "ed25519",
+          "name": "key_type",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "key_size",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "comment",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "passphrase",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "GenerateKeyResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "KeySummary"
+        }
+      ],
+      "status": "Schema only"
+    },
     "GetPluginSecretRequest": {
       "fields": [
         {
@@ -3203,6 +3272,58 @@
       ],
       "status": "Schema only"
     },
+    "KeyList": {
+      "fields": [
+        {
+          "default": null,
+          "name": "keys",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[KeySummary, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "KeySummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "private_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "public_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "public_key_available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
     "KnownHostEntrySummary": {
       "fields": [
         {
@@ -3353,6 +3474,18 @@
         }
       ],
       "status": "Implemented"
+    },
+    "ListKeysRequest": {
+      "fields": [
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
+        }
+      ],
+      "status": "Schema only"
     },
     "LookupKeyPassphraseRequest": {
       "fields": [
@@ -3685,6 +3818,44 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PublicKeyResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ReadPublicKeyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
         }
       ],
       "status": "Schema only"

@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- Declared `keys.read` and `keys.write` capability enum values and published
+  the SSH-key schema: `KeyId`, `KeyStoreScope`, `KeySummary`, `KeyList`,
+  `ListKeysRequest`, `ReadPublicKeyRequest`, `PublicKeyResult`,
+  `GenerateKeyRequest`, and `GenerateKeyResult`. Added `key_not_found`,
+  `key_already_exists`, `key_public_unavailable`, and `key_generation_failed`
+  error codes. Schema only: the daemon does not advertise these capabilities or
+  implement the RPCs yet.
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.15`; `PROTOCOL_VERSION` stays `1.0`.
+
 - Implemented `DaemonClient.list_known_hosts` and
   `DaemonClient.remove_known_host_entries` over the `known_hosts.list` and
   `known_hosts.remove` RPCs. Removal uses an optimistic revision check and

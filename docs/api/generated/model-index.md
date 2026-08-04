@@ -1392,6 +1392,60 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: GenerateKeyRequest -->
+## `GenerateKeyRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Request a daemon-owned ``ssh-keygen`` invocation.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `name` | `str` | Yes | — | No |
+| `key_type` | `str` | No | `ed25519` | No |
+| `key_size` | `int` | No | `0` | No |
+| `comment` | `str` | No | `` | No |
+| `passphrase` | `str` | No | `` | No |
+| `scope` | `KeyStoreScope` | No | `default` | No |
+
+Synthetic representation:
+
+```json
+{
+  "comment": "",
+  "key_size": 0,
+  "key_type": "ed25519",
+  "name": "example",
+  "passphrase": "",
+  "scope": "default"
+}
+```
+
+<!-- api-model: GenerateKeyResult -->
+## `GenerateKeyResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Result of a daemon key generation.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `KeySummary` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key": {}
+}
+```
+
 <!-- api-model: GetPluginSecretRequest -->
 ## `GetPluginSecretRequest`
 
@@ -1810,6 +1864,58 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: KeyList -->
+## `KeyList`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Ordered key metadata from the daemon (duplicate ids rejected).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `keys` | `Tuple[KeySummary, ...]` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "keys": {}
+}
+```
+
+<!-- api-model: KeySummary -->
+## `KeySummary`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Metadata for a daemon-discovered or generated key (never private material).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_id` | `KeyId` | Yes | — | No |
+| `name` | `str` | Yes | — | No |
+| `private_path` | `str` | Yes | — | No |
+| `public_path` | `str` | Yes | — | No |
+| `public_key_available` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key_id": {},
+  "name": "example",
+  "private_path": {},
+  "public_key_available": {},
+  "public_path": {}
+}
+```
+
 <!-- api-model: KnownHostEntrySummary -->
 ## `KnownHostEntrySummary`
 
@@ -1943,6 +2049,28 @@ Synthetic representation:
   "next_cursor": null,
   "path": "/remote/example",
   "truncated": false
+}
+```
+
+<!-- api-model: ListKeysRequest -->
+## `ListKeysRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** List keys from one semantic key-store scope.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `scope` | `KeyStoreScope` | No | `default` | No |
+
+Synthetic representation:
+
+```json
+{
+  "scope": "default"
 }
 ```
 
@@ -2243,6 +2371,54 @@ Synthetic representation:
 ```json
 {
   "text": "example"
+}
+```
+
+<!-- api-model: PublicKeyResult -->
+## `PublicKeyResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Public-key text for one key (never private-key material).
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_id` | `KeyId` | Yes | — | No |
+| `text` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key_id": {},
+  "text": {}
+}
+```
+
+<!-- api-model: ReadPublicKeyRequest -->
+## `ReadPublicKeyRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Read public-key text for one opaque key id.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_id` | `KeyId` | Yes | — | No |
+| `scope` | `KeyStoreScope` | No | `default` | No |
+
+Synthetic representation:
+
+```json
+{
+  "key_id": {},
+  "scope": "default"
 }
 ```
 
