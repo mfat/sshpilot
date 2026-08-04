@@ -89,7 +89,6 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("gtk/interaction.py", "interaction", "validate_response"),
         # -- pure naming helpers ----------------------------------------
         ("connection_manager.py", "connections", "generate_duplicate_nickname"),
-        ("groups.py", "connections.models", "generate_group_slug"),
         ("backup_manager.py", "connections.models", "generate_group_slug"),
         # -- pure key sniffing (no directory discovery / generation) ----
         ("key_utils.py", "keys", "SKIPPED_FILENAMES"),

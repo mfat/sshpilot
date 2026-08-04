@@ -451,6 +451,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.key_manager = None
             return
         self.connection_manager.attach_client(self.client)
+        self.group_manager.attach_client(self.client)
         self.connection_runtime_status.attach_client(self.client)
         self.plugin_connection_services.attach_client(self.client)
         self.key_manager = KeyManager(self.client, self._key_scope)
