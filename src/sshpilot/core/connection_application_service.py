@@ -150,14 +150,22 @@ class ConnectionApplicationService:
             )
         return result
 
-    def prepare_daemon_sftp_launch(self, connection_id: ConnectionId) -> tuple:
+    def prepare_daemon_sftp_launch(
+        self,
+        connection_id: ConnectionId,
+        *,
+        interaction_policy: str = "broker",
+    ) -> tuple:
         self._assert_command_thread()
         result = self._provider_call(
-            self._launch_provider, "prepare_sftp_launch", connection_id
+            self._launch_provider,
+            "prepare_sftp_launch",
+            connection_id,
+            interaction_policy=interaction_policy,
         )
         if result is None:
             raise SshPilotError(
-                ErrorCode.SESSION_STARTUP_FAILED,
+                ErrorCode.SFTP_SERVICE_NOT_READY,
                 "The SFTP session could not be prepared",
                 connection_id=connection_id,
             )
@@ -166,24 +174,30 @@ class ConnectionApplicationService:
     def prepare_daemon_forward_launch(
         self,
         connection_id: ConnectionId,
-        port: int,
         *,
-        remote: bool = False,
-        bind_address: str = "localhost",
+        forward_type: str = "local",
+        bind_host: str = "localhost",
+        bind_port: int = 0,
+        destination_host: Optional[str] = None,
+        destination_port: Optional[int] = None,
+        interaction_policy: str = "broker",
     ) -> tuple:
         self._assert_command_thread()
         result = self._provider_call(
             self._launch_provider,
             "prepare_forward_launch",
             connection_id,
-            port,
-            remote=remote,
-            bind_address=bind_address,
+            forward_type=forward_type,
+            bind_host=bind_host,
+            bind_port=bind_port,
+            destination_host=destination_host,
+            destination_port=destination_port,
+            interaction_policy=interaction_policy,
         )
         if result is None:
             raise SshPilotError(
-                ErrorCode.SESSION_STARTUP_FAILED,
-                "The forward session could not be prepared",
+                ErrorCode.FORWARD_STARTUP_FAILED,
+                "The forward could not be prepared",
                 connection_id=connection_id,
             )
         return result
@@ -202,44 +216,64 @@ class ConnectionApplicationService:
         self,
         connection_id: ConnectionId,
         password: str,
-        username: Optional[str] = None,
+        *,
+        previous_hostname: str = "",
+        previous_host: str = "",
+        previous_username: str = "",
     ) -> bool:
         result = self._provider_call(
             self._secret_provider,
             "store_connection_password",
             connection_id,
             password,
-            username=username,
+            previous_hostname=previous_hostname,
+            previous_host=previous_host,
+            previous_username=previous_username,
         )
         return bool(result)
 
     def delete_daemon_password(
         self,
         connection_id: ConnectionId,
-        username: Optional[str] = None,
+        *,
+        previous_hostname: str = "",
+        previous_host: str = "",
+        previous_username: str = "",
     ) -> bool:
         result = self._provider_call(
             self._secret_provider,
             "delete_connection_password",
             connection_id,
-            username=username,
+            previous_hostname=previous_hostname,
+            previous_host=previous_host,
+            previous_username=previous_username,
         )
         return bool(result)
 
     def store_connection_password_rpc(
-        self,
-        connection_id: ConnectionId,
-        password: str,
-        username: Optional[str] = None,
+        self, request: Any
     ) -> bool:
-        return self.store_daemon_password(connection_id, password, username=username)
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.store_daemon_password(
+            request.connection_id,
+            request.password,
+            previous_hostname=request.previous_hostname,
+            previous_host=request.previous_host,
+            previous_username=request.previous_username,
+        )
 
     def delete_connection_password_rpc(
-        self,
-        connection_id: ConnectionId,
-        username: Optional[str] = None,
+        self, request: Any
     ) -> bool:
-        return self.delete_daemon_password(connection_id, username=username)
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.delete_daemon_password(
+            request.connection_id,
+            previous_hostname=request.previous_hostname,
+            previous_host=request.previous_host,
+            previous_username=request.previous_username,
+        )
 
     def lookup_daemon_passphrase(self, key_path: str) -> Optional[str]:
         return self._provider_call(
@@ -263,35 +297,51 @@ class ConnectionApplicationService:
             )
         )
 
-    def store_key_passphrase_rpc(
-        self, key_path: str, passphrase: str
-    ) -> bool:
-        return self.store_daemon_passphrase(key_path, passphrase)
+    def store_key_passphrase_rpc(self, request: Any) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.store_daemon_passphrase(request.key_path, request.passphrase)
+
+    def delete_key_passphrase_rpc(self, request: Any) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.delete_daemon_passphrase(request.key_path)
+
+    def lookup_key_passphrase_rpc(self, request: Any) -> Optional[str]:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return self.lookup_daemon_passphrase(request.key_path)
 
     def store_plugin_secret_rpc(self, request) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         return bool(
             self._provider_call(
-                self._secret_provider, "store_plugin_secret", request
+                self._secret_provider,
+                "store_plugin_secret",
+                request.plugin_id,
+                request.key,
+                request.value,
             )
         )
 
     def get_plugin_secret_rpc(self, request):
+        self._assert_command_thread()
         return self._provider_call(
-            self._secret_provider, "get_plugin_secret", request
+            self._secret_provider, "get_plugin_secret", request.plugin_id, request.key
         )
 
     def delete_plugin_secret_rpc(self, request) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         return bool(
             self._provider_call(
-                self._secret_provider, "delete_plugin_secret", request
+                self._secret_provider,
+                "delete_plugin_secret",
+                request.plugin_id,
+                request.key,
             )
         )
-
-    def delete_key_passphrase_rpc(self, key_path: str) -> bool:
-        return self.delete_daemon_passphrase(key_path)
-
-    def lookup_key_passphrase_rpc(self, key_path: str) -> Optional[str]:
-        return self.lookup_daemon_passphrase(key_path)
 
     # ------------------------------------------------------------------
     # Metadata / group operations
