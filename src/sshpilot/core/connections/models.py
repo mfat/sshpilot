@@ -43,6 +43,11 @@ class ConnectionRecord:
     group_id: Optional[str] = None
     order: int = 0
     data: Dict[str, Any] = field(default_factory=dict)
+    # Persistence metadata owned by the daemon: the source file the record
+    # was loaded from and the per-connection mutation generation used for
+    # stale-editor detection. Both are internal; clients never supply them.
+    source: str = ""
+    generation: int = 0
 
     def normalized_nickname(self) -> str:
         return (self.nickname or "").strip()
@@ -77,6 +82,10 @@ class ConnectionRecord:
             port = int(raw.get("port") or 22)
         except (TypeError, ValueError):
             port = 22
+        try:
+            generation = int(raw.get("generation") or 0)
+        except (TypeError, ValueError):
+            generation = 0
         return cls(
             id=cid,
             nickname=nick or cid,
@@ -87,6 +96,8 @@ class ConnectionRecord:
             group_id=(str(raw["group_id"]) if raw.get("group_id") else None),
             order=int(raw.get("order") or 0),
             data=raw,
+            source=str(raw.get("source") or "").strip(),
+            generation=generation,
         )
 
     def with_updates(self, updates: Mapping[str, Any]) -> "ConnectionRecord":
