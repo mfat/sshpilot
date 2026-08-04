@@ -162,26 +162,26 @@ def test_missing_legacy_config_yields_defaults(tmp_path):
     assert state.metadata == {}
 
 
-def test_migration_drops_secret_like_metadata_keys(tmp_path):
+def test_migration_rejects_secret_like_metadata_keys(tmp_path):
     config = _legacy_config(
         tmp_path,
         connections_meta={
             "switch": {"api_password": "hunter2", "tags": ["network"]},
         },
     )
-    state = read_legacy_connection_state(config)
-    assert state.metadata == {"switch": {"tags": ["network"]}}
+    with pytest.raises(ValueError):
+        read_legacy_connection_state(config)
 
 
-def test_migration_drops_unusable_metadata_entries(tmp_path):
+def test_migration_rejects_unusable_metadata_entries(tmp_path):
     config = _legacy_config(
         tmp_path,
         connections_meta={
             "switch": {"tags": [1, 2, 3], "bad": {"nested": float("nan")}},
         },
     )
-    state = read_legacy_connection_state(config)
-    assert state.metadata == {}
+    with pytest.raises(ValueError):
+        read_legacy_connection_state(config)
 
 
 # ---------------------------------------------------------------------------

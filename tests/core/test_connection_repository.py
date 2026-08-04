@@ -54,6 +54,133 @@ def test_initial_default_load_is_empty(tmp_path):
     assert snap.root_connection_ids == ()
 
 
+def test_legacy_migration_reconciles_deleted_connections_and_preserves_order(tmp_path):
+    repo, root, state, legacy = _repo(
+        tmp_path,
+        "Host web\n    HostName web.example\n\n"
+        "Host db\n    HostName db.example\n",
+    )
+    del repo
+    state.unlink()
+    legacy.write_text(
+        json.dumps(
+            {
+                "connections": {"non_ssh": [{"nickname": "serial", "protocol": "serial"}]},
+                "connection_groups": {
+                    "groups": {
+                        "prod": {
+                            "id": "prod",
+                            "name": "Production",
+                            "order": 0,
+                            "connections": ["deleted", "db", "db"],
+                            "parent_id": "missing",
+                        }
+                    },
+                    "connections": {"deleted": "prod", "web": "prod"},
+                    "root_connections": ["deleted", "web", "web"],
+                },
+                "connections_meta": {
+                    "deleted": {"pinned": True},
+                    "db": {"tags": ["database"]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = legacy.read_bytes()
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=legacy,
+        isolated=False,
+    )
+    snapshot = repo.snapshot()
+    assert [item.id for item in snapshot.connections] == ["web", "db", "serial"]
+    assert snapshot.groups[0].parent_id is None
+    assert snapshot.groups[0].connection_ids == ("db", "web")
+    assert snapshot.root_connection_ids == ("serial",)
+    assert [item.connection_id for item in snapshot.metadata] == ["db"]
+    assert state.exists()
+    assert legacy.read_bytes() == before
+    assert repo._legacy_migration_result.dangling_memberships_removed == 1
+    assert repo._legacy_migration_result.dangling_root_entries_removed == 1
+    assert repo._legacy_migration_result.dangling_metadata_entries_removed == 1
+    assert repo._legacy_migration_result.dangling_parent_links_removed == 1
+
+
+def test_legacy_migration_failure_does_not_create_canonical_state(tmp_path):
+    repo, root, state, legacy = _repo(
+        tmp_path, "Host web\n    HostName web.example\n"
+    )
+    del repo
+    state.unlink()
+    legacy.write_text(
+        json.dumps(
+            {
+                "connections_meta": {"deleted": {"password": "secret"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = legacy.read_bytes()
+    with pytest.raises(ValueError):
+        ConnectionRepository(
+            ssh_store=SshConfigStore(root),
+            state_path=state,
+            legacy_config_path=legacy,
+            isolated=False,
+        )
+    assert not state.exists()
+    assert legacy.read_bytes() == before
+
+
+def test_canonical_unknown_metadata_remains_strict(tmp_path):
+    _, root, state, _ = _repo(tmp_path, "Host web\n    HostName web.example\n")
+    state.unlink()
+    _write_state(
+        state,
+        {
+            "version": 1,
+            "non_ssh_connections": [],
+            "groups": {"groups": {}, "root_connections": ["web"]},
+            "metadata": {"deleted": {"pinned": True}},
+        },
+    )
+    with pytest.raises(ValueError):
+        ConnectionRepository(
+            ssh_store=SshConfigStore(root),
+            state_path=state,
+            legacy_config_path=tmp_path / "config.json",
+            isolated=False,
+        )
+
+
+def test_legacy_parent_cycle_aborts_without_canonical_file(tmp_path):
+    _, root, state, legacy = _repo(tmp_path, "Host web\n    HostName web.example\n")
+    state.unlink()
+    legacy.write_text(
+        json.dumps(
+            {
+                "connection_groups": {
+                    "groups": {
+                        "a": {"name": "A", "parent_id": "b", "connections": []},
+                        "b": {"name": "B", "parent_id": "a", "connections": []},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        ConnectionRepository(
+            ssh_store=SshConfigStore(root),
+            state_path=state,
+            legacy_config_path=legacy,
+            isolated=False,
+        )
+    assert not state.exists()
+
+
 def test_loads_ssh_connections_in_order(tmp_path):
     repo, root, state, _ = _repo(
         tmp_path,
@@ -190,7 +317,7 @@ def test_malformed_state_file_is_an_error(tmp_path):
         _repo(tmp_path)
 
 
-def test_orphan_metadata_dropped_at_load(tmp_path):
+def test_orphan_metadata_rejected_in_canonical_state(tmp_path):
     state = tmp_path / "connections.json"
     _write_state(
         state,
@@ -201,8 +328,8 @@ def test_orphan_metadata_dropped_at_load(tmp_path):
             "metadata": {"ghost": {"pinned": True}},
         },
     )
-    repo, root, _, _ = _repo(tmp_path)
-    assert repo.snapshot().metadata == ()
+    with pytest.raises(ValueError):
+        _repo(tmp_path)
 
 
 # ---------------------------------------------------------------------------

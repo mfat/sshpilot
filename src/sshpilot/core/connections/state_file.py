@@ -79,23 +79,10 @@ def _looks_like_secret_key(key: str) -> bool:
 
 
 def _sanitize_legacy_metadata(meta: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
-    """Return safe metadata for migration, or ``None`` when unusable.
-
-    Legacy metadata may contain arbitrary plugin keys. Secret-like keys are
-    dropped rather than persisted, and entries that still fail the safe
-    metadata validation are skipped entirely so migration never stores secrets.
-    """
+    """Validate legacy metadata without silently removing unsafe content."""
     if not isinstance(meta, Mapping):
         return None
-    cleaned = {
-        str(key): value
-        for key, value in meta.items()
-        if type(key) is str and not _looks_like_secret_key(str(key))
-    }
-    try:
-        return validate_safe_metadata(cleaned)
-    except (TypeError, ValueError):
-        return None
+    return validate_safe_metadata(meta)
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +417,13 @@ def read_legacy_connection_state(config_path: Path) -> ConnectionFileState:
             membership = {}
         root_raw = groups_blob.get("root_connections")
         if isinstance(root_raw, list):
-            root = [str(item) for item in root_raw if str(item)]
+            seen_root = set()
+            root = []
+            for item in root_raw:
+                value = str(item)
+                if value and value not in seen_root:
+                    seen_root.add(value)
+                    root.append(value)
         if isinstance(raw_groups, dict):
             for gid, info in raw_groups.items():
                 if not isinstance(info, dict):

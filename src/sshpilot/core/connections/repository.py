@@ -20,6 +20,7 @@ every reload build a fully validated candidate before publishing.
 from __future__ import annotations
 
 import copy
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,8 @@ from .state_file import (
     write_connection_state,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class RepositoryChange:
@@ -57,6 +60,17 @@ class RepositoryChange:
 
     before: ConnectionStoreSnapshot
     after: ConnectionStoreSnapshot
+
+
+@dataclass(frozen=True)
+class LegacyMigrationResult:
+    """Count-only diagnostics from one legacy connection-state migration."""
+
+    groups_migrated: int = 0
+    dangling_memberships_removed: int = 0
+    dangling_root_entries_removed: int = 0
+    dangling_metadata_entries_removed: int = 0
+    dangling_parent_links_removed: int = 0
 
 
 ChangeListener = Callable[[RepositoryChange], None]
@@ -183,6 +197,7 @@ class ConnectionRepository:
         self._non_ssh_generations: Dict[str, int] = {}
         self._generation = 0
         self._migrated_legacy = False
+        self._legacy_migration_result = LegacyMigrationResult()
         self._initial_load()
 
     # ------------------------------------------------------------------
@@ -267,7 +282,101 @@ class ConnectionRepository:
         """
         ssh_config = self._ssh_store.load()
         file_state, migrated = self._read_state()
+        if migrated:
+            file_state = self._reconcile_legacy_state(ssh_config, file_state)
         self._publish_state_locked(ssh_config, file_state, migrated=migrated)
+
+    def _reconcile_legacy_state(
+        self,
+        ssh_config: LoadedSshConfiguration,
+        file_state: ConnectionFileState,
+    ) -> ConnectionFileState:
+        """Drop obsolete legacy references without weakening canonical state."""
+        records = list(ssh_config.connections)
+        for raw in file_state.non_ssh_connections:
+            record = ConnectionRecord.from_dict(raw)
+            if record.id and record.id not in {item.id for item in records}:
+                records.append(record)
+        known_ids = {record.id for record in records}
+        group_ids = {group.id for group in file_state.groups}
+        grouped_ids = set()
+        dangling_memberships = 0
+        reconciled_groups = []
+        dangling_parents = 0
+        for group in file_state.groups:
+            members = []
+            seen = set()
+            for connection_id in group.connection_ids:
+                if connection_id not in known_ids:
+                    dangling_memberships += 1
+                    continue
+                if connection_id in seen:
+                    continue
+                seen.add(connection_id)
+                members.append(connection_id)
+                grouped_ids.add(connection_id)
+            parent_id = group.parent_id
+            if parent_id is not None and parent_id not in group_ids:
+                parent_id = None
+                dangling_parents += 1
+            reconciled_groups.append(
+                GroupFileState(
+                    id=group.id,
+                    name=group.name,
+                    parent_id=parent_id,
+                    order=group.order,
+                    color=group.color,
+                    connection_ids=tuple(members),
+                )
+            )
+
+        roots = []
+        seen_roots = set()
+        dangling_roots = 0
+        for connection_id in file_state.root_connections:
+            if connection_id not in known_ids:
+                dangling_roots += 1
+                continue
+            if connection_id in grouped_ids or connection_id in seen_roots:
+                continue
+            seen_roots.add(connection_id)
+            roots.append(connection_id)
+        for record in records:
+            if record.id not in grouped_ids and record.id not in seen_roots:
+                roots.append(record.id)
+                seen_roots.add(record.id)
+
+        metadata = {}
+        dangling_metadata = 0
+        for connection_id, values in file_state.metadata.items():
+            if connection_id not in known_ids:
+                dangling_metadata += 1
+                continue
+            metadata[connection_id] = values
+
+        self._legacy_migration_result = LegacyMigrationResult(
+            groups_migrated=len(reconciled_groups),
+            dangling_memberships_removed=dangling_memberships,
+            dangling_root_entries_removed=dangling_roots,
+            dangling_metadata_entries_removed=dangling_metadata,
+            dangling_parent_links_removed=dangling_parents,
+        )
+        logger.info(
+            "Migrated legacy connection state groups=%d dangling_memberships=%d "
+            "dangling_roots=%d dangling_metadata=%d dangling_parents=%d",
+            len(reconciled_groups),
+            dangling_memberships,
+            dangling_roots,
+            dangling_metadata,
+            dangling_parents,
+        )
+        return ConnectionFileState(
+            version=file_state.version,
+            non_ssh_connections=file_state.non_ssh_connections,
+            groups=tuple(reconciled_groups),
+            root_connections=tuple(roots),
+            metadata=metadata,
+        )
 
     def _publish_state_locked(
         self,
@@ -305,6 +414,8 @@ class ConnectionRepository:
         for cid, values in file_state.metadata.items():
             if cid in existing_ids:
                 metadata[cid] = validate_safe_metadata(values)
+            elif not migrated:
+                raise ValueError("canonical metadata refers to an unknown connection")
 
         non_ssh_generations: Dict[str, int] = {}
         ssh_generations = {
