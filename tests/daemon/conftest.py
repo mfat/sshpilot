@@ -3,6 +3,11 @@ from pathlib import Path
 import pytest
 
 from sshpilot.core.connection_application_service import ConnectionApplicationService
+from sshpilot.core.connections.models import ConnectionRecord
+from sshpilot.core.errors import CoreError, ErrorCode
+from sshpilot.api.models.connection_store import ConnectionStoreSnapshot
+from sshpilot.api.models.connections import ConnectionHealth, ConnectionSummary
+from sshpilot.api.models.common import ConnectionId
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.session_runtime import SessionRuntime
 
@@ -41,6 +46,7 @@ class TestConnection:
         self.username = username
         self.port = 22
         self.protocol = "ssh"
+        self.generation = 0
         self.aliases = []
         self.auth_method = 0
         self.keyfile = ""
@@ -74,6 +80,65 @@ class TestConnectionManager:
         self.plugin_secrets = {}
         self._handlers = {}
         self._next_handler = 1
+        self._listeners = []
+        self._generation = 0
+
+    def _snapshot(self):
+        return ConnectionStoreSnapshot(
+            generation=self._generation,
+            connections=tuple(
+                ConnectionSummary(
+                    id=ConnectionId(connection.id),
+                    nickname=connection.nickname,
+                    host=connection.host,
+                    hostname=connection.hostname,
+                    username=connection.username,
+                    port=connection.port,
+                    protocol=connection.protocol,
+                    health=ConnectionHealth.UNKNOWN,
+                )
+                for connection in self.connections
+            ),
+            groups=(),
+            root_connection_ids=tuple(
+                ConnectionId(connection.id) for connection in self.connections
+            ),
+            metadata=(),
+        )
+
+    def _changed(self, before):
+        self._generation += 1
+        after = self._snapshot()
+        for listener in tuple(self._listeners):
+            listener(type("RepositoryChange", (), {"before": before, "after": after})())
+
+    def add_listener(self, callback):
+        self._listeners.append(callback)
+
+    def remove_listener(self, callback):
+        if callback in self._listeners:
+            self._listeners.remove(callback)
+
+    def snapshot(self):
+        return self._snapshot()
+
+    def list_records(self):
+        return tuple(
+            ConnectionRecord.from_dict(connection.data, connection_id=connection.id)
+            for connection in self.connections
+        )
+
+    def get_record(self, connection_id):
+        return self.find_connection_by_nickname(str(connection_id))
+
+    def get_editor_record(self, connection_id):
+        return self.get_record(connection_id)
+
+    def discover_paths(self):
+        return frozenset()
+
+    def reload(self):
+        return self._snapshot()
 
     def get_connections(self):
         return list(self.connections)
@@ -103,6 +168,7 @@ class TestConnectionManager:
         )
 
     def create_connection(self, data):
+        before = self._snapshot()
         connection = TestConnection(
             nickname=data["nickname"],
             hostname=data["hostname"],
@@ -112,18 +178,69 @@ class TestConnectionManager:
         connection.update_data(data)
         self.connections.append(connection)
         self.emit("connection-added", connection)
+        self._changed(before)
         return connection
 
-    def update_connection(self, connection, data, *, emit_signal=True):
+    def update_connection(
+        self, connection, data, *, expected_generation=None, emit_signal=True
+    ):
+        if isinstance(connection, str):
+            connection = self.get_record(connection)
+        if connection is None:
+            raise KeyError("connection")
+        if (
+            expected_generation is not None
+            and expected_generation != connection.generation
+        ):
+            raise CoreError(
+                ErrorCode.STALE_CONNECTION_STATE,
+                "The connection has been modified since it was last read",
+            )
+        before = self._snapshot()
         connection.update_data(data)
+        connection.generation += 1
         if emit_signal:
             self.emit("connection-updated", connection)
-        return True
+        self._changed(before)
+        return connection
+
+    def duplicate_connection(self, connection_id):
+        source = self.get_record(connection_id)
+        if source is None:
+            raise KeyError(connection_id)
+        data = dict(source.data)
+        data["nickname"] = f"{source.nickname} copy"
+        return self.create_connection(data)
 
     def remove_connection(self, connection):
+        before = self._snapshot()
         self.connections.remove(connection)
         self.emit("connection-removed", connection)
+        self._changed(before)
         return True
+
+    def delete_connection(self, connection_id):
+        connection = self.get_record(connection_id)
+        if connection is None:
+            raise KeyError(connection_id)
+        self.remove_connection(connection)
+
+    def split_connection(self, connection_id, original_host_token, data, *, expected_generation=None):
+        return self.create_connection(data)
+
+    def lookup_connection_password(self, connection_id):
+        getter = getattr(self, "get_connection_password", None)
+        if callable(getter):
+            connection = self.get_record(connection_id)
+            return getter(connection) if connection is not None else None
+        return self.plugin_secrets.get(("connection", str(connection_id)))
+
+    def store_connection_password(self, connection_id, password, **_kwargs):
+        self.plugin_secrets[("connection", str(connection_id))] = password
+        return True
+
+    def delete_connection_password(self, connection_id, **_kwargs):
+        return self.plugin_secrets.pop(("connection", str(connection_id)), None) is not None
 
     def store_plugin_secret(self, plugin_id, key, value):
         self.plugin_secrets[(plugin_id, key)] = value
@@ -162,7 +279,11 @@ def daemon_factory(tmp_path):
         path = Path(socket_path or tmp_path / f"daemon-{len(servers)}" / "sshpilotd.sock")
         path.parent.mkdir(mode=0o700, exist_ok=True)
         server = DaemonServer(
-            lambda: ConnectionApplicationService(manager, client_name="sshpilotd"),
+            lambda: ConnectionApplicationService(
+                manager,
+                secret_provider=manager,
+                client_name="sshpilotd",
+            ),
             socket_path=path,
             client_event_queue_limit=client_event_queue_limit,
             max_client_outbound_bytes=max_client_outbound_bytes,

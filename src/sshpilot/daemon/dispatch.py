@@ -55,6 +55,13 @@ from sshpilot.api.transport.codec import (
     connection_details_to_wire,
     connection_editor_details_to_wire,
     connection_mutation_result_to_wire,
+    connection_store_snapshot_to_wire,
+    set_group_color_request_from_wire,
+    place_group_request_from_wire,
+    copy_connection_to_group_request_from_wire,
+    remove_connection_from_group_request_from_wire,
+    reorder_connection_request_from_wire,
+    rename_tag_request_from_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
     create_group_request_from_wire,
@@ -114,6 +121,7 @@ logger = logging.getLogger(__name__)
 DAEMON_METHOD_CAPABILITIES = {
     "connections.get": Capability.CONNECTIONS_READ,
     "connections.list": Capability.CONNECTIONS_READ,
+    "connections.snapshot": Capability.CONNECTIONS_READ,
     "connections.create": Capability.CONNECTIONS_WRITE,
     "connections.duplicate": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
@@ -128,10 +136,20 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.store_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.lookup_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.update_metadata": Capability.CONNECTIONS_METADATA_WRITE,
+    "connections.metadata.update": Capability.CONNECTIONS_METADATA_WRITE,
+    "connections.metadata.rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.assign_to_group": Capability.CONNECTIONS_GROUPS,
     "connections.create_group": Capability.CONNECTIONS_GROUPS,
     "connections.delete_group": Capability.CONNECTIONS_GROUPS,
     "connections.rename_group": Capability.CONNECTIONS_GROUPS,
+    "groups.create": Capability.CONNECTIONS_GROUPS,
+    "groups.delete": Capability.CONNECTIONS_GROUPS,
+    "groups.rename": Capability.CONNECTIONS_GROUPS,
+    "groups.set_color": Capability.CONNECTIONS_GROUPS,
+    "groups.place": Capability.CONNECTIONS_GROUPS,
+    "groups.copy_connection": Capability.CONNECTIONS_GROUPS,
+    "groups.remove_connection": Capability.CONNECTIONS_GROUPS,
+    "groups.reorder_connection": Capability.CONNECTIONS_GROUPS,
     "connections.split": Capability.CONNECTIONS_SPLIT,
     "daemon.status": Capability.DAEMON_STATUS,
     "daemon.diagnostics": Capability.DAEMON_STATUS,
@@ -195,6 +213,18 @@ DRAIN_REJECTED_METHODS = frozenset(
         "connections.duplicate",
         "connections.update",
         "connections.delete",
+        "connections.split",
+        "groups.create",
+        "groups.delete",
+        "groups.rename",
+        "groups.set_color",
+        "groups.place",
+        "groups.copy_connection",
+        "groups.remove_connection",
+        "groups.reorder_connection",
+        "connections.metadata.update",
+        "connections.metadata.rename_tag",
+        "connections.update_metadata",
         "sessions.open",
         "sessions.attach",
         "sftp.open",
@@ -218,6 +248,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.duplicate",
         "connections.update",
         "connections.delete",
+        "connections.split",
         "connections.get_editor",
         "connections.store_password",
         "connections.lookup_password",
@@ -228,6 +259,19 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.store_passphrase",
         "connections.update_metadata",
         "connections.assign_to_group",
+        "connections.create_group",
+        "connections.delete_group",
+        "connections.rename_group",
+        "groups.create",
+        "groups.delete",
+        "groups.rename",
+        "groups.set_color",
+        "groups.place",
+        "groups.copy_connection",
+        "groups.remove_connection",
+        "groups.reorder_connection",
+        "connections.metadata.update",
+        "connections.metadata.rename_tag",
         "sessions.open",
         "sessions.close",
         "sftp.open",
@@ -360,6 +404,7 @@ class RequestDispatcher:
             "daemon.stop": self._handle_daemon_stop,
             "daemon.restart": self._handle_daemon_restart,
             "connections.list": self._handle_list_connections,
+            "connections.snapshot": self._handle_connection_snapshot,
             "connections.get": self._handle_get_connection,
             "connections.create": self._handle_create_connection,
             "connections.duplicate": self._handle_duplicate_connection,
@@ -376,10 +421,20 @@ class RequestDispatcher:
             "connections.delete_passphrase": self._handle_delete_key_passphrase,
             "connections.lookup_passphrase": self._handle_lookup_key_passphrase,
             "connections.update_metadata": self._handle_update_connection_metadata,
+            "connections.metadata.update": self._handle_update_connection_metadata,
+            "connections.metadata.rename_tag": self._handle_rename_tag,
             "connections.assign_to_group": self._handle_assign_to_group,
             "connections.create_group": self._handle_create_group,
             "connections.delete_group": self._handle_delete_group,
             "connections.rename_group": self._handle_rename_group,
+            "groups.create": self._handle_create_group,
+            "groups.delete": self._handle_delete_group,
+            "groups.rename": self._handle_rename_group,
+            "groups.set_color": self._handle_set_group_color,
+            "groups.place": self._handle_place_group,
+            "groups.copy_connection": self._handle_copy_connection_to_group,
+            "groups.remove_connection": self._handle_remove_connection_from_group,
+            "groups.reorder_connection": self._handle_reorder_connection,
             "connections.split": self._handle_split_connection,
             "interactions.list": self._handle_list_interactions,
             "interactions.get": self._handle_get_interaction,
@@ -659,6 +714,16 @@ class RequestDispatcher:
             for item in self._connections.list_connections()
         ]
 
+    def _handle_connection_snapshot(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        self._require_empty_params(request)
+        return connection_store_snapshot_to_wire(
+            self._connections.snapshot_connection_store()
+        )
+
     def _handle_get_connection(
         self,
         request: RequestEnvelope,
@@ -934,6 +999,24 @@ class RequestDispatcher:
             connection_id=typed_request.connection_id,
         )
 
+    def _handle_rename_tag(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = rename_tag_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: int(
+                bool(
+                    self._connections.rename_tag_rpc(
+                        typed_request.old_tag, typed_request.new_tag
+                    )
+                )
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
     def _handle_assign_to_group(
         self,
         request: RequestEnvelope,
@@ -954,40 +1037,124 @@ class RequestDispatcher:
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> Optional[str]:
+    ) -> DeferredResult:
         typed_request = create_group_request_from_wire(request.params)
-        return self._connections.create_group_rpc(
-            typed_request.name,
-            parent_id=typed_request.parent_id,
-            color=typed_request.color,
+        return DeferredResult(
+            operation=lambda: self._connections.create_group_rpc(
+                typed_request.name,
+                parent_id=typed_request.parent_id,
+                color=typed_request.color,
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _handle_delete_group(
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> bool:
+    ) -> DeferredResult:
         typed_request = delete_group_request_from_wire(request.params)
-        return self._connections.delete_group_rpc(typed_request.group_id)
+        return DeferredResult(
+            operation=lambda: self._connections.delete_group_rpc(typed_request.group_id),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
 
     def _handle_rename_group(
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> bool:
+    ) -> DeferredResult:
         typed_request = rename_group_request_from_wire(request.params)
-        return self._connections.rename_group_rpc(
-            typed_request.group_id, typed_request.new_name
+        return DeferredResult(
+            operation=lambda: self._connections.rename_group_rpc(
+                typed_request.group_id, typed_request.new_name
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_set_group_color(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        typed_request = set_group_color_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.set_group_color_rpc(
+                typed_request.group_id, typed_request.color
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_place_group(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        typed_request = place_group_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.place_group_rpc(
+                typed_request.group_id, typed_request.parent_id, typed_request.index
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_copy_connection_to_group(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        typed_request = copy_connection_to_group_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.copy_connection_to_group_rpc(
+                typed_request.connection_id, typed_request.group_id
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
+
+    def _handle_remove_connection_from_group(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        typed_request = remove_connection_from_group_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.remove_connection_from_group_rpc(
+                typed_request.connection_id, typed_request.group_id
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
+
+    def _handle_reorder_connection(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        typed_request = reorder_connection_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.reorder_connection_rpc(
+                typed_request.connection_id,
+                typed_request.target_connection_id,
+                typed_request.group_id,
+                typed_request.position,
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
         )
 
     def _handle_split_connection(
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> dict:
+    ) -> DeferredResult:
         typed_request = split_connection_request_from_wire(request.params)
-        result = self._connections.split_connection(typed_request)
-        return connection_mutation_result_to_wire(result)
+        return DeferredResult(
+            operation=lambda: connection_mutation_result_to_wire(
+                self._connections.split_connection(typed_request)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
 
     def _handle_list_sessions(
         self,
