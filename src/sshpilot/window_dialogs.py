@@ -2207,6 +2207,12 @@ class WindowConfigDialogsMixin:
         ``on_confirm(name, color)`` runs on the confirm button; return True to
         close the dialog, False to keep it open (e.g. validation failed).
         ``color`` is an RGBA string, or None when unset/cleared.
+
+        The *on_confirm* callback may also accept a ``set_busy`` keyword
+        argument ``(set_busy: Callable[[bool], None])``.  When provided the
+        dialog disables all controls while the callback is running so that
+        the user cannot re-submit; the callback re-enables them by calling
+        ``set_busy(False)`` on failure.
         """
         dialog = Adw.Dialog()
         dialog.set_title(title)
@@ -2303,6 +2309,13 @@ class WindowConfigDialogsMixin:
             color_row.append(color_controls)
             content_area.append(color_row)
 
+        def _set_controls_enabled(enabled: bool) -> None:
+            entry.set_sensitive(enabled)
+            confirm_button.set_sensitive(enabled)
+            cancel_button.set_sensitive(enabled)
+            if color_button is not None:
+                color_button.set_sensitive(enabled)
+
         def on_confirm_clicked(_button):
             name = entry.get_text().strip()
             color = None
@@ -2310,7 +2323,11 @@ class WindowConfigDialogsMixin:
                 rgba_value = color_button.get_rgba()
                 if color_selected and rgba_value.alpha > 0:
                     color = rgba_value.to_string()
-            if on_confirm(name, color):
+            try:
+                result = on_confirm(name, color, set_busy=lambda busy: _set_controls_enabled(not busy))
+            except TypeError:
+                result = on_confirm(name, color)
+            if result is True:
                 dialog.close()
 
         cancel_button.connect('clicked', lambda _b: dialog.close())
@@ -2327,15 +2344,47 @@ class WindowConfigDialogsMixin:
         GLib.idle_add(focus_entry)
 
     def on_create_group_action(self, action, param=None):
-        """Handle create group action"""
+        """Handle create group action."""
         try:
-            def create(name, color):
+            def create(name, color, set_busy=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                self.group_manager.create_group(name, color=color)
-                self.rebuild_connection_list()
-                return True
+                controller = getattr(self.group_manager, 'controller', None)
+                if controller is None:
+                    # Fallback: synchronous local call.
+                    self.group_manager.create_group(name, color=color)
+                    self.rebuild_connection_list()
+                    return True
+                if set_busy is not None:
+                    set_busy(True)
+                from sshpilot.api.models.connection_store import (
+                    CreateGroupRequest,
+                )
+                def _do_create():
+                    return controller.client.create_group(
+                        name, parent_id="", color=color or "",
+                    )
+                def _on_created(new_group_id):
+                    self.rebuild_connection_list()
+                    if set_busy is not None:
+                        set_busy(False)
+                    return True
+                def _on_error(error):
+                    if set_busy is not None:
+                        set_busy(False)
+                    self._simple_dialog(
+                        _("Error"),
+                        _("Failed to create group: {error}").format(
+                            error=str(error),
+                        ),
+                    )
+                controller.run(
+                    _do_create,
+                    on_success=_on_created,
+                    on_error=_on_error,
+                )
+                return False  # keep dialog open until async completes
 
             self._group_form_dialog(
                 title=_("Create New Group"),
@@ -2368,15 +2417,54 @@ class WindowConfigDialogsMixin:
                 logger.debug(f"Group info not found for ID: {group_id}")
                 return
 
-            def save(name, color):
+            def save(name, color, set_busy=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                self.group_manager.rename_group(group_id, name)
+                controller = getattr(self.group_manager, 'controller', None)
+                if controller is None:
+                    self.group_manager.rename_group(group_id, name)
+                    if color is not None:
+                        self.group_manager.set_group_color(group_id, color)
+                    self.rebuild_connection_list()
+                    return True
+                if set_busy is not None:
+                    set_busy(True)
+                from sshpilot.api.models.connection_store import (
+                    GroupId,
+                    SetGroupColorRequest,
+                )
+                steps = [
+                    lambda _prev: controller.client.rename_group(group_id, name),
+                ]
                 if color is not None:
-                    self.group_manager.set_group_color(group_id, color)
-                self.rebuild_connection_list()
-                return True
+                    steps.append(
+                        lambda _prev: controller.client.set_group_color(
+                            SetGroupColorRequest(
+                                group_id=GroupId(group_id),
+                                color=color or "",
+                            )
+                        )
+                    )
+                def _on_done(_result):
+                    self.rebuild_connection_list()
+                    if set_busy is not None:
+                        set_busy(False)
+                def _on_error(error):
+                    if set_busy is not None:
+                        set_busy(False)
+                    self._simple_dialog(
+                        _("Error"),
+                        _("Failed to update group: {error}").format(
+                            error=str(error),
+                        ),
+                    )
+                controller.run_sequence(
+                    steps,
+                    on_success=_on_done,
+                    on_error=_on_error,
+                )
+                return False  # keep dialog open until async completes
 
             self._group_form_dialog(
                 title=_("Edit Group"),
@@ -2400,27 +2488,67 @@ class WindowConfigDialogsMixin:
             old_name = str(tag_row.group_info.get('name', ''))
             old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
 
-            def save(name, _color):
+            def save(name, _color, set_busy=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a tag name."))
                     return False
                 if ',' in name:
-                    # Tags are entered comma-separated in the connection
-                    # dialog, so a comma in a tag name could not round-trip.
                     self._simple_dialog(_("Error"), _("Tag names cannot contain commas."))
                     return False
-                if name != old_name:
-                    from .tag_groups import migrate_expanded_state
-                    self.config.rename_tag(old_name, name)
-                    try:
-                        state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
-                        self.config.set_setting(
-                            'ui.tag_groups_expanded',
-                            migrate_expanded_state(state, old_key, name.casefold()),
+                if name == old_name:
+                    return True
+                from .tag_groups import migrate_expanded_state
+                controller = getattr(self.group_manager, 'controller', None)
+                client = getattr(self.group_manager, 'client', None)
+                if controller is not None and client is not None:
+                    # Route authoritative tag mutation through the daemon RPC.
+                    if set_busy is not None:
+                        set_busy(True)
+                    from sshpilot.api.models.connection_store import RenameTagRequest
+                    def _do_rename():
+                        return client.rename_tag(
+                            RenameTagRequest(old_tag=old_name, new_tag=name),
                         )
-                    except Exception:
-                        logger.debug("Failed to migrate tag expansion state", exc_info=True)
-                    self.rebuild_connection_list()
+                    def _on_done(_result):
+                        # Update frontend expansion state only after daemon rename
+                        # succeeds.
+                        try:
+                            state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                            self.config.set_setting(
+                                'ui.tag_groups_expanded',
+                                migrate_expanded_state(state, old_key, name.casefold()),
+                            )
+                        except Exception:
+                            logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                        self.rebuild_connection_list()
+                        if set_busy is not None:
+                            set_busy(False)
+                    def _on_error(error):
+                        if set_busy is not None:
+                            set_busy(False)
+                        self._simple_dialog(
+                            _("Error"),
+                            _("Failed to rename tag: {error}").format(
+                                error=str(error),
+                            ),
+                        )
+                    controller.run(
+                        _do_rename,
+                        on_success=_on_done,
+                        on_error=_on_error,
+                    )
+                    return False  # keep dialog open until async completes
+                # Fallback: legacy config-only rename.
+                self.config.rename_tag(old_name, name)
+                try:
+                    state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                    self.config.set_setting(
+                        'ui.tag_groups_expanded',
+                        migrate_expanded_state(state, old_key, name.casefold()),
+                    )
+                except Exception:
+                    logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                self.rebuild_connection_list()
                 return True
 
             self._group_form_dialog(

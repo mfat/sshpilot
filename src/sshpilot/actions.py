@@ -371,9 +371,8 @@ class WindowActions:
             logger.error(f"Failed to open known hosts editor: {e}")
 
     def on_delete_group_action(self, action, param=None):
-        """Handle delete group action"""
+        """Handle delete group action."""
         try:
-            # Get the group row from context menu or selected row
             selected_row = getattr(self, '_context_menu_group_row', None)
             if not selected_row:
                 selected_row = self.connection_list.get_selected_row()
@@ -385,68 +384,116 @@ class WindowActions:
             if not group_info:
                 return
 
-            # Check if group has connections (filter to only existing connections)
             all_connections = self.connection_manager.get_connections()
             connections_dict = {conn.nickname: conn for conn in all_connections}
-            
+
             actual_connections = [
                 c
                 for c in group_info.get('connections', [])
                 if c in connections_dict
             ]
             connection_count = len(actual_connections)
-            
+
+            controller = getattr(self.group_manager, 'controller', None)
+
+            def _run_delete(sequence):
+                """Run a controller sequence for the delete operation."""
+                if controller is not None:
+                    controller.run_sequence(
+                        sequence,
+                        on_success=lambda _r: self.rebuild_connection_list(),
+                        on_error=lambda e: self._simple_dialog(
+                            _("Error"),
+                            _("Failed to delete group: {error}").format(
+                                error=str(e),
+                            ),
+                        ),
+                    )
+                else:
+                    # Fallback: run steps synchronously.
+                    for step in sequence:
+                        step(None)
+                    self.rebuild_connection_list()
+
             if connection_count > 0:
-                # Show dialog asking what to do with connections
                 dialog = Adw.MessageDialog(
                     transient_for=self,
                     modal=True,
                     heading=_("Delete Group"),
-                    body=_("The group '{name}' contains {count} connection(s).\n\nWhat would you like to do with the connections?").format(
-                        name=group_info['name'], count=connection_count
-                    )
+                    body=_(
+                        "The group '{name}' contains {count} connection(s).\n\n"
+                        "What would you like to do with the connections?"
+                    ).format(name=group_info['name'], count=connection_count),
                 )
-                
+
                 dialog.add_response('cancel', _('Cancel'))
                 dialog.add_response('move', _('Move to Parent/Ungrouped'))
                 dialog.add_response('delete_all', _('Delete All Connections'))
-                dialog.set_response_appearance('delete_all', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_response_appearance(
+                    'delete_all', Adw.ResponseAppearance.DESTRUCTIVE,
+                )
                 dialog.set_default_response('move')
-                
-                def on_response_with_connections(dialog, response):
+
+                def on_response_with_connections(_dialog, response):
                     if response == 'move':
-                        # Just delete the group, connections will be moved
-                        self.group_manager.delete_group(group_id)
-                        self.rebuild_connection_list()
+                        _run_delete([
+                            lambda _prev: controller.client.delete_group(group_id)
+                            if controller is not None
+                            else self.group_manager.delete_group(group_id),
+                        ] if controller is not None else [
+                            lambda _prev: self.group_manager.delete_group(group_id),
+                        ])
                     elif response == 'delete_all':
-                        # Delete all connections in the group first
-                        connections_to_delete = list(actual_connections)  # Use filtered list
-                        self.group_manager.delete_group(group_id)
-                        self.rebuild_connection_list()
-                    dialog.destroy()
-                
+                        # Delete each connection, then delete the group.
+                        steps = []
+                        for nickname in actual_connections:
+                            steps.append(
+                                lambda _prev, nick=nickname: (
+                                    controller.client.delete_connection(nick)
+                                    if controller is not None
+                                    else self.connection_manager.delete_connection(nick)
+                                )
+                            )
+                        steps.append(
+                            lambda _prev: (
+                                controller.client.delete_group(group_id)
+                                if controller is not None
+                                else self.group_manager.delete_group(group_id)
+                            )
+                        )
+                        _run_delete(steps)
+                    _dialog.destroy()
+
                 dialog.connect('response', on_response_with_connections)
                 dialog.present()
             else:
-                # Group is empty, show simple confirmation
                 dialog = Adw.MessageDialog(
                     transient_for=self,
                     modal=True,
                     heading=_("Delete Group"),
-                    body=_("Are you sure you want to delete the empty group '{name}'?").format(name=group_info['name'])
+                    body=_("Are you sure you want to delete the empty group '{name}'?").format(
+                        name=group_info['name'],
+                    ),
                 )
-                
+
                 dialog.add_response('cancel', _('Cancel'))
                 dialog.add_response('delete', _('Delete'))
-                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_response_appearance(
+                    'delete', Adw.ResponseAppearance.DESTRUCTIVE,
+                )
                 dialog.set_default_response('cancel')
-                
-                def on_response_empty_group(dialog, response):
+
+                def on_response_empty_group(_dialog, response):
                     if response == 'delete':
-                        self.group_manager.delete_group(group_id)
-                        self.rebuild_connection_list()
-                    dialog.destroy()
-                
+                        _run_delete([
+                            lambda _prev: (
+                                controller.client.delete_group(group_id)
+                                if controller is not None
+                                else self.group_manager.delete_group(group_id)
+                            )
+                        ])
+                    _dialog.destroy()
+
                 dialog.connect('response', on_response_empty_group)
                 dialog.present()
 

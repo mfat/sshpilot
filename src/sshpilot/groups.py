@@ -1,8 +1,12 @@
 """Compatibility view of daemon-owned connection groups.
 
-This module deliberately contains no persistence.  The daemon client owns all
-group mutations; this class only adapts immutable snapshots for older GTK
-callers while group expansion remains frontend-local.
+Authoritative group names, colors, membership, hierarchy, and ordering
+remain snapshot-only.  The daemon client owns all group mutations; this
+class only adapts immutable snapshots for older GTK callers.
+
+``ui.group_expansion`` is the sole frontend-owned persistence: exact
+Boolean values loaded at construction, persisted by ``set_group_expanded``,
+and migrated from legacy ``connection_groups.groups.*.expanded`` once.
 """
 
 from __future__ import annotations
@@ -14,16 +18,16 @@ class GroupManager:
     """Snapshot-backed compatibility adapter for legacy GTK call sites."""
 
     def __init__(self, config=None, connection_manager=None, *, client=None, controller=None):
-        del config
         self.connection_manager = connection_manager
         self.client = client
         self.controller = controller
-        self.config = None
+        self.config = config
         self.groups = {}
         self.connections = {}
         self.root_connections = []
         self._expanded = {}
         self._projection_handler = None
+        self._load_expansion_from_config()
         if connection_manager is not None:
             connect_after = getattr(connection_manager, "connect_after", None)
             if callable(connect_after):
@@ -228,9 +232,66 @@ class GroupManager:
         self._expanded[group_id] = bool(expanded)
         if group_id in self.groups:
             self.groups[group_id]["expanded"] = bool(expanded)
+        # Persist to ``ui.group_expansion`` so the setting survives restarts.
+        if self.config is not None:
+            try:
+                self.config.set_setting(
+                    "ui.group_expansion",
+                    dict(self._expanded),
+                )
+            except Exception:
+                pass
 
     def is_group_expanded(self, group_id: str) -> bool:
         return self._expanded.get(group_id, True)
+
+    def run(self, operation, *, on_success, on_error, refresh_after=True):
+        """Delegate to the mutation controller's ``run()``."""
+        if self.controller is None:
+            raise RuntimeError("no mutation controller attached")
+        return self.controller.run(
+            operation, on_success=on_success, on_error=on_error,
+            refresh_after=refresh_after,
+        )
+
+    def run_sequence(self, steps, *, on_success, on_error):
+        """Delegate to the mutation controller's ``run_sequence()``."""
+        if self.controller is None:
+            raise RuntimeError("no mutation controller attached")
+        return self.controller.run_sequence(
+            steps, on_success=on_success, on_error=on_error,
+        )
+
+    def _load_expansion_from_config(self):
+        """Load ``ui.group_expansion``; migrate from legacy once."""
+        if self.config is None:
+            return
+        try:
+            stored = self.config.get_setting("ui.group_expansion", None)
+            if stored is not None and isinstance(stored, dict):
+                self._expanded = {
+                    str(k): bool(v) for k, v in stored.items()
+                }
+                return
+        except Exception:
+            pass
+        # One-time migration from legacy ``connection_groups.groups.*.expanded``.
+        try:
+            legacy = self.config.get_setting("connection_groups", None)
+            if legacy is not None and isinstance(legacy, dict):
+                groups = legacy.get("groups", {})
+                if isinstance(groups, dict):
+                    for gid, info in groups.items():
+                        if isinstance(info, dict) and "expanded" in info:
+                            self._expanded[str(gid)] = bool(info["expanded"])
+                    # Write the new overlay so the migration runs only once.
+                    if self._expanded:
+                        self.config.set_setting(
+                            "ui.group_expansion",
+                            dict(self._expanded),
+                        )
+        except Exception:
+            pass
 
     def _load_groups(self):
         self._refresh()
