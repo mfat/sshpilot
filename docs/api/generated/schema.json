@@ -686,6 +686,7 @@
       "connection.created",
       "connection.updated",
       "connection.deleted",
+      "connection_store.changed",
       "session.created",
       "session.state_changed",
       "session.output",

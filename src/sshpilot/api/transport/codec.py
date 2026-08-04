@@ -57,6 +57,19 @@ from ..models.keys import (
     PublicKeyResult,
     ReadPublicKeyRequest,
 )
+from ..models.connection_store import (
+    ConnectionMetadataSummary,
+    ConnectionStoreSnapshot,
+    CopyConnectionToGroupRequest,
+    GroupId,
+    GroupSummary,
+    PlaceGroupRequest,
+    RemoveConnectionFromGroupRequest,
+    RenameTagRequest,
+    ReorderConnectionRequest,
+    SetGroupColorRequest,
+    validate_safe_metadata,
+)
 from ..models.connections import (
     EDITABLE_CONFIG_FIELDS,
     AuthenticationMethod,
@@ -925,6 +938,302 @@ def generate_key_result_to_wire(result: GenerateKeyResult) -> Dict[str, Any]:
 def generate_key_result_from_wire(value: Any) -> GenerateKeyResult:
     data = _strict_fields(value, required={"key"}, context="generate key result")
     return GenerateKeyResult(key=key_summary_from_wire(data["key"]))
+
+
+def group_summary_to_wire(summary: GroupSummary) -> Dict[str, Any]:
+    if type(summary) is not GroupSummary:
+        raise TypeError("group summary is required")
+    payload: Dict[str, Any] = {
+        "id": summary.id,
+        "name": summary.name,
+        "order": summary.order,
+        "color": summary.color,
+        "connection_ids": list(summary.connection_ids),
+    }
+    if summary.parent_id is not None:
+        payload["parent_id"] = summary.parent_id
+    return payload
+
+
+def group_summary_from_wire(value: Any) -> GroupSummary:
+    data = _strict_fields(
+        value,
+        required={"id", "name", "order", "color", "connection_ids"},
+        optional={"parent_id"},
+        context="group summary",
+    )
+    connection_ids = data["connection_ids"]
+    if type(connection_ids) is not list:
+        raise ValueError("group connection ids must be an array")
+    parent_id = data.get("parent_id")
+    if parent_id is not None and type(parent_id) is not str:
+        raise ValueError("group parent id must be a string or null")
+    return GroupSummary(
+        id=GroupId(_identifier(data["id"], "group id")),
+        name=_text(data["name"], "group name"),
+        parent_id=(
+            GroupId(_identifier(parent_id, "group parent id"))
+            if parent_id is not None
+            else None
+        ),
+        order=_integer(data["order"], "group order"),
+        color=_text(data["color"], "group color", allow_empty=True),
+        connection_ids=tuple(
+            ConnectionId(_identifier(item, "group connection id"))
+            for item in connection_ids
+        ),
+    )
+
+
+def connection_metadata_summary_to_wire(
+    summary: ConnectionMetadataSummary,
+) -> Dict[str, Any]:
+    if type(summary) is not ConnectionMetadataSummary:
+        raise TypeError("connection metadata summary is required")
+    return {
+        "connection_id": summary.connection_id,
+        "values": dict(summary.values),
+    }
+
+
+def connection_metadata_summary_from_wire(
+    value: Any,
+) -> ConnectionMetadataSummary:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "values"},
+        context="connection metadata summary",
+    )
+    values = data["values"]
+    if type(values) is not dict:
+        raise ValueError("connection metadata values must be an object")
+    return ConnectionMetadataSummary(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        values=validate_safe_metadata(values),
+    )
+
+
+def connection_store_snapshot_to_wire(
+    snapshot: ConnectionStoreSnapshot,
+) -> Dict[str, Any]:
+    if type(snapshot) is not ConnectionStoreSnapshot:
+        raise TypeError("connection store snapshot is required")
+    return {
+        "generation": snapshot.generation,
+        "connections": [
+            connection_summary_to_wire(item) for item in snapshot.connections
+        ],
+        "groups": [group_summary_to_wire(item) for item in snapshot.groups],
+        "root_connection_ids": list(snapshot.root_connection_ids),
+        "metadata": [
+            connection_metadata_summary_to_wire(item)
+            for item in snapshot.metadata
+        ],
+    }
+
+
+def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
+    data = _strict_fields(
+        value,
+        required={"generation", "connections", "groups", "root_connection_ids", "metadata"},
+        context="connection store snapshot",
+    )
+    connections = data["connections"]
+    groups = data["groups"]
+    root_ids = data["root_connection_ids"]
+    metadata = data["metadata"]
+    if type(connections) is not list:
+        raise ValueError("connection store connections must be an array")
+    if type(groups) is not list:
+        raise ValueError("connection store groups must be an array")
+    if type(root_ids) is not list:
+        raise ValueError("connection store root ids must be an array")
+    if type(metadata) is not list:
+        raise ValueError("connection store metadata must be an array")
+    return ConnectionStoreSnapshot(
+        generation=_integer(data["generation"], "connection store generation"),
+        connections=tuple(
+            connection_summary_from_wire(item) for item in connections
+        ),
+        groups=tuple(group_summary_from_wire(item) for item in groups),
+        root_connection_ids=tuple(
+            ConnectionId(_identifier(item, "root connection id"))
+            for item in root_ids
+        ),
+        metadata=tuple(
+            connection_metadata_summary_from_wire(item) for item in metadata
+        ),
+    )
+
+
+def set_group_color_request_to_wire(
+    request: SetGroupColorRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SetGroupColorRequest:
+        raise TypeError("set group color request is required")
+    return {"group_id": request.group_id, "color": request.color}
+
+
+def set_group_color_request_from_wire(value: Any) -> SetGroupColorRequest:
+    data = _strict_fields(
+        value,
+        required={"group_id", "color"},
+        context="set group color request",
+    )
+    return SetGroupColorRequest(
+        group_id=GroupId(_identifier(data["group_id"], "group id")),
+        color=_text(data["color"], "group color", allow_empty=True),
+    )
+
+
+def place_group_request_to_wire(request: PlaceGroupRequest) -> Dict[str, Any]:
+    if type(request) is not PlaceGroupRequest:
+        raise TypeError("place group request is required")
+    payload: Dict[str, Any] = {
+        "group_id": request.group_id,
+        "index": request.index,
+    }
+    if request.parent_id is not None:
+        payload["parent_id"] = request.parent_id
+    return payload
+
+
+def place_group_request_from_wire(value: Any) -> PlaceGroupRequest:
+    data = _strict_fields(
+        value,
+        required={"group_id", "index"},
+        optional={"parent_id"},
+        context="place group request",
+    )
+    parent_id = data.get("parent_id")
+    if parent_id is not None and type(parent_id) is not str:
+        raise ValueError("group parent id must be a string or null")
+    return PlaceGroupRequest(
+        group_id=GroupId(_identifier(data["group_id"], "group id")),
+        parent_id=(
+            GroupId(_identifier(parent_id, "group parent id"))
+            if parent_id is not None
+            else None
+        ),
+        index=_integer(data["index"], "group placement index"),
+    )
+
+
+def copy_connection_to_group_request_to_wire(
+    request: CopyConnectionToGroupRequest,
+) -> Dict[str, Any]:
+    if type(request) is not CopyConnectionToGroupRequest:
+        raise TypeError("copy connection to group request is required")
+    return {
+        "connection_id": request.connection_id,
+        "group_id": request.group_id,
+    }
+
+
+def copy_connection_to_group_request_from_wire(
+    value: Any,
+) -> CopyConnectionToGroupRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "group_id"},
+        context="copy connection to group request",
+    )
+    return CopyConnectionToGroupRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        group_id=GroupId(_identifier(data["group_id"], "group id")),
+    )
+
+
+def remove_connection_from_group_request_to_wire(
+    request: RemoveConnectionFromGroupRequest,
+) -> Dict[str, Any]:
+    if type(request) is not RemoveConnectionFromGroupRequest:
+        raise TypeError("remove connection from group request is required")
+    return {
+        "connection_id": request.connection_id,
+        "group_id": request.group_id,
+    }
+
+
+def remove_connection_from_group_request_from_wire(
+    value: Any,
+) -> RemoveConnectionFromGroupRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "group_id"},
+        context="remove connection from group request",
+    )
+    return RemoveConnectionFromGroupRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        group_id=GroupId(_identifier(data["group_id"], "group id")),
+    )
+
+
+def reorder_connection_request_to_wire(
+    request: ReorderConnectionRequest,
+) -> Dict[str, Any]:
+    if type(request) is not ReorderConnectionRequest:
+        raise TypeError("reorder connection request is required")
+    payload: Dict[str, Any] = {
+        "connection_id": request.connection_id,
+        "target_connection_id": request.target_connection_id,
+        "position": request.position,
+    }
+    if request.group_id is not None:
+        payload["group_id"] = request.group_id
+    return payload
+
+
+def reorder_connection_request_from_wire(
+    value: Any,
+) -> ReorderConnectionRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "target_connection_id", "position"},
+        optional={"group_id"},
+        context="reorder connection request",
+    )
+    group_id = data.get("group_id")
+    if group_id is not None and type(group_id) is not str:
+        raise ValueError("reorder group id must be a string or null")
+    return ReorderConnectionRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        target_connection_id=ConnectionId(
+            _identifier(data["target_connection_id"], "target connection id")
+        ),
+        group_id=(
+            GroupId(_identifier(group_id, "reorder group id"))
+            if group_id is not None
+            else None
+        ),
+        position=_identifier(data["position"], "reorder position"),
+    )
+
+
+def rename_tag_request_to_wire(request: RenameTagRequest) -> Dict[str, Any]:
+    if type(request) is not RenameTagRequest:
+        raise TypeError("rename tag request is required")
+    return {"old_tag": request.old_tag, "new_tag": request.new_tag}
+
+
+def rename_tag_request_from_wire(value: Any) -> RenameTagRequest:
+    data = _strict_fields(
+        value,
+        required={"old_tag", "new_tag"},
+        context="rename tag request",
+    )
+    return RenameTagRequest(
+        old_tag=_text(data["old_tag"], "old tag"),
+        new_tag=_text(data["new_tag"], "new tag"),
+    )
 
 
 def handshake_request_to_wire(request: HandshakeRequest) -> Dict[str, Any]:

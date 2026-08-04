@@ -141,6 +141,19 @@ local `error.occurred` continuity notification where delivery remains possible.
 - **Related IDs/order/delivery:** Same guarantees as `connection.created`.
 - **Coalescing / dropping:** Not coalesced or buffered.
 
+<!-- api-event: connection_store.changed -->
+## `connection_store.changed`
+
+- **Status / introduced:** Schema-only / API 0.16. Published by the daemon
+  after each committed connection-store mutation in a later task.
+- **Trigger / payload:** One committed daemon connection-store mutation;
+  exact `ConnectionStoreSnapshot` payload. No envelope fields.
+- **Related IDs/order/delivery:** Emitted after the compatibility
+  `connection.created` / `connection.updated` / `connection.deleted` events
+  for the same mutation, in the shared daemon sequence.
+- **Coalescing / dropping:** One snapshot per committed mutation; a pure
+  group or metadata change publishes only this event.
+
 <!-- api-event: session.created -->
 ## `session.created`
 

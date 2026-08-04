@@ -12,6 +12,7 @@ from typing import Any, Callable, Deque, Dict, Generic, Mapping, Optional, Tuple
 
 from ._safe_values import copy_safe_details
 from .models.common import ConnectionId, RequestId, SessionId, utc_now
+from .models.connection_store import ConnectionStoreSnapshot
 from .models.connections import ConnectionSummary
 from .models.interactions import InteractionRequest, InteractionSummary
 from .models.operations import ForwardSummary, SftpServiceSummary
@@ -30,6 +31,7 @@ class EventType(str, Enum):
     CONNECTION_CREATED = "connection.created"
     CONNECTION_UPDATED = "connection.updated"
     CONNECTION_DELETED = "connection.deleted"
+    CONNECTION_STORE_CHANGED = "connection_store.changed"
     SESSION_CREATED = "session.created"
     SESSION_STATE_CHANGED = "session.state_changed"
     SESSION_OUTPUT = "session.output"
@@ -99,6 +101,7 @@ _EVENT_PAYLOAD_TYPES = {
     EventType.CONNECTION_CREATED: ConnectionSummary,
     EventType.CONNECTION_UPDATED: ConnectionSummary,
     EventType.CONNECTION_DELETED: ConnectionSummary,
+    EventType.CONNECTION_STORE_CHANGED: ConnectionStoreSnapshot,
     EventType.SESSION_CREATED: SessionSummary,
     EventType.SESSION_STATE_CHANGED: SessionSummary,
     EventType.SESSION_OUTPUT: TerminalOutput,
