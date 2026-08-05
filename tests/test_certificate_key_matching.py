@@ -95,7 +95,11 @@ class TestCertKeyCorrespondence:
 
 class TestParserRoundTripsNonStandardCerts:
     def test_parser_keeps_all_nonstandard_certs(self, pki):
-        from sshpilot.connection_manager import ConnectionManager
+        from sshpilot.core.connections.ssh_config_loader import (
+            load_ssh_configuration,
+        )
+        from sshpilot.ssh_config_formatter import format_ssh_config_entry
+
         cfg = pki / "config"
         cfg.write_text(
             "Host multi\n"
@@ -103,20 +107,17 @@ class TestParserRoundTripsNonStandardCerts:
             f"    CertificateFile {pki/'signed-one.pub'}\n"
             f"    CertificateFile {pki/'signed-two.pub'}\n"
         )
-        cm = ConnectionManager.__new__(ConnectionManager)
-        cm.connections = []
-        cm.rules = []
-        cm.ssh_config_path = str(cfg)
-        cm.load_ssh_config()
-        conn = next(c for c in cm.connections if c.nickname == "multi")
-        assert any("signed-one.pub" in c for c in conn.certificate_files)
-        assert any("signed-two.pub" in c for c in conn.certificate_files)
+        loaded = load_ssh_configuration(cfg, isolated=False)
+        record = next(c for c in loaded.connections if c.nickname == "multi")
+        certificates = list(record.data.get("certificate_files") or ())
+        assert any("signed-one.pub" in c for c in certificates)
+        assert any("signed-two.pub" in c for c in certificates)
         # And they round-trip back out as two CertificateFile lines.
-        entry = cm.format_ssh_config_entry({
+        entry = format_ssh_config_entry({
             "nickname": "multi", "hostname": "multi.example.com", "auth_method": 0,
             "key_select_mode": 2, "keyfile": str(pki / "alpha"),
             "identity_files": [str(pki / "alpha")],
-            "certificate_files": conn.certificate_files,
+            "certificate_files": certificates,
         })
         assert entry.count("CertificateFile") == 2
 

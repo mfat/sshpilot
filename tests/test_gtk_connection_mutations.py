@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 from sshpilot.api import ErrorCode, SshPilotError
 from sshpilot.window import MainWindow
-from sshpilot.core.connection_application_service import ConnectionApplicationService
 
 
 class _ControlledBridge:
@@ -331,25 +330,10 @@ def test_changed_metadata_invalidates_only_metadata_checkpoint():
     assert window.client.metadata == [("demo", {"tags": ["new"]})]
 
 
-def test_daemon_delete_absent_password_is_idempotent():
-    client = ConnectionApplicationService.__new__(ConnectionApplicationService)
-    client._find_connection = lambda _connection_id: SimpleNamespace(
-        hostname="demo.example", host="demo", username="alice"
-    )
-    client._connection_manager = SimpleNamespace(
-        delete_connection_passwords=lambda *_args, **_kwargs: False
-    )
-
-    assert client.delete_daemon_password("demo") is True
-
-
-def test_daemon_delete_absent_passphrase_is_idempotent():
-    client = ConnectionApplicationService.__new__(ConnectionApplicationService)
-    client._connection_manager = SimpleNamespace(
-        delete_key_passphrase=lambda _path: False
-    )
-
-    assert client.delete_daemon_passphrase("/tmp/missing-key") is True
+# Secret deletion idempotence is owned by DaemonConnectionSecretProvider and
+# covered in tests/daemon/test_connection_secret_provider.py (including the
+# non-empty absent key-passphrase path). The application service only delegates
+# to the provider and never reinterprets its result.
 
 
 def test_secret_plan_is_rejected_at_config_persistence_boundary():

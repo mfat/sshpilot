@@ -74,6 +74,9 @@ class Connection:
 
     @is_connected.setter
     def is_connected(self, value: bool) -> None:
-        self.set_status(
-            ConnectionState.CONNECTED if value else ConnectionState.DISCONNECTED
-        )
+        # A plain is_connected=False (e.g. generic cleanup) must not erase a
+        # richer FAILED state (and its reason) already recorded.
+        if value:
+            self.set_status(ConnectionState.CONNECTED)
+        elif self._status is not ConnectionState.FAILED:
+            self.set_status(ConnectionState.DISCONNECTED)

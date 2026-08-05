@@ -52,8 +52,16 @@ class HeadlessConnectionView:
         self._status = None
         self.is_connected = False
         self.resolved_identity_files: List[str] = []
-        self.identity_agent_directive = ""
-        self.identity_agent_disabled = False
+        # IdentityAgent policy is daemon-loaded SSH configuration, not frontend
+        # mutation: ``none`` disables agent usage; any other non-empty value is
+        # a custom agent socket/directive.
+        identity_agent = _string(self.data.get("identity_agent"))
+        if identity_agent.lower() == "none":
+            self.identity_agent_disabled = True
+            self.identity_agent_directive = ""
+        else:
+            self.identity_agent_disabled = False
+            self.identity_agent_directive = identity_agent
         self._password: Optional[str] = None
 
     # -- plain attribute passthrough ----------------------------------------
@@ -240,13 +248,87 @@ class HeadlessConnectionView:
 
     # -- best-effort preload (mirrors classic VTE; never raises) ------------
 
-    def _preload_keys_into_agent(self, app_config=None) -> None:
+    def _preload_keys_into_agent(
+        self,
+        app_config=None,
+        credential_lookup=None,
+    ) -> None:
+        """Best-effort keyring-gated agent preload; never aborts launch.
+
+        Restored daemon-owned policy: only keys whose passphrase is already
+        stored are force-added to ssh-agent, and only when the app setting
+        enables preloading and the host's IdentityAgent policy allows it.
+        Mirrors the retired frontend ``ConnectionManager`` gates.
+        """
         try:
+            # Password auth never preloads keys.
+            if self.auth_method == 1:
+                return
+            if self.identity_agent_disabled:
+                return
+            if _string(self.identity_agent_directive):
+                return
+
+            preload_enabled = True
+            lifetime = 0
+            if app_config is not None:
+                try:
+                    getter = getattr(app_config, "get_setting", None)
+                    if callable(getter):
+                        preload_enabled = bool(
+                            getter("ssh.agent_preload_keys", True)
+                        )
+                        lifetime = getter("ssh.agent_preload_lifetime", 0)
+                except Exception:
+                    pass
+            if not preload_enabled:
+                return
+            try:
+                lifetime = int(lifetime)
+            except (TypeError, ValueError):
+                lifetime = 0
+            if lifetime < 0:
+                lifetime = 0
+
+            candidates = list(self.resolved_identity_files or [])
+            if not candidates:
+                candidates = list(self.collect_identity_file_candidates() or [])
+                # Share the candidate set with the auth resolver / preload path.
+                self.resolved_identity_files = candidates
+            if not candidates:
+                return
+
             from ..askpass_utils import ensure_key_in_agent
 
-            for key_path in list(self.resolved_identity_files or []):
+            for key_path in candidates:
                 try:
-                    ensure_key_in_agent(key_path, force=True)
+                    passphrase = None
+                    if credential_lookup is not None:
+                        getter = getattr(
+                            credential_lookup, "get_key_passphrase", None
+                        )
+                        if callable(getter):
+                            passphrase = getter(key_path)
+                        if not passphrase:
+                            alt = getattr(
+                                credential_lookup, "lookup_key_passphrase", None
+                            )
+                            if callable(alt):
+                                passphrase = alt(key_path)
+                    if not passphrase:
+                        # No stored passphrase -> never silently add the key.
+                        continue
+                    preparer = (
+                        getattr(
+                            credential_lookup, "prepare_key_for_connection", None
+                        )
+                        if credential_lookup is not None
+                        else None
+                    )
+                    if callable(preparer):
+                        preparer(key_path, force=True, lifetime=lifetime)
+                    else:
+                        ensure_key_in_agent(key_path, force=True, lifetime=lifetime)
                 except Exception:
                     continue
         except Exception:
@@ -310,11 +392,13 @@ class DaemonConnectionLaunchProvider:
                         return None
                 return None
 
-            def prepare_key_for_connection(self, key_path, *, force=True):
+            def prepare_key_for_connection(self, key_path, *, force=True, lifetime=0):
                 try:
                     from ..askpass_utils import ensure_key_in_agent
 
-                    return bool(ensure_key_in_agent(key_path, force=force))
+                    return bool(
+                        ensure_key_in_agent(key_path, force=force, lifetime=lifetime)
+                    )
                 except Exception:
                     return False
 
@@ -344,9 +428,12 @@ class DaemonConnectionLaunchProvider:
         connection.resolved_identity_files = (
             connection.collect_identity_file_candidates()
         )
+        # One shared credential surface feeds both the builder's auth resolution
+        # and the post-build preload so they see the same passphrases/preparer.
+        manager = self._manager_shim(connection)
         ctx = ConnectionContext(
             connection=connection,
-            connection_manager=self._manager_shim(connection),
+            connection_manager=manager,
             config=app_config,
             command_type=command_type,
             extra_args=extra_args,
@@ -354,7 +441,7 @@ class DaemonConnectionLaunchProvider:
             interaction_policy=interaction_policy,
         )
         prepared = build_ssh_connection(ctx)
-        connection._preload_keys_into_agent(app_config)
+        connection._preload_keys_into_agent(app_config, credential_lookup=manager)
         argv = tuple(prepared.command or ())
         environment = dict(prepared.env or {})
         if not argv:

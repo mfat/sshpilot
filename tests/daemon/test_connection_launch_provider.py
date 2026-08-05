@@ -135,3 +135,70 @@ def test_production_settings_view_is_not_called_as_a_function(provider, monkeypa
     )
     command, _environment = prov.prepare_terminal_launch("web")
     assert command[0].endswith("/ssh")
+
+
+def test_preload_uses_identities_discovered_by_resolver_when_cache_empty(
+    monkeypatch,
+):
+    """Fresh callers can resolve identities without caching them.
+
+    The provider-level flow: the view starts with an empty candidate cache,
+    ``collect_identity_file_candidates()`` discovers one key, the builder
+    receives that candidate, and the post-build preload path preloads the
+    SAME key through the shared credential surface using its stored passphrase.
+    """
+    import sshpilot.ssh_connection_builder as builder
+    from sshpilot.daemon import connection_launch_provider as provider_mod
+
+    key = "/home/u/.ssh/id_ed25519"
+
+    class _Credentials:
+        def __init__(self):
+            self.prepared = []
+
+        def get_key_passphrase(self, key_path):
+            return "secretpass" if key_path == key else None
+
+        def prepare_key_for_connection(self, key_path, *, force=True, lifetime=0):
+            self.prepared.append((key_path, force, lifetime))
+            return True
+
+    credentials = _Credentials()
+    seen_by_builder = []
+
+    class Prepared:
+        command = ("ssh", "web")
+        env = {}
+        use_askpass = False
+        password = None
+
+    def _fake_build(context):
+        seen_by_builder.append(list(context.connection.resolved_identity_files))
+        return Prepared()
+
+    monkeypatch.setattr(
+        provider_mod.HeadlessConnectionView,
+        "collect_identity_file_candidates",
+        lambda self: [key],
+    )
+    monkeypatch.setattr(builder, "build_ssh_connection", _fake_build)
+    monkeypatch.setattr(
+        provider_mod.shutil, "which", lambda _name, **_kwargs: "/usr/bin/ssh"
+    )
+
+    class SettingsView:
+        def get_setting(self, _key, default=None):
+            return default
+
+    prov = DaemonConnectionLaunchProvider(
+        lambda cid: _record(data={"auth_method": 0}),
+        secret_provider=None,
+        app_config=SettingsView(),
+    )
+    prov._manager_shim = lambda _connection: credentials
+
+    _argv, _env = prov.prepare_terminal_launch("web", interaction_policy="none")
+
+    # The builder sees the resolved candidate, and the preload path shares it.
+    assert seen_by_builder == [[key]]
+    assert credentials.prepared == [(key, True, 0)]

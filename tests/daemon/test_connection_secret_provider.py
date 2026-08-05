@@ -124,6 +124,25 @@ def test_key_passphrase_roundtrip(provider):
     assert prov.lookup_key_passphrase("/home/u/.ssh/id_ed25519") is None
 
 
+def test_delete_missing_key_passphrase_is_idempotent(provider, monkeypatch):
+    """A non-empty absent key path is already in the requested state.
+
+    Idempotent by contract: ``lookup_key_passphrase`` finds nothing, so
+    ``clear_passphrase`` is not required and the deletion succeeds.
+    """
+    import sshpilot.askpass_utils as askpass_utils
+
+    prov, _manager, _records = provider
+    monkeypatch.setattr(askpass_utils, "lookup_passphrase", lambda _p: "")
+
+    def _unexpected(*_args, **_kwargs):
+        raise AssertionError("clear_passphrase must not run for an absent passphrase")
+
+    monkeypatch.setattr(askpass_utils, "clear_passphrase", _unexpected)
+
+    assert prov.delete_key_passphrase("/tmp/missing-key") is True
+
+
 def test_plugin_secret_namespaced(provider):
     prov, manager, _records = provider
     assert prov.store_plugin_secret("docker", "token", "abc") is True

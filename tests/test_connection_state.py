@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sshpilot import ssh_connection_builder as builder
-from sshpilot.connection_manager import Connection, ConnectionState
+from sshpilot.connection_model import Connection, ConnectionState
 
 
 def _inject(overrides=None, app_cfg=None):
