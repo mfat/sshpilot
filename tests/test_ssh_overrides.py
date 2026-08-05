@@ -1,7 +1,6 @@
-import asyncio
-
-from sshpilot.connection_manager import Connection
+from sshpilot.api.models import ConnectionDetails
 from sshpilot.preferences import PreferencesWindow
+from sshpilot.ssh_connection_builder import build_native_command
 
 
 class DummyConfig:
@@ -152,34 +151,33 @@ def test_apply_default_clears_overrides():
     ]
 
 
-def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch):
-    overrides = ['-o', 'ConnectTimeout=10', '-C']
+def test_native_connect_appends_overrides_even_when_native_disabled():
+    # Pure builder contract: ssh_overrides land verbatim ahead of the host even
+    # when the app-config native_connect toggle is disabled. The toggle is a
+    # vestigial preference key — no retired backend is invoked — and the plain
+    # native command builder invents no default keepalive arguments.
+    connection = ConnectionDetails(
+        id="example",
+        nickname="example",
+        host="example",
+        hostname="example.com",
+        username="",
+        port=22,
+    )
 
     class NativeConfig:
         def get_ssh_config(self):
             return {
-                'native_connect': False,
-                'ssh_overrides': overrides,
+                "native_connect": False,
+                "ssh_overrides": ["-o", "ConnectTimeout=10", "-C"],
             }
 
-    monkeypatch.setattr('sshpilot.config.Config', lambda: NativeConfig())
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        connection = Connection({'host': 'example.com', 'nickname': 'example'})
-        result = loop.run_until_complete(connection.native_connect())
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
-
-    assert result is True
-    # ssh_overrides are appended verbatim; default keepalive is injected after.
-    assert connection.ssh_cmd == [
-        'ssh', '-o', 'ConnectTimeout=10', '-C',
-        '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
-        'example.com',
-    ]
+    cmd = build_native_command(connection, NativeConfig())
+    assert cmd == ["ssh", "-o", "ConnectTimeout=10", "-C", "example"]
+    # No default keepalive arguments are invented.
+    assert not any("ServerAlive" in token for token in cmd)
+    # Overrides precede the host.
+    assert cmd.index("ConnectTimeout=10") < cmd.index("example")
 
 
 # Removed: test_dynamic_forwarding_uses_configured_keepalive.
