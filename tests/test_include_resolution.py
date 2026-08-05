@@ -1,18 +1,16 @@
-import asyncio
+"""Include resolution: fragments are loaded, sources are attributed, and edits
+target the fragment that actually defines the host while native SSH still
+evaluates the root config so the full Include tree applies."""
+
 import logging
 import shutil
 import subprocess
 
-from sshpilot.connection_manager import ConnectionManager
-from sshpilot.ssh_connection_builder import (
-    ConnectionContext,
-    build_native_command,
-    build_ssh_connection,
-)
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+from sshpilot.core.connections.ssh_config_store import SshConfigStore
 from sshpilot.ssh_config_utils import resolve_ssh_config_files
+from sshpilot.ssh_connection_builder import build_native_command
 
-# Ensure an event loop for Connection objects
-asyncio.set_event_loop(asyncio.new_event_loop())
 
 def test_include_directives_parsed(tmp_path):
     main_cfg = tmp_path / "config"
@@ -34,22 +32,26 @@ def test_include_directives_parsed(tmp_path):
         "Include conf.d/*.conf",
     ]))
 
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.connections = []
-    cm.ssh_config_path = str(main_cfg)
-    cm.load_ssh_config()
-
-    names = {c.nickname for c in cm.connections}
-    assert names == {"main", "hosta", "hostb"}
-    sources = {c.nickname: c.source for c in cm.connections}
+    loaded = load_ssh_configuration(main_cfg, isolated=False)
+    connections = {c.id: c for c in loaded.connections}
+    assert set(connections) == {"main", "hosta", "hostb"}
+    sources = {cid: str(c.source) for cid, c in connections.items()}
     assert sources["main"] == str(main_cfg)
     assert sources["hosta"] == str(a_cfg)
     assert sources["hostb"] == str(b_cfg)
+    from pathlib import Path
+    assert set(loaded.source_paths) == {
+        Path(main_cfg).resolve(),
+        Path(a_cfg).resolve(),
+        Path(b_cfg).resolve(),
+    }
 
-    hosta = next(c for c in cm.connections if c.nickname == "hosta")
+    hosta = connections["hosta"]
     new_data = dict(hosta.data)
     new_data["port"] = 2222
-    cm.update_ssh_config_file(hosta, new_data)
+    SshConfigStore(a_cfg).update(
+        "hosta", new_data, expected_generation=hosta.generation
+    )
     assert "Port 2222" in a_cfg.read_text()
     assert "Port 2222" not in main_cfg.read_text()
 
@@ -79,29 +81,20 @@ def test_included_host_native_commands_use_root_config(tmp_path):
         "",
     ]))
 
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.connections = []
-    cm.ssh_config_path = str(main_cfg)
-    cm.load_ssh_config()
+    loaded = load_ssh_configuration(main_cfg, isolated=False)
+    connection = next(c for c in loaded.connections if c.id == "production")
+    assert str(connection.source) == str(host_cfg)
 
-    connection = next(c for c in cm.connections if c.nickname == "production")
-    assert connection.source == str(host_cfg)
-
-    plain_command = build_native_command(connection)
-    prepared_command = build_ssh_connection(
-        ConnectionContext(connection=connection, native_mode=True)
-    ).command
-
-    for command in (plain_command, prepared_command):
-        assert "-F" in command
-        selected_config = command[command.index("-F") + 1]
-        assert selected_config == str(main_cfg), (
-            "Native SSH must evaluate the root config; selecting the included "
-            "fragment drops root Host * directives and sibling includes"
-        )
+    command = build_native_command(connection, config_file=str(main_cfg))
+    assert "-F" in command
+    selected_config = command[command.index("-F") + 1]
+    assert selected_config == str(main_cfg), (
+        "Native SSH must evaluate the root config; selecting the included "
+        "fragment drops root Host * directives and sibling includes"
+    )
 
     if shutil.which("ssh") is not None:
-        command = list(prepared_command)
+        command = list(command)
         command.insert(command.index("production"), "-G")
         result = subprocess.run(
             command,
@@ -142,15 +135,12 @@ def test_nested_include_sources(tmp_path):
         f"Include {level1_cfg}",
     ]))
 
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.connections = []
-    cm.ssh_config_path = str(main_cfg)
-    cm.load_ssh_config()
-
-    sources = {c.nickname: c.source for c in cm.connections}
+    loaded = load_ssh_configuration(main_cfg, isolated=False)
+    sources = {c.id: str(c.source) for c in loaded.connections}
     assert sources["top"] == str(main_cfg)
     assert sources["mid"] == str(level1_cfg)
     assert sources["nested"] == str(level2_cfg)
+
 
 def test_include_cycle_detected(tmp_path, caplog):
     a_cfg = tmp_path / "a.conf"

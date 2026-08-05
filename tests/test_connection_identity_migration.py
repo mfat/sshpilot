@@ -2,26 +2,28 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 import threading
 from pathlib import Path
 
-from gi.repository import GObject
-
-from sshpilot.connection_manager import Connection, ConnectionManager
 from sshpilot.core.connections.models import ConnectionRecord, generate_group_slug
 from sshpilot.core.connections.service import ConnectionService
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
 from sshpilot.runtime_identity import RuntimeIdAllocator, new_session_id
-from sshpilot.ssh_config_formatter import SSH_UUID_MARKER, format_ssh_config_entry, merged_block_lines
 from sshpilot.ssh_config_document import HostBlock
+from sshpilot.ssh_config_formatter import (
+    SSH_UUID_MARKER,
+    format_ssh_config_entry,
+    merged_block_lines,
+)
 
 
 def test_saved_connection_id_is_nickname():
-    conn = Connection({"nickname": "production", "hostname": "10.0.0.5", "username": "root"})
-    assert conn.id == "production"
-    assert conn.nickname == "production"
-    assert conn.uuid == "production"
+    record = ConnectionRecord.from_dict(
+        {"nickname": "production", "hostname": "10.0.0.5", "username": "root"},
+        connection_id="production",
+    )
+    assert record.id == "production"
+    assert record.nickname == "production"
 
 
 def test_connection_record_serialization_has_no_uuid_field():
@@ -116,41 +118,14 @@ def test_merged_block_drops_legacy_uuid_comments():
     assert SSH_UUID_MARKER not in joined
 
 
-def _manager_with_config(text: str) -> ConnectionManager:
-    td = tempfile.mkdtemp()
-    cfg_path = os.path.join(td, "config")
-    Path(cfg_path).write_text(text)
-
-    class _Cfg:
-        def get_setting(self, key, default=None):
-            return {} if default is None else default
-
-        def set_setting(self, *args, **kwargs):
-            return None
-
-        def bind_connection_identities(self, _connections):
-            return None
-
-    cm = ConnectionManager.__new__(ConnectionManager)
-    GObject.Object.__init__(cm)
-    cm.config = _Cfg()
-    cm.connections = []
-    cm._connections_by_id = {}
-    cm._visible_connections = cm.connections
-    cm._visible_connections_by_id = cm._connections_by_id
-    cm.identity_migration_enabled = True
-    cm.identity_migration_error = None
-    cm.rules = []
-    cm.isolated_mode = False
-    cm.ssh_config_path = cfg_path
-    cm.connection_config_generation = 0
-    cm._domain = ConnectionService(autosave=False)
-    cm._load_ssh_config_locked()
-    return cm
+def _load(text: str, tmp_path):
+    cfg_path = tmp_path / "config"
+    cfg_path.write_text(text)
+    return load_ssh_configuration(cfg_path, isolated=False)
 
 
-def test_load_skips_wildcard_and_negated_aliases():
-    cm = _manager_with_config(
+def test_load_skips_wildcard_and_negated_aliases(tmp_path):
+    result = _load(
         """
 Host demo
   HostName 1.2.3.4
@@ -161,35 +136,37 @@ Host *
 
 Host !negated
   User nobody
-"""
+""",
+        tmp_path,
     )
-    assert [c.id for c in cm.connections] == ["demo"]
-    assert len(cm.rules) == 2
+    assert [c.id for c in result.connections] == ["demo"]
+    assert len(result.rules) == 2
 
 
-def test_load_multi_pattern_concrete_aliases():
-    cm = _manager_with_config(
+def test_load_multi_pattern_concrete_aliases(tmp_path):
+    result = _load(
         """
 Host production staging qa
   HostName 10.0.0.5
   User root
-"""
+""",
+        tmp_path,
     )
-    assert sorted(c.id for c in cm.connections) == ["production", "qa", "staging"]
+    assert sorted(c.id for c in result.connections) == ["production", "qa", "staging"]
 
 
-def test_load_ignores_legacy_uuid_comments():
-    cm = _manager_with_config(
+def test_load_ignores_legacy_uuid_comments(tmp_path):
+    result = _load(
         f"""
 Host production
   {SSH_UUID_MARKER} production 550e8400-e29b-41d4-a716-446655440000
   HostName 10.0.0.5
   User root
-"""
+""",
+        tmp_path,
     )
-    assert len(cm.connections) == 1
-    assert cm.connections[0].id == "production"
-    assert cm.identity_migration_error is None
+    assert len(result.connections) == 1
+    assert result.connections[0].id == "production"
 
 
 def test_runtime_session_ids_use_counters():

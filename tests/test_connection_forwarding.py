@@ -6,90 +6,84 @@ travels two code paths, both covered here for every type:
 
   1. UI -> rule dict:   ``ConnectionDialog._save_rule_from_editor`` turns the
      rule-editor widgets into the ``forwarding_rules`` entry.
-  2. rule dict -> config: ``ConnectionManager.format_ssh_config_entry`` writes
-     the ``LocalForward`` / ``RemoteForward`` / ``DynamicForward`` directive.
+  2. rule dict -> config: ``ssh_config_formatter.format_ssh_config_entry``
+     writes the ``LocalForward`` / ``RemoteForward`` / ``DynamicForward``
+     directive, and the headless loader parses directives back into rules.
 """
 
 from __future__ import annotations
 
 import importlib
 
-
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+from sshpilot.ssh_config_formatter import format_ssh_config_entry
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_cm(tmp_path):
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.connections = []
-    cm.rules = []
-    cm.ssh_config_path = str(tmp_path / "config")
-    return cm
-
-
 def _forward_lines(entry: str):
     prefixes = ("LocalForward", "RemoteForward", "DynamicForward")
     return [ln.strip() for ln in entry.splitlines() if ln.strip().startswith(prefixes)]
 
 
-def _entry(cm, rules):
-    return cm.format_ssh_config_entry({
+def _entry(rules):
+    return format_ssh_config_entry({
         "nickname": "fwd",
         "hostname": "fwd.example.com",
         "forwarding_rules": rules,
     })
 
 
+def _load_rules(tmp_path, text: str):
+    path = tmp_path / "config"
+    path.write_text(text, encoding="utf-8")
+    result = load_ssh_configuration(path, isolated=False)
+    return result.connections[0].data.get("forwarding_rules") or []
+
+
 # ---------------------------------------------------------------------------
-# rule dict -> ~/.ssh/config (ConnectionManager.format_ssh_config_entry)
+# rule dict -> ~/.ssh/config (ssh_config_formatter.format_ssh_config_entry)
 # ---------------------------------------------------------------------------
 
 class TestForwardingConfigOutput:
-    def test_local_forward_exact_line(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{
+    def test_local_forward_exact_line(self):
+        entry = _entry([{
             "type": "local", "listen_addr": "localhost", "listen_port": 8080,
             "remote_host": "localhost", "remote_port": 80,
         }])
         assert _forward_lines(entry) == ["LocalForward localhost:8080 localhost:80"]
 
-    def test_remote_forward_exact_line(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{
+    def test_remote_forward_exact_line(self):
+        entry = _entry([{
             "type": "remote", "listen_addr": "localhost", "listen_port": 2222,
             "local_host": "localhost", "local_port": 22,
         }])
         assert _forward_lines(entry) == ["RemoteForward localhost:2222 localhost:22"]
 
-    def test_remote_forward_socks_single_arg(self, tmp_path):
+    def test_remote_forward_socks_single_arg(self):
         """A RemoteForward with no destination is the SOCKS (single-argument) form."""
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{
+        entry = _entry([{
             "type": "remote", "listen_addr": "localhost", "listen_port": 9999,
         }])
         assert _forward_lines(entry) == ["RemoteForward localhost:9999"]
 
-    def test_dynamic_forward_exact_line(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{
+    def test_dynamic_forward_exact_line(self):
+        entry = _entry([{
             "type": "dynamic", "listen_addr": "localhost", "listen_port": 1080,
         }])
         assert _forward_lines(entry) == ["DynamicForward localhost:1080"]
 
-    def test_ipv6_bind_address_is_bracketed(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{
+    def test_ipv6_bind_address_is_bracketed(self):
+        entry = _entry([{
             "type": "local", "listen_addr": "::1", "listen_port": 8080,
             "remote_host": "localhost", "remote_port": 80,
         }])
         assert _forward_lines(entry) == ["LocalForward [::1]:8080 localhost:80"]
 
-    def test_all_three_types_written_together(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [
+    def test_all_three_types_written_together(self):
+        entry = _entry([
             {"type": "local", "listen_addr": "localhost", "listen_port": 8080,
              "remote_host": "web", "remote_port": 80},
             {"type": "remote", "listen_addr": "localhost", "listen_port": 2222,
@@ -102,18 +96,16 @@ class TestForwardingConfigOutput:
             "DynamicForward localhost:1080",
         ]
 
-    def test_rule_without_listen_port_is_skipped(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{"type": "local", "listen_addr": "localhost",
-                             "remote_host": "localhost", "remote_port": 80}])
+    def test_rule_without_listen_port_is_skipped(self):
+        entry = _entry([{"type": "local", "listen_addr": "localhost",
+                         "remote_host": "localhost", "remote_port": 80}])
         assert _forward_lines(entry) == []
 
-    def test_remote_with_dest_host_but_no_port_falls_back_to_socks(self, tmp_path):
+    def test_remote_with_dest_host_but_no_port_falls_back_to_socks(self):
         """A remote rule missing its destination port must never emit "host:"."""
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{"type": "remote", "listen_addr": "localhost",
-                             "listen_port": 9999, "local_host": "localhost",
-                             "local_port": 0}])
+        entry = _entry([{"type": "remote", "listen_addr": "localhost",
+                         "listen_port": 9999, "local_host": "localhost",
+                         "local_port": 0}])
         assert _forward_lines(entry) == ["RemoteForward localhost:9999"]
 
     def test_socks_remote_round_trips_through_parser(self, tmp_path):
@@ -121,49 +113,43 @@ class TestForwardingConfigOutput:
 
         The config omits the bind address, so it must NOT be coerced to localhost.
         """
-        cm = _make_cm(tmp_path)
-        parsed = cm.parse_host_config(
-            {"host": "h", "hostname": "h", "remoteforward": "9999"}, source="user"
-        )
-        rule = parsed["forwarding_rules"][0]
+        rules = _load_rules(tmp_path, "Host h\n    HostName h\n    RemoteForward 9999\n")
+        rule = rules[0]
         assert rule.get("socks") is True
         assert not rule.get("listen_addr")  # bind preserved as empty, not localhost
-        assert _forward_lines(_entry(cm, [rule])) == ["RemoteForward 9999"]
+        assert _forward_lines(_entry([rule])) == ["RemoteForward 9999"]
 
-    def test_remote_empty_bind_omits_host_prefix(self, tmp_path):
+    def test_remote_empty_bind_omits_host_prefix(self):
         """An empty remote bind address writes just the port (no localhost prefix)."""
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{"type": "remote", "listen_addr": "", "listen_port": 2222,
-                             "local_host": "localhost", "local_port": 22}])
+        entry = _entry([{"type": "remote", "listen_addr": "", "listen_port": 2222,
+                         "local_host": "localhost", "local_port": 22}])
         assert _forward_lines(entry) == ["RemoteForward 2222 localhost:22"]
 
-    def test_remote_empty_bind_socks_omits_host_prefix(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{"type": "remote", "listen_addr": "", "listen_port": 9999,
-                             "socks": True}])
+    def test_remote_empty_bind_socks_omits_host_prefix(self):
+        entry = _entry([{"type": "remote", "listen_addr": "", "listen_port": 9999,
+                         "socks": True}])
         assert _forward_lines(entry) == ["RemoteForward 9999"]
 
-    def test_remote_explicit_bind_is_kept(self, tmp_path):
-        cm = _make_cm(tmp_path)
-        entry = _entry(cm, [{"type": "remote", "listen_addr": "0.0.0.0", "listen_port": 2222,
-                             "local_host": "localhost", "local_port": 22}])
+    def test_remote_explicit_bind_is_kept(self):
+        entry = _entry([{"type": "remote", "listen_addr": "0.0.0.0", "listen_port": 2222,
+                         "local_host": "localhost", "local_port": 22}])
         assert _forward_lines(entry) == ["RemoteForward 0.0.0.0:2222 localhost:22"]
 
     def test_omitted_bind_round_trips_per_type(self, tmp_path):
         """Parser keeps localhost for local/dynamic but empty for remote, and
         each round-trips through the writer."""
-        cm = _make_cm(tmp_path)
-        parsed = cm.parse_host_config({
-            "host": "h", "hostname": "h",
-            "localforward": "8080 localhost:80",
-            "dynamicforward": "1080",
-            "remoteforward": "2222 localhost:22",
-        }, source="user")
-        rules = {r["type"]: r for r in parsed["forwarding_rules"]}
-        assert rules["local"]["listen_addr"] == "localhost"
-        assert rules["dynamic"]["listen_addr"] == "localhost"
-        assert rules["remote"]["listen_addr"] == ""  # remote bind preserved empty
-        assert _forward_lines(_entry(cm, parsed["forwarding_rules"])) == [
+        rules = _load_rules(
+            tmp_path,
+            "Host h\n    HostName h\n"
+            "    LocalForward 8080 localhost:80\n"
+            "    DynamicForward 1080\n"
+            "    RemoteForward 2222 localhost:22\n",
+        )
+        by_type = {r["type"]: r for r in rules}
+        assert by_type["local"]["listen_addr"] == "localhost"
+        assert by_type["dynamic"]["listen_addr"] == "localhost"
+        assert by_type["remote"]["listen_addr"] == ""  # remote bind preserved empty
+        assert _forward_lines(_entry(rules)) == [
             "LocalForward localhost:8080 localhost:80",
             "RemoteForward 2222 localhost:22",
             "DynamicForward localhost:1080",
