@@ -181,7 +181,7 @@
     },
     "get_global_ssh_overrides": {
       "capability": "ssh_overrides.read",
-      "status": "daemon-only"
+      "status": "implemented"
     },
     "get_interaction": {
       "capability": "interactions.read",
@@ -261,7 +261,7 @@
     },
     "reset_global_ssh_overrides": {
       "capability": "ssh_overrides.write",
-      "status": "daemon-only"
+      "status": "implemented"
     },
     "resize_terminal": {
       "capability": "terminal.resize",
@@ -365,7 +365,7 @@
     },
     "update_global_ssh_overrides": {
       "capability": "ssh_overrides.write",
-      "status": "daemon-only"
+      "status": "implemented"
     }
   },
   "client_methods": [

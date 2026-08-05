@@ -535,7 +535,10 @@ class WindowConfigDialogsMixin:
                 # Imported lazily so the heavy Preferences module stays off the
                 # startup path — only needed when Settings is opened.
                 from .preferences import PreferencesWindow
-                prefs = PreferencesWindow(self, self.config)
+                controller = self._build_ssh_overrides_controller()
+                prefs = PreferencesWindow(
+                    self, self.config, ssh_overrides_controller=controller
+                )
                 self._preferences_window = prefs
             except Exception as e:
                 logger.error(f"Failed to create preferences page: {e}")

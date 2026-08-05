@@ -22,6 +22,7 @@ from sshpilot.runtime_identity import new_server_instance_id
 from sshpilot import __version__ as sshpilot_version
 from sshpilot.core.errors import CoreError
 from sshpilot.core.connection_application_service import ConnectionApplicationService
+from sshpilot.core.ssh_overrides_service import SshOverridesService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
 from sshpilot.api.models.common import ForwardId, RequestId, SessionId, SftpServiceId
@@ -166,6 +167,7 @@ class CoreServices:
     configuration_backend: Optional[AuthoritativeConfigurationBackend] = None
     known_hosts: Optional[KnownHostsService] = None
     keys: Optional[DaemonKeyService] = None
+    ssh_overrides: Optional[SshOverridesService] = None
 
 
 @dataclass
@@ -280,6 +282,7 @@ class DaemonServer:
         self._connection_service: Optional[ConnectionApplicationService] = None
         self._known_hosts_service: Optional[KnownHostsService] = None
         self._key_service: Optional[DaemonKeyService] = None
+        self._ssh_overrides_service: Optional[SshOverridesService] = None
         self._session_runtime: Optional[SessionRuntime] = None
         self._sftp_runtime: Optional[SftpServiceRuntime] = None
         self._transfer_runtime: Optional[TransferRuntime] = None
@@ -530,6 +533,7 @@ class DaemonServer:
                 configuration_backend = core.configuration_backend
                 self._known_hosts_service = core.known_hosts
                 self._key_service = core.keys
+                self._ssh_overrides_service = core.ssh_overrides
             else:
                 self._connection_service = core
             enable_workers = getattr(
@@ -632,6 +636,7 @@ class DaemonServer:
                 forward_runtime=self._forward_runtime,
                 known_hosts_service=self._known_hosts_service,
                 key_service=self._key_service,
+                ssh_overrides_service=self._ssh_overrides_service,
                 lifecycle_controller=self._lifecycle,
                 diagnostics_provider=self.build_diagnostics,
             )

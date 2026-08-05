@@ -15,7 +15,8 @@ def test_connection_service_only_declares_connection_operations():
         "store_key_passphrase", "delete_key_passphrase", "lookup_key_passphrase",
         "update_connection_metadata", "assign_connection_to_group", "create_group",
         "delete_group", "rename_group", "split_connection", "subscribe_events",
-        "update_connection",
+        "update_connection", "get_global_ssh_overrides",
+        "update_global_ssh_overrides", "reset_global_ssh_overrides",
     }
     for client_only in ("open_session", "open_sftp", "open_forward", "start_transfer"):
         assert not hasattr(ConnectionApplicationService, client_only)

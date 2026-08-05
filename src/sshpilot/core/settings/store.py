@@ -14,6 +14,14 @@ from .migration import ensure_config_defaults
 logger = logging.getLogger(__name__)
 
 
+class SettingsFileError(RuntimeError):
+    """Raised when a settings file cannot be read as a valid current-version tree.
+
+    This is the core-level signal for authoritative readers; the daemon maps it
+    to a stable sanitized API error (no paths, no raw JSON, no exception text).
+    """
+
+
 def load_settings(path: Path | str) -> Tuple[Dict[str, Any], bool]:
     """Load settings from *path*.
 
@@ -52,6 +60,63 @@ def load_settings(path: Path | str) -> Tuple[Dict[str, Any], bool]:
 
     data, updated = ensure_config_defaults(data)
     return data, updated
+
+
+def load_settings_strict(path: Path | str) -> Tuple[Dict[str, Any], bool]:
+    """Load settings for an authoritative reader, raising on malformed input.
+
+    Returns ``(config, migrated)`` where *migrated* is True when defaults were
+    returned (missing file or an obsolete version tree was replaced).
+
+    Unlike :func:`load_settings`, this never silently swallows damage:
+
+    * missing file -> canonical defaults (migrated=True)
+    * unreadable file -> :class:`SettingsFileError`
+    * invalid JSON / empty root -> :class:`SettingsFileError`
+    * non-object root -> :class:`SettingsFileError`
+    * obsolete ``config_version`` (< CONFIG_VERSION) -> replaced with a ``.bak``
+      backup and defaults returned (preserves the documented version migration)
+
+    A valid current-version tree is returned untouched: no rename, replacement,
+    or truncation, and no default backfill beyond the explicit version migration.
+    """
+    path = Path(path)
+    if not path.exists():
+        return get_default_config(), True
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SettingsFileError(
+            "The settings file could not be read"
+        ) from exc
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise SettingsFileError(
+            "The settings file does not contain valid JSON"
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise SettingsFileError("The settings file is not a settings object")
+
+    stored_version = data.get("config_version")
+    try:
+        stored_version = int(stored_version) if stored_version is not None else 0
+    except (TypeError, ValueError):
+        stored_version = 0
+
+    if stored_version < CONFIG_VERSION:
+        # Match load_settings: obsolete trees are replaced, not partially merged.
+        backup = path.with_suffix(path.suffix + ".bak")
+        try:
+            if path.exists():
+                path.replace(backup)
+        except OSError:
+            logger.debug("Could not back up obsolete config", exc_info=True)
+        return get_default_config(), True
+
+    return data, False
 
 
 def save_settings(path: Path | str, config: Dict[str, Any]) -> None:

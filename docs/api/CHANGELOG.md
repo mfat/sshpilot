@@ -5,6 +5,20 @@ notes remain separate.
 
 ## Unreleased
 
+- Implemented `get_global_ssh_overrides`, `update_global_ssh_overrides`, and
+  `reset_global_ssh_overrides` over the `ssh_overrides.get`, `ssh_overrides.update`,
+  and `ssh_overrides.reset` RPCs. The daemon-owned `SshOverridesService` is the
+  authoritative source for global SSH overrides: strict validation and
+  normalization, deterministic revision tokens, optimistic concurrency control
+  on writes, and atomic persistence of the settings file. The daemon advertises
+  `ssh_overrides.read` / `ssh_overrides.write` only when that service is
+  installed; otherwise clients receive canonical `unsupported_capability`
+  errors and never fall back to GTK-owned config handling.
+- Published the SSH overrides schema and contract: `GlobalSshOverrides`,
+  `UpdateGlobalSshOverridesRequest`, `EDITABLE_FIELDS`, plus the
+  `revision_conflict`, `settings_malformed`, and `settings_persistence_failed`
+  error codes. `PROTOCOL_VERSION` stays `1.0`.
+
 - Implemented daemon-backed `connections.snapshot`, complete group mutation
   RPCs, and connection metadata/tag mutation methods.
 

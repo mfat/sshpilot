@@ -245,10 +245,11 @@ class PreferencesWindow(Adw.NavigationPage):
     header_bar = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
 
-    def __init__(self, parent_window, config):
+    def __init__(self, parent_window, config, ssh_overrides_controller=None):
         super().__init__()
         self.parent_window = parent_window
         self.config = config
+        self.ssh_overrides_controller = ssh_overrides_controller
         self._shortcuts_row = None
         self._shortcuts_button = None
         self._group_display_sync = False
@@ -2146,6 +2147,53 @@ class PreferencesWindow(Adw.NavigationPage):
         return security_page
 
 
+    def _ssh_override_page_values(self):
+        """Return the nine SSH override field values for the page.
+
+        The daemon-backed controller is authoritative when injected; the page
+        then reflects daemon state instead of the local config cache. Without a
+        controller (legacy construction) the local config view is used.
+        """
+        if self.ssh_overrides_controller is not None:
+            try:
+                snapshot = self.ssh_overrides_controller.load()
+                return {
+                    "connect_timeout": snapshot.connect_timeout,
+                    "connection_attempts": snapshot.connection_attempts,
+                    "server_alive_interval": snapshot.server_alive_interval,
+                    "server_alive_count_max": snapshot.server_alive_count_max,
+                    "strict_host_key_checking": snapshot.strict_host_key_checking,
+                    "batch_mode": snapshot.batch_mode,
+                    "compression": snapshot.compression,
+                    "verbosity": snapshot.verbosity,
+                    "debug_enabled": snapshot.debug_enabled,
+                }
+            except Exception:
+                logger.warning(
+                    "Failed to load global SSH overrides", exc_info=True
+                )
+
+        def _config_int(key, default=0):
+            try:
+                value = int(self.config.get_setting(key, None))
+            except (TypeError, ValueError):
+                value = default
+            return value if value >= 0 else default
+
+        return {
+            "connect_timeout": _config_int('ssh.connection_timeout'),
+            "connection_attempts": _config_int('ssh.connection_attempts'),
+            "server_alive_interval": _config_int('ssh.keepalive_interval'),
+            "server_alive_count_max": _config_int('ssh.keepalive_count_max'),
+            "strict_host_key_checking": str(
+                self.config.get_setting('ssh.strict_host_key_checking', 'accept-new')
+            ),
+            "batch_mode": bool(self.config.get_setting('ssh.batch_mode', False)),
+            "compression": bool(self.config.get_setting('ssh.compression', False)),
+            "verbosity": _config_int('ssh.verbosity'),
+            "debug_enabled": bool(self.config.get_setting('ssh.debug_enabled', False)),
+        }
+
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
         ssh_settings_page = Adw.PreferencesPage()
@@ -2166,30 +2214,18 @@ class PreferencesWindow(Adw.NavigationPage):
 
         advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
 
+        values = self._ssh_override_page_values()
+
         # Connect timeout
         self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
         self.connect_timeout_row.set_title(_("Connect Timeout (s)"))
-        connect_timeout_value = self.config.get_setting('ssh.connection_timeout', None)
-        try:
-            connect_timeout_value = int(connect_timeout_value)
-        except (TypeError, ValueError):
-            connect_timeout_value = 0
-        if connect_timeout_value < 0:
-            connect_timeout_value = 0
-        self.connect_timeout_row.set_value(connect_timeout_value)
+        self.connect_timeout_row.set_value(int(values['connect_timeout']))
         advanced_group.add(self.connect_timeout_row)
 
         # Connection attempts
         self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
         self.connection_attempts_row.set_title(_("Connection Attempts"))
-        connection_attempts_value = self.config.get_setting('ssh.connection_attempts', None)
-        try:
-            connection_attempts_value = int(connection_attempts_value)
-        except (TypeError, ValueError):
-            connection_attempts_value = 0
-        if connection_attempts_value < 0:
-            connection_attempts_value = 0
-        self.connection_attempts_row.set_value(connection_attempts_value)
+        self.connection_attempts_row.set_value(int(values['connection_attempts']))
         advanced_group.add(self.connection_attempts_row)
 
         # Default keepalive opt-out. When on (default) and the user hasn't
@@ -2209,40 +2245,26 @@ class PreferencesWindow(Adw.NavigationPage):
         # Keepalive interval
         self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
         self.keepalive_interval_row.set_title(_("ServerAlive Interval (s)"))
-        keepalive_interval_value = self.config.get_setting('ssh.keepalive_interval', None)
-        try:
-            keepalive_interval_value = int(keepalive_interval_value)
-        except (TypeError, ValueError):
-            keepalive_interval_value = 0
-        if keepalive_interval_value < 0:
-            keepalive_interval_value = 0
-        self.keepalive_interval_row.set_value(keepalive_interval_value)
+        self.keepalive_interval_row.set_value(int(values['server_alive_interval']))
         advanced_group.add(self.keepalive_interval_row)
 
         # Keepalive count max
         self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
         self.keepalive_count_row.set_title(_("ServerAlive CountMax"))
-        keepalive_count_value = self.config.get_setting('ssh.keepalive_count_max', None)
-        try:
-            keepalive_count_value = int(keepalive_count_value)
-        except (TypeError, ValueError):
-            keepalive_count_value = 0
-        if keepalive_count_value < 0:
-            keepalive_count_value = 0
-        self.keepalive_count_row.set_value(keepalive_count_value)
+        self.keepalive_count_row.set_value(int(values['server_alive_count_max']))
         advanced_group.add(self.keepalive_count_row)
 
         # Strict host key checking
         self.strict_host_row = Adw.ComboRow()
         self.strict_host_row.set_title(_("StrictHostKeyChecking"))
         strict_model = Gtk.StringList()
-        for item in ["accept-new", "yes", "no", "ask"]:
+        strict_options = ["accept-new", "yes", "no", "ask"]
+        for item in strict_options:
             strict_model.append(item)
         self.strict_host_row.set_model(strict_model)
-        # Map current value
-        current_strict = str(self.config.get_setting('ssh.strict_host_key_checking', 'accept-new'))
+        current_strict = str(values['strict_host_key_checking'])
         try:
-            idx = ["accept-new", "yes", "no", "ask"].index(current_strict)
+            idx = strict_options.index(current_strict)
         except ValueError:
             idx = 0
         self.strict_host_row.set_selected(idx)
@@ -2251,13 +2273,13 @@ class PreferencesWindow(Adw.NavigationPage):
         # BatchMode (non-interactive)
         self.batch_mode_row = Adw.SwitchRow()
         self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
-        self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', False)))
+        self.batch_mode_row.set_active(bool(values['batch_mode']))
         advanced_group.add(self.batch_mode_row)
 
         # Compression
         self.compression_row = Adw.SwitchRow()
         self.compression_row.set_title(_("Enable Compression (-C)"))
-        self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', False)))
+        self.compression_row.set_active(bool(values['compression']))
         advanced_group.add(self.compression_row)
 
         # Connection multiplexing (ControlMaster). When on, the first
@@ -2274,13 +2296,13 @@ class PreferencesWindow(Adw.NavigationPage):
         # SSH verbosity (-v levels)
         self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
         self.verbosity_row.set_title(_("SSH Verbosity (-v)"))
-        self.verbosity_row.set_value(int(self.config.get_setting('ssh.verbosity', 0)))
+        self.verbosity_row.set_value(int(values['verbosity']))
         advanced_group.add(self.verbosity_row)
 
         # Debug logging toggle
         self.debug_enabled_row = Adw.SwitchRow()
         self.debug_enabled_row.set_title(_("Enable SSH Debug Logging"))
-        self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
+        self.debug_enabled_row.set_active(bool(values['debug_enabled']))
         advanced_group.add(self.debug_enabled_row)
 
 
@@ -5049,106 +5071,124 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as e:
             logger.error(f"Failed to remove color override provider: {e}")
 
+    def _collect_ssh_override_patch(self):
+        """Read the nine SSH override fields from the page rows."""
+        options = ["accept-new", "yes", "no", "ask"]
+        idx = self.strict_host_row.get_selected()
+        strict_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+        return {
+            "connect_timeout": int(self.connect_timeout_row.get_value()),
+            "connection_attempts": int(self.connection_attempts_row.get_value()),
+            "server_alive_interval": int(self.keepalive_interval_row.get_value()),
+            "server_alive_count_max": int(self.keepalive_count_row.get_value()),
+            "strict_host_key_checking": strict_value,
+            "batch_mode": bool(self.batch_mode_row.get_active()),
+            "compression": bool(self.compression_row.get_active()),
+            "verbosity": int(self.verbosity_row.get_value()),
+            "debug_enabled": bool(self.debug_enabled_row.get_active()),
+        }
+
+    def _apply_ssh_override_values_to_rows(self, snapshot):
+        """Populate the page rows from a daemon ``GlobalSshOverrides``."""
+        self.connect_timeout_row.set_value(int(snapshot.connect_timeout))
+        self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
+        self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
+        self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
+        options = ["accept-new", "yes", "no", "ask"]
+        try:
+            self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
+        except ValueError:
+            self.strict_host_row.set_selected(0)
+        self.batch_mode_row.set_active(bool(snapshot.batch_mode))
+        self.compression_row.set_active(bool(snapshot.compression))
+        self.verbosity_row.set_value(int(snapshot.verbosity))
+        self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
-            connect_timeout = None
-            connection_attempts = None
-            keepalive_interval = None
-            keepalive_count = None
-            strict_host_value = ''
-            batch_mode_enabled = False
-            compression_enabled = False
-            verbosity_value = 0
-            debug_enabled = False
+            page_built = hasattr(self, 'connect_timeout_row')
 
-            if hasattr(self, 'connect_timeout_row'):
-                connect_timeout_value = int(self.connect_timeout_row.get_value())
-                if connect_timeout_value <= 0:
-                    connect_timeout = None
-                else:
-                    connect_timeout = connect_timeout_value
-                self.config.set_setting('ssh.connection_timeout', connect_timeout)
-            if hasattr(self, 'connection_attempts_row'):
-                connection_attempts_value = int(self.connection_attempts_row.get_value())
-                if connection_attempts_value <= 0:
-                    connection_attempts = None
-                else:
-                    connection_attempts = connection_attempts_value
-                self.config.set_setting('ssh.connection_attempts', connection_attempts)
+            # Config-owned SSH rows (multiplexing, default keepalive).
             if hasattr(self, 'apply_default_keepalive_row'):
                 self.config.set_setting(
                     'ssh.apply_default_keepalive',
                     bool(self.apply_default_keepalive_row.get_active()),
                 )
-            if hasattr(self, 'keepalive_interval_row'):
-                keepalive_interval_value = int(self.keepalive_interval_row.get_value())
-                if keepalive_interval_value <= 0:
-                    keepalive_interval = None
-                else:
-                    keepalive_interval = keepalive_interval_value
-                self.config.set_setting('ssh.keepalive_interval', keepalive_interval)
-            if hasattr(self, 'keepalive_count_row'):
-                keepalive_count_value = int(self.keepalive_count_row.get_value())
-                if keepalive_count_value <= 0:
-                    keepalive_count = None
-                else:
-                    keepalive_count = keepalive_count_value
-                self.config.set_setting('ssh.keepalive_count_max', keepalive_count)
-            if hasattr(self, 'strict_host_row'):
-                options = ["accept-new", "yes", "no", "ask"]
-                idx = self.strict_host_row.get_selected()
-                strict_host_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
-                self.config.set_setting('ssh.strict_host_key_checking', strict_host_value)
-            if hasattr(self, 'batch_mode_row'):
-                batch_mode_enabled = bool(self.batch_mode_row.get_active())
-                self.config.set_setting('ssh.batch_mode', batch_mode_enabled)
-            if hasattr(self, 'compression_row'):
-                compression_enabled = bool(self.compression_row.get_active())
-                self.config.set_setting('ssh.compression', compression_enabled)
-            if hasattr(self, 'verbosity_row'):
-                verbosity_value = int(self.verbosity_row.get_value())
-                self.config.set_setting('ssh.verbosity', verbosity_value)
-            if hasattr(self, 'debug_enabled_row'):
-                debug_enabled = bool(self.debug_enabled_row.get_active())
-                self.config.set_setting('ssh.debug_enabled', debug_enabled)
             controlmaster_enabled = False
             if hasattr(self, 'controlmaster_row'):
                 controlmaster_enabled = bool(self.controlmaster_row.get_active())
                 self.config.set_setting('ssh.controlmaster', controlmaster_enabled)
 
-            overrides: List[str] = []
-            from sshpilot.core.settings import compose_ssh_overrides
+            controller = self.ssh_overrides_controller
+            if controller is not None and page_built:
+                # Daemon-owned path: the nine semantic fields are persisted
+                # through the controller; Preferences no longer writes them or
+                # composes ``ssh.ssh_overrides`` on the local config.
+                try:
+                    controller.update(self._collect_ssh_override_patch())
+                except Exception as exc:
+                    logger.error(f"Failed to save global SSH overrides: {exc}")
+            elif page_built:
+                # Legacy config-backed path (constructed without a controller).
+                connect_timeout = None
+                connection_attempts = None
+                keepalive_interval = None
+                keepalive_count = None
+                strict_host_value = ''
+                batch_mode_enabled = False
+                compression_enabled = False
+                verbosity_value = 0
+                debug_enabled = False
 
-            ssh_fragment = {
-                'batch_mode': batch_mode_enabled,
-                'connection_timeout': connect_timeout,
-                'connection_attempts': connection_attempts,
-                'keepalive_interval': keepalive_interval,
-                'keepalive_count_max': keepalive_count,
-                'strict_host_key_checking': strict_host_value,
-                'compression': compression_enabled,
-                'verbosity': verbosity_value,
-                'debug_enabled': debug_enabled,
-                'controlmaster': controlmaster_enabled,
-            }
-            controlmaster_extra = None
-            if controlmaster_enabled:
-                from .ssh_multiplex import controlmaster_args
-                controlmaster_extra = controlmaster_args()
-            overrides = compose_ssh_overrides(
-                ssh_fragment, controlmaster_extra=controlmaster_extra
-            )
+                connect_timeout_value = int(self.connect_timeout_row.get_value())
+                connect_timeout = connect_timeout_value if connect_timeout_value > 0 else None
+                self.config.set_setting('ssh.connection_timeout', connect_timeout)
+                connection_attempts_value = int(self.connection_attempts_row.get_value())
+                connection_attempts = connection_attempts_value if connection_attempts_value > 0 else None
+                self.config.set_setting('ssh.connection_attempts', connection_attempts)
+                keepalive_interval_value = int(self.keepalive_interval_row.get_value())
+                keepalive_interval = keepalive_interval_value if keepalive_interval_value > 0 else None
+                self.config.set_setting('ssh.keepalive_interval', keepalive_interval)
+                keepalive_count_value = int(self.keepalive_count_row.get_value())
+                keepalive_count = keepalive_count_value if keepalive_count_value > 0 else None
+                self.config.set_setting('ssh.keepalive_count_max', keepalive_count)
+                options = ["accept-new", "yes", "no", "ask"]
+                idx = self.strict_host_row.get_selected()
+                strict_host_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+                self.config.set_setting('ssh.strict_host_key_checking', strict_host_value)
+                batch_mode_enabled = bool(self.batch_mode_row.get_active())
+                self.config.set_setting('ssh.batch_mode', batch_mode_enabled)
+                compression_enabled = bool(self.compression_row.get_active())
+                self.config.set_setting('ssh.compression', compression_enabled)
+                verbosity_value = int(self.verbosity_row.get_value())
+                self.config.set_setting('ssh.verbosity', verbosity_value)
+                debug_enabled = bool(self.debug_enabled_row.get_active())
+                self.config.set_setting('ssh.debug_enabled', debug_enabled)
 
-            self.config.set_setting('ssh.ssh_overrides', overrides)
-            # Global SSH options changed: retire live ControlMasters so new
-            # connections pick up the new overrides instead of riding stale
-            # transports (existing sessions drain naturally via -O stop).
-            try:
-                from .ssh_multiplex import expire_all_masters
-                expire_all_masters()
-            except Exception:
-                logger.debug('Master expiry skipped', exc_info=True)
+                from sshpilot.core.settings import compose_ssh_overrides
+
+                ssh_fragment = {
+                    'batch_mode': batch_mode_enabled,
+                    'connection_timeout': connect_timeout,
+                    'connection_attempts': connection_attempts,
+                    'keepalive_interval': keepalive_interval,
+                    'keepalive_count_max': keepalive_count,
+                    'strict_host_key_checking': strict_host_value,
+                    'compression': compression_enabled,
+                    'verbosity': verbosity_value,
+                    'debug_enabled': debug_enabled,
+                    'controlmaster': controlmaster_enabled,
+                }
+                controlmaster_extra = None
+                if controlmaster_enabled:
+                    from .ssh_multiplex import controlmaster_args
+                    controlmaster_extra = controlmaster_args()
+                overrides = compose_ssh_overrides(
+                    ssh_fragment, controlmaster_extra=controlmaster_extra
+                )
+                self.config.set_setting('ssh.ssh_overrides', overrides)
+
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.config.set_setting(
                     'file_manager.force_internal',
@@ -5175,6 +5215,15 @@ class PreferencesWindow(Adw.NavigationPage):
                     connect_timeout_value = 0
                 self.config.set_setting('file_manager.sftp_connect_timeout', connect_timeout_value)
 
+            # Global SSH options changed: retire live ControlMasters so new
+            # connections pick up the new overrides instead of riding stale
+            # transports (existing sessions drain naturally via -O stop).
+            try:
+                from .ssh_multiplex import expire_all_masters
+                expire_all_masters()
+            except Exception:
+                logger.debug('Master expiry skipped', exc_info=True)
+
             manager = None
             if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
                 manager = self.parent_window.connection_manager
@@ -5187,42 +5236,56 @@ class PreferencesWindow(Adw.NavigationPage):
         """Restore advanced SSH settings to defaults and update the UI."""
         try:
             defaults = self.config.get_default_config().get('ssh', {})
+            controller = self.ssh_overrides_controller
 
-            if hasattr(self, 'connect_timeout_row'):
-                self.config.set_setting('ssh.connection_timeout', None)
-                self.connect_timeout_row.set_value(0)
-            if hasattr(self, 'connection_attempts_row'):
-                self.config.set_setting('ssh.connection_attempts', None)
-                self.connection_attempts_row.set_value(0)
+            if controller is not None and hasattr(self, 'connect_timeout_row'):
+                # Daemon-owned path: the nine semantic fields reset through
+                # the controller and the page reflects the daemon result.
+                try:
+                    snapshot = controller.reset()
+                    self._apply_ssh_override_values_to_rows(snapshot)
+                except Exception as exc:
+                    logger.error(f"Failed to reset global SSH overrides: {exc}")
+            else:
+                if hasattr(self, 'connect_timeout_row'):
+                    self.config.set_setting('ssh.connection_timeout', None)
+                    self.connect_timeout_row.set_value(0)
+                if hasattr(self, 'connection_attempts_row'):
+                    self.config.set_setting('ssh.connection_attempts', None)
+                    self.connection_attempts_row.set_value(0)
+                if hasattr(self, 'keepalive_interval_row'):
+                    self.config.set_setting('ssh.keepalive_interval', None)
+                    self.keepalive_interval_row.set_value(0)
+                if hasattr(self, 'keepalive_count_row'):
+                    self.config.set_setting('ssh.keepalive_count_max', None)
+                    self.keepalive_count_row.set_value(0)
+                if hasattr(self, 'strict_host_row'):
+                    try:
+                        self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))
+                    except ValueError:
+                        self.strict_host_row.set_selected(0)
+                    self.config.set_setting('ssh.strict_host_key_checking', 'accept-new')
+                self.config.set_setting('ssh.auto_add_host_keys', defaults.get('auto_add_host_keys'))
+                if hasattr(self, 'batch_mode_row'):
+                    self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', False)))
+                    self.batch_mode_row.set_active(bool(defaults.get('batch_mode', False)))
+                if hasattr(self, 'compression_row'):
+                    self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
+                    self.compression_row.set_active(bool(defaults.get('compression', False)))
+                if hasattr(self, 'verbosity_row'):
+                    self.config.set_setting('ssh.verbosity', defaults.get('verbosity'))
+                    self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
+                if hasattr(self, 'debug_enabled_row'):
+                    self.config.set_setting('ssh.debug_enabled', bool(defaults.get('debug_enabled', False)))
+                    self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
+
             if hasattr(self, 'apply_default_keepalive_row'):
                 default_apply = bool(defaults.get('apply_default_keepalive', True))
                 self.config.set_setting('ssh.apply_default_keepalive', default_apply)
                 self.apply_default_keepalive_row.set_active(default_apply)
-            if hasattr(self, 'keepalive_interval_row'):
-                self.config.set_setting('ssh.keepalive_interval', None)
-                self.keepalive_interval_row.set_value(0)
-            if hasattr(self, 'keepalive_count_row'):
-                self.config.set_setting('ssh.keepalive_count_max', None)
-                self.keepalive_count_row.set_value(0)
-            if hasattr(self, 'strict_host_row'):
-                try:
-                    self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))
-                except ValueError:
-                    self.strict_host_row.set_selected(0)
-                self.config.set_setting('ssh.strict_host_key_checking', 'accept-new')
-            self.config.set_setting('ssh.auto_add_host_keys', defaults.get('auto_add_host_keys'))
-            if hasattr(self, 'batch_mode_row'):
-                self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', False)))
-                self.batch_mode_row.set_active(bool(defaults.get('batch_mode', False)))
-            if hasattr(self, 'compression_row'):
-                self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
-                self.compression_row.set_active(bool(defaults.get('compression', False)))
-            if hasattr(self, 'verbosity_row'):
-                self.config.set_setting('ssh.verbosity', defaults.get('verbosity'))
-                self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
-            if hasattr(self, 'debug_enabled_row'):
-                self.config.set_setting('ssh.debug_enabled', bool(defaults.get('debug_enabled', False)))
-                self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
+            if hasattr(self, 'controlmaster_row'):
+                self.config.set_setting('ssh.controlmaster', False)
+                self.controlmaster_row.set_active(False)
 
             file_manager_defaults = self.config.get_default_config().get('file_manager', {})
             default_force_internal = bool(file_manager_defaults.get('force_internal', False))
@@ -5247,7 +5310,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.sftp_connect_timeout_row.set_value(max(0, connect_timeout_default))
             self._update_external_file_manager_row()
 
-            self.save_advanced_ssh_settings()
+            if controller is None:
+                self.save_advanced_ssh_settings()
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
 

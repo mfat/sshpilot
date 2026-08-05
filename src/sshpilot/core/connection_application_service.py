@@ -46,6 +46,10 @@ from ..api.models.connections import (
     UNSET,
     forwarding_rule_from_dict,
 )
+from ..api.models.settings import (
+    GlobalSshOverrides,
+    UpdateGlobalSshOverridesRequest,
+)
 from ..api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from .connections.models import ConnectionRecord
 from .connections.repository import (
@@ -81,6 +85,9 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "split_connection": Capability.CONNECTIONS_SPLIT,
     "subscribe_events": Capability.CONNECTIONS_EVENTS,
     "update_connection": Capability.CONNECTIONS_WRITE,
+    "get_global_ssh_overrides": Capability.SSH_OVERRIDES_READ,
+    "update_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
+    "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
 }
 
 
@@ -98,6 +105,7 @@ class ConnectionApplicationService:
         *,
         launch_provider: Any = None,
         secret_provider: Any = None,
+        ssh_overrides: Any = None,
         client_name: str = "sshpilotd",
         client_version: str = sshpilot_version,
         allow_cross_thread_commands: bool = False,
@@ -107,6 +115,7 @@ class ConnectionApplicationService:
         self._repository = repository
         self._launch_provider = launch_provider
         self._secret_provider = secret_provider
+        self._ssh_overrides_service = ssh_overrides
         self._owner_thread_id = threading.get_ident()
         self._allow_cross_thread_commands = bool(allow_cross_thread_commands)
         self._publisher = EventPublisher()
@@ -122,6 +131,13 @@ class ConnectionApplicationService:
             Capability.CONNECTIONS_GROUPS,
             Capability.CONNECTIONS_SPLIT,
         }
+        if ssh_overrides is not None:
+            supported.update(
+                {
+                    Capability.SSH_OVERRIDES_READ,
+                    Capability.SSH_OVERRIDES_WRITE,
+                }
+            )
         self._capabilities = Capabilities(
             protocol_version=PROTOCOL_VERSION,
             api_implementation_version=API_IMPLEMENTATION_VERSION,
@@ -930,6 +946,37 @@ class ConnectionApplicationService:
     def _require_capability(self, capability: Capability) -> None:
         if not self._capabilities.supports(capability):
             raise unsupported_capability(capability)
+
+    # -- SSH overrides (in-process parity with the daemon service) --------
+
+    def get_global_ssh_overrides(self) -> GlobalSshOverrides:
+        self._require_capability(Capability.SSH_OVERRIDES_READ)
+        service = self._ssh_overrides_service
+        if service is None:
+            raise unsupported_capability(Capability.SSH_OVERRIDES_READ)
+        return service.get()
+
+    def update_global_ssh_overrides(
+        self, request: UpdateGlobalSshOverridesRequest
+    ) -> GlobalSshOverrides:
+        self._require_capability(Capability.SSH_OVERRIDES_WRITE)
+        if type(request) is not UpdateGlobalSshOverridesRequest:
+            raise TypeError(
+                "request must be an UpdateGlobalSshOverridesRequest instance"
+            )
+        service = self._ssh_overrides_service
+        if service is None:
+            raise unsupported_capability(Capability.SSH_OVERRIDES_WRITE)
+        return service.update(request)
+
+    def reset_global_ssh_overrides(
+        self, expected_revision: Optional[str] = None
+    ) -> GlobalSshOverrides:
+        self._require_capability(Capability.SSH_OVERRIDES_WRITE)
+        service = self._ssh_overrides_service
+        if service is None:
+            raise unsupported_capability(Capability.SSH_OVERRIDES_WRITE)
+        return service.reset(expected_revision=expected_revision)
 
     # -- daemon-only protocol surface (canonical unsupported errors) ------
 

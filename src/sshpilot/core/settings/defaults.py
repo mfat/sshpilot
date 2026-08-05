@@ -122,6 +122,12 @@ def get_default_config() -> Dict[str, Any]:
             'use_isolated_config': False,
             'ssh_overrides': [],
             'strict_host_key_checking': 'accept-new',
+            # Global SSH override fields (daemon-owned). 0 disables the
+            # corresponding ``-o`` option (matching compose_ssh_overrides).
+            'connection_timeout': 0,
+            'connection_attempts': 0,
+            'keepalive_interval': 0,
+            'keepalive_count_max': 0,
             # When the user hasn't configured keepalive (here or in
             # ~/.ssh/config), apply a sane default ServerAlive* so a dead
             # link is detected (~interval*count seconds) instead of the

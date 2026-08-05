@@ -242,6 +242,8 @@ DRAIN_REJECTED_METHODS = frozenset(
         "forwards.open",
         "known_hosts.remove",
         "keys.generate",
+        "ssh_overrides.update",
+        "ssh_overrides.reset",
     }
 )
 
@@ -624,6 +626,7 @@ class RequestDispatcher:
                 forwards=self._forward_runtime is not None,
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
+                ssh_overrides=self._ssh_overrides_service is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -1956,6 +1959,7 @@ class RequestDispatcher:
                 forwards=self._forward_runtime is not None,
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
+                ssh_overrides=self._ssh_overrides_service is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -1974,6 +1978,7 @@ class RequestDispatcher:
         forwards: bool = False,
         known_hosts: bool = False,
         keys: bool = False,
+        ssh_overrides: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -2065,6 +2070,13 @@ class RequestDispatcher:
                 {
                     Capability.KEYS_READ,
                     Capability.KEYS_WRITE,
+                }
+            )
+        if ssh_overrides:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.SSH_OVERRIDES_READ,
+                    Capability.SSH_OVERRIDES_WRITE,
                 }
             )
         return daemon_capabilities
@@ -2182,6 +2194,10 @@ class RequestDispatcher:
             global_ssh_overrides_to_wire,
         )
 
+        if set(request.params) - {"expected_revision"}:
+            raise ValueError(
+                f"unexpected params: {sorted(set(request.params) - {'expected_revision'})}"
+            )
         expected_revision = request.params.get("expected_revision")
         if expected_revision is not None and (
             type(expected_revision) is not str or not expected_revision.strip()

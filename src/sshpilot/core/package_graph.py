@@ -51,6 +51,7 @@ ALLOWED_EDGES = {
         "sshpilot.askpass_utils",
         "sshpilot.ssh_config_utils",
         "sshpilot.sftp",
+        "sshpilot.ssh_multiplex",  # GI-free connection-multiplex helpers
     ),
 }
 

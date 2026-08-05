@@ -150,9 +150,9 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: split_connection status=implemented capability=connections.split -->
-<!-- api-method-contract: get_global_ssh_overrides status=daemon-only capability=ssh_overrides.read -->
-<!-- api-method-contract: update_global_ssh_overrides status=daemon-only capability=ssh_overrides.write -->
-<!-- api-method-contract: reset_global_ssh_overrides status=daemon-only capability=ssh_overrides.write -->
+<!-- api-method-contract: get_global_ssh_overrides status=implemented capability=ssh_overrides.read -->
+<!-- api-method-contract: update_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
+<!-- api-method-contract: reset_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
 <!-- api-method: get_connection_store_snapshot -->
 <!-- api-method: set_group_color -->
 <!-- api-method: place_group -->
@@ -1227,7 +1227,8 @@ finally:
 <!-- api-method: get_global_ssh_overrides -->
 ## `get_global_ssh_overrides`
 
-- **Status / introduced:** Daemon-only / Protocol v1
+- **Status / introduced:** Implemented through `DaemonClient` when the SSH
+  overrides service is installed / Protocol v1
 - **Capability / purpose:** `ssh_overrides.read`; read the authoritative
   global SSH overrides state including a deterministic revision token.
 - **Parameters / return:** No parameters; returns `GlobalSshOverrides`.
@@ -1245,7 +1246,8 @@ print(overrides.connect_timeout, overrides.revision)
 <!-- api-method: update_global_ssh_overrides -->
 ## `update_global_ssh_overrides`
 
-- **Status / introduced:** Daemon-only / Protocol v1
+- **Status / introduced:** Implemented through `DaemonClient` when the SSH
+  overrides service is installed / Protocol v1
 - **Capability / purpose:** `ssh_overrides.write`; partially update one or
   more SSH override fields with optimistic concurrency control.
 - **Parameters / return:** `UpdateGlobalSshOverridesRequest` with a `patch`
@@ -1272,7 +1274,8 @@ result = client.update_global_ssh_overrides(
 <!-- api-method: reset_global_ssh_overrides -->
 ## `reset_global_ssh_overrides`
 
-- **Status / introduced:** Daemon-only / Protocol v1
+- **Status / introduced:** Implemented through `DaemonClient` when the SSH
+  overrides service is installed / Protocol v1
 - **Capability / purpose:** `ssh_overrides.write`; reset SSH override fields
   to application defaults.
 - **Parameters / return:** Optional `expected_revision: str`; returns

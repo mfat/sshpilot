@@ -770,6 +770,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # If the previous run crashed, surface it once the UI has settled.
         GLib.timeout_add(1200, self._check_previous_crash)
 
+    def _build_ssh_overrides_controller(self):
+        """Build the daemon-backed SSH overrides controller for Preferences."""
+        client = getattr(self, 'client', None)
+        if client is None:
+            return None
+        from .gtk.ssh_overrides_controller import SshOverridesController
+        return SshOverridesController(client)
+
     def _preload_preferences_window(self) -> bool:
         """Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant."""
         if getattr(self, '_preferences_window', None) is not None or getattr(self, '_is_quitting', False):
@@ -777,7 +785,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             from .preferences import PreferencesWindow
             if getattr(self, '_preferences_window', None) is None:
-                self._preferences_window = PreferencesWindow(self, self.config)
+                controller = self._build_ssh_overrides_controller()
+                self._preferences_window = PreferencesWindow(
+                    self, self.config, ssh_overrides_controller=controller
+                )
         except Exception as exc:
             logger.debug("Preloading preferences page skipped/failed: %s", exc)
         return GLib.SOURCE_REMOVE

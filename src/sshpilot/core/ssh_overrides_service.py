@@ -4,6 +4,11 @@ Manages the daemon-owned global SSH overrides through the existing
 headless settings store.  The service is the single authority for
 reading and mutating the semantic SSH fields; it regenerates the
 derived ``ssh.ssh_overrides`` list on every mutation.
+
+All field-model contracts (field→config-key mapping, valid ranges,
+canonical defaults, strict normalization, revision) live in
+``sshpilot.core.settings.ssh_overrides`` so the API model and the
+revision token always agree.
 """
 
 from __future__ import annotations
@@ -11,33 +16,31 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from ..api.errors import ErrorCode, SshPilotError
 from ..api.models.settings import (
-    EDITABLE_FIELDS,
     REVISION_CONFLICT,
     SETTINGS_MALFORMED,
     SETTINGS_PERSISTENCE_FAILED,
     GlobalSshOverrides,
     UpdateGlobalSshOverridesRequest,
-    _compute_revision,
-    _FIELD_TO_CONFIG_KEY,
 )
 
-# Expose the field→config-key mapping for callers that need it.
-FIELD_TO_CONFIG_KEY = _FIELD_TO_CONFIG_KEY
-
 from .settings import (
+    DEFAULT_SSH_OVERRIDES,
+    FIELD_TO_CONFIG_KEY,
+    SettingsFileError,
     compose_ssh_overrides,
-    get_nested,
-    load_settings,
+    compute_ssh_overrides_revision,
+    get_default_config,
+    load_settings_strict,
+    normalize_ssh_overrides,
     save_settings,
     set_nested,
 )
 
 logger = logging.getLogger(__name__)
-
 
 
 class SshOverridesService:
@@ -49,11 +52,24 @@ class SshOverridesService:
 
     All public methods are serialized with a lock so concurrent stale writers
     are rejected cleanly.
+
+    ``controlmaster_extra`` supplies the ``-o`` args that enable SSH connection
+    multiplexing (``ssh_multiplex.controlmaster_args()``) when the daemon
+    configuration enables ``ssh.controlmaster``.  Core does not import the
+    multiplex helper; the daemon injects the args.
     """
 
-    def __init__(self, settings_path: Path | str) -> None:
+    def __init__(
+        self,
+        settings_path: Path | str,
+        *,
+        controlmaster_extra: Optional[Sequence[str]] = None,
+    ) -> None:
         self._path = Path(settings_path)
         self._lock = threading.Lock()
+        self._controlmaster_extra = (
+            tuple(controlmaster_extra) if controlmaster_extra is not None else None
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -94,9 +110,14 @@ class SshOverridesService:
                 return current
 
             for key, value in request.patch.items():
-                config_key = _FIELD_TO_CONFIG_KEY[key]
+                config_key = FIELD_TO_CONFIG_KEY[key]
                 set_nested(config, config_key, value)
 
+            # Validate the complete patched state strictly before persisting,
+            # then write back the canonical semantic values so the file stays
+            # fully normalized (defaults backfilled, host-key value canonical).
+            semantic = self._normalize(config)
+            self._write_semantic(config, semantic)
             self._compose_and_persist(config)
             return self._snapshot(config)
 
@@ -107,7 +128,9 @@ class SshOverridesService:
         """Reset SSH overrides to application defaults.
 
         Only the semantic fields listed in ``EDITABLE_FIELDS`` are reset;
-        every other configuration key is preserved.
+        every other configuration key is preserved.  The canonical defaults are
+        written explicitly so the persisted state matches a fresh file exactly
+        (including the revision token).
         """
         with self._lock:
             config = self._load_strict()
@@ -130,37 +153,50 @@ class SshOverridesService:
     # ------------------------------------------------------------------
 
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """Read a dotted setting key from the authoritative state."""
-        with self._lock:
-            config = self._load_strict()
-            return get_nested(config, key, default)
+        """Read a dotted setting key from the authoritative state.
+
+        Best-effort view for the launch builder: a malformed or unreadable
+        file degrades to the canonical defaults (logged) instead of aborting
+        a connection launch.  The strict API surface (:meth:`get`, :meth:`update`,
+        :meth:`reset`) still raises on malformed input.
+        """
+        if key.startswith("ssh."):
+            nested = key[len("ssh."):]
+            return self.get_ssh_config().get(nested, default)
+        config = self._load_view()
+        return config.get(key, default)
 
     def get_ssh_config(self) -> Dict[str, Any]:
-        """Return the ``ssh`` subtree and the derived override list.
+        """Return the ``ssh`` subtree with defaults merged and the derived list.
 
-        Compatible with the ``app_config.get_ssh_config()`` interface
-        consumed by ``ssh_connection_builder``.
+        Compatible with the ``app_config.get_ssh_config()`` interface consumed
+        by ``ssh_connection_builder``: persisted values win over the canonical
+        defaults, and the derived ``ssh_overrides`` argv fragment is always
+        regenerated so the launch path and the overrides API agree.
         """
-        with self._lock:
-            config = self._load_strict()
-            ssh = dict(config.get("ssh", {}))
-            # Ensure the derived overrides list is always current.
-            ssh["ssh_overrides"] = compose_ssh_overrides(ssh)
-            return ssh
+        config = self._load_view()
+        ssh = dict(get_default_config()["ssh"])
+        persisted = config.get("ssh")
+        if isinstance(persisted, dict):
+            ssh.update({key: value for key, value in persisted.items() if value is not None})
+        ssh["ssh_overrides"] = compose_ssh_overrides(
+            ssh, controlmaster_extra=self._controlmaster_extra
+        )
+        return ssh
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _load_strict(self) -> Dict[str, Any]:
-        """Load settings or raise if the file is malformed."""
+        """Load settings or raise a stable error if the file is malformed."""
         try:
-            config, _migrated = load_settings(self._path)
-        except Exception as exc:
+            config, _migrated = load_settings_strict(self._path)
+        except SettingsFileError as exc:
             raise SshPilotError(
                 ErrorCode.PERSISTENCE_FAILED,
                 "The SSH settings file could not be read",
-                details={"code": SETTINGS_MALFORMED, "error": str(exc)},
+                details={"code": SETTINGS_MALFORMED},
             ) from exc
         if not isinstance(config, dict):
             raise SshPilotError(
@@ -168,63 +204,95 @@ class SshOverridesService:
                 "The SSH settings file is malformed",
                 details={"code": SETTINGS_MALFORMED},
             )
+        # Validate the SSH subtree shape up-front so every read/mutation fails
+        # with the stable malformed error instead of a raw conversion exception.
+        self._normalize(config)
         return config
 
-    def _snapshot(self, config: Dict[str, Any]) -> GlobalSshOverrides:
-        """Build a ``GlobalSshOverrides`` from the raw config tree."""
+    def _load_view(self) -> Dict[str, Any]:
+        """Best-effort load for launch-path views (defaults on malformed input).
+
+        A damaged daemon settings file must not abort an SSH connection: the
+        builder falls back to the canonical defaults (logged, never rewritten).
+        """
+        try:
+            return self._load_strict()
+        except SshPilotError:
+            logger.warning(
+                "SSH settings file is malformed; using canonical defaults "
+                "for the launch view"
+            )
+            return get_default_config()
+
+    def _normalize(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Strictly normalize the ``ssh`` subtree (wrapped as a stable error)."""
         ssh = config.get("ssh", {})
+        if not isinstance(ssh, dict):
+            raise SshPilotError(
+                ErrorCode.PERSISTENCE_FAILED,
+                "The SSH settings file is malformed",
+                details={"code": SETTINGS_MALFORMED},
+            )
+        try:
+            return normalize_ssh_overrides(ssh)
+        except (TypeError, ValueError) as exc:
+            raise SshPilotError(
+                ErrorCode.PERSISTENCE_FAILED,
+                "The SSH settings file is malformed",
+                details={"code": SETTINGS_MALFORMED},
+            ) from exc
 
-        def _int(key: str) -> int:
-            value = ssh.get(key)
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return 0
-
-        def _bool(key: str) -> bool:
-            return bool(ssh.get(key))
-
-        overrides = GlobalSshOverrides(
-            revision=_compute_revision(
-                {
-                    "connect_timeout": _int("connection_timeout"),
-                    "connection_attempts": _int("connection_attempts"),
-                    "server_alive_interval": _int("keepalive_interval"),
-                    "server_alive_count_max": _int("keepalive_count_max"),
-                    "strict_host_key_checking": str(
-                        ssh.get("strict_host_key_checking") or ""
-                    ).strip(),
-                    "batch_mode": _bool("batch_mode"),
-                    "compression": _bool("compression"),
-                    "verbosity": _int("verbosity"),
-                    "debug_enabled": _bool("debug_enabled"),
-                }
-            ),
-            connect_timeout=_int("connection_timeout"),
-            connection_attempts=_int("connection_attempts"),
-            server_alive_interval=_int("keepalive_interval"),
-            server_alive_count_max=_int("keepalive_count_max"),
-            strict_host_key_checking=str(
-                ssh.get("strict_host_key_checking") or ""
-            ).strip()
-            or "accept-new",
-            batch_mode=_bool("batch_mode"),
-            compression=_bool("compression"),
-            verbosity=_int("verbosity"),
-            debug_enabled=_bool("debug_enabled"),
+    def _snapshot(self, config: Dict[str, Any]) -> GlobalSshOverrides:
+        """Build a ``GlobalSshOverrides`` from the normalized ssh subtree."""
+        semantic = self._normalize(config)
+        return GlobalSshOverrides(
+            revision=compute_ssh_overrides_revision(semantic),
+            connect_timeout=semantic["connect_timeout"],
+            connection_attempts=semantic["connection_attempts"],
+            server_alive_interval=semantic["server_alive_interval"],
+            server_alive_count_max=semantic["server_alive_count_max"],
+            strict_host_key_checking=semantic["strict_host_key_checking"],
+            batch_mode=semantic["batch_mode"],
+            compression=semantic["compression"],
+            verbosity=semantic["verbosity"],
+            debug_enabled=semantic["debug_enabled"],
         )
-        return overrides
+
+    def _write_semantic(
+        self,
+        config: Dict[str, Any],
+        semantic: Dict[str, Any],
+    ) -> None:
+        """Write canonical semantic values back to the raw config keys."""
+        ssh = config.setdefault("ssh", {})
+        if not isinstance(ssh, dict):
+            raise SshPilotError(
+                ErrorCode.PERSISTENCE_FAILED,
+                "The SSH settings file is malformed",
+                details={"code": SETTINGS_MALFORMED},
+            )
+        for field, value in semantic.items():
+            raw_key = FIELD_TO_CONFIG_KEY[field].split(".", 1)[1]
+            ssh[raw_key] = value
 
     def _compose_and_persist(self, config: Dict[str, Any]) -> None:
         """Regenerate ``ssh.ssh_overrides`` and atomically persist."""
         ssh = config.get("ssh", {})
+        if not isinstance(ssh, dict):
+            raise SshPilotError(
+                ErrorCode.PERSISTENCE_FAILED,
+                "The SSH settings file is malformed",
+                details={"code": SETTINGS_MALFORMED},
+            )
         try:
-            overrides = compose_ssh_overrides(ssh)
+            overrides = compose_ssh_overrides(
+                ssh, controlmaster_extra=self._controlmaster_extra
+            )
         except Exception as exc:
             raise SshPilotError(
                 ErrorCode.PERSISTENCE_FAILED,
                 "The SSH overrides could not be composed",
-                details={"code": SETTINGS_PERSISTENCE_FAILED, "error": str(exc)},
+                details={"code": SETTINGS_PERSISTENCE_FAILED},
             ) from exc
         ssh["ssh_overrides"] = overrides
         try:
@@ -233,20 +301,18 @@ class SshOverridesService:
             raise SshPilotError(
                 ErrorCode.PERSISTENCE_FAILED,
                 "The SSH settings could not be saved",
-                details={"code": SETTINGS_PERSISTENCE_FAILED, "error": str(exc)},
+                details={"code": SETTINGS_PERSISTENCE_FAILED},
             ) from exc
 
     def _reset_defaults(self, config: Dict[str, Any]) -> None:
-        """Reset only the SSH override fields to defaults."""
-        from .settings.defaults import get_default_config
-
-        defaults = get_default_config()
-        default_ssh = defaults.get("ssh", {})
+        """Reset only the SSH override fields to their canonical defaults."""
         ssh = config.setdefault("ssh", {})
-
-        for field_name in EDITABLE_FIELDS:
-            config_key = _FIELD_TO_CONFIG_KEY[field_name]
-            # config_key is like "ssh.connection_timeout"; last part is the key
-            _, _, raw_key = config_key.partition(".")
-            if raw_key in default_ssh:
-                ssh[raw_key] = default_ssh[raw_key]
+        if not isinstance(ssh, dict):
+            raise SshPilotError(
+                ErrorCode.PERSISTENCE_FAILED,
+                "The SSH settings file is malformed",
+                details={"code": SETTINGS_MALFORMED},
+            )
+        for field, config_key in FIELD_TO_CONFIG_KEY.items():
+            raw_key = config_key.split(".", 1)[1]
+            ssh[raw_key] = DEFAULT_SSH_OVERRIDES[field]

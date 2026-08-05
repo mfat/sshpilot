@@ -1,45 +1,43 @@
-"""Immutable API models for daemon-owned global SSH overrides."""
+"""Immutable API models for daemon-owned global SSH overrides.
+
+The canonical field model (field→config-key mapping, valid ranges, host-key
+enum, canonical defaults, strict normalization, revision) is owned by
+``sshpilot.core.settings.ssh_overrides`` so the API values, the persisted
+config keys, and the revision token always agree.  This module keeps the
+API-level validation and public DTOs.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
-# ---------------------------------------------------------------------------
-# Valid host-key-checking values accepted by OpenSSH.
-# ---------------------------------------------------------------------------
+from sshpilot.core.settings.ssh_overrides import (
+    EDITABLE_FIELDS,
+    FIELD_TO_CONFIG_KEY,
+    INTEGER_RANGES,
+    VALID_HOST_KEY_VALUES,
+    compute_ssh_overrides_revision,
+)
 
-_VALID_HK_VALUES = frozenset({"accept-new", "yes", "no", "ask"})
+# Re-exported field-model contracts (consumed by the daemon service).
+# ``EDITABLE_FIELDS`` is public API; the underscore-prefixed names are kept for
+# internal compatibility with the codec and should not be part of the public
+# surface.
+EDITABLE_FIELDS = EDITABLE_FIELDS
+_FIELD_TO_CONFIG_KEY: Dict[str, str] = dict(FIELD_TO_CONFIG_KEY)
+_INTEGER_RANGES: Dict[str, tuple[int, int]] = dict(INTEGER_RANGES)
+_VALID_HK_VALUES = VALID_HOST_KEY_VALUES
 
-# ---------------------------------------------------------------------------
-# Semantic field name → persisted config key mapping.
-# ---------------------------------------------------------------------------
 
-_FIELD_TO_CONFIG_KEY: Dict[str, str] = {
-    "connect_timeout": "ssh.connection_timeout",
-    "connection_attempts": "ssh.connection_attempts",
-    "server_alive_interval": "ssh.keepalive_interval",
-    "server_alive_count_max": "ssh.keepalive_count_max",
-    "strict_host_key_checking": "ssh.strict_host_key_checking",
-    "batch_mode": "ssh.batch_mode",
-    "compression": "ssh.compression",
-    "verbosity": "ssh.verbosity",
-    "debug_enabled": "ssh.debug_enabled",
-}
+def _compute_revision(data: Dict[str, Any]) -> str:
+    """Deterministic revision from the semantic fields only.
 
-# Fields exposed through the API model (the public surface).
-EDITABLE_FIELDS = frozenset(_FIELD_TO_CONFIG_KEY.keys())
+    The revision is a hex SHA-256 prefix (12 chars) of the canonical JSON
+    representation of the semantic fields.
+    """
+    return compute_ssh_overrides_revision(data)
 
-# Integer fields with their documented valid ranges.
-_INTEGER_RANGES: Dict[str, tuple[int, int]] = {
-    "connect_timeout": (0, 600),
-    "connection_attempts": (0, 100),
-    "server_alive_interval": (0, 86400),
-    "server_alive_count_max": (0, 100),
-    "verbosity": (0, 3),
-}
 
 # ---------------------------------------------------------------------------
 # Error codes narrowly scoped to this module.
@@ -73,20 +71,6 @@ def _validate_strict_host_key(value: Any) -> None:
         )
 
 
-def _compute_revision(data: Dict[str, Any]) -> str:
-    """Deterministic revision from the semantic fields only.
-
-    The revision is a hex SHA-256 prefix (12 chars) of the canonical JSON
-    representation of the semantic fields.
-    """
-    canonical = json.dumps(
-        {k: data[k] for k in sorted(_FIELD_TO_CONFIG_KEY)},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
-
-
 def _validate_patch_fields(patch: Mapping[str, Any]) -> None:
     """Reject unknown patch fields and type-check values."""
     unknown = set(patch.keys()) - EDITABLE_FIELDS
@@ -108,7 +92,7 @@ class GlobalSshOverrides:
     """Immutable snapshot of daemon-owned global SSH overrides.
 
     Every field uses the public API name; the persisted config key mapping
-    lives in ``_FIELD_TO_CONFIG_KEY``.
+    lives in the core ``sshpilot.core.settings.ssh_overrides`` module.
     """
 
     revision: str

@@ -304,24 +304,44 @@ def _production_core_services():
         legacy_config_path=get_config_dir() / "config.json",
         isolated=isolated,
     )
+    def _build_ssh_overrides_service():
+        from sshpilot.core.ssh_overrides_service import SshOverridesService
+        from sshpilot.ssh_multiplex import controlmaster_args
+
+        controlmaster_extra = None
+        try:
+            if bool(settings.get_ssh_config().get("controlmaster")):
+                controlmaster_extra = controlmaster_args()
+        except Exception:
+            controlmaster_extra = None
+        return SshOverridesService(
+            get_config_dir() / "config.json",
+            controlmaster_extra=controlmaster_extra,
+        )
+
+    overrides_service = _build_ssh_overrides_service()
     secret_provider = DaemonConnectionSecretProvider(repository.get_record)
     launch_provider = DaemonConnectionLaunchProvider(
         repository.get_record,
         secret_provider=secret_provider,
-        app_config=settings,
+        app_config=overrides_service,
+        headless_settings=settings,
     )
     connections = ConnectionApplicationService(
         repository,
         launch_provider=launch_provider,
         secret_provider=secret_provider,
+        ssh_overrides=overrides_service,
         client_name="sshpilotd",
         allow_cross_thread_commands=True,
     )
+
     return CoreServices(
         connections=connections,
         configuration_backend=AuthoritativeConfigurationBackend(repository),
         known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
         keys=DaemonKeyService(_resolve_key_root),
+        ssh_overrides=overrides_service,
     )
 
 
