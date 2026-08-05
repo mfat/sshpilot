@@ -109,6 +109,10 @@
       "capability": "forwards.read",
       "status": "daemon-only"
     },
+    "get_global_ssh_overrides": {
+      "capability": "ssh_overrides.read",
+      "status": "daemon-only"
+    },
     "get_interaction": {
       "capability": "interactions.read",
       "status": "daemon-only"
@@ -183,6 +187,10 @@
     },
     "replay_terminal": {
       "capability": "terminal.replay",
+      "status": "daemon-only"
+    },
+    "reset_global_ssh_overrides": {
+      "capability": "ssh_overrides.write",
       "status": "daemon-only"
     },
     "resize_terminal": {
@@ -284,6 +292,10 @@
     "update_connection_metadata": {
       "capability": "connections.metadata.write",
       "status": "implemented"
+    },
+    "update_global_ssh_overrides": {
+      "capability": "ssh_overrides.write",
+      "status": "daemon-only"
     }
   },
   "daemon_method_contract": {
@@ -512,6 +524,15 @@
     "sftp.symlink": {
       "capability": "sftp.mutate"
     },
+    "ssh_overrides.get": {
+      "capability": "ssh_overrides.read"
+    },
+    "ssh_overrides.reset": {
+      "capability": "ssh_overrides.write"
+    },
+    "ssh_overrides.update": {
+      "capability": "ssh_overrides.write"
+    },
     "system.get_capabilities": {
       "capability": null
     },
@@ -599,6 +620,8 @@
       "known_hosts.write",
       "keys.read",
       "keys.write",
+      "ssh_overrides.read",
+      "ssh_overrides.write",
       "plugins",
       "secrets"
     ],

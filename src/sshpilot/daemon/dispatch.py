@@ -202,6 +202,9 @@ DAEMON_METHOD_CAPABILITIES = {
     "keys.list": Capability.KEYS_READ,
     "keys.get_public": Capability.KEYS_READ,
     "keys.generate": Capability.KEYS_WRITE,
+    "ssh_overrides.get": Capability.SSH_OVERRIDES_READ,
+    "ssh_overrides.update": Capability.SSH_OVERRIDES_WRITE,
+    "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -359,6 +362,7 @@ class RequestDispatcher:
         *,
         lifecycle_controller: Any = None,
         diagnostics_provider: Optional[Callable[[], Any]] = None,
+        ssh_overrides_service: Any = None,
     ) -> None:
         self._connections = connection_service
         self._session_runtime = session_runtime or SessionRuntime(connection_service)
@@ -369,6 +373,7 @@ class RequestDispatcher:
         self._known_hosts_service = known_hosts_service
         self._key_service = key_service
         self._lifecycle = lifecycle_controller
+        self._ssh_overrides_service = ssh_overrides_service
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
@@ -483,6 +488,9 @@ class RequestDispatcher:
             "keys.list": self._handle_list_keys,
             "keys.get_public": self._handle_get_public_key,
             "keys.generate": self._handle_generate_key,
+            "ssh_overrides.get": self._handle_get_ssh_overrides,
+            "ssh_overrides.update": self._handle_update_ssh_overrides,
+            "ssh_overrides.reset": self._handle_reset_ssh_overrides,
         }
 
     def begin_shutdown(self) -> None:
@@ -2133,3 +2141,61 @@ class RequestDispatcher:
                 "A protocol handshake is required before session operations",
             )
         return state.client_id
+
+    # -- SSH overrides ---------------------------------------------------
+
+    def _handle_get_ssh_overrides(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import (
+            global_ssh_overrides_to_wire,
+        )
+
+        self._require_empty_params(request)
+        service = self._required_ssh_overrides_service()
+        return global_ssh_overrides_to_wire(service.get())
+
+    def _handle_update_ssh_overrides(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import (
+            global_ssh_overrides_to_wire,
+            update_global_ssh_overrides_request_from_wire,
+        )
+
+        typed_request = update_global_ssh_overrides_request_from_wire(
+            request.params
+        )
+        service = self._required_ssh_overrides_service()
+        return global_ssh_overrides_to_wire(service.update(typed_request))
+
+    def _handle_reset_ssh_overrides(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import (
+            global_ssh_overrides_to_wire,
+        )
+
+        expected_revision = request.params.get("expected_revision")
+        if expected_revision is not None and (
+            type(expected_revision) is not str or not expected_revision.strip()
+        ):
+            raise ValueError("expected_revision must be a non-empty string or null")
+        service = self._required_ssh_overrides_service()
+        return global_ssh_overrides_to_wire(
+            service.reset(expected_revision=expected_revision)
+        )
+
+    def _required_ssh_overrides_service(self):
+        if not hasattr(self, "_ssh_overrides_service") or self._ssh_overrides_service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "SSH overrides are unavailable",
+            )
+        return self._ssh_overrides_service

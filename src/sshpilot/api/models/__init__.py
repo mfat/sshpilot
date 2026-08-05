@@ -173,6 +173,11 @@ from .terminal import (
     TerminalInput,
     TerminalOutput,
 )
+from .settings import (
+    EDITABLE_FIELDS,
+    GlobalSshOverrides,
+    UpdateGlobalSshOverridesRequest,
+)
 from .transfers import (
     CancelTransferRequest,
     StartTransferRequest,
@@ -337,6 +342,9 @@ __all__ = [
     "TransferLocalMode",
     "TransferState",
     "TransferSummary",
+    "GlobalSshOverrides",
+    "UpdateGlobalSshOverridesRequest",
+    "EDITABLE_FIELDS",
     "UpdateConnectionMetadataRequest",
     "UpdateConnectionRequest",
     "default_idle_shutdown_seconds",

@@ -2,6 +2,9 @@
 from .capabilities import Capability
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
+    "get_global_ssh_overrides": Capability.SSH_OVERRIDES_READ,
+    "update_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
+    "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
     "attach_session": Capability.SESSIONS_WRITE,
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,

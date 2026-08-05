@@ -456,6 +456,20 @@ through the daemon-owned `ssh-keygen` in the selected key store scope
 (`keys.generate`). Gated behind `KEYS_WRITE`. Generation is unavailable while
 the daemon is draining.
 
+<!-- api-capability: ssh_overrides.read -->
+## `ssh_overrides.read`
+
+Implemented when the SSH overrides service is installed. Returns the current
+global SSH overrides state (`ssh_overrides.get`). Gated behind `SSH_OVERRIDES_READ`.
+
+<!-- api-capability: ssh_overrides.write -->
+## `ssh_overrides.write`
+
+Implemented when the SSH overrides service is installed. Partially updates
+(`ssh_overrides.update`) or resets (`ssh_overrides.reset`) global SSH overrides.
+Gated behind `SSH_OVERRIDES_WRITE`. Write operations use optimistic concurrency
+control via `expected_revision`.
+
 ## Frontend behaviour
 
 Check capabilities before displaying or enabling optional actions. A frontend

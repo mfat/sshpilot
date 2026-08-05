@@ -344,12 +344,14 @@ class DaemonConnectionLaunchProvider:
         *,
         secret_provider: Any = None,
         app_config: Any = None,
+        headless_settings: Any = None,
     ) -> None:
         if resolver is None:
             raise ValueError("a connection resolver is required")
         self._resolver = resolver
         self._secret_provider = secret_provider
         self._app_config_view = app_config
+        self._headless_settings = headless_settings
 
     def _resolve(self, connection_id: ConnectionId) -> ConnectionRecord:
         record = self._resolver(connection_id)
@@ -407,12 +409,9 @@ class DaemonConnectionLaunchProvider:
     def _get_app_config(self):
         if self._app_config_view is not None:
             return self._app_config_view
-        try:
-            from ..config import Config
-
-            return Config()
-        except Exception:
-            return None
+        if self._headless_settings is not None:
+            return self._headless_settings
+        return None
 
     def _prepare_ssh_launch(
         self,

@@ -54,7 +54,6 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     # Launch/secret compatibility moved out of core into daemon providers
     # (Task 12). Each provider file registers the exact legacy helper it still
     # uses, tagged with the migration that will remove it.
-    ("daemon/connection_launch_provider.py", "sshpilot.config"): "M4",
     ("daemon/connection_launch_provider.py", "sshpilot.ssh_connection_builder"): "M7",
     ("daemon/connection_launch_provider.py", "sshpilot.plugins"): "M8",
     ("daemon/connection_secret_provider.py", "sshpilot.credential_model"): "M5",

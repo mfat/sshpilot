@@ -4307,3 +4307,107 @@ def daemon_stop_result_from_wire(value: Any) -> DaemonStopResult:
         message=message,
         restart_requested=restart,
     )
+
+
+# ---------------------------------------------------------------------------
+# SSH overrides codec
+# ---------------------------------------------------------------------------
+
+def global_ssh_overrides_to_wire(
+    overrides: Any,
+) -> Dict[str, Any]:
+    from ..models.settings import GlobalSshOverrides
+
+    if type(overrides) is not GlobalSshOverrides:
+        raise TypeError("GlobalSshOverrides is required")
+    return {
+        "revision": overrides.revision,
+        "connect_timeout": overrides.connect_timeout,
+        "connection_attempts": overrides.connection_attempts,
+        "server_alive_interval": overrides.server_alive_interval,
+        "server_alive_count_max": overrides.server_alive_count_max,
+        "strict_host_key_checking": overrides.strict_host_key_checking,
+        "batch_mode": overrides.batch_mode,
+        "compression": overrides.compression,
+        "verbosity": overrides.verbosity,
+        "debug_enabled": overrides.debug_enabled,
+        "applies_immediately": overrides.applies_immediately,
+    }
+
+
+def global_ssh_overrides_from_wire(value: Any) -> Any:
+    from ..models.settings import GlobalSshOverrides
+
+    data = _strict_fields(
+        value,
+        required={
+            "revision",
+            "connect_timeout",
+            "connection_attempts",
+            "server_alive_interval",
+            "server_alive_count_max",
+            "strict_host_key_checking",
+            "batch_mode",
+            "compression",
+            "verbosity",
+            "debug_enabled",
+        },
+        optional={"applies_immediately"},
+        context="global ssh overrides",
+    )
+    return GlobalSshOverrides(
+        revision=_identifier(data["revision"], "revision"),
+        connect_timeout=_integer(data["connect_timeout"], "connect_timeout"),
+        connection_attempts=_integer(
+            data["connection_attempts"], "connection_attempts"
+        ),
+        server_alive_interval=_integer(
+            data["server_alive_interval"], "server_alive_interval"
+        ),
+        server_alive_count_max=_integer(
+            data["server_alive_count_max"], "server_alive_count_max"
+        ),
+        strict_host_key_checking=_text(
+            data["strict_host_key_checking"],
+            "strict_host_key_checking",
+            allow_empty=True,
+        ),
+        batch_mode=_boolean(data["batch_mode"], "batch_mode"),
+        compression=_boolean(data["compression"], "compression"),
+        verbosity=_integer(data["verbosity"], "verbosity"),
+        debug_enabled=_boolean(data["debug_enabled"], "debug_enabled"),
+        applies_immediately=data.get("applies_immediately", True),
+    )
+
+
+def update_global_ssh_overrides_request_to_wire(
+    request: Any,
+) -> Dict[str, Any]:
+    from ..models.settings import UpdateGlobalSshOverridesRequest
+
+    if type(request) is not UpdateGlobalSshOverridesRequest:
+        raise TypeError("UpdateGlobalSshOverridesRequest is required")
+    result: Dict[str, Any] = {"patch": dict(request.patch)}
+    if request.expected_revision is not None:
+        result["expected_revision"] = request.expected_revision
+    return result
+
+
+def update_global_ssh_overrides_request_from_wire(
+    value: Any,
+) -> Any:
+    from ..models.settings import UpdateGlobalSshOverridesRequest
+
+    data = _strict_fields(
+        value,
+        required={"patch"},
+        optional={"expected_revision"},
+        context="update global ssh overrides request",
+    )
+    patch = data["patch"]
+    if type(patch) is not dict:
+        raise ValueError("patch must be an object")
+    return UpdateGlobalSshOverridesRequest(
+        patch=patch,
+        expected_revision=data.get("expected_revision"),
+    )

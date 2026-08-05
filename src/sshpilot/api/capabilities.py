@@ -60,6 +60,8 @@ class Capability(str, Enum):
     KNOWN_HOSTS_WRITE = "known_hosts.write"
     KEYS_READ = "keys.read"
     KEYS_WRITE = "keys.write"
+    SSH_OVERRIDES_READ = "ssh_overrides.read"
+    SSH_OVERRIDES_WRITE = "ssh_overrides.write"
     PLUGINS = "plugins"
     SECRETS = "secrets"
 

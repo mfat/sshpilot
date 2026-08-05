@@ -56,6 +56,8 @@
     "sftp.mutate",
     "sftp.read",
     "sftp.write",
+    "ssh_overrides.read",
+    "ssh_overrides.write",
     "terminal",
     "terminal.attach",
     "terminal.input",
@@ -177,6 +179,10 @@
       "capability": "forwards.read",
       "status": "daemon-only"
     },
+    "get_global_ssh_overrides": {
+      "capability": "ssh_overrides.read",
+      "status": "daemon-only"
+    },
     "get_interaction": {
       "capability": "interactions.read",
       "status": "daemon-only"
@@ -251,6 +257,10 @@
     },
     "replay_terminal": {
       "capability": "terminal.replay",
+      "status": "daemon-only"
+    },
+    "reset_global_ssh_overrides": {
+      "capability": "ssh_overrides.write",
       "status": "daemon-only"
     },
     "resize_terminal": {
@@ -352,6 +362,10 @@
     "update_connection_metadata": {
       "capability": "connections.metadata.write",
       "status": "implemented"
+    },
+    "update_global_ssh_overrides": {
+      "capability": "ssh_overrides.write",
+      "status": "daemon-only"
     }
   },
   "client_methods": [
@@ -385,6 +399,7 @@
     "get_daemon_diagnostics",
     "get_daemon_status",
     "get_forward",
+    "get_global_ssh_overrides",
     "get_interaction",
     "get_session",
     "get_sftp_service",
@@ -412,6 +427,7 @@
     "rename_tag",
     "reorder_connection",
     "replay_terminal",
+    "reset_global_ssh_overrides",
     "resize_terminal",
     "respond_to_interaction",
     "restart_daemon",
@@ -437,7 +453,8 @@
     "subscribe_events",
     "subscribe_terminal",
     "update_connection",
-    "update_connection_metadata"
+    "update_connection_metadata",
+    "update_global_ssh_overrides"
   ],
   "client_signatures": {
     "assign_connection_to_group": {
@@ -725,6 +742,10 @@
       ],
       "return": "ForwardSummary"
     },
+    "get_global_ssh_overrides": {
+      "parameters": [],
+      "return": "GlobalSshOverrides"
+    },
     "get_interaction": {
       "parameters": [
         {
@@ -957,6 +978,16 @@
         }
       ],
       "return": "ReplayResult"
+    },
+    "reset_global_ssh_overrides": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "expected_revision",
+          "type": "str | None"
+        }
+      ],
+      "return": "GlobalSshOverrides"
     },
     "resize_terminal": {
       "parameters": [
@@ -1257,6 +1288,16 @@
         }
       ],
       "return": "bool"
+    },
+    "update_global_ssh_overrides": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "UpdateGlobalSshOverridesRequest"
+        }
+      ],
+      "return": "GlobalSshOverrides"
     }
   },
   "daemon_method_contract": {
@@ -1485,6 +1526,15 @@
     "sftp.symlink": {
       "capability": "sftp.mutate"
     },
+    "ssh_overrides.get": {
+      "capability": "ssh_overrides.read"
+    },
+    "ssh_overrides.reset": {
+      "capability": "ssh_overrides.write"
+    },
+    "ssh_overrides.update": {
+      "capability": "ssh_overrides.write"
+    },
     "system.get_capabilities": {
       "capability": null
     },
@@ -1696,6 +1746,7 @@
     "DeletePluginSecretRequest",
     "DetachSessionRequest",
     "EDITABLE_CONFIG_FIELDS",
+    "EDITABLE_FIELDS",
     "FORBIDDEN_IN_PATCH",
     "FileEntryKind",
     "ForwardId",
@@ -1707,6 +1758,7 @@
     "GenerateKeyRequest",
     "GenerateKeyResult",
     "GetPluginSecretRequest",
+    "GlobalSshOverrides",
     "GroupId",
     "GroupReference",
     "GroupSummary",
@@ -1803,6 +1855,7 @@
     "UNSET",
     "UpdateConnectionMetadataRequest",
     "UpdateConnectionRequest",
+    "UpdateGlobalSshOverridesRequest",
     "default_idle_shutdown_seconds",
     "forwarding_rule_from_dict",
     "forwarding_rule_to_dict",
@@ -2666,6 +2719,8 @@
       "known_hosts.write",
       "keys.read",
       "keys.write",
+      "ssh_overrides.read",
+      "ssh_overrides.write",
       "plugins",
       "secrets"
     ],

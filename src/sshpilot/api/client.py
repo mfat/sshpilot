@@ -106,6 +106,10 @@ from .models.daemon import (
     RestartDaemonRequest,
     StopDaemonRequest,
 )
+from .models.settings import (
+    GlobalSshOverrides,
+    UpdateGlobalSshOverridesRequest,
+)
 
 
 class SshPilotClient(Protocol):
@@ -394,6 +398,21 @@ class SshPilotClient(Protocol):
         ...
 
     def generate_key(self, request: GenerateKeyRequest) -> GenerateKeyResult:
+        ...
+
+    def get_global_ssh_overrides(self) -> GlobalSshOverrides:
+        ...
+
+    def update_global_ssh_overrides(
+        self,
+        request: UpdateGlobalSshOverridesRequest,
+    ) -> GlobalSshOverrides:
+        ...
+
+    def reset_global_ssh_overrides(
+        self,
+        expected_revision: Optional[str] = None,
+    ) -> GlobalSshOverrides:
         ...
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:

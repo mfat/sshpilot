@@ -78,7 +78,6 @@ from .models.keys import (
     ReadPublicKeyRequest,
 )
 from .models.known_hosts import (
-    KnownHostEntryId,
     KnownHostsMutationResult,
     KnownHostsSnapshot,
     RemoveKnownHostEntriesRequest,
@@ -303,6 +302,9 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_keys": Capability.KEYS_READ,
     "read_public_key": Capability.KEYS_READ,
     "generate_key": Capability.KEYS_WRITE,
+    "get_global_ssh_overrides": Capability.SSH_OVERRIDES_READ,
+    "update_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
+    "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
 }
 
 
@@ -1264,6 +1266,55 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol(
                 "The daemon returned an invalid key generation result"
+            )
+
+    # -- SSH overrides ----------------------------------------------------
+
+    def get_global_ssh_overrides(self):
+
+        self._require_capability(Capability.SSH_OVERRIDES_READ)
+        result = self._request("ssh_overrides.get", {})
+        try:
+            from sshpilot.api.transport.codec import global_ssh_overrides_from_wire
+            return global_ssh_overrides_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned invalid SSH overrides"
+            )
+
+    def update_global_ssh_overrides(self, request):
+        from sshpilot.api.models.settings import UpdateGlobalSshOverridesRequest
+
+        self._require_capability(Capability.SSH_OVERRIDES_WRITE)
+        if type(request) is not UpdateGlobalSshOverridesRequest:
+            raise TypeError("an UpdateGlobalSshOverridesRequest is required")
+        from sshpilot.api.transport.codec import (
+            update_global_ssh_overrides_request_to_wire,
+            global_ssh_overrides_from_wire,
+        )
+        result = self._request(
+            "ssh_overrides.update",
+            update_global_ssh_overrides_request_to_wire(request),
+        )
+        try:
+            return global_ssh_overrides_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned invalid SSH overrides"
+            )
+
+    def reset_global_ssh_overrides(self, expected_revision=None):
+        self._require_capability(Capability.SSH_OVERRIDES_WRITE)
+        params = {}
+        if expected_revision is not None:
+            params["expected_revision"] = expected_revision
+        result = self._request("ssh_overrides.reset", params)
+        try:
+            from sshpilot.api.transport.codec import global_ssh_overrides_from_wire
+            return global_ssh_overrides_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned invalid SSH overrides"
             )
 
     def send_terminal_input(self, request: TerminalInput) -> None:

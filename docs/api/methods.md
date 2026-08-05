@@ -150,6 +150,9 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: split_connection status=implemented capability=connections.split -->
+<!-- api-method-contract: get_global_ssh_overrides status=daemon-only capability=ssh_overrides.read -->
+<!-- api-method-contract: update_global_ssh_overrides status=daemon-only capability=ssh_overrides.write -->
+<!-- api-method-contract: reset_global_ssh_overrides status=daemon-only capability=ssh_overrides.write -->
 <!-- api-method: get_connection_store_snapshot -->
 <!-- api-method: set_group_color -->
 <!-- api-method: place_group -->
@@ -332,6 +335,9 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: transfers.get capability=transfers.read -->
 <!-- api-daemon-method: transfers.list capability=transfers.read -->
 <!-- api-daemon-method: transfers.start capability=transfers.write -->
+<!-- api-daemon-method: ssh_overrides.get capability=ssh_overrides.read -->
+<!-- api-daemon-method: ssh_overrides.update capability=ssh_overrides.write -->
+<!-- api-daemon-method: ssh_overrides.reset capability=ssh_overrides.write -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
 
@@ -1216,6 +1222,73 @@ try:
     run_frontend()
 finally:
     subscription.close()
+```
+
+<!-- api-method: get_global_ssh_overrides -->
+## `get_global_ssh_overrides`
+
+- **Status / introduced:** Daemon-only / Protocol v1
+- **Capability / purpose:** `ssh_overrides.read`; read the authoritative
+  global SSH overrides state including a deterministic revision token.
+- **Parameters / return:** No parameters; returns `GlobalSshOverrides`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the SSH overrides
+  service is not installed.
+- **Cancellation / ordering:** Read-only; no ordering constraints.
+- **Threading:** Safe from any thread.
+- **Side effects / security:** Loads the settings file; no mutations.
+
+```python
+overrides = client.get_global_ssh_overrides()
+print(overrides.connect_timeout, overrides.revision)
+```
+
+<!-- api-method: update_global_ssh_overrides -->
+## `update_global_ssh_overrides`
+
+- **Status / introduced:** Daemon-only / Protocol v1
+- **Capability / purpose:** `ssh_overrides.write`; partially update one or
+  more SSH override fields with optimistic concurrency control.
+- **Parameters / return:** `UpdateGlobalSshOverridesRequest` with a `patch`
+  mapping and optional `expected_revision`; returns `GlobalSshOverrides`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `VALIDATION_FAILED` with `revision_conflict` when
+  `expected_revision` does not match the current revision.
+- **Cancellation / ordering:** Mutations are serialized per daemon; concurrent
+  stale writes are rejected.
+- **Threading:** Thread-safe via internal lock.
+- **Side effects / security:** Atomically persists the updated settings file.
+
+```python
+from sshpilot.api.models.settings import UpdateGlobalSshOverridesRequest
+
+result = client.update_global_ssh_overrides(
+    UpdateGlobalSshOverridesRequest(
+        patch={"connect_timeout": 30, "compression": True},
+        expected_revision=overrides.revision,
+    )
+)
+```
+
+<!-- api-method: reset_global_ssh_overrides -->
+## `reset_global_ssh_overrides`
+
+- **Status / introduced:** Daemon-only / Protocol v1
+- **Capability / purpose:** `ssh_overrides.write`; reset SSH override fields
+  to application defaults.
+- **Parameters / return:** Optional `expected_revision: str`; returns
+  `GlobalSshOverrides`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `VALIDATION_FAILED` with `revision_conflict` when
+  `expected_revision` does not match.
+- **Cancellation / ordering:** Serialized per daemon.
+- **Threading:** Thread-safe via internal lock.
+- **Side effects / security:** Atomically persists defaults to the settings
+  file.
+
+```python
+result = client.reset_global_ssh_overrides(
+    expected_revision=overrides.revision,
+)
 ```
 
 <!-- api-method: close -->
