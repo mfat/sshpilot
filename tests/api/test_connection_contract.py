@@ -2,26 +2,26 @@ from dataclasses import fields
 
 import pytest
 
-from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api import ErrorCode, SshPilotError
 from sshpilot.api.models import ConnectionDetails, ConnectionSummary
 from sshpilot.api.models.common import ConnectionId
 
 
 def test_list_and_get_connections_preserve_order_and_identity(
-    fake_manager,
-    fake_connection,
+    fake_repo,
     client_factory,
-    group_manager,
 ):
-    second = type(fake_connection)(
-        nickname="second",
-        hostname="second.example",
-        username="bob",
-        port=2202,
+    fake_repo.create_connection(
+        {
+            "nickname": "second",
+            "hostname": "second.example",
+            "username": "bob",
+            "port": 2202,
+        }
     )
-    fake_manager.connections.append(second)
-    client = client_factory(fake_manager, group_manager=group_manager)
+    fake_repo.create_group("Production")
+    fake_repo.assign_connection_to_group("demo", "production")
+    client = client_factory(fake_repo)
 
     summaries = client.list_connections()
     details = client.get_connection(summaries[0].id)
@@ -31,11 +31,10 @@ def test_list_and_get_connections_preserve_order_and_identity(
     assert isinstance(details, ConnectionDetails)
     assert details.id == summaries[0].id
     assert details.groups[0].name == "Production"
-    assert ConnectionApplicationService.connection_id_for(fake_connection) == summaries[0].id
 
 
-def test_unknown_connection_has_structured_not_found_error(fake_manager, client_factory):
-    client = client_factory(fake_manager)
+def test_unknown_connection_has_structured_not_found_error(fake_repo, client_factory):
+    client = client_factory(fake_repo)
     missing_id = ConnectionId("nonexistent")
 
     with pytest.raises(SshPilotError) as caught:
@@ -46,17 +45,17 @@ def test_unknown_connection_has_structured_not_found_error(fake_manager, client_
 
 
 def test_connection_dtos_never_return_internal_models_or_secrets(
-    fake_manager,
-    fake_connection,
+    fake_repo,
     client_factory,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
+    record = fake_repo.get_record("demo")
     summary = client.list_connections()[0]
     details = client.get_connection(summary.id)
     public_fields = {item.name for item in fields(details)}
 
-    assert summary is not fake_connection
-    assert details is not fake_connection
+    assert summary is not record
+    assert details is not record
     assert "password" not in public_fields
     assert "key_passphrase" not in public_fields
     assert "do-not-expose" not in repr(details)
@@ -64,37 +63,25 @@ def test_connection_dtos_never_return_internal_models_or_secrets(
 
 
 def test_existing_connection_id_is_stable_across_equivalent_reload(
-    fake_manager,
-    fake_connection,
+    fake_repo,
     client_factory,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
     first_id = client.list_connections()[0].id
-    replacement = type(fake_connection)(
-        nickname=fake_connection.nickname,
-        hostname="changed.example",
-        username="different",
+    fake_repo.update_connection(
+        "demo",
+        {"hostname": "changed.example", "username": "different"},
     )
-    replacement.id = fake_connection.id
-    replacement.uuid = fake_connection.id
-    replacement.data["id"] = fake_connection.id
-    replacement.data.pop("uuid", None)
-    fake_manager.connections[:] = [replacement]
 
     assert client.list_connections()[0].id == first_id
 
 
 def test_connection_id_matches_nickname(
-    fake_manager,
-    fake_connection,
+    fake_repo,
     client_factory,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
 
-    fake_connection.nickname = "renamed"
-    fake_connection.id = "renamed"
+    fake_repo.update_connection("demo", {"nickname": "renamed"})
 
     assert client.list_connections()[0].id == "renamed"
-
-
-

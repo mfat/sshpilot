@@ -657,7 +657,7 @@ def test_prepare_daemon_terminal_launch_preloads_keys(monkeypatch) -> None:
     manager = TestConnectionManager()
     connection = PreloadConnection()
     manager.connections = [connection]
-    client = ConnectionApplicationService(manager, allow_cross_thread_commands=True)
+    client = ConnectionApplicationService(manager, launch_provider=manager, allow_cross_thread_commands=True)
     cid = ConnectionId("preload")
     monkeypatch.setattr(
         "shutil.which",
@@ -698,7 +698,7 @@ def test_prepare_daemon_terminal_launch_carries_local_command(monkeypatch) -> No
 
     manager = TestConnectionManager()
     manager.connections = [LocalCommandConnection()]
-    client = ConnectionApplicationService(manager, allow_cross_thread_commands=True)
+    client = ConnectionApplicationService(manager, launch_provider=manager, allow_cross_thread_commands=True)
     monkeypatch.setattr("shutil.which", lambda name, path=None: "/usr/bin/ssh")
 
     argv, _env = client.prepare_daemon_terminal_launch(
@@ -742,7 +742,7 @@ def test_prepare_daemon_terminal_launch_dispatches_non_ssh_provider(monkeypatch)
     registry.register(Provider(), plugin_id="test-plugin")
     monkeypatch.setattr("shutil.which", lambda name, path=None: "/bin/wire-client")
     try:
-        service = ConnectionApplicationService(manager, allow_cross_thread_commands=True)
+        service = ConnectionApplicationService(manager, launch_provider=manager, allow_cross_thread_commands=True)
         argv, env = service.prepare_daemon_terminal_launch(ConnectionId("wire"))
     finally:
         registry.unregister_plugin("test-plugin")

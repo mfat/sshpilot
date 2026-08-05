@@ -51,20 +51,11 @@ def test_dispatcher_includes_dev_revision(monkeypatch):
     from sshpilot.daemon.dispatch import RequestDispatcher
     from sshpilot.api.transport.envelopes import RequestEnvelope
     from sshpilot.daemon.dispatch import ClientProtocolState
+    from tests.helpers.fake_connection_repository import make_test_repository
     
     monkeypatch.setenv("SSHPILOT_DEV_REVISION", "phase93-test")
 
-    class _Manager:
-        def get_connections(self):
-            return []
-
-        def connect(self, *_a, **_k):
-            return 1
-
-        def disconnect(self, *_a, **_k):
-            return None
-
-    dispatcher = RequestDispatcher(ConnectionApplicationService(_Manager(), client_name="t"))
+    dispatcher = RequestDispatcher(ConnectionApplicationService(make_test_repository(), client_name="t"))
     assert dispatcher._development_revision == "phase93-test"
     state = ClientProtocolState()
     request = RequestEnvelope(

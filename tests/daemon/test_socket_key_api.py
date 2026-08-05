@@ -13,10 +13,10 @@ import pytest
 
 from sshpilot.api import DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.server import CoreServices
+from tests.helpers.fake_connection_repository import make_test_connection_service
 
 PRIVATE_HEADER = (
     b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
@@ -41,10 +41,7 @@ def key_server(tmp_path):
         socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
         def _build():
-            manager = ConnectionApplicationService(
-                object(),
-                client_name="sshpilotd",
-            )
+            connections = make_test_connection_service(client_name="sshpilotd")
             resolver = (
                 (lambda scope: default_dir)
                 if isolated_dir is None
@@ -57,7 +54,7 @@ def key_server(tmp_path):
                 )
             )
             service = DaemonKeyService(resolver)
-            return CoreServices(connections=manager, keys=service)
+            return CoreServices(connections=connections, keys=service)
 
         server = DaemonServer(_build, socket_path=socket_path)
         server.start_in_thread()

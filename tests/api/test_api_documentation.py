@@ -62,11 +62,11 @@ def test_protocol_version_and_changelog_are_documented():
 
 
 def test_runtime_capability_markers_match_the_provider(
-    fake_manager,
+    fake_repo,
     client_factory,
     client_backend,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
     marker = (
         "daemon-runtime-capability"
         if client_backend == "daemon"
@@ -183,11 +183,11 @@ def test_wire_framing_handshake_and_method_registry_are_documented():
 
 
 def test_schema_only_capabilities_are_not_advertised(
-    fake_manager,
+    fake_repo,
     client_factory,
     client_backend,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
 
     runtime_capabilities = {
         Capability.CONNECTIONS_READ,

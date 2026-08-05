@@ -166,12 +166,12 @@ def test_shutdown_wakes_request_pending_in_client_reader(daemon_factory):
     release = threading.Event()
     failures = []
 
-    def blocked_connections():
+    def blocked_snapshot():
         entered.set()
         assert release.wait(2)
-        return list(manager.connections)
+        return manager._snapshot()
 
-    manager.get_connections = blocked_connections
+    manager.snapshot = blocked_snapshot
 
     def request():
         try:
@@ -284,11 +284,13 @@ def test_internal_manager_failure_is_safe_on_wire_and_in_logs(
     daemon_factory,
     caplog,
 ):
-    class FailingManager:
-        def get_connections(self):
+    from tests.helpers.fake_connection_repository import FakeConnectionRepository
+
+    class FailingRepo(FakeConnectionRepository):
+        def snapshot(self):
             raise RuntimeError("token=must-not-appear")
 
-    server, _manager = daemon_factory(manager=FailingManager())
+    server, _repo = daemon_factory(manager=FailingRepo())
     client = DaemonClient(socket_path=server.socket_path)
 
     with pytest.raises(SshPilotError) as caught:

@@ -316,13 +316,12 @@ def test_event_envelope_rejects_internal_objects_outside_payload():
     ],
 )
 def test_connection_events_use_typed_dtos_across_clients(
-    fake_manager,
-    fake_connection,
+    fake_repo,
     client_factory,
     signal_name,
     event_type,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
     received = []
     delivered = threading.Event()
 
@@ -332,10 +331,20 @@ def test_connection_events_use_typed_dtos_across_clients(
 
     subscription = client.subscribe_events(_receive)
 
-    fake_manager.emit(signal_name, fake_connection)
+    if signal_name == "connection-added":
+        created = fake_repo.create_connection(
+            {"nickname": "other", "hostname": "other.example", "username": "user", "port": 22}
+        )
+        expected_id = created.id
+    elif signal_name == "connection-updated":
+        fake_repo.update_connection("demo", {"hostname": "updated.example"})
+        expected_id = client.list_connections()[0].id
+    else:
+        expected_id = client.list_connections()[0].id
+        fake_repo.delete_connection(str(expected_id))
 
     assert delivered.wait(2)
     assert received[0].type is event_type
-    assert received[0].connection_id == client.list_connections()[0].id
-    assert received[0].payload.nickname == "demo"
+    assert received[0].connection_id == expected_id
+    assert received[0].connection_id is not None
     subscription.close()

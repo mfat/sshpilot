@@ -398,12 +398,9 @@ def test_daemon_without_required_gtk_connection_capabilities_is_rejected(
 ):
     class _NoCapabilityCore:
         def __init__(self):
-            manager = type(
-                "_Manager",
-                (),
-                {"get_connections": lambda self: []},
-            )()
-            self._base = ConnectionApplicationService(manager)
+            from tests.helpers.fake_connection_repository import make_test_repository
+
+            self._base = ConnectionApplicationService(make_test_repository())
 
         def get_capabilities(self):
             return replace(

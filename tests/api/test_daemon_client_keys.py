@@ -31,10 +31,10 @@ from sshpilot.api.transport import (
     encode_frame,
     receive_frame,
 )
-from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.server import CoreServices
+from tests.helpers.fake_connection_repository import make_test_connection_service, make_test_repository
 
 PRIVATE_HEADER = (
     b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
@@ -59,12 +59,9 @@ def key_server(tmp_path):
         socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
         def _build():
-            manager = ConnectionApplicationService(
-                object(),
-                client_name="sshpilotd",
-            )
+            connections = make_test_connection_service(client_name="sshpilotd")
             service = DaemonKeyService(lambda scope: default_dir)
-            return CoreServices(connections=manager, keys=service)
+            return CoreServices(connections=connections, keys=service)
 
         server = DaemonServer(_build, socket_path=socket_path)
         server.start_in_thread()

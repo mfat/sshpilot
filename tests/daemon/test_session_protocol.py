@@ -255,7 +255,7 @@ def test_session_and_connection_events_share_one_monotonic_sequence(
     received = []
     client.subscribe_events(received.append)
     try:
-        manager.emit("connection-updated", manager.connections[0])
+        manager.update_connection("demo", {"hostname": "updated.example"})
         session = client.open_session(
             OpenSessionRequest(connection_id=client.list_connections()[0].id)
         )

@@ -15,42 +15,7 @@ from sshpilot.api.models.sessions import (
 )
 from sshpilot.api.models.terminal import TerminalDimensions, TerminalInput
 from sshpilot.daemon.session_runtime import SessionRuntime
-
-
-class _Connection:
-    def __init__(self):
-        self.nickname = "demo"
-        self.id = "demo"
-        self.uuid = "demo"
-        self.host = "demo"
-        self.hostname = "example.test"
-        self.username = "alice"
-        self.port = 22
-        self.protocol = "ssh"
-        self.aliases = []
-        self.auth_method = 0
-        self.keyfile = ""
-        self.identity_files = []
-        self.certificate = ""
-        self.certificate_files = []
-        self.x11_forwarding = False
-        self.forwarding_rules = []
-        self.proxy_jump = []
-        self.data = {}
-
-
-class _Manager:
-    def __init__(self):
-        self.connection = _Connection()
-
-    def get_connections(self):
-        return [self.connection]
-
-    def connect(self, _name, _callback):
-        return 1
-
-    def disconnect(self, _handler_id):
-        return None
+from tests.helpers.fake_connection_repository import make_test_repository
 
 
 class _Handle:
@@ -136,8 +101,8 @@ class _EvidenceTerminalRunner:
 
 
 def test_starting_input_is_dropped_and_output_deferred_until_running():
-    manager = _Manager()
-    core = ConnectionApplicationService(manager, client_name="starting-race")
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="starting-race")
     runner = _GatedTerminalRunner()
     runtime = SessionRuntime(core, runner=runner)
     outputs: list[bytes] = []
@@ -211,8 +176,8 @@ def test_starting_input_is_dropped_and_output_deferred_until_running():
 
 
 def test_connection_evidence_gate_does_not_equate_spawn_with_connected():
-    manager = _Manager()
-    core = ConnectionApplicationService(manager, client_name="evidence-gate")
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="evidence-gate")
     runner = _EvidenceTerminalRunner()
     runtime = SessionRuntime(core, runner=runner)
     runtime.enable_connection_evidence_gate()
@@ -267,8 +232,8 @@ def test_connection_evidence_gate_does_not_equate_spawn_with_connected():
 
 
 def test_connection_evidence_gate_turns_unconfirmed_failure_into_failed_state():
-    manager = _Manager()
-    core = ConnectionApplicationService(manager, client_name="evidence-failure")
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="evidence-failure")
     runner = _EvidenceTerminalRunner()
     runtime = SessionRuntime(core, runner=runner)
     runtime.enable_connection_evidence_gate()

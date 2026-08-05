@@ -16,10 +16,10 @@ from sshpilot.api.models import (
     KnownHostEntryId,
     RemoveKnownHostEntriesRequest,
 )
-from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.known_hosts_service import KnownHostsService
 from sshpilot.daemon.server import CoreServices
+from tests.helpers.fake_connection_repository import make_test_connection_service
 
 HOSTS = (
     b"example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGkVdummy\n"
@@ -31,19 +31,16 @@ HOSTS = (
 
 def _core_factory(known_hosts_path: Path):
     def _build():
-        manager = ConnectionApplicationService(
-            object(),
-            client_name="sshpilotd",
-        )
+        connections = make_test_connection_service(client_name="sshpilotd")
         service = KnownHostsService(lambda: known_hosts_path)
-        return CoreServices(connections=manager, known_hosts=service)
+        return CoreServices(connections=connections, known_hosts=service)
 
     return _build
 
 
 def _plain_factory():
     return lambda: CoreServices(
-        connections=ConnectionApplicationService(object(), client_name="sshpilotd")
+        connections=make_test_connection_service(client_name="sshpilotd")
     )
 
 

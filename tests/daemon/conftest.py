@@ -252,6 +252,73 @@ class TestConnectionManager:
     def delete_plugin_secret(self, plugin_id, key):
         return self.plugin_secrets.pop((plugin_id, key), None) is not None
 
+    def prepare_terminal_launch(self, connection_id, *, interaction_policy="none"):
+        connection = self.get_record(connection_id)
+        if connection is None:
+            return None
+        if getattr(connection, "protocol", "ssh") != "ssh":
+            from sshpilot.plugins.registry import protocol_registry
+
+            registry = protocol_registry()
+            try:
+                backend = registry.get(connection.protocol)
+            except ValueError:
+                return None
+            if backend is None:
+                return None
+            plugin_id = registry.plugin_id_for(connection.protocol) or connection.protocol
+            ctx = type("SpawnContext", (), {"plugin_id": plugin_id})()
+            spec = backend.build_spawn(connection, ctx)
+            import shutil
+
+            argv = tuple(spec.argv or ())
+            env = dict(spec.env or {})
+            executable = shutil.which(argv[0], path=env.get("PATH"))
+            if executable:
+                return (executable, *argv[1:]), env
+            return argv, env
+        loop = None
+        try:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except Exception:
+            pass
+        if loop is not None and hasattr(connection, "native_connect"):
+            try:
+                loop.run_until_complete(connection.native_connect())
+            finally:
+                if loop is not asyncio.get_event_loop():
+                    loop.close()
+        cmd = getattr(connection, "ssh_connection_cmd", None)
+        if cmd is None:
+            return None
+        import shutil
+
+        preload = getattr(connection, "_preload_keys_into_agent", None)
+        if callable(preload):
+            preload()
+        argv = list(cmd.command)
+        env = dict(cmd.env)
+        local_command = getattr(connection, "local_command", None)
+        if local_command and len(argv) >= 2:
+            argv = [
+                *argv[:-1],
+                "-o",
+                "PermitLocalCommand=yes",
+                "-o",
+                f"LocalCommand={local_command}",
+                argv[-1],
+            ]
+        executable = shutil.which(argv[0], path=env.get("PATH"))
+        if executable:
+            argv[0] = executable
+        return tuple(argv), env
+
 
 @pytest.fixture
 def daemon_factory(tmp_path):

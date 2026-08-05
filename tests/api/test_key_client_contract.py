@@ -1,9 +1,8 @@
 """SSH-key public client contract tests."""
 
-from types import SimpleNamespace
-
 import pytest
 
+from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.client import SshPilotClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -19,7 +18,7 @@ from sshpilot.api.models.keys import (
     PublicKeyResult,
     ReadPublicKeyRequest,
 )
-from sshpilot.core.connection_application_service import ConnectionApplicationService
+from tests.helpers.fake_connection_repository import make_test_repository
 
 
 def test_protocol_declares_key_methods():
@@ -46,12 +45,7 @@ def test_daemon_client_registers_key_methods():
 
 
 def _in_process_client():
-    manager = SimpleNamespace(
-        get_connections=lambda: [],
-        connections=[],
-        subscribe_events=lambda callback: SimpleNamespace(unsubscribe=lambda: None),
-    )
-    return ConnectionApplicationService(manager, client_name="test")
+    return ConnectionApplicationService(make_test_repository(), client_name="test")
 
 
 @pytest.mark.parametrize(

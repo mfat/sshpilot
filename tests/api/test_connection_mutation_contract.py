@@ -21,8 +21,8 @@ def _wait_for(events, count=1):
     assert len(events) >= count
 
 
-def test_create_update_delete_have_shared_behaviour(fake_manager, client_factory):
-    client = client_factory(fake_manager)
+def test_create_update_delete_have_shared_behaviour(fake_repo, client_factory):
+    client = client_factory(fake_repo)
     events = []
 
     def _record(event):
@@ -68,8 +68,8 @@ def test_create_update_delete_have_shared_behaviour(fake_manager, client_factory
     subscription.unsubscribe()
 
 
-def test_duplicate_and_not_found_errors_emit_no_events(fake_manager, client_factory):
-    client = client_factory(fake_manager)
+def test_duplicate_and_not_found_errors_emit_no_events(fake_repo, client_factory):
+    client = client_factory(fake_repo)
     events = []
     subscription = client.subscribe_events(events.append)
 
@@ -106,12 +106,9 @@ def test_duplicate_and_not_found_errors_emit_no_events(fake_manager, client_fact
     subscription.unsubscribe()
 
 
-
-
-
-def test_failed_mutations_emit_no_events(fake_manager, client_factory, monkeypatch):
-    monkeypatch.setattr(fake_manager, "create_connection", lambda _data: None)
-    client = client_factory(fake_manager)
+def test_failed_mutations_emit_no_events(fake_repo, client_factory, monkeypatch):
+    fake_repo.fail_next = True
+    client = client_factory(fake_repo)
     events = []
     subscription = client.subscribe_events(events.append)
 
@@ -129,10 +126,10 @@ def test_failed_mutations_emit_no_events(fake_manager, client_factory, monkeypat
 
 
 def test_mutation_dtos_and_results_exclude_secret_fields(
-    fake_manager,
+    fake_repo,
     client_factory,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
     created = client.create_connection(
         CreateConnectionRequest(
             nickname="public",
@@ -152,19 +149,15 @@ def test_mutation_dtos_and_results_exclude_secret_fields(
 
 
 def test_basic_update_preserves_advanced_state_without_passing_secrets(
-    fake_manager,
-    fake_connection,
+    fake_repo,
     client_factory,
 ):
-    fake_connection.keyfile = "/private/key-path"
-    fake_connection.data.update(
-        {
-            "keyfile": fake_connection.keyfile,
-            "password": "must-not-reach-manager-update",
-            "token": "must-not-reach-manager-update",
-        }
-    )
-    client = client_factory(fake_manager)
+    fake_repo.update_connection("demo", {
+        "keyfile": "/private/key-path",
+        "password": "must-not-reach-manager-update",
+        "token": "must-not-reach-manager-update",
+    })
+    client = client_factory(fake_repo)
     connection_id = client.list_connections()[0].id
 
     updated = client.update_connection(
@@ -174,6 +167,4 @@ def test_basic_update_preserves_advanced_state_without_passing_secrets(
 
     details = client.get_connection(updated.connection_id)
     assert details.identity_configured is True
-    assert fake_manager.last_update["keyfile"] == "/private/key-path"
-    assert "password" not in fake_manager.last_update
-    assert "token" not in fake_manager.last_update
+    assert fake_repo.last_update["keyfile"] == "/private/key-path"

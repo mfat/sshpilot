@@ -10,42 +10,7 @@ from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId
 from sshpilot.api.models.sessions import AttachSessionRequest, OpenSessionRequest, SessionExitInfo, SessionState
 from sshpilot.api.models.terminal import TerminalDimensions
 from sshpilot.daemon.session_runtime import SessionRuntime
-
-
-class _Connection:
-    def __init__(self):
-        self.nickname = "test"
-        self.id = "test"
-        self.uuid = "test"
-        self.host = "test"
-        self.hostname = "test.example"
-        self.username = "alice"
-        self.port = 22
-        self.protocol = "ssh"
-        self.aliases = []
-        self.auth_method = 0
-        self.keyfile = ""
-        self.identity_files = []
-        self.certificate = ""
-        self.certificate_files = []
-        self.x11_forwarding = False
-        self.forwarding_rules = []
-        self.proxy_jump = []
-        self.data = {}
-
-
-class _Manager:
-    def __init__(self):
-        self.connection = _Connection()
-
-    def get_connections(self):
-        return [self.connection]
-
-    def connect(self, _name, _callback):
-        return 1
-
-    def disconnect(self, _handler_id):
-        return None
+from tests.helpers.fake_connection_repository import make_test_repository
 
 
 class ControlledHandle:
@@ -106,8 +71,8 @@ class ControlledRunner:
 @pytest.fixture
 def session_runtime():
     """Create a session runtime for testing."""
-    manager = _Manager()
-    core = ConnectionApplicationService(manager)
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo)
     runner = ControlledRunner()
     runtime = SessionRuntime(core, runner=runner)
     yield runtime, core

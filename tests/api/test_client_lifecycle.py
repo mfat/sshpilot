@@ -6,10 +6,10 @@ from sshpilot.api import ErrorCode, SshPilotError
 
 
 def test_closed_client_rejects_commands_and_new_subscriptions(
-    fake_manager,
+    fake_repo,
     client_factory,
 ):
-    client = client_factory(fake_manager)
+    client = client_factory(fake_repo)
     capabilities = client.get_capabilities()
     client.close()
 
@@ -24,10 +24,10 @@ def test_closed_client_rejects_commands_and_new_subscriptions(
 
 
 def test_core_service_commands_reject_the_wrong_thread(
-    fake_manager,
+    fake_repo,
     application_services_factory,
 ):
-    client = application_services_factory(fake_manager)
+    client = application_services_factory(fake_repo)
     failures = []
 
     def invoke():

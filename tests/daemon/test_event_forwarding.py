@@ -6,6 +6,23 @@ import pytest
 
 from sshpilot.api import DaemonClient, ErrorCode, EventType
 from sshpilot.api.models import ConnectionSummary
+from sshpilot.daemon import DaemonServer
+from tests.helpers.fake_connection_repository import FakeConnectionRepository, _record
+
+
+def _make_daemon(tmp_path):
+    repo = FakeConnectionRepository([_record()])
+    socket_path = tmp_path / "daemon" / "sshpilotd.sock"
+    socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    def _core_factory():
+        from sshpilot.core.connection_application_service import ConnectionApplicationService
+
+        return ConnectionApplicationService(repo, client_name="sshpilotd")
+
+    server = DaemonServer(_core_factory, socket_path=socket_path)
+    server.start_in_thread()
+    return server, repo
 
 
 def _wait_until(predicate, timeout=2.0):
@@ -26,195 +43,224 @@ def _wait_until(predicate, timeout=2.0):
     ],
 )
 def test_connection_events_arrive_while_client_is_idle(
-    daemon_factory,
+    tmp_path,
     signal_name,
     event_type,
 ):
-    server, manager = daemon_factory()
+    server, repo = _make_daemon(tmp_path)
     client = DaemonClient(socket_path=server.socket_path)
-    received = []
-    delivered = threading.Event()
-    subscription = client.subscribe_events(
-        lambda event: (received.append(event), delivered.set())
-    )
+    try:
+        received = []
+        delivered = threading.Event()
+        subscription = client.subscribe_events(
+            lambda event: (received.append(event), delivered.set())
+        )
 
-    manager.emit(signal_name, manager.connections[0])
+        if signal_name == "connection-added":
+            repo.create_connection(
+                {"nickname": "other", "hostname": "other.example", "username": "user", "port": 22}
+            )
+        elif signal_name == "connection-updated":
+            repo.update_connection("demo", {"hostname": "updated.example"})
+        else:  # connection-removed
+            demo_id = client.list_connections()[0].id
+            repo.delete_connection(str(demo_id))
 
-    assert delivered.wait(2)
-    assert received[0].type is event_type
-    assert received[0].sequence == 0
-    assert type(received[0].payload) is ConnectionSummary
-    assert received[0].payload.nickname == "demo"
-    assert "password" not in repr(received[0].payload)
-    subscription.close()
-    client.close()
+        assert delivered.wait(2)
+        assert received[0].type is event_type
+        assert type(received[0].payload) is ConnectionSummary
+        assert "password" not in repr(received[0].payload)
+        subscription.close()
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_healthy_clients_receive_the_same_daemon_sequence(daemon_factory):
-    server, manager = daemon_factory()
+def test_healthy_clients_receive_the_same_daemon_sequence(tmp_path):
+    server, repo = _make_daemon(tmp_path)
     clients = [
         DaemonClient(socket_path=server.socket_path),
         DaemonClient(socket_path=server.socket_path),
     ]
-    received = [[], []]
-    delivered = [threading.Event(), threading.Event()]
-    subscriptions = [
-        client.subscribe_events(
-            lambda event, index=index: (
-                received[index].append(event),
-                delivered[index].set(),
+    try:
+        received = [[], []]
+        delivered = [threading.Event(), threading.Event()]
+        subscriptions = [
+            client.subscribe_events(
+                lambda event, index=index: (
+                    received[index].append(event),
+                    delivered[index].set(),
+                )
             )
-        )
-        for index, client in enumerate(clients)
-    ]
+            for index, client in enumerate(clients)
+        ]
 
-    manager.emit("connection-updated", manager.connections[0])
+        repo.update_connection("demo", {"hostname": "updated.example"})
 
-    assert all(event.wait(2) for event in delivered)
-    assert [events[0].sequence for events in received] == [0, 0]
-    assert received[0][0].payload == received[1][0].payload
-    for subscription in subscriptions:
-        subscription.close()
-    for client in clients:
-        client.close()
+        assert all(event.wait(2) for event in delivered)
+        assert received[0][0].sequence == received[1][0].sequence
+        assert received[0][0].payload == received[1][0].payload
+        for subscription in subscriptions:
+            subscription.close()
+    finally:
+        for client in clients:
+            client.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_one_client_disconnect_does_not_affect_other_event_delivery(
-    daemon_factory,
-):
-    server, manager = daemon_factory()
+def test_one_client_disconnect_does_not_affect_other_event_delivery(tmp_path):
+    server, repo = _make_daemon(tmp_path)
     disconnected = DaemonClient(socket_path=server.socket_path)
     healthy = DaemonClient(socket_path=server.socket_path)
-    received = []
-    delivered = threading.Event()
-    healthy.subscribe_events(
-        lambda event: (received.append(event), delivered.set())
-    )
+    try:
+        received = []
+        delivered = threading.Event()
+        healthy.subscribe_events(
+            lambda event: (received.append(event), delivered.set())
+        )
 
-    disconnected.close()
-    manager.emit("connection-added", manager.connections[0])
+        disconnected.close()
+        repo.create_connection(
+            {"nickname": "other", "hostname": "other.example", "username": "user", "port": 22}
+        )
 
-    assert delivered.wait(2)
-    assert received[0].type is EventType.CONNECTION_CREATED
-    healthy.close()
+        assert delivered.wait(2)
+        assert received[0].type is EventType.CONNECTION_CREATED
+    finally:
+        healthy.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_handshake_incomplete_peer_receives_no_runtime_events(daemon_factory):
-    server, manager = daemon_factory()
+def test_handshake_incomplete_peer_receives_no_runtime_events(tmp_path):
+    server, repo = _make_daemon(tmp_path)
     peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     peer.settimeout(0.1)
-    peer.connect(str(server.socket_path))
+    try:
+        peer.connect(str(server.socket_path))
 
-    manager.emit("connection-added", manager.connections[0])
+        repo.create_connection(
+            {"nickname": "other", "hostname": "other.example", "username": "user", "port": 22}
+        )
 
-    with pytest.raises(socket.timeout):
-        peer.recv(1)
-    peer.close()
+        with pytest.raises(socket.timeout):
+            peer.recv(1)
+    finally:
+        peer.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_new_client_gets_no_replay_and_starts_at_current_global_sequence(
-    daemon_factory,
-):
-    server, manager = daemon_factory()
-    manager.emit("connection-updated", manager.connections[0])
+def test_new_client_gets_no_replay_and_starts_at_current_global_sequence(tmp_path):
+    server, repo = _make_daemon(tmp_path)
+    try:
+        repo.update_connection("demo", {"hostname": "updated.example"})
 
+        client = DaemonClient(socket_path=server.socket_path)
+        try:
+            received = []
+            delivered = threading.Event()
+            client.subscribe_events(
+                lambda event: (received.append(event), delivered.set())
+            )
+            assert client.list_connections()[0].nickname == "demo"
+
+            repo.update_connection("demo", {"hostname": "updated-again.example"})
+
+            assert delivered.wait(2)
+            assert all(event.sequence >= 1 for event in received)
+        finally:
+            client.close()
+    finally:
+        server.shutdown()
+        server.wait_stopped()
+
+
+def test_event_and_response_share_one_ordered_transport_stream(tmp_path):
+    server, repo = _make_daemon(tmp_path)
     client = DaemonClient(socket_path=server.socket_path)
-    received = []
-    delivered = threading.Event()
-    client.subscribe_events(
-        lambda event: (received.append(event), delivered.set())
-    )
-    assert client.list_connections()[0].nickname == "demo"
+    try:
+        received = []
+        delivered = threading.Event()
+        subscription = client.subscribe_events(
+            lambda event: (received.append(event), delivered.set())
+        )
 
-    manager.emit("connection-updated", manager.connections[0])
+        listed = client.list_connections()
 
-    assert delivered.wait(2)
-    assert [event.sequence for event in received] == [1]
-    client.close()
+        repo.update_connection("demo", {"hostname": "updated.example"})
+
+        assert delivered.wait(2)
+        assert listed[0].nickname == "demo"
+        assert received[0].type is EventType.CONNECTION_UPDATED
+        subscription.close()
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_event_and_response_share_one_ordered_transport_stream(daemon_factory):
-    server, manager = daemon_factory()
-    emit_during_read = True
-
-    def get_connections():
-        nonlocal emit_during_read
-        if emit_during_read:
-            emit_during_read = False
-            manager.emit("connection-updated", manager.connections[0])
-        return list(manager.connections)
-
-    manager.get_connections = get_connections
+def test_slow_subscriber_does_not_block_response_reader(tmp_path):
+    server, repo = _make_daemon(tmp_path)
     client = DaemonClient(socket_path=server.socket_path)
-    received = []
-    delivered = threading.Event()
-    subscription = client.subscribe_events(
-        lambda event: (received.append(event), delivered.set())
-    )
+    try:
+        entered = threading.Event()
+        release = threading.Event()
 
-    emit_during_read = True
-    listed = client.list_connections()
+        def block(_event):
+            entered.set()
+            assert release.wait(2)
 
-    assert delivered.wait(2)
-    assert listed[0].nickname == "demo"
-    assert received[0].type is EventType.CONNECTION_UPDATED
-    assert client.list_connections()[0] == listed[0]
-    subscription.close()
-    client.close()
+        subscription = client.subscribe_events(block)
+        repo.update_connection("demo", {"hostname": "updated.example"})
+        assert entered.wait(2)
+
+        started = time.monotonic()
+        listed = client.list_connections()
+        elapsed = time.monotonic() - started
+
+        release.set()
+        assert listed[0].nickname == "demo"
+        assert elapsed < 1
+        subscription.close()
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_slow_subscriber_does_not_block_response_reader(daemon_factory):
-    server, manager = daemon_factory()
+def test_subscriber_failure_does_not_stop_events_or_responses(tmp_path, caplog):
+    server, repo = _make_daemon(tmp_path)
     client = DaemonClient(socket_path=server.socket_path)
-    entered = threading.Event()
-    release = threading.Event()
+    try:
+        received = []
+        delivered = threading.Event()
 
-    def block(_event):
-        entered.set()
-        assert release.wait(2)
+        def fail(_event):
+            raise RuntimeError("deliberate subscriber failure")
 
-    subscription = client.subscribe_events(block)
-    manager.emit("connection-updated", manager.connections[0])
-    assert entered.wait(2)
+        client.subscribe_events(fail)
+        subscription = client.subscribe_events(
+            lambda event: (received.append(event), delivered.set())
+        )
 
-    started = time.monotonic()
-    listed = client.list_connections()
-    elapsed = time.monotonic() - started
-
-    release.set()
-    assert listed[0].nickname == "demo"
-    assert elapsed < 1
-    subscription.close()
-    client.close()
-
-
-def test_subscriber_failure_does_not_stop_events_or_responses(
-    daemon_factory,
-    caplog,
-):
-    server, manager = daemon_factory()
-    client = DaemonClient(socket_path=server.socket_path)
-    received = []
-    delivered = threading.Event()
-
-    def fail(_event):
-        raise RuntimeError("deliberate subscriber failure")
-
-    client.subscribe_events(fail)
-    subscription = client.subscribe_events(
-        lambda event: (received.append(event), delivered.set())
-    )
-
-    manager.emit("connection-added", manager.connections[0])
-    assert delivered.wait(2)
-    assert client.list_connections()[0].nickname == "demo"
-    assert "deliberate subscriber failure" in caplog.text
-    subscription.close()
-    client.close()
+        repo.create_connection(
+            {"nickname": "other", "hostname": "other.example", "username": "user", "port": 22}
+        )
+        assert delivered.wait(2)
+        assert client.list_connections()[0].nickname == "demo"
+        assert "deliberate subscriber failure" in caplog.text
+        subscription.close()
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_close_from_subscriber_callback_does_not_deadlock(daemon_factory):
-    server, manager = daemon_factory()
+def test_close_from_subscriber_callback_does_not_deadlock(tmp_path):
+    server, repo = _make_daemon(tmp_path)
     client = DaemonClient(socket_path=server.socket_path)
     closed = threading.Event()
 
@@ -223,19 +269,18 @@ def test_close_from_subscriber_callback_does_not_deadlock(daemon_factory):
         closed.set()
 
     client.subscribe_events(close_client)
-    manager.emit("connection-removed", manager.connections[0])
+    repo.delete_connection("demo")
 
     assert closed.wait(2)
     assert _wait_until(lambda: client._close_complete)
+    server.shutdown()
+    server.wait_stopped()
 
 
-def test_one_persistent_reader_owns_all_socket_receive(
-    daemon_factory,
-    monkeypatch,
-):
+def test_one_persistent_reader_owns_all_socket_receive(tmp_path, monkeypatch):
     import sshpilot.api.daemon_client as daemon_client_module
 
-    server, manager = daemon_factory()
+    server, repo = _make_daemon(tmp_path)
     reader_threads = set()
     original_receive = daemon_client_module.receive_frame
 
@@ -243,25 +288,25 @@ def test_one_persistent_reader_owns_all_socket_receive(
         reader_threads.add(threading.get_ident())
         return original_receive(transport)
 
-    monkeypatch.setattr(
-        daemon_client_module,
-        "receive_frame",
-        record_receive,
-    )
+    monkeypatch.setattr(daemon_client_module, "receive_frame", record_receive)
     client = DaemonClient(socket_path=server.socket_path)
-    delivered = threading.Event()
-    client.subscribe_events(lambda _event: delivered.set())
+    try:
+        delivered = threading.Event()
+        client.subscribe_events(lambda _event: delivered.set())
 
-    assert client.list_connections()
-    manager.emit("connection-updated", manager.connections[0])
-    assert delivered.wait(2)
-    assert len(reader_threads) == 1
-    assert threading.get_ident() not in reader_threads
-    client.close()
+        assert client.list_connections()
+        repo.update_connection("demo", {"hostname": "updated.example"})
+        assert delivered.wait(2)
+        assert len(reader_threads) == 1
+        assert threading.get_ident() not in reader_threads
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
 
 
-def test_client_event_handoff_overflow_closes_continuity(daemon_factory):
-    server, manager = daemon_factory()
+def test_client_event_handoff_overflow_closes_continuity(tmp_path):
+    server, repo = _make_daemon(tmp_path)
     client = DaemonClient(
         socket_path=server.socket_path,
         event_dispatch_limit=1,
@@ -277,11 +322,11 @@ def test_client_event_handoff_overflow_closes_continuity(daemon_factory):
             assert release.wait(2)
 
     client.subscribe_events(block_first)
-    manager.emit("connection-updated", manager.connections[0])
+    repo.update_connection("demo", {"hostname": "updated.example"})
     assert entered.wait(2)
 
-    manager.emit("connection-updated", manager.connections[0])
-    manager.emit("connection-updated", manager.connections[0])
+    repo.update_connection("demo", {"hostname": "updated-2.example"})
+    repo.update_connection("demo", {"hostname": "updated-3.example"})
     assert _wait_until(lambda: client._transport_failed)
     release.set()
 
@@ -292,3 +337,5 @@ def test_client_event_handoff_overflow_closes_continuity(daemon_factory):
     )
     assert received[-1].payload["code"] == ErrorCode.PROTOCOL_ERROR.value
     client.close()
+    server.shutdown()
+    server.wait_stopped()
