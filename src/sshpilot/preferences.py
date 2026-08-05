@@ -5139,13 +5139,34 @@ class PreferencesWindow(Adw.NavigationPage):
         cache is refreshed from the authoritative file without writing it back,
         so a later Config-owned write cannot clobber the daemon state.
 
+        Before any Config-owned write the legacy cache is refreshed from the
+        authoritative file.  A stale cache would otherwise rewrite an older
+        SSH-overrides revision back to disk on the first ``set_setting``,
+        silently clobbering a concurrent daemon mutation.  If that strict
+        refresh fails nothing is written: the method returns ``False``.
+
         Returns ``True`` on success.  On a validation, revision-conflict,
         unsupported-capability, or persistence failure the daemon mutation
         failed: the page stays open, the controller snapshot is preserved, and
         no ControlMaster sessions are expired.
         """
         try:
+            controller = self.ssh_overrides_controller
             page_built = hasattr(self, 'connect_timeout_row')
+
+            # 0. Refresh the legacy cache from the authoritative file before
+            #    any Config-owned write.  A stale cache would rewrite an older
+            #    SSH-overrides revision back to disk on the first set_setting,
+            #    clobbering a concurrent daemon mutation.
+            if controller is not None and page_built:
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache before SSH overrides save",
+                        exc_info=True,
+                    )
+                    return False
 
             # 1. Config-owned rows persist first (each set_setting saves now).
             if hasattr(self, 'apply_default_keepalive_row'):
@@ -5186,7 +5207,6 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.config.set_setting('file_manager.sftp_connect_timeout', connect_timeout_value)
 
             # 2. The nine daemon-owned fields go through the controller last.
-            controller = self.ssh_overrides_controller
             if controller is not None and page_built:
                 try:
                     controller.update(self._collect_ssh_override_patch())
@@ -5230,11 +5250,29 @@ class PreferencesWindow(Adw.NavigationPage):
         fields reset through the controller last.  Returns ``True`` on
         success.  On a daemon failure the page keeps its state and no
         ControlMaster sessions are expired.
+
+        Before any Config-owned write the legacy cache is refreshed from the
+        authoritative file so a stale cache cannot rewrite an older
+        SSH-overrides revision back to disk.  If that strict refresh fails
+        nothing is written: the method returns ``False``.
         """
         try:
             defaults = self.config.get_default_config().get('ssh', {})
             controller = self.ssh_overrides_controller
             page_built = hasattr(self, 'connect_timeout_row')
+
+            # 0. Refresh the legacy cache from the authoritative file before
+            #    any Config-owned write (same clobber protection as the save
+            #    path).  A malformed file aborts before anything is written.
+            if controller is not None and page_built:
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache before SSH overrides reset",
+                        exc_info=True,
+                    )
+                    return False
 
             # Config-owned rows first (each set_setting saves immediately).
             if hasattr(self, 'apply_default_keepalive_row'):

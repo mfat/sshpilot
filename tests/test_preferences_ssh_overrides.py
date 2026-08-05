@@ -44,6 +44,9 @@ class _Switch:
     def set_active(self, active):
         self._active = active
 
+    def set_sensitive(self, _sensitive):
+        pass
+
 
 class _Combo:
     def __init__(self, selected=0):
@@ -353,6 +356,126 @@ def test_on_close_request_returns_false_after_success(tmp_path, monkeypatch):
     prefs.connect_timeout_row = _Spin(value=30)
 
     assert prefs.on_close_request() is False
+
+
+# ---------------------------------------------------------------------------
+# Cross-client clobber race: a stale legacy cache must not rewrite an older
+# SSH-overrides revision back to disk before the daemon mutation runs.
+# ---------------------------------------------------------------------------
+
+
+def test_stale_snapshot_save_conflicts_without_manual_refresh(
+    tmp_path, monkeypatch
+):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+    loaded = controller.load()
+    prefs = _make_prefs(config, controller)
+    prefs.connect_timeout_row = _Spin(value=60)
+    prefs.batch_mode_row = _Switch(active=True)
+    expires = _expiry_record(monkeypatch)
+
+    # Another SshOverridesService changes connection_timeout to revision B
+    # after the page snapshot (revision A) was taken.  No manual cache
+    # refresh: the save path must protect itself.
+    other = SshOverridesService(tmp_path / "config.json")
+    other.update(UpdateGlobalSshOverridesRequest({"connect_timeout": 7}))
+
+    # The stale controller snapshot is rejected.
+    assert prefs.save_advanced_ssh_settings() is False
+    # ControlMasters are not expired.
+    assert expires == []
+    # The B value remains on disk.
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["connection_timeout"] == 7
+    # Config-owned settings were applied from the refreshed cache and were
+    # not allowed to restore revision A.
+    assert on_disk["ssh"].get("connection_timeout") != 5
+    assert on_disk["ssh"]["apply_default_keepalive"] is True
+    # The controller snapshot is preserved.
+    assert controller.snapshot().revision == loaded.revision
+    assert controller.snapshot().connect_timeout == 5
+
+
+def test_stale_snapshot_reset_conflicts_without_manual_refresh(
+    tmp_path, monkeypatch
+):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+    loaded = controller.load()
+    prefs = _make_prefs(config, controller)
+    expires = _expiry_record(monkeypatch)
+
+    other = SshOverridesService(tmp_path / "config.json")
+    other.update(UpdateGlobalSshOverridesRequest({"connect_timeout": 7}))
+
+    assert prefs._apply_default_advanced_settings() is False
+    # ControlMasters are not expired.
+    assert expires == []
+    # The B value remains on disk.
+    on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["ssh"]["connection_timeout"] == 7
+    # Config-owned settings were applied from the refreshed cache and were
+    # not allowed to restore revision A.
+    assert on_disk["ssh"].get("connection_timeout") != 5
+    assert on_disk["ssh"]["apply_default_keepalive"] is True
+    # The controller snapshot is preserved.
+    assert controller.snapshot().revision == loaded.revision
+    assert controller.snapshot().connect_timeout == 5
+
+
+def test_malformed_file_aborts_save_before_any_write(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+    controller.load()
+    prefs = _make_prefs(config, controller)
+    prefs.connect_timeout_row = _Spin(value=60)
+    expires = _expiry_record(monkeypatch)
+
+    path = tmp_path / "config.json"
+    path.write_text("{ not json", encoding="utf-8")
+    before = path.read_bytes()
+
+    assert prefs.save_advanced_ssh_settings() is False
+    # No Config-owned writes, no daemon mutation, no master expiry.
+    assert expires == []
+    assert path.read_bytes() == before
+
+
+def test_malformed_file_aborts_reset_before_any_write(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+    controller.load()
+    prefs = _make_prefs(config, controller)
+    expires = _expiry_record(monkeypatch)
+
+    path = tmp_path / "config.json"
+    path.write_text("{ not json", encoding="utf-8")
+    before = path.read_bytes()
+
+    assert prefs._apply_default_advanced_settings() is False
+    assert expires == []
+    assert path.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------
