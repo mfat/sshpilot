@@ -16,6 +16,11 @@ from sshpilot.daemon.connection_secret_provider import (  # noqa: E402
     DaemonConnectionSecretProvider,
 )
 from sshpilot.core.connections.models import ConnectionRecord  # noqa: E402
+from sshpilot.credential_model import (  # noqa: E402
+    canonical_password_host,
+    password_host_candidates,
+)
+from sshpilot.secret_storage import password_spec  # noqa: E402
 
 
 class FakeSecretManager:
@@ -52,6 +57,7 @@ def _record(nickname="web", **kwargs) -> ConnectionRecord:
         username=kwargs.pop("username", "alice"),
         port=kwargs.pop("port", 22),
         protocol=kwargs.pop("protocol", "ssh"),
+        host=kwargs.pop("host", ""),
         data=kwargs.pop("data", {}),
     )
 
@@ -138,3 +144,89 @@ def test_secret_values_not_in_repr(provider):
 def test_resolver_required():
     with pytest.raises(ValueError):
         DaemonConnectionSecretProvider(None)
+
+
+# --- pure credential-model helpers -------------------------------------------
+
+
+def test_canonical_password_host_precedence():
+    # hostname takes precedence over host and nickname.
+    assert (
+        canonical_password_host(
+            {"hostname": "h.example", "host": "alias", "nickname": "nick"}
+        )
+        == "h.example"
+    )
+    # host is used when hostname is empty.
+    assert (
+        canonical_password_host({"hostname": "", "host": "alias", "nickname": "nick"})
+        == "alias"
+    )
+    # nickname is the final fallback.
+    assert (
+        canonical_password_host({"hostname": "", "host": "", "nickname": "nick"})
+        == "nick"
+    )
+
+
+def test_password_host_candidates_ordered_and_deduplicated():
+    conn = {"hostname": "h.example", "host": "alias", "nickname": "nick"}
+    assert password_host_candidates(conn) == ["h.example", "alias", "nick"]
+    dup = {"hostname": "h.example", "host": "h.example", "nickname": "h.example"}
+    assert password_host_candidates(dup) == ["h.example"]
+
+
+# --- migrated scenarios from the retired connection-password tests -----------
+
+
+def test_store_uses_canonical_host_and_removes_legacy_nickname_alias(provider):
+    prov, manager, records = provider
+    records["web"] = _record(nickname="bnick", hostname="b.example", username="bob")
+    manager.store(password_spec("bnick", "bob"), "legacy")
+
+    assert prov.store_connection_password("web", "new-pw") is True
+    assert manager.lookup(password_spec("b.example", "bob")) == "new-pw"
+    assert manager.lookup(password_spec("bnick", "bob")) is None
+
+
+def test_store_cleans_complete_previous_identity(provider):
+    prov, manager, records = provider
+    records["web"] = _record(
+        nickname="new-name", hostname="new.example", username="new-user"
+    )
+    manager.store(password_spec("old.example", "old-user"), "old-pw")
+
+    assert prov.store_connection_password(
+        "web",
+        "new-pw",
+        previous_hostname="old.example",
+        previous_username="old-user",
+    ) is True
+    assert manager.lookup(password_spec("new.example", "new-user")) == "new-pw"
+    assert manager.lookup(password_spec("old.example", "old-user")) is None
+
+
+def test_lookup_migrates_legacy_nickname_alias(provider):
+    prov, manager, records = provider
+    records["web"] = _record(nickname="bnick", hostname="b.example", username="bob")
+    manager.store(password_spec("bnick", "bob"), "legacy")
+
+    assert prov.lookup_connection_password("web") == "legacy"
+    # The canonical account is created and the legacy alias is removed.
+    assert manager.lookup(password_spec("b.example", "bob")) == "legacy"
+    assert manager.lookup(password_spec("bnick", "bob")) is None
+
+
+def test_delete_clears_all_candidate_aliases(provider):
+    prov, manager, records = provider
+    records["web"] = _record(
+        nickname="bnick", hostname="b.example", host="alias", username="bob"
+    )
+    manager.store(password_spec("b.example", "bob"), "x")
+    manager.store(password_spec("alias", "bob"), "y")
+    manager.store(password_spec("bnick", "bob"), "z")
+
+    assert prov.delete_connection_password("web") is True
+    assert manager.lookup(password_spec("b.example", "bob")) is None
+    assert manager.lookup(password_spec("alias", "bob")) is None
+    assert manager.lookup(password_spec("bnick", "bob")) is None
