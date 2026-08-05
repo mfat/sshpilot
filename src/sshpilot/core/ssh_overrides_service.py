@@ -54,9 +54,11 @@ class SshOverridesService:
     are rejected cleanly.
 
     ``controlmaster_extra`` supplies the ``-o`` args that enable SSH connection
-    multiplexing (``ssh_multiplex.controlmaster_args()``) when the daemon
-    configuration enables ``ssh.controlmaster``.  Core does not import the
-    multiplex helper; the daemon injects the args.
+    multiplexing (``ssh_multiplex.controlmaster_args()``).  The daemon injects
+    the args unconditionally; :func:`compose_ssh_overrides` decides whether to
+    include the fragment from the *currently loaded* ``ssh.controlmaster`` value,
+    so toggling it in Preferences applies without a daemon restart.  Core does
+    not import the multiplex helper; the daemon injects the args.
     """
 
     def __init__(

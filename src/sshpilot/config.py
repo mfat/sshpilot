@@ -119,6 +119,20 @@ class Config(GObject.Object):
         config, _updated = self._ensure_config_defaults(config)
         return config
 
+    def reload_json_cache_strict(self) -> Dict[str, Any]:
+        """Refresh ``config_data`` from the authoritative JSON file in place.
+
+        Used after a daemon-owned mutation (SSH overrides) so the legacy
+        in-memory cache reflects the authoritative file instead of a stale tree
+        that a later ``save_json_config`` would clobber daemon state with.
+
+        Strict, read-only: raises on malformed input, performs no save, and
+        emits no mutation signals.
+        """
+        config = self.read_json_config_strict()
+        self.config_data = config
+        return config
+
     def save_json_config(
         self,
         config_data: Optional[Dict[str, Any]] = None,

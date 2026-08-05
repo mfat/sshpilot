@@ -104,6 +104,54 @@ def test_non_object_root_raises_malformed(tmp_path):
     assert excinfo.value.details.get("code") == SETTINGS_MALFORMED
 
 
+@pytest.mark.parametrize("raw", ["", "\n", "   \t  \n"])
+def test_blank_or_whitespace_file_raises_malformed_unchanged(tmp_path, raw):
+    path = tmp_path / "config.json"
+    path.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(SshPilotError) as excinfo:
+        _service(path).get()
+    assert excinfo.value.code is ErrorCode.PERSISTENCE_FAILED
+    assert excinfo.value.details.get("code") == SETTINGS_MALFORMED
+    # Malformed input stays byte-for-byte unchanged and is never replaced.
+    assert path.read_text(encoding="utf-8") == raw
+    assert not (tmp_path / "config.json.bak").exists()
+
+
+@pytest.mark.parametrize("version", ["abc", "3.5", True, False, [], {}, "3.0", ""])
+def test_invalid_config_version_raises_malformed_unchanged(tmp_path, version):
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"config_version": version, "ssh": {"batch_mode": True}}),
+        encoding="utf-8",
+    )
+    before = path.read_text(encoding="utf-8")
+
+    with pytest.raises(SshPilotError) as excinfo:
+        _service(path).get()
+    assert excinfo.value.code is ErrorCode.PERSISTENCE_FAILED
+    assert excinfo.value.details.get("code") == SETTINGS_MALFORMED
+    # Malformed input stays byte-for-byte unchanged and is never backed up.
+    assert path.read_text(encoding="utf-8") == before
+    assert not (tmp_path / "config.json.bak").exists()
+
+
+def test_string_integer_config_version_is_accepted(tmp_path):
+    path = _write(tmp_path / "config.json", {"config_version": str(CONFIG_VERSION)})
+    snapshot = _service(path).get()
+    assert snapshot.revision == compute_ssh_overrides_revision(DEFAULT_SSH_OVERRIDES)
+
+
+def test_blank_whitespace_file_rejected_by_loader_directly(tmp_path):
+    from sshpilot.core.settings import SettingsFileError, load_settings_strict
+
+    path = tmp_path / "config.json"
+    path.write_text("   \n  ", encoding="utf-8")
+    with pytest.raises(SettingsFileError):
+        load_settings_strict(path)
+    assert path.read_text(encoding="utf-8") == "   \n  "
+
+
 def test_bad_ssh_value_raises_malformed_without_overwrite(tmp_path):
     path = _write(
         tmp_path / "config.json",
@@ -319,3 +367,73 @@ def test_base_defaults_shape_matches_core_defaults(tmp_path):
             # stored default list.
             continue
         assert ssh.get(key) == value
+
+
+# ---------------------------------------------------------------------------
+# Live ControlMaster composition (task 6)
+# ---------------------------------------------------------------------------
+
+_MUX_ARGS = (
+    "-o", "ControlMaster=auto",
+    "-o", "ControlPath=%C",
+    "-o", "ControlPersist=60",
+)
+
+
+def _join(ssh):
+    return " ".join(ssh["ssh_overrides"])
+
+
+def test_controlmaster_false_yields_no_fragment(tmp_path):
+    path = _write(tmp_path / "config.json", {"ssh": {"controlmaster": False}})
+    service = SshOverridesService(path, controlmaster_extra=_MUX_ARGS)
+
+    ssh = service.get_ssh_config()
+    assert "ControlMaster=auto" not in _join(ssh)
+
+
+def test_live_controlmaster_toggle_without_restart(tmp_path):
+    path = _write(tmp_path / "config.json", {"ssh": {"controlmaster": False}})
+    service = SshOverridesService(path, controlmaster_extra=_MUX_ARGS)
+
+    assert "ControlMaster=auto" not in _join(service.get_ssh_config())
+
+    # External/current config enables controlmaster on the same file; the same
+    # long-lived service composes the fragment on the next read.
+    _write(path, {"ssh": {"controlmaster": True}})
+    assert "ControlMaster=auto" in _join(service.get_ssh_config())
+
+    # And turning it back off removes the fragment again.
+    _write(path, {"ssh": {"controlmaster": False}})
+    assert "ControlMaster=auto" not in _join(service.get_ssh_config())
+
+
+def test_controlmaster_fragment_only_injected_when_enabled(tmp_path):
+    # The args are always injected, but the loaded value gates inclusion.
+    path = _write(tmp_path / "config.json", {"ssh": {"controlmaster": False}})
+    service = SshOverridesService(path, controlmaster_extra=_MUX_ARGS)
+
+    ssh = service.get_ssh_config()
+    assert ssh["ssh_overrides"] == ["-o", "StrictHostKeyChecking=accept-new"]
+
+    _write(path, {"ssh": {"controlmaster": True}})
+    ssh = service.get_ssh_config()
+    assert "ControlMaster=auto" in _join(ssh)
+    assert "-o" in ssh["ssh_overrides"][:2]
+
+
+def test_persisted_mutation_composes_controlmaster_when_enabled(tmp_path):
+    path = _write(tmp_path / "config.json", {"ssh": {"controlmaster": True}})
+    service = SshOverridesService(path, controlmaster_extra=_MUX_ARGS)
+    before = service.get()
+
+    updated = service.update(
+        UpdateGlobalSshOverridesRequest(
+            patch={"connect_timeout": 12},
+            expected_revision=before.revision,
+        )
+    )
+    assert updated.connect_timeout == 12
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert "ControlMaster=auto" in on_disk["ssh"]["ssh_overrides"]

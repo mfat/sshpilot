@@ -10,6 +10,7 @@ API-level validation and public DTOs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional
 
 from sshpilot.core.settings.ssh_overrides import (
@@ -51,6 +52,13 @@ SETTINGS_PERSISTENCE_FAILED = "settings_persistence_failed"
 def _validate_boolean(value: Any, field: str) -> None:
     if not isinstance(value, bool):
         raise TypeError(f"{field} must be a boolean, got {type(value).__name__}")
+
+
+def _validate_revision(value: Any) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"revision must be a string, got {type(value).__name__}")
+    if not value.strip():
+        raise ValueError("revision must not be empty")
 
 
 def _validate_integer(value: Any, field: str) -> None:
@@ -124,6 +132,7 @@ class GlobalSshOverrides:
 
     def __post_init__(self) -> None:
         # Validate on construction (frozen dataclass uses object.__setattr__).
+        _validate_revision(self.revision)
         _validate_integer(self.connect_timeout, "connect_timeout")
         _validate_integer(self.connection_attempts, "connection_attempts")
         _validate_integer(self.server_alive_interval, "server_alive_interval")
@@ -133,13 +142,17 @@ class GlobalSshOverrides:
         _validate_boolean(self.compression, "compression")
         _validate_integer(self.verbosity, "verbosity")
         _validate_boolean(self.debug_enabled, "debug_enabled")
+        _validate_boolean(self.applies_immediately, "applies_immediately")
 
 
 @dataclass(frozen=True)
 class UpdateGlobalSshOverridesRequest:
     """A partial update to global SSH overrides.
 
-    ``patch`` contains only the fields to change (partial semantics).
+    ``patch`` contains only the fields to change (partial semantics).  The
+    mapping is copied and frozen on construction: mutating the caller's
+    original dictionary afterwards does not change the request, and the
+    request's own ``patch`` is read-only.
     ``expected_revision`` enables optimistic concurrency control: the
     service rejects the update if the current revision does not match.
     """
@@ -152,3 +165,13 @@ class UpdateGlobalSshOverridesRequest:
             raise TypeError("patch must be a mapping")
         if self.patch:
             _validate_patch_fields(self.patch)
+        if self.expected_revision is not None and (
+            not isinstance(self.expected_revision, str)
+            or not self.expected_revision.strip()
+        ):
+            raise ValueError(
+                "expected_revision must be a non-empty string or None"
+            )
+        object.__setattr__(
+            self, "patch", MappingProxyType(dict(self.patch))
+        )

@@ -308,15 +308,17 @@ def _production_core_services():
         from sshpilot.core.ssh_overrides_service import SshOverridesService
         from sshpilot.ssh_multiplex import controlmaster_args
 
-        controlmaster_extra = None
+        # The multiplex args are always injected so the daemon composes the
+        # ControlMaster fragment based on the *currently loaded* value of
+        # ``ssh.controlmaster`` in the settings file — toggling it in
+        # Preferences takes effect without a daemon restart.
         try:
-            if bool(settings.get_ssh_config().get("controlmaster")):
-                controlmaster_extra = controlmaster_args()
+            multiplex_extra = controlmaster_args()
         except Exception:
-            controlmaster_extra = None
+            multiplex_extra = None
         return SshOverridesService(
             get_config_dir() / "config.json",
-            controlmaster_extra=controlmaster_extra,
+            controlmaster_extra=multiplex_extra,
         )
 
     overrides_service = _build_ssh_overrides_service()

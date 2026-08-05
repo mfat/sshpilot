@@ -157,3 +157,78 @@ def test_missing_strict_host_key_and_explicit_default_share_revision():
         {"strict_host_key_checking": "accept-new"}
     )
     assert _compute_revision(without) == _compute_revision(with_default)
+
+
+# ---------------------------------------------------------------------------
+# Request immutability / expected_revision validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("revision", ["", "   ", 0, 12, True, [], {}])
+def test_update_request_rejects_invalid_expected_revision(revision):
+    with pytest.raises(ValueError):
+        UpdateGlobalSshOverridesRequest(
+            patch={"connect_timeout": 5}, expected_revision=revision
+        )
+
+
+def test_update_request_accepts_none_expected_revision():
+    request = UpdateGlobalSshOverridesRequest(
+        patch={"connect_timeout": 5}, expected_revision=None
+    )
+    assert request.expected_revision is None
+
+
+def test_update_request_patch_is_immutable():
+    request = UpdateGlobalSshOverridesRequest(patch={"connect_timeout": 5})
+    with pytest.raises(TypeError):
+        request.patch["connect_timeout"] = 9  # type: ignore[index]
+    with pytest.raises(TypeError):
+        del request.patch["connect_timeout"]  # type: ignore[misc]
+
+
+def test_update_request_copies_caller_patch():
+    caller_patch = {"connect_timeout": 5}
+    request = UpdateGlobalSshOverridesRequest(patch=caller_patch)
+
+    caller_patch["connect_timeout"] = 99
+    caller_patch["batch_mode"] = True
+
+    assert request.patch == {"connect_timeout": 5}
+    assert set(request.patch) == {"connect_timeout"}
+
+
+def test_snapshot_revision_must_be_non_empty_string():
+    base = dict(
+        revision="r",
+        connect_timeout=0,
+        connection_attempts=0,
+        server_alive_interval=0,
+        server_alive_count_max=0,
+        strict_host_key_checking="accept-new",
+        batch_mode=False,
+        compression=False,
+        verbosity=0,
+        debug_enabled=False,
+    )
+    for bad in ("", "   ", 123, None, True, ["r"]):
+        with pytest.raises((TypeError, ValueError)):
+            GlobalSshOverrides(**{**base, "revision": bad})
+
+
+def test_snapshot_applies_immediately_must_be_boolean():
+    base = dict(
+        revision="r",
+        connect_timeout=0,
+        connection_attempts=0,
+        server_alive_interval=0,
+        server_alive_count_max=0,
+        strict_host_key_checking="accept-new",
+        batch_mode=False,
+        compression=False,
+        verbosity=0,
+        debug_enabled=False,
+    )
+    for bad in (1, 0, "yes", None):
+        with pytest.raises(TypeError):
+            GlobalSshOverrides(**{**base, "applies_immediately": bad})

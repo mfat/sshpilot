@@ -2326,6 +2326,23 @@ class PreferencesWindow(Adw.NavigationPage):
         ssh_settings_page.add(help_group)
         ssh_settings_page.add(advanced_group)
 
+        if self.ssh_overrides_controller is None:
+            # No daemon overrides service: there is no authoritative owner for
+            # the nine semantic fields, so they stay visible but disabled
+            # rather than being persisted locally.
+            for row in (
+                self.connect_timeout_row,
+                self.connection_attempts_row,
+                self.keepalive_interval_row,
+                self.keepalive_count_row,
+                self.strict_host_row,
+                self.batch_mode_row,
+                self.compression_row,
+                self.verbosity_row,
+                self.debug_enabled_row,
+            ):
+                row.set_sensitive(False)
+
         # Ensure shortcut overview controls reflect current state
         self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
@@ -2520,15 +2537,23 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error(f"Failed to setup preferences: {e}")
 
     def on_close_request(self, *args):
-        """Persist settings when leaving Settings mode (NavigationView pop)."""
+        """Persist settings when leaving Settings mode (NavigationView pop).
+
+        Every relevant setter persists immediately, so no blanket
+        ``save_json_config`` write is needed here.  When the daemon SSH
+        overrides save fails, the page stays open and a failure state is
+        shown; returns True to signal the caller to keep Settings visible.
+        """
         try:
             if hasattr(self, 'shortcuts_editor_page'):
                 self.shortcuts_editor_page.flush_changes()
-            self.save_advanced_ssh_settings()
-            if hasattr(self.config, 'save_json_config'):
-                self.config.save_json_config()
+            saved = self.save_advanced_ssh_settings()
+            if not saved:
+                self._show_ssh_save_failure()
+                return True
         except Exception:
-            pass
+            logger.debug('Failed to flush preferences on close', exc_info=True)
+            return True
         return False
 
     def on_view_shortcuts_clicked(self, _button):
@@ -5105,89 +5130,34 @@ class PreferencesWindow(Adw.NavigationPage):
         self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
 
     def save_advanced_ssh_settings(self):
-        """Persist advanced SSH settings from the preferences UI"""
+        """Persist advanced SSH settings from the preferences UI.
+
+        Config-owned rows (``ssh.apply_default_keepalive``, ``ssh.controlmaster``,
+        file-manager settings) persist first — each ``set_setting`` writes the
+        file immediately.  The nine daemon-owned SSH override fields are
+        submitted through the controller last; on success the legacy Config
+        cache is refreshed from the authoritative file without writing it back,
+        so a later Config-owned write cannot clobber the daemon state.
+
+        Returns ``True`` on success.  On a validation, revision-conflict,
+        unsupported-capability, or persistence failure the daemon mutation
+        failed: the page stays open, the controller snapshot is preserved, and
+        no ControlMaster sessions are expired.
+        """
         try:
             page_built = hasattr(self, 'connect_timeout_row')
 
-            # Config-owned SSH rows (multiplexing, default keepalive).
+            # 1. Config-owned rows persist first (each set_setting saves now).
             if hasattr(self, 'apply_default_keepalive_row'):
                 self.config.set_setting(
                     'ssh.apply_default_keepalive',
                     bool(self.apply_default_keepalive_row.get_active()),
                 )
-            controlmaster_enabled = False
             if hasattr(self, 'controlmaster_row'):
-                controlmaster_enabled = bool(self.controlmaster_row.get_active())
-                self.config.set_setting('ssh.controlmaster', controlmaster_enabled)
-
-            controller = self.ssh_overrides_controller
-            if controller is not None and page_built:
-                # Daemon-owned path: the nine semantic fields are persisted
-                # through the controller; Preferences no longer writes them or
-                # composes ``ssh.ssh_overrides`` on the local config.
-                try:
-                    controller.update(self._collect_ssh_override_patch())
-                except Exception as exc:
-                    logger.error(f"Failed to save global SSH overrides: {exc}")
-            elif page_built:
-                # Legacy config-backed path (constructed without a controller).
-                connect_timeout = None
-                connection_attempts = None
-                keepalive_interval = None
-                keepalive_count = None
-                strict_host_value = ''
-                batch_mode_enabled = False
-                compression_enabled = False
-                verbosity_value = 0
-                debug_enabled = False
-
-                connect_timeout_value = int(self.connect_timeout_row.get_value())
-                connect_timeout = connect_timeout_value if connect_timeout_value > 0 else None
-                self.config.set_setting('ssh.connection_timeout', connect_timeout)
-                connection_attempts_value = int(self.connection_attempts_row.get_value())
-                connection_attempts = connection_attempts_value if connection_attempts_value > 0 else None
-                self.config.set_setting('ssh.connection_attempts', connection_attempts)
-                keepalive_interval_value = int(self.keepalive_interval_row.get_value())
-                keepalive_interval = keepalive_interval_value if keepalive_interval_value > 0 else None
-                self.config.set_setting('ssh.keepalive_interval', keepalive_interval)
-                keepalive_count_value = int(self.keepalive_count_row.get_value())
-                keepalive_count = keepalive_count_value if keepalive_count_value > 0 else None
-                self.config.set_setting('ssh.keepalive_count_max', keepalive_count)
-                options = ["accept-new", "yes", "no", "ask"]
-                idx = self.strict_host_row.get_selected()
-                strict_host_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
-                self.config.set_setting('ssh.strict_host_key_checking', strict_host_value)
-                batch_mode_enabled = bool(self.batch_mode_row.get_active())
-                self.config.set_setting('ssh.batch_mode', batch_mode_enabled)
-                compression_enabled = bool(self.compression_row.get_active())
-                self.config.set_setting('ssh.compression', compression_enabled)
-                verbosity_value = int(self.verbosity_row.get_value())
-                self.config.set_setting('ssh.verbosity', verbosity_value)
-                debug_enabled = bool(self.debug_enabled_row.get_active())
-                self.config.set_setting('ssh.debug_enabled', debug_enabled)
-
-                from sshpilot.core.settings import compose_ssh_overrides
-
-                ssh_fragment = {
-                    'batch_mode': batch_mode_enabled,
-                    'connection_timeout': connect_timeout,
-                    'connection_attempts': connection_attempts,
-                    'keepalive_interval': keepalive_interval,
-                    'keepalive_count_max': keepalive_count,
-                    'strict_host_key_checking': strict_host_value,
-                    'compression': compression_enabled,
-                    'verbosity': verbosity_value,
-                    'debug_enabled': debug_enabled,
-                    'controlmaster': controlmaster_enabled,
-                }
-                controlmaster_extra = None
-                if controlmaster_enabled:
-                    from .ssh_multiplex import controlmaster_args
-                    controlmaster_extra = controlmaster_args()
-                overrides = compose_ssh_overrides(
-                    ssh_fragment, controlmaster_extra=controlmaster_extra
+                self.config.set_setting(
+                    'ssh.controlmaster',
+                    bool(self.controlmaster_row.get_active()),
                 )
-                self.config.set_setting('ssh.ssh_overrides', overrides)
 
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.config.set_setting(
@@ -5215,9 +5185,28 @@ class PreferencesWindow(Adw.NavigationPage):
                     connect_timeout_value = 0
                 self.config.set_setting('file_manager.sftp_connect_timeout', connect_timeout_value)
 
-            # Global SSH options changed: retire live ControlMasters so new
-            # connections pick up the new overrides instead of riding stale
-            # transports (existing sessions drain naturally via -O stop).
+            # 2. The nine daemon-owned fields go through the controller last.
+            controller = self.ssh_overrides_controller
+            if controller is not None and page_built:
+                try:
+                    controller.update(self._collect_ssh_override_patch())
+                except Exception as exc:
+                    logger.error(f"Failed to save global SSH overrides: {exc}")
+                    return False
+
+            # 3. Refresh the legacy cache from the authoritative file so a
+            #    later Config-owned write cannot clobber the daemon state.
+            if controller is not None and page_built:
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache after SSH overrides save",
+                        exc_info=True,
+                    )
+
+            # The daemon mutation succeeded; retire live ControlMasters so new
+            # connections negotiate fresh transports with the new options.
             try:
                 from .ssh_multiplex import expire_all_masters
                 expire_all_masters()
@@ -5229,56 +5218,25 @@ class PreferencesWindow(Adw.NavigationPage):
                 manager = self.parent_window.connection_manager
             if manager and hasattr(manager, 'invalidate_cached_commands'):
                 manager.invalidate_cached_commands()
+            return True
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
+            return False
 
     def _apply_default_advanced_settings(self):
-        """Restore advanced SSH settings to defaults and update the UI."""
+        """Restore advanced SSH settings to defaults and update the UI.
+
+        Config-owned rows persist first; the nine daemon-owned SSH override
+        fields reset through the controller last.  Returns ``True`` on
+        success.  On a daemon failure the page keeps its state and no
+        ControlMaster sessions are expired.
+        """
         try:
             defaults = self.config.get_default_config().get('ssh', {})
             controller = self.ssh_overrides_controller
+            page_built = hasattr(self, 'connect_timeout_row')
 
-            if controller is not None and hasattr(self, 'connect_timeout_row'):
-                # Daemon-owned path: the nine semantic fields reset through
-                # the controller and the page reflects the daemon result.
-                try:
-                    snapshot = controller.reset()
-                    self._apply_ssh_override_values_to_rows(snapshot)
-                except Exception as exc:
-                    logger.error(f"Failed to reset global SSH overrides: {exc}")
-            else:
-                if hasattr(self, 'connect_timeout_row'):
-                    self.config.set_setting('ssh.connection_timeout', None)
-                    self.connect_timeout_row.set_value(0)
-                if hasattr(self, 'connection_attempts_row'):
-                    self.config.set_setting('ssh.connection_attempts', None)
-                    self.connection_attempts_row.set_value(0)
-                if hasattr(self, 'keepalive_interval_row'):
-                    self.config.set_setting('ssh.keepalive_interval', None)
-                    self.keepalive_interval_row.set_value(0)
-                if hasattr(self, 'keepalive_count_row'):
-                    self.config.set_setting('ssh.keepalive_count_max', None)
-                    self.keepalive_count_row.set_value(0)
-                if hasattr(self, 'strict_host_row'):
-                    try:
-                        self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))
-                    except ValueError:
-                        self.strict_host_row.set_selected(0)
-                    self.config.set_setting('ssh.strict_host_key_checking', 'accept-new')
-                self.config.set_setting('ssh.auto_add_host_keys', defaults.get('auto_add_host_keys'))
-                if hasattr(self, 'batch_mode_row'):
-                    self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', False)))
-                    self.batch_mode_row.set_active(bool(defaults.get('batch_mode', False)))
-                if hasattr(self, 'compression_row'):
-                    self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
-                    self.compression_row.set_active(bool(defaults.get('compression', False)))
-                if hasattr(self, 'verbosity_row'):
-                    self.config.set_setting('ssh.verbosity', defaults.get('verbosity'))
-                    self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
-                if hasattr(self, 'debug_enabled_row'):
-                    self.config.set_setting('ssh.debug_enabled', bool(defaults.get('debug_enabled', False)))
-                    self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
-
+            # Config-owned rows first (each set_setting saves immediately).
             if hasattr(self, 'apply_default_keepalive_row'):
                 default_apply = bool(defaults.get('apply_default_keepalive', True))
                 self.config.set_setting('ssh.apply_default_keepalive', default_apply)
@@ -5311,9 +5269,46 @@ class PreferencesWindow(Adw.NavigationPage):
             self._update_external_file_manager_row()
 
             if controller is None:
-                self.save_advanced_ssh_settings()
+                # No Preferences row exists for this Config-owned key, but the
+                # legacy no-controller reset restored it to its default.
+                self.config.set_setting(
+                    'ssh.auto_add_host_keys', defaults.get('auto_add_host_keys')
+                )
+
+            # The nine daemon-owned fields reset through the controller last.
+            if controller is not None and page_built:
+                try:
+                    snapshot = controller.reset()
+                except Exception as exc:
+                    logger.error(f"Failed to reset global SSH overrides: {exc}")
+                    return False
+                self._apply_ssh_override_values_to_rows(snapshot)
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache after SSH overrides reset",
+                        exc_info=True,
+                    )
+
+            # The daemon mutation succeeded (or there was nothing to reset);
+            # retire live ControlMasters so new connections negotiate fresh
+            # transports with the new options.
+            try:
+                from .ssh_multiplex import expire_all_masters
+                expire_all_masters()
+            except Exception:
+                logger.debug('Master expiry skipped', exc_info=True)
+
+            manager = None
+            if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
+                manager = self.parent_window.connection_manager
+            if manager and hasattr(manager, 'invalidate_cached_commands'):
+                manager.invalidate_cached_commands()
+            return True
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
+            return False
 
     def on_reset_advanced_ssh(self, *args):
         """Reset only advanced SSH keys to defaults and update UI."""
@@ -5485,6 +5480,17 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception:
             # Fallback to logging when toast overlay isn't available
             logger.info(message)
+
+    def _show_ssh_save_failure(self):
+        """Surface a failed daemon SSH overrides save (narrow failure state)."""
+        try:
+            self._show_toast(
+                _("Could not save SSH settings. Please check the values and try again.")
+            )
+        except Exception:
+            logger.error(
+                "Failed to save global SSH overrides; preferences kept open"
+            )
 
     def _update_encoding_config_if_needed(self, target_code):
         current_value = self.config.get_setting('terminal.encoding', 'UTF-8')

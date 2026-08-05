@@ -92,8 +92,6 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("key_utils.py", "keys", "SKIPPED_FILENAMES"),
         ("key_utils.py", "keys", "is_private_key"),
         ("key_utils.py", "keys", "looks_like_private_key"),
-        # -- pure SSH-overrides composition ------------------------------
-        ("preferences.py", "settings", "compose_ssh_overrides"),
         # -- terminal-output evidence classification --------------------
         ("terminal.py", "connection_evidence", "classify_connection_evidence"),
         # -- plugin contracts (shared language, NOT authoritative I/O) --
@@ -680,6 +678,67 @@ def _ids_in_funcs(tree: ast.Module, names: frozenset) -> dict[str, set[str]]:
                 ids.add(child.attr)
         found[node.name] = ids
     return found
+
+
+_SSH_OVERRIDE_CONFIG_KEYS = frozenset(
+    {
+        "ssh.connection_timeout",
+        "ssh.connection_attempts",
+        "ssh.keepalive_interval",
+        "ssh.keepalive_count_max",
+        "ssh.strict_host_key_checking",
+        "ssh.batch_mode",
+        "ssh.compression",
+        "ssh.verbosity",
+        "ssh.debug_enabled",
+        "ssh.ssh_overrides",
+    }
+)
+
+
+def test_preferences_has_no_local_ssh_override_persistence():
+    """SSH overrides ownership: Preferences never composes the derived list or
+    persists the nine daemon-owned fields through the local config.
+
+    The daemon owns the semantic SSH fields; the page only reads them for
+    display and submits mutations through ``SshOverridesController``.  Any
+    ``compose_ssh_overrides`` call, ``ssh.ssh_overrides`` write, or
+    ``config.set_setting`` of a daemon-owned override key here is ownership
+    debt that fails the suite.
+    """
+    path = SOURCE / "preferences.py"
+    tree = _parse_source(path)
+    used: set[str] = set()
+    strings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            used.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            strings.add(node.value)
+
+    assert not ({"compose_ssh_overrides"} & used), (
+        "preferences.py composes SSH overrides locally (daemon-ownership debt)"
+    )
+    assert not ({"ssh.ssh_overrides"} & strings), (
+        "preferences.py writes ssh.ssh_overrides locally (daemon-ownership debt)"
+    )
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "set_setting":
+            continue
+        if not node.args:
+            continue
+        key = node.args[0]
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            assert key.value not in _SSH_OVERRIDE_CONFIG_KEYS, (
+                "preferences.py persists a daemon-owned SSH override key "
+                f"({key.value!r}) through Config (daemon-ownership debt)"
+            )
 
 
 def test_authorized_keys_window_reads_no_discovered_key_paths():

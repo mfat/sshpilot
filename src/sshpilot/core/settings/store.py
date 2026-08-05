@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -72,13 +73,18 @@ def load_settings_strict(path: Path | str) -> Tuple[Dict[str, Any], bool]:
 
     * missing file -> canonical defaults (migrated=True)
     * unreadable file -> :class:`SettingsFileError`
-    * invalid JSON / empty root -> :class:`SettingsFileError`
+    * blank / whitespace-only file -> :class:`SettingsFileError`
+    * invalid JSON -> :class:`SettingsFileError`
     * non-object root -> :class:`SettingsFileError`
-    * obsolete ``config_version`` (< CONFIG_VERSION) -> replaced with a ``.bak``
-      backup and defaults returned (preserves the documented version migration)
+    * invalid ``config_version`` type/value -> :class:`SettingsFileError`
+    * obsolete ``config_version`` (a valid integer < CONFIG_VERSION) -> replaced
+      with a ``.bak`` backup and defaults returned (preserves the documented
+      version migration)
 
     A valid current-version tree is returned untouched: no rename, replacement,
     or truncation, and no default backfill beyond the explicit version migration.
+    Malformed input is never modified — every error path returns without touching
+    the file, so the damaged bytes stay byte-for-byte unchanged.
     """
     path = Path(path)
     if not path.exists():
@@ -90,8 +96,12 @@ def load_settings_strict(path: Path | str) -> Tuple[Dict[str, Any], bool]:
         raise SettingsFileError(
             "The settings file could not be read"
         ) from exc
+
+    if not raw.strip():
+        raise SettingsFileError("The settings file is empty")
+
     try:
-        data = json.loads(raw) if raw.strip() else {}
+        data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise SettingsFileError(
             "The settings file does not contain valid JSON"
@@ -100,11 +110,7 @@ def load_settings_strict(path: Path | str) -> Tuple[Dict[str, Any], bool]:
     if not isinstance(data, dict):
         raise SettingsFileError("The settings file is not a settings object")
 
-    stored_version = data.get("config_version")
-    try:
-        stored_version = int(stored_version) if stored_version is not None else 0
-    except (TypeError, ValueError):
-        stored_version = 0
+    stored_version = _parse_stored_version(data)
 
     if stored_version < CONFIG_VERSION:
         # Match load_settings: obsolete trees are replaced, not partially merged.
@@ -117,6 +123,29 @@ def load_settings_strict(path: Path | str) -> Tuple[Dict[str, Any], bool]:
         return get_default_config(), True
 
     return data, False
+
+
+def _parse_stored_version(data: Dict[str, Any]) -> int:
+    """Return the stored ``config_version`` as an integer.
+
+    A missing ``config_version`` is treated as version 0 (obsolete) so legacy
+    trees still migrate safely.  Any other non-integer type or value — bools,
+    floats, non-numeric strings, lists, dicts — is malformed and raises.
+    """
+    value = data.get("config_version")
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise SettingsFileError(
+            "config_version must be an integer"
+        )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"-?\d+", value):
+        return int(value)
+    raise SettingsFileError(
+        "config_version must be an integer"
+    )
 
 
 def save_settings(path: Path | str, config: Dict[str, Any]) -> None:

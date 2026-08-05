@@ -141,3 +141,35 @@ def test_production_composition_connections_capabilities(tmp_path, monkeypatch):
     values = {item.value for item in capabilities.supported}
     assert "connections.read" in values
     assert "connections.write" in values
+
+
+def test_production_overrides_service_always_injects_controlmaster_args(
+    tmp_path, monkeypatch
+):
+    """Task 6: the multiplex args are injected unconditionally; the loaded
+    ``ssh.controlmaster`` value decides whether the fragment is composed."""
+    from sshpilot.core.settings import load_settings_strict, save_settings
+    from sshpilot.core.settings.defaults import CONFIG_VERSION
+
+    services = _compose(tmp_path, monkeypatch)
+    overrides = services.ssh_overrides
+    assert overrides._controlmaster_extra is not None
+    assert "ControlMaster=auto" in overrides._controlmaster_extra
+
+    config_path = get_config_dir() / "config.json"
+
+    def _set_controlmaster(enabled):
+        save_settings(
+            config_path,
+            {"config_version": CONFIG_VERSION, "ssh": {"controlmaster": enabled}},
+        )
+        load_settings_strict(config_path)
+
+    _set_controlmaster(False)
+    ssh = overrides.get_ssh_config()
+    assert "ControlMaster=auto" not in " ".join(ssh["ssh_overrides"])
+
+    # Same long-lived service composes the fragment once the file flips.
+    _set_controlmaster(True)
+    ssh = overrides.get_ssh_config()
+    assert "ControlMaster=auto" in " ".join(ssh["ssh_overrides"])

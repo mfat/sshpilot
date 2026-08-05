@@ -771,9 +771,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         GLib.timeout_add(1200, self._check_previous_crash)
 
     def _build_ssh_overrides_controller(self):
-        """Build the daemon-backed SSH overrides controller for Preferences."""
+        """Build the daemon-backed SSH overrides controller for Preferences.
+
+        Returns ``None`` when the daemon does not advertise the SSH overrides
+        capability, so the SSH override controls are disabled instead of
+        failing at save time.
+        """
         client = getattr(self, 'client', None)
         if client is None:
+            return None
+        try:
+            capabilities = client.get_capabilities()
+        except Exception:
+            return None
+        from sshpilot.api.capabilities import Capability
+
+        if not capabilities.supports(Capability.SSH_OVERRIDES_READ):
             return None
         from .gtk.ssh_overrides_controller import SshOverridesController
         return SshOverridesController(client)
@@ -1859,9 +1872,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         prefs = getattr(self, '_preferences_window', None)
         if prefs is not None and page is prefs:
             try:
-                prefs.on_close_request()
+                keep_open = prefs.on_close_request()
             except Exception:
                 logger.debug('Failed to flush preferences on pop', exc_info=True)
+                keep_open = False
+            if keep_open and not getattr(self, '_is_quitting', False):
+                # A daemon-backed save failed; keep Settings visible so the
+                # user can fix the value instead of silently losing it.
+                nav = getattr(self, 'nav_view', None)
+                if nav is not None:
+                    try:
+                        nav.push(prefs)
+                    except Exception:
+                        logger.debug(
+                            'Failed to re-push preferences after save failure',
+                            exc_info=True,
+                        )
 
     def is_preferences_visible(self) -> bool:
         """True when Settings mode is the visible NavigationView page."""

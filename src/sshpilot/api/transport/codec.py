@@ -4376,7 +4376,9 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
         compression=_boolean(data["compression"], "compression"),
         verbosity=_integer(data["verbosity"], "verbosity"),
         debug_enabled=_boolean(data["debug_enabled"], "debug_enabled"),
-        applies_immediately=data.get("applies_immediately", True),
+        applies_immediately=_boolean(
+            data.get("applies_immediately", True), "applies_immediately"
+        ),
     )
 
 
