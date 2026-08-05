@@ -1,6 +1,13 @@
 """End-to-end (no network): load the EasyEnv example with a fake REST client and
 assert it provisions public-IP boxes into standard sshPilot SSH connections
-(single -> one connection; multi -> a group), via the public SDK."""
+(single -> one connection; multi -> a group), via the public SDK.
+
+The removed local ``ConnectionManager`` no longer exists: the plugin talks to a
+daemon-backed facade with the current plugin contract
+(``add_connection_from_data`` / ``update_connection`` /
+``find_connection_by_nickname`` / scoped plugin secrets), so the e2e drives a
+host fake implementing exactly that surface plus a fake group store.
+"""
 
 import importlib.util
 import os
@@ -11,11 +18,11 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.connection_manager import ConnectionManager
-from sshpilot.groups import GroupManager
+from sshpilot.connection_model import Connection
 from sshpilot.plugins import registry as registry_mod
 from sshpilot.plugins.api import PluginContext
 from sshpilot.plugins.host import PluginHost
+from sshpilot.ssh_config_formatter import format_ssh_config_entry
 
 # Derive from the imported package so this works regardless of whether the
 # source lives at repo-root sshpilot/ or src/sshpilot/.
@@ -34,6 +41,40 @@ class FakeConfig:
         self.settings[key] = value
 
 
+class FakeGroupStore:
+    """Host-side group store standing in for the daemon-backed GroupManager:
+    find-or-create by display name and synchronous membership moves (the
+    plugin only observes groups through the host, never persists them)."""
+
+    def __init__(self):
+        self.groups = {}
+        self._seq = 0
+
+    def get_all_groups(self):
+        return list(self.groups.values())
+
+    def create_group(self, name, color=None):
+        target = str(name or "").strip().lower()
+        for group in self.groups.values():
+            if str(group["name"]).strip().lower() == target:
+                return group["id"]
+        gid = f"g{self._seq}"
+        self._seq += 1
+        self.groups[gid] = {
+            "id": gid, "name": str(name), "color": color or "",
+            "connections": [],
+        }
+        return gid
+
+    def move_connection(self, nickname, group_id):
+        for group in self.groups.values():
+            if nickname in group["connections"]:
+                group["connections"].remove(nickname)
+        if group_id in self.groups and nickname not in self.groups[group_id]["connections"]:
+            self.groups[group_id]["connections"].append(nickname)
+        return True
+
+
 class FakeWindow:
     def __init__(self, cm):
         self.tab_view = types.SimpleNamespace(
@@ -48,7 +89,7 @@ class FakeWindow:
             connect_to_host=lambda conn: self.opened.append(conn))
         self._actions = {}
         self.connection_manager = cm
-        self.group_manager = GroupManager(FakeConfig())
+        self.group_manager = FakeGroupStore()
         self.rebuilds = 0
 
     def show_tab_view(self): pass
@@ -57,27 +98,69 @@ class FakeWindow:
     def rebuild_connection_list(self): self.rebuilds += 1
 
 
-def _make_cm(tmp_path):
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.config = FakeConfig()
-    cm.connections = []
-    cm.rules = []
-    cm.ssh_config = {}
-    cm.isolated_mode = False
-    cm.ssh_config_path = str(tmp_path / 'ssh_config')
-    cm.known_hosts_path = str(tmp_path / 'known_hosts')
-    open(cm.ssh_config_path, 'w').write("# empty\n")
-    cm.emit = lambda *a: None
-    cm.stored_passwords = []
-    cm.store_password = lambda host, user, pw: cm.stored_passwords.append((host, user, pw)) or True
-    cm.delete_password = lambda *a, **k: True
-    cm.connect_after = lambda *a, **k: 0
-    # keyring-backed plugin secrets used by ctx.secrets:
-    cm._sec = {}
-    cm.store_plugin_secret = lambda pid, k, v: cm._sec.__setitem__((pid, k), v) or True
-    cm.get_plugin_secret = lambda pid, k: cm._sec.get((pid, k))
-    cm.delete_plugin_secret = lambda pid, k: cm._sec.pop((pid, k), None) is not None
-    return cm
+class FakeCM:
+    """Host fake for the daemon-backed plugin connection surface: keeps an
+    in-memory connection list, persists SSH entries to the fake config file,
+    and records keyring password/secret operations (never persisting them)."""
+
+    def __init__(self, tmp_path, config):
+        self.config = config
+        self.connections = []
+        self.ssh_config_path = str(tmp_path / 'ssh_config')
+        self.known_hosts_path = str(tmp_path / 'known_hosts')
+        with open(self.ssh_config_path, 'w', encoding='utf-8') as fh:
+            fh.write("# empty\n")
+        self.stored_passwords = []
+        self._plugin_secrets = {}
+
+    def connect_after(self, *a, **k):
+        return 0
+
+    def add_connection_from_data(self, data):
+        values = dict(data)
+        nickname = str(values.get('nickname') or values.get('host') or '').strip()
+        if any(c.nickname == nickname for c in self.connections):
+            raise ValueError(f"A connection named {nickname!r} already exists.")
+        conn = Connection(values)
+        self.connections.append(conn)
+        password = values.get('password')
+        if password:
+            self.store_password(
+                values.get('hostname') or values.get('host') or '',
+                values.get('username') or '', password)
+        if conn.protocol == 'ssh':
+            with open(self.ssh_config_path, 'a', encoding='utf-8') as fh:
+                fh.write('\n' + format_ssh_config_entry(values))
+        return conn
+
+    def update_connection(self, conn, data):
+        conn.update_data(dict(data))
+        password = data.get('password')
+        if password:
+            self.store_password(
+                data.get('hostname') or data.get('host') or conn.hostname,
+                data.get('username') or conn.username, password)
+        return True
+
+    def find_connection_by_nickname(self, nickname):
+        return next((c for c in self.connections if c.nickname == nickname), None)
+
+    def store_password(self, host, user, pw):
+        self.stored_passwords.append((host, user, pw))
+        return True
+
+    def delete_password(self, *a, **k):
+        return True
+
+    def store_plugin_secret(self, plugin_id, key, value):
+        self._plugin_secrets[(plugin_id, key)] = value
+        return True
+
+    def get_plugin_secret(self, plugin_id, key):
+        return self._plugin_secrets.get((plugin_id, key))
+
+    def delete_plugin_secret(self, plugin_id, key):
+        return self._plugin_secrets.pop((plugin_id, key), None) is not None
 
 
 class FakeClient:
@@ -117,7 +200,8 @@ def env(tmp_path, monkeypatch):
     SshPlugin().activate(PluginContext(plugin_id="ssh", app_config=None,
                                        connection_manager=None,
                                        protocol_registry=registry_mod.protocol_registry()))
-    cm = _make_cm(tmp_path)
+    config = FakeConfig()
+    cm = FakeCM(tmp_path, config)
     host = PluginHost(connection_manager=cm)
     host.bind_window(FakeWindow(cm))
     host.dispatch_app_started()
@@ -125,7 +209,7 @@ def env(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("easyenv_e2e", EXAMPLE)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    ctx = PluginContext(plugin_id="easyenv-workspaces", app_config=cm.config,
+    ctx = PluginContext(plugin_id="easyenv-workspaces", app_config=config,
                         connection_manager=cm,
                         protocol_registry=registry_mod.protocol_registry(), host=host)
     plugin = mod.Plugin()

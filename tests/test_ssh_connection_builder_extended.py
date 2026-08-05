@@ -14,7 +14,7 @@ import asyncio
 from typing import List, Optional
 
 
-from sshpilot.connection_manager import Connection, ConnectionManager
+from sshpilot.connection_model import Connection
 from sshpilot.api.models import AuthenticationMethod, ConnectionDetails
 from sshpilot.ssh_connection_builder import (
     ConnectionContext,
@@ -516,57 +516,9 @@ def test_keepalive_and_timeout_only_via_ssh_overrides():
 
 
 # --- connect() integration ---
-
-
-def test_connect_stores_ssh_cmd_and_env(monkeypatch):
-    captured = {}
-
-    def fake_build(ctx):
-        captured['manager'] = ctx.connection_manager
-        from sshpilot.ssh_connection_builder import SSHConnectionCommand
-
-        return SSHConnectionCommand(
-            command=['ssh', '-o', 'BatchMode=yes', 'myhost'],
-            env={'SSH_ASKPASS': '/tmp/askpass', 'SSH_ASKPASS_REQUIRE': 'prefer'},
-            use_sshpass=False,
-            use_askpass=True,
-        )
-
-    monkeypatch.setattr('sshpilot.connection_manager.build_ssh_connection', fake_build)
-    monkeypatch.setattr('sshpilot.config.Config', lambda: _ConfigStub())
-
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.known_hosts_path = ''
-    manager.connections = []
-    conn = Connection({'host': 'myhost', 'hostname': 'myhost'})
-    manager._register_connection(conn)
-
-    loop = asyncio.get_event_loop()
-    assert loop.run_until_complete(conn.connect()) is True
-    assert conn.ssh_cmd == ['ssh', '-o', 'BatchMode=yes', 'myhost']
-    assert conn.ssh_env.get('SSH_ASKPASS') == '/tmp/askpass'
-    assert captured['manager'] is manager
-
-
-def test_connect_builds_native_command(tmp_path, monkeypatch):
-    # known_hosts is no longer injected into the command in native mode; it lives
-    # in ~/.ssh/config. connect() should still produce a minimal native command.
-    monkeypatch.setattr('sshpilot.config.Config', lambda: _ConfigStub())
-
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.known_hosts_path = ''
-    manager.connections = []
-
-    conn = Connection({'host': 'khhost', 'hostname': 'khhost', 'auth_method': 0})
-    manager._register_connection(conn)
-
-    loop = asyncio.get_event_loop()
-    assert loop.run_until_complete(conn.connect()) is True
-    assert conn.ssh_cmd[0] == 'ssh'
-    assert conn.ssh_cmd[-1] == 'khhost'
-    # No known_hosts injected into the command.
-    assert not any('UserKnownHostsFile' in part for part in conn.ssh_cmd)
-
+# ``Connection.connect()`` was retired with the frontend connection manager;
+# command preparation now lives in the daemon launch provider (covered by
+# tests/daemon/test_connection_launch_provider.py) and the builder tests above.
 
 # --- _build_base_ssh_command: per-binary option guards ---
 
