@@ -54,7 +54,7 @@ def test_update_metadata_merges(tmp_path):
     snap = repo.snapshot()
     values = snap.metadata[0].values
     assert values["pinned"] is True
-    assert values["tags"] == ["prod", "web"]
+    assert values["tags"] == ("prod", "web")
 
 
 def test_metadata_pins_tags_and_wol(tmp_path):
@@ -69,7 +69,7 @@ def test_metadata_pins_tags_and_wol(tmp_path):
     values = snap.metadata[0].values
     assert values["pinned"] is True
     assert values["wol"]["mac"] == "aa:bb:cc:dd:ee:ff"
-    assert values["tags"] == ["prod", "web"]
+    assert values["tags"] == ("prod", "web")
 
 
 def test_none_removes_requested_key_only(tmp_path):
@@ -82,7 +82,7 @@ def test_none_removes_requested_key_only(tmp_path):
     snap = repo.snapshot()
     values = snap.metadata[0].values
     assert "pinned" not in values
-    assert values["tags"] == ["a"]
+    assert values["tags"] == ("a",)
     assert values["keep"] == 1
 
 
@@ -137,8 +137,8 @@ def test_rename_tag_case_insensitive_and_dedupes(tmp_path):
     snap = repo.snapshot()
     web_values = next(m for m in snap.metadata if m.connection_id == "web").values
     db_values = next(m for m in snap.metadata if m.connection_id == "db").values
-    assert web_values["tags"] == ["production", "web"]
-    assert db_values["tags"] == ["production", "db"]
+    assert web_values["tags"] == ("production", "web")
+    assert db_values["tags"] == ("production", "db")
     stored = _state(state)
     assert stored["metadata"]["web"]["tags"] == ["production", "web"]
 
