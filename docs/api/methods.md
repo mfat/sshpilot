@@ -150,13 +150,6 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: split_connection status=implemented capability=connections.split -->
-<!-- api-method-contract: get_connection_store_snapshot status=implemented capability=connections.read -->
-<!-- api-method-contract: set_group_color status=implemented capability=connections.groups -->
-<!-- api-method-contract: place_group status=implemented capability=connections.groups -->
-<!-- api-method-contract: copy_connection_to_group status=implemented capability=connections.groups -->
-<!-- api-method-contract: remove_connection_from_group status=implemented capability=connections.groups -->
-<!-- api-method-contract: reorder_connection status=implemented capability=connections.groups -->
-<!-- api-method-contract: rename_tag status=implemented capability=connections.metadata.write -->
 <!-- api-method: get_connection_store_snapshot -->
 <!-- api-method: set_group_color -->
 <!-- api-method: place_group -->

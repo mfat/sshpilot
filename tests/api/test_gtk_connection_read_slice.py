@@ -72,8 +72,10 @@ def test_recent_listing_reads_dtos_from_client_not_manager():
     page = SimpleNamespace(
         _recent_box=_Box(),
         client=client,
-        config=SimpleNamespace(
-            get_connection_meta=lambda nickname: {"last_used": 10}
+        window=SimpleNamespace(
+            connection_manager=SimpleNamespace(
+                get_metadata=lambda nickname: {"last_used": 10},
+            ),
         ),
         _min_row=lambda title, subtitle, callback: (title, subtitle, callback),
         _min_section=lambda title, rows: (title, rows),
@@ -267,8 +269,10 @@ def test_daemon_backed_recent_read_is_submitted_without_blocking(monkeypatch):
     page._recent_request = None
     page._recent_generation = 0
     page._closed = False
-    page.config = SimpleNamespace(
-        get_connection_meta=lambda _nickname: {"last_used": 1}
+    page.window = SimpleNamespace(
+        connection_manager=SimpleNamespace(
+            get_metadata=lambda _nickname: {"last_used": 1},
+        ),
     )
     page._min_row = lambda title, subtitle, callback: (title, subtitle, callback)
     page._min_section = lambda title, rows: (title, rows)

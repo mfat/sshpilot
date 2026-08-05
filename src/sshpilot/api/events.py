@@ -215,8 +215,11 @@ def _validate_dto_value(
         for item in value:
             _validate_dto_value(item, path=f"{path}[]")
         return
-    if isinstance(value, dict):
-        copy_safe_details(value)
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if type(key) is not str:
+                raise TypeError(f"{path} keys must be strings")
+            _validate_dto_value(item, path=f"{path}.{key}")
         return
     if is_dataclass(value) and not isinstance(value, type):
         if not type(value).__module__.startswith("sshpilot.api.models."):

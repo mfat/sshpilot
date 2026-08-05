@@ -3,7 +3,12 @@
 import pytest
 
 from sshpilot.api import EventType
-from sshpilot.api.events import CoreEvent, EventPublisher, validate_event_payload
+from sshpilot.api.events import (
+    CoreEvent,
+    EventPublisher,
+    _validate_dto_value,
+    validate_event_payload,
+)
 from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.connection_store import (
     ConnectionMetadataSummary,
@@ -56,6 +61,64 @@ def test_store_changed_accepts_exact_snapshot():
     assert validated is snapshot
 
 
+def test_store_changed_accepts_frozen_tag_tuples():
+    snapshot = ConnectionStoreSnapshot(
+        generation=1,
+        connections=(_connection(),),
+        groups=(),
+        root_connection_ids=(ConnectionId("conn-1"),),
+        metadata=(
+            ConnectionMetadataSummary(
+                connection_id=ConnectionId("conn-1"),
+                values={"tags": ("web",)},
+            ),
+        ),
+    )
+    assert snapshot.metadata[0].values["tags"] == ("web",)
+    assert (
+        validate_event_payload(EventType.CONNECTION_STORE_CHANGED, snapshot)
+        is snapshot
+    )
+
+
+def test_store_changed_accepts_nested_immutable_metadata():
+    snapshot = ConnectionStoreSnapshot(
+        generation=1,
+        connections=(_connection(),),
+        groups=(),
+        root_connection_ids=(ConnectionId("conn-1"),),
+        metadata=(
+            ConnectionMetadataSummary(
+                connection_id=ConnectionId("conn-1"),
+                values={
+                    "tags": ("web", "prod"),
+                    "nested": {"deep": ("a", "b")},
+                },
+            ),
+        ),
+    )
+    assert (
+        validate_event_payload(EventType.CONNECTION_STORE_CHANGED, snapshot)
+        is snapshot
+    )
+
+
+def test_dto_mapping_rejects_arbitrary_object_values():
+    with pytest.raises(TypeError, match="unsupported public value type"):
+        _validate_dto_value(
+            {"nested": {"bad": object()}},
+            path="connection_store.changed.payload",
+        )
+
+
+def test_dto_mapping_rejects_non_string_keys():
+    with pytest.raises(TypeError, match="keys must be strings"):
+        _validate_dto_value(
+            {"nested": {123: "value"}},
+            path="connection_store.changed.payload",
+        )
+
+
 def test_store_changed_rejects_arbitrary_dictionary():
     with pytest.raises(TypeError):
         validate_event_payload(
@@ -81,6 +144,20 @@ def test_store_changed_rejects_unsafe_metadata_in_payload():
         ConnectionMetadataSummary(
             connection_id=ConnectionId("conn-1"),
             values={"api_password": "x"},
+        )
+
+
+def test_error_occurred_still_rejects_sensitive_detail_keys():
+    # The ERROR_OCCURRED envelope keeps its own strict sensitive-key filter;
+    # permissive DTO mappings must not weaken error-detail filtering.
+    with pytest.raises(ValueError, match="disallowed sensitive detail key"):
+        validate_event_payload(
+            EventType.ERROR_OCCURRED,
+            {
+                "code": "internal_error",
+                "message": "Operation failed",
+                "details": {"password": "must-not-cross-wire"},
+            },
         )
 
 
