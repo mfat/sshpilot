@@ -364,7 +364,19 @@ class SecretBackendService:
             with settings_transaction_lock(self._path):
                 config = self._load_strict()
                 self._apply_environment(config)
-            self._configure_bitwarden_server(url)
+            command_ok = self._configure_bitwarden_server(url)
+            if not command_ok:
+                status = self.bitwarden_status(force_refresh=True)
+                return BitwardenStatus(
+                    logged_in=status.logged_in,
+                    unlocked=status.unlocked,
+                    needs_login=status.needs_login,
+                    email=status.email,
+                    server_url=status.server_url,
+                    profile=status.profile,
+                    twofa_required=status.twofa_required,
+                    message="Bitwarden server configuration failed",
+                )
             # Reacquire the transaction lock and reload the latest file
             # immediately before applying the configuration change, so the write
             # is based on the most recent state (no lost concurrent edits).
@@ -411,69 +423,77 @@ class SecretBackendService:
                 )
             password_text = password.decode("utf-8", "replace")
             _clear_secret(password)
-
-            # Auth-challenge client secret is only collected when the backend
-            # sign-in later reports it is required — it never travels in RPC
-            # parameters and is cleared right after the retry.
-            ok, detail, needs_2fa = self._bitwarden_login_with_password(
-                bw, email, password_text, twofa_method=twofa_method, twofa_code=None,
-                auth_client_secret=None,
-            )
-
-            if not ok and not needs_2fa and _login_needs_challenge(detail):
-                client_secret = self._prompt_for_secret(
-                    "Enter the Bitwarden API client secret to complete the "
-                    "authentication challenge"
-                )
-                if client_secret is None:
-                    return BitwardenStatus(
-                        logged_in=False, unlocked=False, needs_login=True,
-                        email=email, server_url=_server_url(config),
-                        profile=_profile(config),
-                        message="Authentication challenge cancelled",
-                    )
-                challenge_text = client_secret.decode("utf-8", "replace")
-                _clear_secret(client_secret)
+            try:
+                # Auth-challenge client secret is only collected when the backend
+                # sign-in later reports it is required — it never travels in RPC
+                # parameters and is cleared right after the retry.
                 ok, detail, needs_2fa = self._bitwarden_login_with_password(
-                    bw, email, password_text, twofa_method=twofa_method,
-                    twofa_code=None, auth_client_secret=challenge_text,
+                    bw, email, password_text, twofa_method=twofa_method, twofa_code=None,
+                    auth_client_secret=None,
                 )
-                challenge_text = ""  # drop the protected value after the retry
 
-            if needs_2fa and twofa_method:
-                code = self._prompt_for_secret(
-                    f"Enter the two-step login code for {email}"
-                )
-                if code is None:
-                    return BitwardenStatus(
-                        logged_in=False, unlocked=False, needs_login=True,
-                        email=email, server_url=_server_url(config),
-                        profile=_profile(config),
-                        twofa_required=True, message="Two-step login cancelled",
+                if not ok and not needs_2fa and _login_needs_challenge(detail):
+                    client_secret = self._prompt_for_secret(
+                        "Enter the Bitwarden API client secret to complete the "
+                        "authentication challenge"
                     )
-                code_text = code.decode("utf-8", "replace")
-                _clear_secret(code)
-                ok, detail, needs_2fa = self._bitwarden_login_with_password(
-                    bw, email, password_text, twofa_method=twofa_method,
-                    twofa_code=code_text, auth_client_secret=None,
+                    if client_secret is None:
+                        return BitwardenStatus(
+                            logged_in=False, unlocked=False, needs_login=True,
+                            email=email, server_url=_server_url(config),
+                            profile=_profile(config),
+                            message="Authentication challenge cancelled",
+                        )
+                    challenge_text = client_secret.decode("utf-8", "replace")
+                    _clear_secret(client_secret)
+                    try:
+                        ok, detail, needs_2fa = self._bitwarden_login_with_password(
+                            bw, email, password_text, twofa_method=twofa_method,
+                            twofa_code=None, auth_client_secret=challenge_text,
+                        )
+                    finally:
+                        challenge_text = ""
+
+                if needs_2fa and twofa_method:
+                    code = self._prompt_for_secret(
+                        f"Enter the two-step login code for {email}"
+                    )
+                    if code is None:
+                        return BitwardenStatus(
+                            logged_in=False, unlocked=False, needs_login=True,
+                            email=email, server_url=_server_url(config),
+                            profile=_profile(config),
+                            twofa_required=True, message="Two-step login cancelled",
+                        )
+                    code_text = code.decode("utf-8", "replace")
+                    _clear_secret(code)
+                    try:
+                        ok, detail, needs_2fa = self._bitwarden_login_with_password(
+                            bw, email, password_text, twofa_method=twofa_method,
+                            twofa_code=code_text, auth_client_secret=None,
+                        )
+                    finally:
+                        code_text = ""
+
+                # Mirror the CLI "log in and unlock in one step": a successful login
+                # can still leave the vault locked, so unlock with the password we have.
+                if ok and password_text and not self._safe_is_unlocked(bw):
+                    if not self._safe(lambda: bw.unlock(password_text)):
+                        ok = False
+                        detail = "Bitwarden vault unlock failed"
+
+                return BitwardenStatus(
+                    logged_in=ok,
+                    unlocked=self._safe_is_unlocked(bw),
+                    needs_login=not ok,
+                    email=email,
+                    server_url=_server_url(config),
+                    profile=_profile(config),
+                    twofa_required=needs_2fa,
+                    message=detail if not ok else "",
                 )
-                code_text = ""  # drop the protected value after use
-
-            # Mirror the CLI "log in and unlock in one step": a successful login
-            # can still leave the vault locked, so unlock with the password we have.
-            if ok and password_text and not self._safe_is_unlocked(bw):
-                self._safe(lambda: bw.unlock(password_text))
-
-            return BitwardenStatus(
-                logged_in=ok,
-                unlocked=self._safe_is_unlocked(bw),
-                needs_login=not ok,
-                email=email,
-                server_url=_server_url(config),
-                profile=_profile(config),
-                twofa_required=needs_2fa,
-                message=detail if not ok else "",
-            )
+            finally:
+                password_text = ""
 
     def bitwarden_api_key_login(self, client_id: str) -> BitwardenStatus:
         with self._lock:
@@ -497,19 +517,22 @@ class SecretBackendService:
             secret_text = secret.decode("utf-8", "replace")
             _clear_secret(secret)
             try:
-                ok, detail = bw.login_with_api_key(client_id, secret_text)
-            except Exception as exc:
-                logger.debug("Bitwarden API-key login failed", exc_info=True)
-                ok, detail = False, str(exc)
-            return BitwardenStatus(
-                logged_in=ok,
-                unlocked=self._safe_is_unlocked(bw),
-                needs_login=not ok,
-                email=client_id,
-                server_url=_server_url(config),
-                profile=_profile(config),
-                message=detail if not ok else "",
-            )
+                try:
+                    ok, detail = bw.login_with_api_key(client_id, secret_text)
+                except Exception:
+                    logger.debug("Bitwarden API-key login failed", exc_info=True)
+                    ok, detail = False, "Bitwarden API-key login failed"
+                return BitwardenStatus(
+                    logged_in=ok,
+                    unlocked=self._safe_is_unlocked(bw),
+                    needs_login=not ok,
+                    email=client_id,
+                    server_url=_server_url(config),
+                    profile=_profile(config),
+                    message=detail if not ok else "",
+                )
+            finally:
+                secret_text = ""
 
     def bitwarden_sso_login(self, identifier: Optional[str] = None) -> BitwardenStatus:
         with self._lock:
@@ -520,9 +543,9 @@ class SecretBackendService:
                 raise self._unavailable("Bitwarden is unavailable")
             try:
                 ok, detail = bw.login_with_sso(identifier or None)
-            except Exception as exc:
+            except Exception:
                 logger.debug("Bitwarden SSO login failed", exc_info=True)
-                ok, detail = False, str(exc)
+                ok, detail = False, "Bitwarden SSO login failed"
             return BitwardenStatus(
                 logged_in=ok,
                 unlocked=self._safe_is_unlocked(bw),
@@ -550,10 +573,17 @@ class SecretBackendService:
             secret_text = secret.decode("utf-8", "replace")
             _clear_secret(secret)
             try:
-                bw.unlock(secret_text)
-            except Exception:
-                logger.debug("Bitwarden unlock failed", exc_info=True)
-            return _bitwarden_status(bw)
+                try:
+                    ok = bool(bw.unlock(secret_text))
+                except Exception:
+                    logger.debug("Bitwarden unlock failed", exc_info=True)
+                    ok = False
+                return _bitwarden_status(
+                    bw,
+                    message="" if ok else "Bitwarden unlock failed",
+                )
+            finally:
+                secret_text = ""
 
     def bitwarden_sync(self) -> BitwardenStatus:
         with self._lock:
@@ -562,11 +592,11 @@ class SecretBackendService:
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
                 raise self._unavailable("Bitwarden is unavailable")
-            try:
-                self._safe(lambda: bw._run(["sync"]))
-            except Exception:
-                logger.debug("Bitwarden sync failed", exc_info=True)
-            return _bitwarden_status(bw)
+            ok = self._run_safely(lambda: bw._run(["sync"]))
+            return _bitwarden_status(
+                bw,
+                message="" if ok else "Bitwarden sync failed",
+            )
 
     def bitwarden_lock(self) -> BitwardenStatus:
         with self._lock:
@@ -607,8 +637,18 @@ class SecretBackendService:
 
     def rbw_configure(self, email: str, base_url: str) -> RbwStatus:
         with self._lock:
-            self._apply_rbw_config(email=email, base_url=base_url)
-            return self.rbw_status()
+            ok = self._apply_rbw_config(email=email, base_url=base_url)
+            status = self.rbw_status()
+            if not ok:
+                return RbwStatus(
+                    installed=status.installed,
+                    configured=status.configured,
+                    unlocked=status.unlocked,
+                    email=status.email,
+                    base_url=status.base_url,
+                    message="rbw configuration failed",
+                )
+            return status
 
     def rbw_unlock(self) -> RbwStatus:
         with self._lock:
@@ -617,12 +657,9 @@ class SecretBackendService:
             rbw = self._manager.get_backend("rbw")
             if rbw is None:
                 raise self._unavailable("rbw is unavailable")
-            try:
-                # Native pinentry/agent owns secret entry — never drive it here.
-                self._safe(lambda: rbw._run("unlock"))
-            except Exception:
-                logger.debug("rbw unlock trigger failed", exc_info=True)
-            return _rbw_status(rbw)
+            # Native pinentry/agent owns secret entry — never drive it here.
+            ok = self._run_safely(lambda: rbw._run("unlock"))
+            return _rbw_status(rbw, message="" if ok else "rbw unlock failed")
 
     def rbw_sync(self) -> RbwStatus:
         with self._lock:
@@ -631,11 +668,8 @@ class SecretBackendService:
             rbw = self._manager.get_backend("rbw")
             if rbw is None:
                 raise self._unavailable("rbw is unavailable")
-            try:
-                self._safe(lambda: rbw._run("sync"))
-            except Exception:
-                logger.debug("rbw sync failed", exc_info=True)
-            return _rbw_status(rbw)
+            ok = self._run_safely(lambda: rbw._run("sync"))
+            return _rbw_status(rbw, message="" if ok else "rbw sync failed")
 
     def rbw_lock(self) -> RbwStatus:
         with self._lock:
@@ -643,16 +677,14 @@ class SecretBackendService:
             self._apply_environment(config)
             rbw = self._manager.get_backend("rbw")
             if rbw is not None:
-                try:
-                    rbw._run("lock")
-                except Exception:
-                    logger.debug("rbw lock failed", exc_info=True)
-                try:
-                    rbw.lock()
-                except Exception:
-                    logger.debug("rbw cache clear failed", exc_info=True)
+                command_ok = self._run_safely(lambda: rbw._run("lock"))
+                cache_ok = self._safe(lambda: rbw.lock()) is not False
+            else:
+                command_ok = False
+                cache_ok = True
             self._clear_cached_manifests()
-            return _rbw_status(rbw)
+            ok = command_ok and cache_ok
+            return _rbw_status(rbw, message="" if ok else "rbw lock failed")
 
     # ------------------------------------------------------------------
     # KeePassXC lifecycle
@@ -1373,14 +1405,11 @@ class SecretBackendService:
         else:
             os.environ.pop("SSHPILOT_SECRET_SESSION_TIMEOUT", None)
 
-    def _configure_bitwarden_server(self, url: str) -> None:
+    def _configure_bitwarden_server(self, url: str) -> bool:
         bw = self._manager.get_backend("bitwarden")
         if bw is None:
             raise self._unavailable("Bitwarden is unavailable")
-        try:
-            self._safe(lambda: bw._run(["config", "server", url]))
-        except Exception as exc:
-            logger.debug("bw config server failed: %s", exc)
+        return self._run_safely(lambda: bw._run(["config", "server", url]))
 
     def _selected_decision(self):
         backend = self._manager.selected_backend()
@@ -1512,9 +1541,9 @@ class SecretBackendService:
                 twofa_code=twofa_code,
                 auth_client_secret=auth_client_secret,
             )
-        except Exception as exc:
+        except Exception:
             logger.debug("Bitwarden password login failed", exc_info=True)
-            return False, str(exc), False
+            return False, "Bitwarden password login failed", False
 
     def _safe_is_unlocked(self, backend: Any) -> bool:
         return bool(self._safe(lambda: backend.is_unlocked()))
@@ -1526,6 +1555,14 @@ class SecretBackendService:
         except Exception:
             return default
 
+    @staticmethod
+    def _run_safely(fn) -> bool:
+        try:
+            result = fn()
+            return getattr(result, "returncode", 1) == 0
+        except Exception:
+            return False
+
     def _unavailable(self, message: str) -> SshPilotError:
         return SshPilotError(
             ErrorCode.UNSUPPORTED_CAPABILITY,
@@ -1533,16 +1570,22 @@ class SecretBackendService:
             details={"code": BACKEND_UNAVAILABLE},
         )
 
-    def _apply_rbw_config(self, email: str, base_url: str) -> None:
+    def _apply_rbw_config(self, email: str, base_url: str) -> bool:
         rbw = self._manager.get_backend("rbw")
         if rbw is None:
             raise self._unavailable("rbw is unavailable")
         email = (email or "").strip()
         base_url = (base_url or "").strip()
+        ok = True
         if email:
-            self._safe(lambda: rbw._run("config", "set", "email", email))
+            ok = self._run_safely(
+                lambda: rbw._run("config", "set", "email", email)
+            ) and ok
         if base_url:
-            self._safe(lambda: rbw._run("config", "set", "base_url", base_url))
+            ok = self._run_safely(
+                lambda: rbw._run("config", "set", "base_url", base_url)
+            ) and ok
+        return ok
 
 
 def _clear_secret(secret: bytearray) -> None:
@@ -1658,12 +1701,12 @@ def _bitwarden_status(
     )
 
 
-def _rbw_status(rbw: Any) -> RbwStatus:
+def _rbw_status(rbw: Any, *, message: str = "") -> RbwStatus:
     installed = bool(rbw is not None and rbw.is_available())
     if not installed:
         return RbwStatus(
             installed=False, configured=False, unlocked=False,
-            email="", base_url="", message="rbw is not installed",
+            email="", base_url="", message=message or "rbw is not installed",
         )
     unlocked = bool(rbw.is_unlocked())
     try:
@@ -1690,4 +1733,5 @@ def _rbw_status(rbw: Any) -> RbwStatus:
         unlocked=unlocked,
         email=email,
         base_url=base_url,
+        message=message,
     )

@@ -53,6 +53,9 @@ _ALLOWED_SUBPROCESS = {
     ("bitwarden_setup.py", "run_install"),
     ("bitwarden_setup.py", "_install_bw_binary_on_host"),
     ("bitwarden_setup.py", "_host_argv"),
+    # Startup diagnostics only probe the local OpenSSH version; they do not
+    # invoke a secret backend lifecycle command.
+    ("startup_info.py", "_get_tools_info"),
 }
 
 # Lifecycle command names that must never be invoked from the frontend.
@@ -137,6 +140,16 @@ def _call_names(tree: ast.Module) -> list[str]:
     return out
 
 
+def _containing_function(tree: ast.Module, target: ast.AST) -> str | None:
+    """Return the function containing ``target`` using a small parent walk."""
+    for root in ast.walk(tree):
+        if not isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if any(node is target for node in ast.walk(root)):
+            return root.name
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 1. No get_secret_manager / SecretManager / concrete backends
 # ---------------------------------------------------------------------------
@@ -174,6 +187,33 @@ def test_frontend_never_imports_secret_storage_backends():
 # ---------------------------------------------------------------------------
 # 2. No backend lifecycle command invocation
 # ---------------------------------------------------------------------------
+
+def test_frontend_subprocesses_are_limited_to_installation():
+    """The frontend subprocess allowlist is enforced at function scope."""
+    subprocess_calls = {"run", "Popen", "check_call", "check_output", "call"}
+    for path in _scoped_paths():
+        tree = _parse(path)
+        rel = _rel(path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            fname = func.attr if isinstance(func, ast.Attribute) else (
+                func.id if isinstance(func, ast.Name) else None
+            )
+            if fname not in subprocess_calls:
+                continue
+            if not (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "subprocess"
+            ):
+                continue
+            containing = _containing_function(tree, node)
+            assert (rel, containing) in _ALLOWED_SUBPROCESS, (
+                f"{rel}:{containing} uses subprocess outside the installation allowlist"
+            )
+
 
 def test_frontend_never_invokes_backend_clis():
     """No subprocess call may target ``bw``/``rbw``/``pass``/``pykeepass`` and
@@ -265,6 +305,28 @@ def test_frontend_never_enumerates_decrypted_credentials():
 # ---------------------------------------------------------------------------
 # 5. No secret-bearing backup export/import in the frontend
 # ---------------------------------------------------------------------------
+
+def test_frontend_backup_archive_use_is_classification_only():
+    """Frontend may classify a local archive, but never read or write it."""
+    for path in _scoped_paths():
+        tree = _parse(path)
+        rel = _rel(path)
+        imports = _import_symbols(tree, rel)
+        assert "write_spbk" not in imports
+        assert "read_spbk" not in imports
+        assert "SpbkFileBackend" not in imports
+        assert "BitwardenBackupBackend" not in imports
+        assert "SSHServerBackupBackend" not in imports
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else (
+                func.id if isinstance(func, ast.Name) else None
+            )
+            if name in {"write_spbk", "read_spbk", "export_to_backend", "import_from_backend"}:
+                assert False, f"{rel} executes backup archive operations locally"
+
 
 def test_frontend_never_executes_secret_backup_export_import():
     """No local backup engine may be imported or invoked directly.

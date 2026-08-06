@@ -322,6 +322,34 @@ def test_bitwarden_configure_server_does_not_deadlock(tmp_path):
     )
 
 
+def test_native_command_failures_are_not_treated_as_success(tmp_path):
+    service, _manager, backends, _broker, path = _make_service(
+        tmp_path, secrets={"backend": "bitwarden", "session_timeout": 0}
+    )
+
+    def failed(*_args):
+        return SimpleNamespace(returncode=1, stdout=b"secret output", stderr=b"failed")
+
+    backends["bitwarden"]._run = failed
+    status = service.bitwarden_configure_server("https://vault.example.com")
+    assert status.message == "Bitwarden server configuration failed"
+    assert service.get_configuration().bitwarden_server == ""
+    assert service.bitwarden_sync().message == "Bitwarden sync failed"
+
+    rbw_path = tmp_path / "rbw"
+    rbw_path.mkdir()
+    service, _manager, backends, _broker, _path = _make_service(
+        rbw_path, secrets={"backend": "rbw", "session_timeout": 0}
+    )
+    backends["rbw"]._run = failed
+    assert service.rbw_configure("alice@example.com", "https://vault.example.com").message == (
+        "rbw configuration failed"
+    )
+    assert service.rbw_unlock().message == "rbw unlock failed"
+    assert service.rbw_sync().message == "rbw sync failed"
+    assert service.rbw_lock().message == "rbw lock failed"
+
+
 def test_rbw_configure_does_not_deadlock(tmp_path):
     """``rbw_configure`` re-enters the lock via ``rbw_status``."""
     service, manager, backends, broker, _ = _make_service(

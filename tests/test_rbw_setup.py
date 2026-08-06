@@ -26,10 +26,14 @@ def test_probe_not_installed():
     assert s.is_ready is False
 
 
-def test_probe_no_controller_assumes_installed_unknown():
-    """Without a controller, the presentation cannot confirm configuration — it
-    reports installed-but-unconfigured so the UI offers setup rather than a false
-    'ready'."""
+def test_probe_no_controller_reports_unavailable():
+    """Without a controller, the presentation cannot confirm configuration."""
+    status = rs.probe_rbw_status()
+    assert status.cli_installed is False
+    assert status.configured is False
+    assert status.unlocked is False
+    assert status.email == ""
+    assert status.is_ready is False
 
 
 def test_probe_installed_but_unconfigured():
