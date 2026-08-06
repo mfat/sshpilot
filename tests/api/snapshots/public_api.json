@@ -282,10 +282,6 @@
       "capability": "sftp.read",
       "status": "daemon-only"
     },
-    "get_ssh_config_text": {
-      "capability": "connections.config.read",
-      "status": "implemented"
-    },
     "get_transfer": {
       "capability": "transfers.read",
       "status": "daemon-only"
@@ -453,10 +449,6 @@
     "restart_daemon": {
       "capability": "daemon.control",
       "status": "daemon-only"
-    },
-    "save_ssh_config_text": {
-      "capability": "connections.config.write",
-      "status": "implemented"
     },
     "send_interaction_secret": {
       "capability": "interactions.respond",
@@ -634,7 +626,6 @@
     "get_secret_state",
     "get_session",
     "get_sftp_service",
-    "get_ssh_config_text",
     "get_transfer",
     "import_bitwarden_backup",
     "import_secret_backup",
@@ -685,7 +676,6 @@
     "resize_terminal",
     "respond_to_interaction",
     "restart_daemon",
-    "save_ssh_config_text",
     "send_interaction_secret",
     "send_terminal_input",
     "set_group_color",
@@ -1198,10 +1188,6 @@
       ],
       "return": "SftpServiceSummary"
     },
-    "get_ssh_config_text": {
-      "parameters": [],
-      "return": "SshConfigTextSnapshot"
-    },
     "get_transfer": {
       "parameters": [
         {
@@ -1654,16 +1640,6 @@
         }
       ],
       "return": "DaemonStopResult"
-    },
-    "save_ssh_config_text": {
-      "parameters": [
-        {
-          "kind": "positional_or_keyword",
-          "name": "request",
-          "type": "SaveSshConfigTextRequest"
-        }
-      ],
-      "return": "SshConfigTextSnapshot"
     },
     "send_interaction_secret": {
       "parameters": [
@@ -2387,12 +2363,6 @@
     },
     "sftp.symlink": {
       "capability": "sftp.mutate"
-    },
-    "ssh_config.get_text": {
-      "capability": "connections.config.read"
-    },
-    "ssh_config.save_text": {
-      "capability": "connections.config.write"
     },
     "ssh_overrides.get": {
       "capability": "ssh_overrides.read"
@@ -3425,10 +3395,6 @@
       "force",
       "confirmation"
     ],
-    "SaveSshConfigTextRequest": [
-      "text",
-      "expected_revision"
-    ],
     "ServiceFailure": [
       "code",
       "message"
@@ -3536,12 +3502,6 @@
       "port",
       "config_patch",
       "expected_generation"
-    ],
-    "SshConfigTextSnapshot": [
-      "text",
-      "revision",
-      "display_name",
-      "writable"
     ],
     "StartTransferRequest": [
       "connection_id",

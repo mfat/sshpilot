@@ -172,8 +172,6 @@ from .operations import (
     SftpServiceState,
     SftpServiceSummary,
     SftpSymlinkRequest,
-    SshConfigTextSnapshot,
-    SaveSshConfigTextRequest,
     is_terminal_operation_state,
     is_valid_operation_transition,
 )

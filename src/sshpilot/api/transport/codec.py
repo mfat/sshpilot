@@ -158,8 +158,6 @@ from ..models.operations import (
     SftpServiceState,
     SftpServiceSummary,
     SftpSymlinkRequest,
-    SaveSshConfigTextRequest,
-    SshConfigTextSnapshot,
 )
 from ..models.transfers import (
     CancelTransferRequest,
@@ -3710,54 +3708,6 @@ def sftp_replace_file_result_from_wire(value: Any) -> SftpReplaceFileResult:
         revision=_identifier(data["revision"], "new file revision"),
         size=_integer(data["size"], "SFTP replacement size"),
         backup_path=backup_path,
-    )
-
-
-def ssh_config_text_snapshot_to_wire(snapshot: SshConfigTextSnapshot) -> Dict[str, Any]:
-    if type(snapshot) is not SshConfigTextSnapshot:
-        raise TypeError("SSH config text snapshot is required")
-    return {
-        "text": snapshot.text,
-        "revision": snapshot.revision,
-        "display_name": snapshot.display_name,
-        "writable": snapshot.writable,
-    }
-
-
-def ssh_config_text_snapshot_from_wire(value: Any) -> SshConfigTextSnapshot:
-    data = _strict_fields(
-        value,
-        required={"text", "revision", "display_name", "writable"},
-        context="SSH config text snapshot",
-    )
-    return SshConfigTextSnapshot(
-        text=_text(data["text"], "SSH config text", allow_empty=True),
-        revision=_identifier(data["revision"], "SSH config revision"),
-        display_name=_text(data["display_name"], "SSH config display name"),
-        writable=_boolean(data["writable"], "SSH config writable"),
-    )
-
-
-def save_ssh_config_text_request_to_wire(request: SaveSshConfigTextRequest) -> Dict[str, Any]:
-    if type(request) is not SaveSshConfigTextRequest:
-        raise TypeError("SSH config text save request is required")
-    return {
-        "text": request.text,
-        "expected_revision": request.expected_revision,
-    }
-
-
-def save_ssh_config_text_request_from_wire(value: Any) -> SaveSshConfigTextRequest:
-    data = _strict_fields(
-        value,
-        required={"text", "expected_revision"},
-        context="SSH config text save request",
-    )
-    return SaveSshConfigTextRequest(
-        text=_text(data["text"], "SSH config text", allow_empty=True),
-        expected_revision=_identifier(
-            data["expected_revision"], "expected SSH config revision"
-        ),
     )
 
 

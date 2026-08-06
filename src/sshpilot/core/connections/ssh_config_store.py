@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-from ...api.models.operations import SshConfigTextSnapshot
 from ...ssh_config_document import (
     HostBlock,
     RawSpan,
@@ -310,82 +309,6 @@ class SshConfigStore:
             return _compute_revision(files) == expected
         except (CoreError, OSError):
             return False
-
-    def _current_revision(self) -> str:
-        try:
-            files = _resolve_config_files(self._root_path)
-            return _compute_revision(files)
-        except (CoreError, OSError) as exc:
-            raise _store_error(
-                "The SSH configuration could not be read completely"
-            ) from exc
-
-    def _config_writable(self) -> bool:
-        """Best-effort writability hint for editors (never a guard)."""
-        try:
-            if self._root_path.exists():
-                return os.access(self._root_path, os.W_OK)
-            return os.access(self._root_path.parent, os.W_OK)
-        except OSError:
-            return False
-
-    # -- raw text ----------------------------------------------------------
-
-    def read_ssh_config_text(self) -> SshConfigTextSnapshot:
-        """Read the active SSH config file as raw text (no parsing)."""
-        path = self._root_path
-        revision = self._current_revision()
-        try:
-            if path.exists():
-                text = path.read_text(encoding="utf-8")
-            else:
-                text = ""
-        except (OSError, UnicodeError) as exc:
-            raise _store_error("The SSH configuration could not be read") from exc
-        return SshConfigTextSnapshot(
-            text=text,
-            revision=revision,
-            display_name=path.name or "ssh_config",
-            writable=self._config_writable(),
-        )
-
-    def write_ssh_config_text(
-        self,
-        text: str,
-        *,
-        expected_revision: str,
-    ) -> SshConfigTextSnapshot:
-        """Atomically replace the active SSH config file with *text*.
-
-        Raises a stale-state ``CoreError`` when the on-disk revision no longer
-        equals *expected_revision*. Failed writes leave the previous file
-        bytes untouched and never validate the resulting document.
-        """
-        if type(text) is not str or "\x00" in text:
-            raise CoreError(
-                ErrorCode.VALIDATION_ERROR,
-                "SSH configuration text must be valid text",
-            )
-        if type(expected_revision) is not str or not expected_revision:
-            raise CoreError(
-                ErrorCode.VALIDATION_ERROR,
-                "An expected revision is required",
-            )
-        self._refuse_symlinked_root()
-        if not self._revision_matches(expected_revision):
-            raise _stale_error()
-        path = self._root_path
-        try:
-            expected_bytes = path.read_bytes() if path.exists() else None
-        except OSError as exc:
-            raise _store_error("The SSH configuration could not be saved") from exc
-        _atomic_write_text(path, text, expected_bytes=expected_bytes)
-        return SshConfigTextSnapshot(
-            text=text,
-            revision=self._current_revision(),
-            display_name=path.name or "ssh_config",
-            writable=True,
-        )
 
     # -- lookups -----------------------------------------------------------
 

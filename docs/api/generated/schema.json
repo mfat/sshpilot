@@ -205,10 +205,6 @@
       "capability": "sftp.read",
       "status": "daemon-only"
     },
-    "get_ssh_config_text": {
-      "capability": "connections.config.read",
-      "status": "implemented"
-    },
     "get_transfer": {
       "capability": "transfers.read",
       "status": "daemon-only"
@@ -376,10 +372,6 @@
     "restart_daemon": {
       "capability": "daemon.control",
       "status": "daemon-only"
-    },
-    "save_ssh_config_text": {
-      "capability": "connections.config.write",
-      "status": "implemented"
     },
     "send_interaction_secret": {
       "capability": "interactions.respond",
@@ -874,12 +866,6 @@
     },
     "sftp.symlink": {
       "capability": "sftp.mutate"
-    },
-    "ssh_config.get_text": {
-      "capability": "connections.config.read"
-    },
-    "ssh_config.save_text": {
-      "capability": "connections.config.write"
     },
     "ssh_overrides.get": {
       "capability": "ssh_overrides.read"
@@ -4940,25 +4926,6 @@
       ],
       "status": "Implemented"
     },
-    "SaveSshConfigTextRequest": {
-      "fields": [
-        {
-          "default": null,
-          "name": "text",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "expected_revision",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        }
-      ],
-      "status": "Schema only"
-    },
     "ServiceFailure": {
       "fields": [
         {
@@ -5560,39 +5527,6 @@
           "required": false,
           "sensitive": false,
           "type": "int | None"
-        }
-      ],
-      "status": "Schema only"
-    },
-    "SshConfigTextSnapshot": {
-      "fields": [
-        {
-          "default": null,
-          "name": "text",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "revision",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "display_name",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "writable",
-          "required": true,
-          "sensitive": false,
-          "type": "bool"
         }
       ],
       "status": "Schema only"

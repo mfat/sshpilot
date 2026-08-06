@@ -5,16 +5,6 @@ notes remain separate.
 
 ## Unreleased
 
-- Added `get_ssh_config_text` / `save_ssh_config_text` public client methods
-  for editing the daemon-resolved SSH configuration text. Reads return
-  `SshConfigTextSnapshot` (text, revision, display name, writable flag); saves
-  take `SaveSshConfigTextRequest` with optimistic concurrency control and
-  reject stale writes with `STALE_EDITOR`, leaving the file untouched. Writes
-  are owned by the daemon `SshConfigStore` (atomic replace, symlink refusal,
-  backup and permissions) and immediately trigger a connection configuration
-  reload. `ssh_config.get_text` / `ssh_config.save_text` are the new daemon
-  wire methods under `connections.config.read` / `connections.config.write`.
-
 - Corrected the bounded SFTP file contract: `SftpReadFileResult.content` and
   `SftpReplaceFileRequest.content` are sensitive fields (excluded from model
   reprs and generated safe representations). Replacements serialize the complete
