@@ -594,6 +594,9 @@ def test_service_preview_caches_manifest_so_import_never_reprompts(monkeypatch, 
     # The preview collected the passphrase once; the import reused the cached
     # manifest instead of prompting again.
     assert len(broker.created) == 1
+    # The one-time import consumed the entry: the cache is empty afterwards.
+    assert not service._manifest_cache
+    assert not service._manifest_timers
 
 
 def test_service_import_prompts_when_no_preview_cached(monkeypatch, tmp_path):

@@ -142,7 +142,13 @@ class SecretBackendsController:
         controller last staged (``load_configuration``/``update_configuration``),
         so a stale UI can never silently overwrite a concurrent selection change.
         On a ``REVISION_CONFLICT`` the daemon rejects the mutation and the
-        controller keeps its snapshot untouched.
+        controller keeps both snapshots untouched.
+
+        After a successful selection the authoritative ``SecretConfiguration`` is
+        re-fetched and staged as ``_configuration`` (the selection bumped its
+        revision), so a following ``update_configuration`` uses the new revision
+        instead of conflicting.  The returned ``SecretBackendState`` is staged
+        as ``_state``.  On any failure both old snapshots are preserved.
         """
         with self._lock:
             self._ensure_idle()
@@ -153,11 +159,15 @@ class SecretBackendsController:
             snapshot = self._client.update_secret_selection(
                 backend, expected_revision=expected_revision
             )
+            # The selection created a new revision; fetch it so subsequent
+            # mutations start from the authoritative state.
+            config = self._client.get_secret_configuration()
         except BaseException:
             with self._lock:
                 self._busy = False
             raise
         with self._lock:
+            self._configuration = config
             self._state = snapshot
             self._busy = False
         return snapshot

@@ -1592,6 +1592,12 @@ class DaemonServer:
 
     def _cleanup(self) -> None:
         self._stop_configuration_reload()
+        secrets = self._secrets_service
+        if secrets is not None and hasattr(secrets, "shutdown"):
+            try:
+                secrets.shutdown()
+            except Exception:
+                logger.debug("secret service shutdown failed", exc_info=True)
         broker = self._interaction_broker
         self._interaction_broker = None
         if broker is not None:

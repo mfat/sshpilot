@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -741,6 +742,129 @@ def test_forget_master_password_clears_keyring_and_policy(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Remember/forget failure semantics (rollback, no partial success)
+# ---------------------------------------------------------------------------
+
+def _keyring_service(tmp_path, *, remember: bool = False, broker=None, expected_secrets=None):
+    keyring = FakeBackend("keyring", session_backed=False)
+    backends = {
+        "keyring": keyring,
+        "bitwarden": FakeBackend("bitwarden", needs_login=False),
+    }
+    service, manager, *_ = _make_service(
+        tmp_path,
+        backends=backends,
+        secrets={
+            "backend": "bitwarden",
+            "session_timeout": 0,
+            "remember_in_keyring": remember,
+        },
+        broker=broker,
+        expected_secrets=expected_secrets,
+    )
+    return service, manager, keyring
+
+
+def test_remember_master_password_rolls_back_when_policy_toggle_fails(
+    tmp_path, monkeypatch, caplog
+):
+    """Keyring store succeeded but enabling the policy failed: the operation
+    must report failure and roll the keyring value back so the two do not
+    intentionally diverge."""
+    service, manager, keyring = _keyring_service(
+        tmp_path, expected_secrets=[SENTINEL_MASTER]
+    )
+
+    def _failing_save(path, config):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "sshpilot.daemon.secret_backend_service.save_settings", _failing_save)
+    result = service.remember_master_password()
+    assert result.state == SecretOperationState.FAILED
+    # Best-effort rollback removed the stored value again.
+    assert keyring.data.get("bitwarden-master:default") is None
+    assert service.get_configuration().remember_in_keyring is False
+    # The remembered password never appears in the result or the logs.
+    assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+    assert SENTINEL_MASTER not in caplog.text
+
+
+def test_remember_master_password_fails_when_keyring_store_fails(tmp_path):
+    """Keyring storage failure must not report success."""
+    class _FailingKeyring(FakeBackend):
+        def store_in_keyring(self, spec, secret):
+            self.calls.append(("store_in_keyring", spec.keyring_account, secret))
+            raise OSError("keyring unavailable")
+
+    keyring = _FailingKeyring("keyring", session_backed=False)
+    backends = {
+        "keyring": keyring,
+        "bitwarden": FakeBackend("bitwarden", needs_login=False),
+    }
+    service, manager, *_ = _make_service(
+        tmp_path,
+        backends=backends,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    result = service.remember_master_password()
+    assert result.state == SecretOperationState.FAILED
+    assert service.get_configuration().remember_in_keyring is False
+    assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+
+
+def test_forget_master_password_fails_when_keyring_delete_fails(tmp_path):
+    """Keyring deletion failure must not report success, and the policy is
+    left untouched so keyring state and policy do not diverge."""
+    class _FailingKeyring(FakeBackend):
+        def delete_in_keyring(self, spec):
+            self.calls.append(("delete_in_keyring", spec.keyring_account))
+            raise OSError("keyring unavailable")
+
+    keyring = _FailingKeyring("keyring", session_backed=False)
+    keyring.data["bitwarden-master:default"] = SENTINEL_MASTER
+    backends = {
+        "keyring": keyring,
+        "bitwarden": FakeBackend("bitwarden", needs_login=False),
+    }
+    service, manager, *_ = _make_service(
+        tmp_path,
+        backends=backends,
+        secrets={
+            "backend": "bitwarden",
+            "session_timeout": 0,
+            "remember_in_keyring": True,
+        },
+    )
+    result = service.forget_master_password()
+    assert result.state == SecretOperationState.FAILED
+    assert service.get_configuration().remember_in_keyring is True
+    assert keyring.data.get("bitwarden-master:default") == SENTINEL_MASTER
+    assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+
+
+def test_forget_master_password_fails_when_policy_persistence_fails(
+    tmp_path, monkeypatch
+):
+    """Keyring deletion succeeded but clearing the policy failed: the operation
+    must report failure (a retry clears the policy)."""
+    service, manager, keyring = _keyring_service(tmp_path, remember=True)
+    keyring.data["bitwarden-master:default"] = SENTINEL_MASTER
+
+    def _failing_save(path, config):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "sshpilot.daemon.secret_backend_service.save_settings", _failing_save)
+    result = service.forget_master_password()
+    assert result.state == SecretOperationState.FAILED
+    assert "could not be forgotten" in result.message
+    assert keyring.data.get("bitwarden-master:default") is None
+    assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+
+
+# ---------------------------------------------------------------------------
 # Sentinel secrecy across the public surface
 # ---------------------------------------------------------------------------
 
@@ -881,16 +1005,81 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
     assert "still-wrong" not in _all_strings(result.to_dict())
 
 
-def test_manifest_cache_expires_after_ttl(tmp_path):
-    """Preview manifests age out of the daemon cache after the TTL."""
+def test_manifest_expires_without_lookup(tmp_path):
+    """A cached manifest is removed by its expiry timer even when no later API
+    request touches the key (no passive TTL check needed)."""
     service, _manager, _backends, _broker, _ = _make_service(tmp_path)
+    service._MANIFEST_CACHE_TTL = 0.05
     key = service._manifest_key("file", "/nonexistent/backup.spbk")
     manifest = {"credentials": [{"name": "alice"}]}
     service._cache_manifest(key, manifest)
     assert service._cached_manifest(key) == manifest
-    # Rewind the cache stamp past the TTL; the entry must expire and be dropped.
-    stamped, _ = service._manifest_cache[key]
-    service._manifest_cache[key] = (
-        stamped - service._MANIFEST_CACHE_TTL - 1.0, manifest)
+    # Wait beyond the TTL *without* calling _cached_manifest: the timer removes
+    # the entry on its own.
+    time.sleep(0.2)
     assert service._cached_manifest(key) is None
-    assert key not in service._manifest_cache
+    assert not service._manifest_cache
+    assert not service._manifest_timers
+
+
+def test_replacing_entry_invalidates_previous_expiry(tmp_path):
+    """A stale expiry timer must not clear a replaced manifest."""
+    service, _manager, _backends, _broker, _ = _make_service(tmp_path)
+    service._MANIFEST_CACHE_TTL = 0.05
+    key = service._manifest_key("file", "/nonexistent/backup.spbk")
+    service._cache_manifest(key, {"generation": 1})
+    # Replacing the entry arms a new, longer timer; the first timer must be
+    # invalidated so it cannot clear the replacement.
+    service._MANIFEST_CACHE_TTL = 0.5
+    service._cache_manifest(key, {"generation": 2})
+    time.sleep(0.15)  # past the first timer, before the second
+    assert service._cached_manifest(key) == {"generation": 2}
+    # The replacement still expires on its own timer.
+    time.sleep(0.5)
+    assert service._cached_manifest(key) is None
+
+
+def test_lock_clears_cached_manifests(tmp_path):
+    """The generic lock route drops every decrypted preview manifest."""
+    service, _manager, _backends, _broker, _ = _make_service(tmp_path)
+    service._cache_manifest(
+        service._manifest_key("file", "/nonexistent/backup.spbk"),
+        {"credentials": []},
+    )
+    service.lock()
+    assert not service._manifest_cache
+    assert not service._manifest_timers
+
+
+def test_backend_lock_routes_clear_cached_manifests(tmp_path):
+    """Bitwarden, rbw and KeePassXC lock routes also clear cached manifests."""
+    service, _manager, _backends, _broker, _ = _make_service(tmp_path)
+    for method in ("bitwarden_lock", "rbw_lock", "keepassxc_lock"):
+        service._cache_manifest(
+            service._manifest_key("bw", "entry"), {"credentials": []}
+        )
+        getattr(service, method)()
+        assert not service._manifest_cache, method
+        assert not service._manifest_timers, method
+
+
+def test_shutdown_clears_cached_manifests(tmp_path):
+    """Daemon shutdown cancels timers and drops cached manifests."""
+    service, _manager, _backends, _broker, _ = _make_service(tmp_path)
+    service._cache_manifest(
+        service._manifest_key("file", "/nonexistent/backup.spbk"),
+        {"credentials": []},
+    )
+    service.shutdown()
+    assert not service._manifest_cache
+    assert not service._manifest_timers
+
+
+def test_import_consume_clears_cached_manifest(tmp_path):
+    """A one-time import pops the entry, so the cache ends empty."""
+    service, _manager, _backends, _broker, _ = _make_service(tmp_path)
+    key = service._manifest_key("file", "/nonexistent/backup.spbk")
+    service._cache_manifest(key, {"credentials": []})
+    assert service._pop_cached_manifest(key) == {"credentials": []}
+    assert not service._manifest_cache
+    assert not service._manifest_timers

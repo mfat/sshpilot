@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -13,6 +14,33 @@ from .defaults import CONFIG_VERSION, get_default_config
 from .migration import ensure_config_defaults
 
 logger = logging.getLogger(__name__)
+
+# Process-wide, per-path locks serializing settings *transactions* (the complete
+# load -> validate -> apply -> save cycle). Multiple daemon services mutate the
+# same ``config.json``; without a shared lock, one writer could clobber another
+# writer's in-memory copy of keys it never touched.
+_SETTINGS_TRANSACTION_LOCKS: Dict[str, threading.RLock] = {}
+_SETTINGS_TRANSACTION_LOCKS_GUARD = threading.Lock()
+
+
+def settings_transaction_lock(path: Path | str) -> threading.RLock:
+    """Return the process-wide reentrant lock for settings transactions on *path*.
+
+    Every GTK-free service that reads-modifies-writes the settings file must
+    hold this lock for its complete load -> validate -> apply -> save cycle so
+    concurrent writers never lose each other's changes.  The lock is reentrant
+    so a service composing nested mutations (e.g. selection -> configuration
+    update) does not deadlock.  It must **not** be held while waiting on
+    protected interactions, running ``bw``/``rbw``/SSH or other slow commands,
+    reading or writing backups, or waiting on UI input.
+    """
+    key = str(Path(path).resolve())
+    with _SETTINGS_TRANSACTION_LOCKS_GUARD:
+        lock = _SETTINGS_TRANSACTION_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _SETTINGS_TRANSACTION_LOCKS[key] = lock
+        return lock
 
 
 class SettingsFileError(RuntimeError):

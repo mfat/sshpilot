@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from pathlib import Path
-from threading import RLock
+from threading import RLock, Timer
 from typing import Any, Dict, List, Optional, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -60,6 +59,7 @@ from sshpilot.core.settings import (
     load_settings_strict,
     save_settings,
     set_nested,
+    settings_transaction_lock,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,8 +119,12 @@ class SecretBackendService:
         # Short-lived decrypted-manifest cache: an import preview reads the
         # ``.spbk`` (prompting for a passphrase via a protected interaction), and
         # the subsequent import reuses the cached manifest so the user is never
-        # prompted for the passphrase twice. Entries expire after a few minutes.
-        self._manifest_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        # prompted for the passphrase twice. Every entry has a real expiry timer
+        # so a manifest is removed even when no later API request touches its
+        # key.  Cache contents never leave this process and never appear in
+        # reprs, logs, diagnostics or API results.
+        self._manifest_cache: Dict[str, Dict[str, Any]] = {}
+        self._manifest_timers: Dict[str, Timer] = {}
         self._MANIFEST_CACHE_TTL = 120.0
         # Bounded re-prompts for a wrong import passphrase; each retry goes through
         # a fresh protected interaction so the secret never travels as an RPC param.
@@ -147,38 +151,44 @@ class SecretBackendService:
         if type(request) is not UpdateSecretConfigurationRequest:
             raise TypeError("an UpdateSecretConfigurationRequest is required")
         with self._lock:
-            config = self._load_strict()
-            current = self._snapshot(config)
+            # The settings transaction lock serializes this complete
+            # load -> validate -> apply -> save cycle against the SSH overrides
+            # service, which mutates the same config.json.  It is never held
+            # while prompting or running native backends (see
+            # ``bitwarden_configure_server`` for the slow-command pattern).
+            with settings_transaction_lock(self._path):
+                config = self._load_strict()
+                current = self._snapshot(config)
 
-            if (
-                request.expected_revision is not None
-                and request.expected_revision != current.revision
-            ):
-                raise SshPilotError(
-                    ErrorCode.VALIDATION_FAILED,
-                    "The secret configuration has been modified since last read",
-                    details={"code": REVISION_CONFLICT},
-                )
+                if (
+                    request.expected_revision is not None
+                    and request.expected_revision != current.revision
+                ):
+                    raise SshPilotError(
+                        ErrorCode.VALIDATION_FAILED,
+                        "The secret configuration has been modified since last read",
+                        details={"code": REVISION_CONFLICT},
+                    )
 
-            if not request.patch:
-                return current
+                if not request.patch:
+                    return current
 
-            for key, value in request.patch.items():
-                config_key = self._field_to_config_key(key)
-                set_nested(config, config_key, value)
+                for key, value in request.patch.items():
+                    config_key = self._field_to_config_key(key)
+                    set_nested(config, config_key, value)
 
-            semantic = self._normalize(config)
-            self._write_semantic(config, semantic)
-            try:
-                save_settings(self._path, config)
-            except Exception as exc:
-                raise SshPilotError(
-                    ErrorCode.PERSISTENCE_FAILED,
-                    "The secret settings could not be saved",
-                    details={"code": SETTINGS_PERSISTENCE_FAILED},
-                ) from exc
-            self._apply_environment(config)
-            return self._snapshot(config)
+                semantic = self._normalize(config)
+                self._write_semantic(config, semantic)
+                try:
+                    save_settings(self._path, config)
+                except Exception as exc:
+                    raise SshPilotError(
+                        ErrorCode.PERSISTENCE_FAILED,
+                        "The secret settings could not be saved",
+                        details={"code": SETTINGS_PERSISTENCE_FAILED},
+                    ) from exc
+                self._apply_environment(config)
+                return self._snapshot(config)
 
     def update_selection(
         self,
@@ -330,6 +340,8 @@ class SecretBackendService:
                     backend.lock()
                 except Exception:
                     logger.debug("secret backend lock failed", exc_info=True)
+            # Locking invalidates any decrypted preview manifests.
+            self._clear_cached_manifests()
             return self._state_from(semantic)
 
     # ------------------------------------------------------------------
@@ -345,21 +357,31 @@ class SecretBackendService:
 
     def bitwarden_configure_server(self, url: str) -> BitwardenStatus:
         with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
-            self._configure_bitwarden_server(str(url or "").strip())
-            semantic = self._normalize(config)
-            semantic["bitwarden_server"] = str(url or "").strip()
-            self._write_semantic(config, semantic)
-            try:
-                save_settings(self._path, config)
-            except Exception as exc:
-                raise SshPilotError(
-                    ErrorCode.PERSISTENCE_FAILED,
-                    "The secret settings could not be saved",
-                    details={"code": SETTINGS_PERSISTENCE_FAILED},
-                ) from exc
-            self._apply_environment(config)
+            url = str(url or "").strip()
+            # Load under the settings transaction lock, then release it before
+            # the slow native ``bw config server`` command so a concurrent SSH
+            # overrides write is never blocked on backend I/O.
+            with settings_transaction_lock(self._path):
+                config = self._load_strict()
+                self._apply_environment(config)
+            self._configure_bitwarden_server(url)
+            # Reacquire the transaction lock and reload the latest file
+            # immediately before applying the configuration change, so the write
+            # is based on the most recent state (no lost concurrent edits).
+            with settings_transaction_lock(self._path):
+                config = self._load_strict()
+                semantic = self._normalize(config)
+                semantic["bitwarden_server"] = url
+                self._write_semantic(config, semantic)
+                try:
+                    save_settings(self._path, config)
+                except Exception as exc:
+                    raise SshPilotError(
+                        ErrorCode.PERSISTENCE_FAILED,
+                        "The secret settings could not be saved",
+                        details={"code": SETTINGS_PERSISTENCE_FAILED},
+                    ) from exc
+                self._apply_environment(config)
             return self.bitwarden_status(force_refresh=True)
 
     def bitwarden_login(
@@ -556,6 +578,7 @@ class SecretBackendService:
                     bw.lock()
                 except Exception:
                     logger.debug("Bitwarden lock failed", exc_info=True)
+            self._clear_cached_manifests()
             return _bitwarden_status(bw)
 
     def bitwarden_logout(self) -> BitwardenStatus:
@@ -628,6 +651,7 @@ class SecretBackendService:
                     rbw.lock()
                 except Exception:
                     logger.debug("rbw cache clear failed", exc_info=True)
+            self._clear_cached_manifests()
             return _rbw_status(rbw)
 
     # ------------------------------------------------------------------
@@ -753,6 +777,7 @@ class SecretBackendService:
                     backend.lock()
                 except Exception:
                     logger.debug("KDBX lock failed", exc_info=True)
+            self._clear_cached_manifests()
             return SecretOperationResult(
                 state=SecretOperationState.SUCCESS,
                 backend="keepassxc",
@@ -794,18 +819,25 @@ class SecretBackendService:
                 password = secret.decode("utf-8", "replace")
             finally:
                 _clear_secret(secret)
+            spec = None
+            stored = False
             try:
                 from sshpilot.secret_storage import selected_master_spec
 
-                ok = self._manager.store_in_keyring(
-                    selected_master_spec(self._manager), password
-                )
+                spec = selected_master_spec(self._manager)
+                stored = self._manager.store_in_keyring(spec, password)
             except Exception:
-                logger.debug("Remembering master password failed", exc_info=True)
-                ok = False
+                logger.debug("Remembering master password failed")
+                stored = False
             finally:
                 password = ""
-            if ok and not semantic["remember_in_keyring"]:
+            if not stored:
+                return SecretOperationResult(
+                    state=SecretOperationState.FAILED,
+                    backend=name,
+                    message="The master password could not be saved",
+                )
+            if not semantic["remember_in_keyring"]:
                 try:
                     self.update_configuration(
                         UpdateSecretConfigurationRequest(
@@ -813,14 +845,26 @@ class SecretBackendService:
                         )
                     )
                 except SshPilotError:
-                    logger.debug("remember_in_keyring toggle failed", exc_info=True)
+                    logger.debug("Enabling remember_in_keyring policy failed")
+                    # Best-effort rollback so keyring state and policy do not
+                    # intentionally diverge: the password was stored but the
+                    # policy could not be enabled, so remove it again.
+                    if spec is not None:
+                        try:
+                            self._manager.delete_in_keyring(spec)
+                        except Exception:
+                            logger.debug(
+                                "Rolling back remembered master password failed"
+                            )
+                    return SecretOperationResult(
+                        state=SecretOperationState.FAILED,
+                        backend=name,
+                        message="The master password could not be remembered",
+                    )
             return SecretOperationResult(
-                state=(
-                    SecretOperationState.SUCCESS
-                    if ok else SecretOperationState.FAILED
-                ),
+                state=SecretOperationState.SUCCESS,
                 backend=name,
-                message="" if ok else "The master password could not be saved",
+                message="",
             )
 
     def forget_master_password(self) -> SecretOperationResult:
@@ -832,6 +876,7 @@ class SecretBackendService:
             backend = self._manager.selected_backend()
             name = getattr(backend, "name", "none") or "none"
             removed = False
+            delete_failed = False
             try:
                 from sshpilot.secret_storage import selected_master_spec
 
@@ -839,9 +884,20 @@ class SecretBackendService:
                     selected_master_spec(self._manager)
                 )
             except Exception:
-                logger.debug("Forgetting master password failed", exc_info=True)
+                logger.debug("Forgetting master password failed")
+                delete_failed = True
+            if delete_failed:
+                # The keyring still holds the value; leave the policy untouched
+                # so keyring state and policy do not diverge.
+                return SecretOperationResult(
+                    state=SecretOperationState.FAILED,
+                    backend=name,
+                    message="The remembered master password could not be removed",
+                )
             semantic = self._normalize(config)
-            if semantic["remember_in_keyring"]:
+            policy_was_on = bool(semantic["remember_in_keyring"])
+            policy_cleared = True
+            if policy_was_on:
                 try:
                     self.update_configuration(
                         UpdateSecretConfigurationRequest(
@@ -849,7 +905,16 @@ class SecretBackendService:
                         )
                     )
                 except SshPilotError:
-                    logger.debug("remember_in_keyring toggle failed", exc_info=True)
+                    logger.debug("Clearing remember_in_keyring policy failed")
+                    policy_cleared = False
+            if policy_was_on and not policy_cleared:
+                # The keyring value is gone but the policy could not be
+                # persisted off; report failure so the user can retry.
+                return SecretOperationResult(
+                    state=SecretOperationState.FAILED,
+                    backend=name,
+                    message="The remembered master password could not be forgotten",
+                )
             return SecretOperationResult(
                 state=SecretOperationState.SUCCESS,
                 backend=name,
@@ -1080,22 +1145,61 @@ class SecretBackendService:
         return "{}:{}".format(kind, value)
 
     def _cache_manifest(self, key: str, manifest: Dict[str, Any]) -> None:
-        self._manifest_cache[key] = (time.monotonic(), manifest)
+        """Store a decrypted preview manifest and arm its real expiry timer.
+
+        Replacing an entry cancels the previous expiry callback so a stale
+        timer can never clear the newer manifest.
+        """
+        self._cancel_manifest_timer(key)
+        self._manifest_cache[key] = manifest
+
+        holder: Dict[str, Timer] = {}
+
+        def _expire() -> None:
+            with self._lock:
+                # Only the *current* timer for the key may clear it; a replaced
+                # or already-popped entry must not be removed by a stale timer.
+                if self._manifest_timers.get(key) is not holder.get("timer"):
+                    return
+                self._manifest_timers.pop(key, None)
+                self._manifest_cache.pop(key, None)
+
+        timer = Timer(self._MANIFEST_CACHE_TTL, _expire)
+        timer.daemon = True
+        holder["timer"] = timer
+        self._manifest_timers[key] = timer
+        timer.start()
+
+    def _cancel_manifest_timer(self, key: str) -> None:
+        timer = self._manifest_timers.pop(key, None)
+        if timer is not None:
+            timer.cancel()
 
     def _cached_manifest(self, key: str) -> Optional[Dict[str, Any]]:
-        entry = self._manifest_cache.get(key)
-        if entry is None:
-            return None
-        stamped, manifest = entry
-        if time.monotonic() - stamped > self._MANIFEST_CACHE_TTL:
-            self._manifest_cache.pop(key, None)
-            return None
-        return manifest
+        # The expiry timer owns removal; this is a plain read.
+        return self._manifest_cache.get(key)
 
     def _pop_cached_manifest(self, key: str) -> Optional[Dict[str, Any]]:
+        """One-time import consume: return the manifest and clear the entry."""
         manifest = self._cached_manifest(key)
+        self._cancel_manifest_timer(key)
         self._manifest_cache.pop(key, None)
         return manifest
+
+    def _clear_cached_manifests(self) -> None:
+        """Cancel every expiry timer and drop all cached manifests.
+
+        Called on every lock route and on daemon shutdown so decrypted
+        manifests never outlive the unlocked session.
+        """
+        for key in list(self._manifest_timers):
+            self._cancel_manifest_timer(key)
+        self._manifest_cache.clear()
+
+    def shutdown(self) -> None:
+        """Clear cached decrypted manifests (daemon exit hook)."""
+        with self._lock:
+            self._clear_cached_manifests()
 
     def list_bitwarden_backups(self) -> List[Dict[str, str]]:
         """List Bitwarden backup-note metadata (id/name/date only)."""

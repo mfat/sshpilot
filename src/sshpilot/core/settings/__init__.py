@@ -19,6 +19,7 @@ from .store import (
     load_settings_strict,
     save_settings,
     set_nested,
+    settings_transaction_lock,
 )
 
 __all__ = [
@@ -39,5 +40,6 @@ __all__ = [
     "normalize_ssh_overrides",
     "save_settings",
     "set_nested",
+    "settings_transaction_lock",
     "ssh_settings_from_values",
 ]

@@ -38,6 +38,7 @@ from .settings import (
     normalize_ssh_overrides,
     save_settings,
     set_nested,
+    settings_transaction_lock,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,33 +96,37 @@ class SshOverridesService:
         if type(request) is not UpdateGlobalSshOverridesRequest:
             raise TypeError("an UpdateGlobalSshOverridesRequest is required")
         with self._lock:
-            config = self._load_strict()
-            current = self._snapshot(config)
+            # The settings transaction lock serializes this complete
+            # load -> validate -> apply -> save cycle against the secret
+            # backend service, which mutates the same config.json.
+            with settings_transaction_lock(self._path):
+                config = self._load_strict()
+                current = self._snapshot(config)
 
-            if (
-                request.expected_revision is not None
-                and request.expected_revision != current.revision
-            ):
-                raise SshPilotError(
-                    ErrorCode.VALIDATION_FAILED,
-                    "The SSH overrides have been modified since last read",
-                    details={"code": REVISION_CONFLICT},
-                )
+                if (
+                    request.expected_revision is not None
+                    and request.expected_revision != current.revision
+                ):
+                    raise SshPilotError(
+                        ErrorCode.VALIDATION_FAILED,
+                        "The SSH overrides have been modified since last read",
+                        details={"code": REVISION_CONFLICT},
+                    )
 
-            if not request.patch:
-                return current
+                if not request.patch:
+                    return current
 
-            for key, value in request.patch.items():
-                config_key = FIELD_TO_CONFIG_KEY[key]
-                set_nested(config, config_key, value)
+                for key, value in request.patch.items():
+                    config_key = FIELD_TO_CONFIG_KEY[key]
+                    set_nested(config, config_key, value)
 
-            # Validate the complete patched state strictly before persisting,
-            # then write back the canonical semantic values so the file stays
-            # fully normalized (defaults backfilled, host-key value canonical).
-            semantic = self._normalize(config)
-            self._write_semantic(config, semantic)
-            self._compose_and_persist(config)
-            return self._snapshot(config)
+                # Validate the complete patched state strictly before persisting,
+                # then write back the canonical semantic values so the file stays
+                # fully normalized (defaults backfilled, host-key value canonical).
+                semantic = self._normalize(config)
+                self._write_semantic(config, semantic)
+                self._compose_and_persist(config)
+                return self._snapshot(config)
 
     def reset(
         self,
@@ -135,20 +140,21 @@ class SshOverridesService:
         (including the revision token).
         """
         with self._lock:
-            config = self._load_strict()
+            with settings_transaction_lock(self._path):
+                config = self._load_strict()
 
-            if expected_revision is not None:
-                current = self._snapshot(config)
-                if expected_revision != current.revision:
-                    raise SshPilotError(
-                        ErrorCode.VALIDATION_FAILED,
-                        "The SSH overrides have been modified since last read",
-                        details={"code": REVISION_CONFLICT},
-                    )
+                if expected_revision is not None:
+                    current = self._snapshot(config)
+                    if expected_revision != current.revision:
+                        raise SshPilotError(
+                            ErrorCode.VALIDATION_FAILED,
+                            "The SSH overrides have been modified since last read",
+                            details={"code": REVISION_CONFLICT},
+                        )
 
-            self._reset_defaults(config)
-            self._compose_and_persist(config)
-            return self._snapshot(config)
+                self._reset_defaults(config)
+                self._compose_and_persist(config)
+                return self._snapshot(config)
 
     # ------------------------------------------------------------------
     # Settings view (for DaemonConnectionLaunchProvider)
