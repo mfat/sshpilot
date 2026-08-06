@@ -431,6 +431,7 @@ _CONNECTION_EVENT_TYPES = frozenset(
         EventType.CONNECTION_CREATED,
         EventType.CONNECTION_UPDATED,
         EventType.CONNECTION_DELETED,
+        EventType.CONNECTION_STORE_CHANGED,
     }
 )
 _SESSION_EVENT_TYPES = frozenset(
@@ -509,9 +510,16 @@ def public_event_to_envelope(
     if not isinstance(event, CoreEvent) or event.type not in _FORWARDED_EVENT_TYPES:
         raise TypeError("daemon transport does not support this event type")
     if event.type in _CONNECTION_EVENT_TYPES:
-        if type(event.payload) is not ConnectionSummary:
-            raise TypeError("connection event payload must be ConnectionSummary")
-        payload = connection_summary_to_wire(event.payload)
+        if event.type is EventType.CONNECTION_STORE_CHANGED:
+            if type(event.payload) is not ConnectionStoreSnapshot:
+                raise TypeError(
+                    "connection store event payload must be ConnectionStoreSnapshot"
+                )
+            payload = connection_store_snapshot_to_wire(event.payload)
+        else:
+            if type(event.payload) is not ConnectionSummary:
+                raise TypeError("connection event payload must be ConnectionSummary")
+            payload = connection_summary_to_wire(event.payload)
     elif event.type in _INTERACTION_EVENT_TYPES:
         if type(event.payload) is not InteractionSummary:
             raise TypeError("interaction event payload must be InteractionSummary")
@@ -571,6 +579,13 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
     if event_type not in _FORWARDED_EVENT_TYPES:
         raise ValueError("daemon event name is unsupported")
     if event_type in _CONNECTION_EVENT_TYPES:
+        if event_type is EventType.CONNECTION_STORE_CHANGED:
+            snapshot = connection_store_snapshot_from_wire(dict(envelope.payload))
+            return CoreEvent(
+                type=event_type,
+                payload=snapshot,
+                sequence=envelope.sequence,
+            )
         summary = connection_summary_from_wire(dict(envelope.payload))
         return CoreEvent(
             type=event_type,

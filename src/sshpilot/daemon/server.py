@@ -113,6 +113,7 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.CONNECTION_CREATED,
         EventType.CONNECTION_UPDATED,
         EventType.CONNECTION_DELETED,
+        EventType.CONNECTION_STORE_CHANGED,
         EventType.SESSION_CREATED,
         EventType.SESSION_STATE_CHANGED,
         EventType.SESSION_EXITED,

@@ -6772,8 +6772,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         def _failure(error):
             if isinstance(error, SshPilotError):
                 logger.warning(
-                    "Daemon connection mutation failed code=%s",
+                    "Daemon connection mutation failed code=%s retryable=%s message=%s",
                     error.code.value,
+                    error.retryable,
+                    error.message,
                 )
             else:
                 logger.error(

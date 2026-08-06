@@ -259,6 +259,32 @@ def test_observers_are_marshaled_through_injected_dispatcher():
     assert delivered[-1].connections == (summary("worker"),)
 
 
+def test_coherent_store_event_updates_snapshot_and_emits_projection_reset():
+    old = summary("old")
+    new = summary("new")
+    client = SnapshotClient("daemon-a", snapshot((old,), generation=1))
+    store = ConnectionPresentationStore()
+    store.attach_client(client)
+    emitted = []
+    store.connect_after(
+        "projection-reset",
+        lambda _store, value: emitted.append(value),
+    )
+
+    client._snapshot = snapshot((new,), generation=2)
+    client.callback(
+        CoreEvent(
+            EventType.CONNECTION_STORE_CHANGED,
+            client._snapshot,
+            1,
+            datetime.now(timezone.utc),
+        )
+    )
+
+    assert store.snapshot().connections == (new,)
+    assert emitted == [None]
+
+
 def test_refresh_replays_event_arriving_while_snapshot_is_in_flight():
     entered = Barrier(2)
     release = Barrier(2)

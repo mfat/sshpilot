@@ -14,11 +14,19 @@ Covers the required contracts:
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 import stat
 from pathlib import Path
 
 import pytest
+
+from sshpilot.api.models.connection_store import thaw_safe_metadata
+from sshpilot.core.connections.state_file import (
+    ConnectionFileState,
+    GroupFileState,
+    write_connection_state,
+)
 
 from sshpilot.api.models.connections import (
     SaveSshConfigTextRequest,
@@ -220,6 +228,65 @@ def test_repository_save_rejects_stale_revision(tmp_path):
     assert root.read_text(encoding="utf-8") == "Host b\n"
 
 
+def _write_sidecar_state(path: Path, *, connection_id: str) -> None:
+    write_connection_state(
+        path,
+        ConnectionFileState(
+            groups=(
+                GroupFileState(
+                    id="group",
+                    name="Group",
+                    connection_ids=(connection_id,),
+                ),
+            ),
+            metadata={
+                connection_id: {
+                    "tags": ["ops"],
+                    "wol_mac": "00:11:22:33:44:55",
+                },
+            },
+        ),
+    )
+
+
+def test_raw_host_rename_reconciles_group_and_metadata_sidecar(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    state_dir = tmp_path / "state"
+    _write_config(root, "Host old\n    HostName old.example.com\n")
+    _write_sidecar_state(state_dir / "connections.json", connection_id="old")
+    repo = _make_repository(root, state_dir=state_dir)
+    loaded = repo.get_ssh_config_text()
+
+    repo.save_ssh_config_text(
+        SaveSshConfigTextRequest(
+            text="Host new\n    HostName old.example.com\n",
+            expected_revision=loaded.revision,
+        )
+    )
+
+    snapshot = repo.snapshot()
+    assert snapshot.groups[0].connection_ids == ("new",)
+    assert [item.connection_id for item in snapshot.metadata] == ["new"]
+    assert thaw_safe_metadata(snapshot.metadata[0].values)["tags"] == ["ops"]
+
+
+def test_raw_host_delete_removes_group_and_metadata_sidecar(tmp_path):
+    root = tmp_path / ".ssh" / "config"
+    state_dir = tmp_path / "state"
+    _write_config(root, "Host old\n    HostName old.example.com\n")
+    _write_sidecar_state(state_dir / "connections.json", connection_id="old")
+    repo = _make_repository(root, state_dir=state_dir)
+    loaded = repo.get_ssh_config_text()
+
+    repo.save_ssh_config_text(
+        SaveSshConfigTextRequest(text="# deleted\n", expected_revision=loaded.revision)
+    )
+
+    snapshot = repo.snapshot()
+    assert snapshot.groups[0].connection_ids == ()
+    assert snapshot.metadata == ()
+
+
 def test_repository_save_rolls_back_when_written_config_does_not_parse(tmp_path):
     root = tmp_path / ".ssh" / "config"
     _write_config(root, "Host ok\n    HostName ok.example.com\n")
@@ -233,6 +300,29 @@ def test_repository_save_rolls_back_when_written_config_does_not_parse(tmp_path)
             SaveSshConfigTextRequest(text=bad, expected_revision=loaded.revision)
         )
     # The failed write rolled the file back to its previous bytes.
+    assert root.read_text(encoding="utf-8") == "Host ok\n    HostName ok.example.com\n"
+
+
+def test_application_service_reports_raw_config_validation_failure(tmp_path, caplog):
+    root = tmp_path / ".ssh" / "config"
+    _write_config(root, "Host ok\n    HostName ok.example.com\n")
+    repository = _make_repository(root, state_dir=tmp_path / "state")
+    service = ConnectionApplicationService(repository)
+    loaded = service.get_ssh_config_text()
+
+    with caplog.at_level(logging.WARNING, logger="sshpilot.core.connection_application_service"):
+        with pytest.raises(Exception) as exc_info:
+            service.save_ssh_config_text(
+                SaveSshConfigTextRequest(
+                    text="Host \"broken\n    HostName broken.example.com\n",
+                    expected_revision=loaded.revision,
+                )
+            )
+
+    assert getattr(exc_info.value, "code", None).value == "validation_failed"
+    assert "invalid Host header" in str(exc_info.value)
+    assert "CONFIG_PARSE_ERROR" in caplog.text
+    assert "SSH configuration contains an invalid Host header" in caplog.text
     assert root.read_text(encoding="utf-8") == "Host ok\n    HostName ok.example.com\n"
 
 

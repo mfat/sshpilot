@@ -668,6 +668,14 @@ class ConnectionApplicationService:
         except SshPilotError:
             raise
         except CoreError as error:
+            logger.warning(
+                "SSH config text save rejected code=%s category=%s reason=%s message=%s",
+                error.code.value,
+                error.diagnostic_category,
+                error.diagnostic_reason,
+                error.message,
+            )
+            logger.debug("SSH config text save failure details", exc_info=True)
             raise _map_core_error(error)
         except Exception:
             logger.exception("Repository SSH config text save failed")
@@ -838,6 +846,13 @@ class ConnectionApplicationService:
         except SshPilotError:
             raise
         except CoreError as error:
+            logger.warning(
+                "Repository update rejected code=%s category=%s reason=%s",
+                error.code.value,
+                error.diagnostic_category,
+                error.diagnostic_reason,
+            )
+            logger.debug("Repository update failure details", exc_info=True)
             raise _map_core_error(error)
         except Exception:
             logger.exception("Repository update failed")
@@ -1219,6 +1234,11 @@ def _map_core_error(error: Any) -> SshPilotError:
         return SshPilotError(
             ErrorCode.VALIDATION_FAILED,
             "The requested connection-store change is invalid",
+        )
+    if code is CoreErrorCode.CONFIG_PARSE_ERROR:
+        return SshPilotError(
+            ErrorCode.VALIDATION_FAILED,
+            error.message or "The SSH configuration is invalid",
         )
     if code is CoreErrorCode.MUTATION_AMBIGUOUS:
         return SshPilotError(

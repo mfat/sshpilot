@@ -1019,29 +1019,29 @@ class RemoteFileEditorWindow(Adw.Window):
         self._perform_save(text)
 
     def _perform_save(self, text: str) -> None:
+        if self._daemon_file_service is not None:
+            self._save_daemon_file(text)
+            return
+
         try:
             # Atomic temp+replace so a crash/full disk can't truncate the file
             # (critical for ~/.ssh/config). mode=None preserves the file's
             # existing permissions (e.g. keeps a 0600 config at 0600).
             from .ssh_config_utils import atomic_write_text
             atomic_write_text(str(self._temp_file), text)
-            self._buffer.set_modified(False)
-            
-            # Reset undo stack after save
-            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-                _clear_undo_history(self._buffer)
-                # Update undo/redo button states
-                if hasattr(self, '_undo_button'):
-                    self._undo_button.set_sensitive(False)
-                if hasattr(self, '_redo_button'):
-                    self._redo_button.set_sensitive(False)
             self._file_modified_time = self._temp_file.stat().st_mtime
-            self._has_unsaved_changes = False
-            self._externally_modified = False
-            self._update_title(False)
             
             if self._is_local:
-                # For local files, just save and refresh the pane
+                self._buffer.set_modified(False)
+                if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
+                    _clear_undo_history(self._buffer)
+                    if hasattr(self, '_undo_button'):
+                        self._undo_button.set_sensitive(False)
+                    if hasattr(self, '_redo_button'):
+                        self._redo_button.set_sensitive(False)
+                self._has_unsaved_changes = False
+                self._externally_modified = False
+                self._update_title(False)
                 self._show_toast("Saved", timeout=2)
                 self._save_button.set_sensitive(False)
                 if self._on_local_saved is not None:
@@ -1049,7 +1049,6 @@ class RemoteFileEditorWindow(Adw.Window):
                         self._on_local_saved()
                     except Exception:
                         logger.debug("local-save callback failed", exc_info=True)
-                # Refresh the file manager to show updated file
                 if self._file_manager_window:
                     pane = self._file_manager_window._left_pane
                     if pane:
@@ -1058,12 +1057,7 @@ class RemoteFileEditorWindow(Adw.Window):
         except Exception as e:
             self._show_error(f"Failed to save file: {e}")
             return
-        
-        if self._daemon_file_service is not None:
-            self._save_daemon_file(text)
-            return
 
-        # For remote files, upload after saving
         if not self._is_local:
             self._upload_file()
     
@@ -1075,12 +1069,36 @@ class RemoteFileEditorWindow(Adw.Window):
             try:
                 result = future.result()
                 self._daemon_file_revision = result.revision
-                GLib.idle_add(self._on_upload_success)
+                GLib.idle_add(self._on_daemon_save_success)
             except Exception as e:
-                GLib.idle_add(self._on_upload_error, str(e))
+                logger.error("Daemon SSH config save failed: %s", e, exc_info=True)
+                GLib.idle_add(self._on_daemon_save_error, str(e))
 
         future = self._daemon_file_service.save_text(text, make_backup=True)
         future.add_done_callback(complete)
+
+    def _on_daemon_save_success(self) -> None:
+        self._has_unsaved_changes = False
+        self._externally_modified = False
+        self._save_button.set_sensitive(False)
+        self._update_title(False)
+        self._show_toast("Saved successfully", timeout=2)
+        self._buffer.set_modified(False)
+
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
+            _clear_undo_history(self._buffer)
+            if hasattr(self, '_undo_button'):
+                self._undo_button.set_sensitive(False)
+            if hasattr(self, '_redo_button'):
+                self._redo_button.set_sensitive(False)
+
+    def _on_daemon_save_error(self, error: str) -> None:
+        self._buffer.set_modified(True)
+        self._has_unsaved_changes = True
+        self._save_button.set_sensitive(True)
+        self._update_title(True)
+        self._show_toast(f"Save failed: {error}", timeout=4)
+        self._show_error(f"Failed to save file: {error}")
 
     def _upload_file(self) -> None:
         """Upload the modified file back to the remote server."""

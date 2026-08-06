@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 from sshpilot.api import ErrorCode, SshPilotError
@@ -207,7 +208,7 @@ def test_daemon_create_waits_for_success_and_sends_create_dto_with_config_patch(
     assert window.rebuilds == 1
 
 
-def test_daemon_mutation_failure_keeps_ui_state_and_uses_safe_completion():
+def test_daemon_mutation_failure_keeps_ui_state_and_uses_safe_completion(caplog):
     window = _MutationWindow()
     completed = []
     data = _basic_data(__save_completion=lambda ok, *a, **k: completed.append(ok))
@@ -215,17 +216,19 @@ def test_daemon_mutation_failure_keeps_ui_state_and_uses_safe_completion():
 
     window.on_connection_saved(dialog, data)
     _operation, _success, failure = window.client_bridge.calls[0]
-    failure(
-        SshPilotError(
-            ErrorCode.PERSISTENCE_FAILED,
-            "safe",
-            details={"field": "nickname"},
-        )
+    error = SshPilotError(
+        ErrorCode.PERSISTENCE_FAILED,
+        "The connection state could not be stored",
+        details={"field": "nickname"},
     )
+    with caplog.at_level(logging.WARNING, logger="sshpilot.window"):
+        failure(error)
 
     assert completed == [False]
     assert window.connection_manager.reloads == 0
     assert window.rebuilds == 0
+    assert "persistence_failed" in caplog.text
+    assert "The connection state could not be stored" in caplog.text
 
 
 def test_metadata_retry_resumes_without_repeating_create():

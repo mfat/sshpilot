@@ -8,6 +8,7 @@ a minimal in-memory ``ConnectionRepositoryProtocol`` fake. No filesystem, no
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -43,6 +44,7 @@ from sshpilot.api.models.connections import (  # noqa: E402
     UpdateConnectionRequest,
 )
 from sshpilot.api.capabilities import Capability  # noqa: E402
+from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 
 
 class FakeRepository(ConnectionRepositoryProtocol):
@@ -58,6 +60,7 @@ class FakeRepository(ConnectionRepositoryProtocol):
         self.calls: List[str] = []
         self.listeners = []
         self.fail_next = False
+        self.fail_update_with: Optional[CoreError] = None
 
     # -- protocol surface ---------------------------------------------------
 
@@ -146,6 +149,10 @@ class FakeRepository(ConnectionRepositoryProtocol):
         expected_generation: Optional[int] = None,
     ) -> ConnectionRecord:
         self.calls.append("update_connection")
+        if self.fail_update_with is not None:
+            error = self.fail_update_with
+            self.fail_update_with = None
+            raise error
         self._mutate()
         existing = self._records[connection_id]
         payload = dict(existing.data)
@@ -416,6 +423,30 @@ def test_missing_record_raises_not_found():
     with pytest.raises(Exception) as exc:
         service.get_connection(ConnectionId("missing"))
     assert "not exist" in str(exc.value).lower()
+
+
+def test_update_failure_logs_core_diagnostics_and_keeps_safe_api_error(caplog):
+    repo = FakeRepository([_record()])
+    repo.fail_update_with = CoreError(
+        ErrorCode.CONNECTION_STATE_IO_ERROR,
+        "The connection configuration could not be saved",
+        diagnostic_category="persistence",
+        diagnostic_reason="state file write failed",
+    )
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    with caplog.at_level(logging.WARNING, logger="sshpilot.core.connection_application_service"):
+        with pytest.raises(Exception) as exc_info:
+            service.update_connection(
+                ConnectionId("web"),
+                UpdateConnectionRequest(hostname="updated.example"),
+            )
+
+    assert getattr(exc_info.value, "code", None) is not None
+    assert "The connection state could not be stored" in str(exc_info.value)
+    assert "CONNECTION_STATE_IO_ERROR" in caplog.text
+    assert "persistence" in caplog.text
+    assert "state file write failed" in caplog.text
 
 
 # ---------------------------------------------------------------------------

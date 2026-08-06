@@ -87,13 +87,27 @@ def test_requesting_and_observing_clients_receive_one_created_event(
     )
 
     assert all(item.wait(2) for item in ready)
-    assert [len(events) for events in received] == [1, 1]
-    assert all(
-        events[0].type is EventType.CONNECTION_CREATED
-        for events in received
-    )
-    assert received[0][0].sequence == received[1][0].sequence
-    assert received[0][0].payload.id == created.connection_id
+    for events in received:
+        created_events = [
+            event for event in events
+            if event.type is EventType.CONNECTION_CREATED
+        ]
+        store_events = [
+            event for event in events
+            if event.type is EventType.CONNECTION_STORE_CHANGED
+        ]
+        assert len(created_events) == 1
+        assert len(store_events) == 1
+        assert created_events[0].payload.id == created.connection_id
+    created_events = [
+        event for event in received[0]
+        if event.type is EventType.CONNECTION_CREATED
+    ]
+    observed_created_events = [
+        event for event in received[1]
+        if event.type is EventType.CONNECTION_CREATED
+    ]
+    assert created_events[0].sequence == observed_created_events[0].sequence
     for subscription in subscriptions:
         subscription.close()
     requesting.close()

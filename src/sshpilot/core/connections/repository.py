@@ -262,6 +262,107 @@ class ConnectionRepository:
         with self._lock:
             return self._ssh_store.get_text()
 
+    @staticmethod
+    def _raw_record_signature(record: ConnectionRecord) -> tuple:
+        data = copy.deepcopy(record.data or {})
+        for key in (
+            "id",
+            "nickname",
+            "host",
+            "aliases",
+            "__host_tokens",
+            "source",
+        ):
+            data.pop(key, None)
+        return (
+            record.source,
+            tuple(sorted((str(key), repr(value)) for key, value in data.items())),
+        )
+
+    def _reconcile_raw_ssh_state_locked(
+        self,
+        previous_records: Tuple[ConnectionRecord, ...],
+        ssh_config: LoadedSshConfiguration,
+        file_state: ConnectionFileState,
+    ) -> ConnectionFileState:
+        previous = {
+            record.id: record
+            for record in previous_records
+            if record.protocol == "ssh"
+        }
+        current = {
+            record.id: record
+            for record in ssh_config.connections
+        }
+        removed = set(previous) - set(current)
+        added = set(current) - set(previous)
+        candidates: Dict[str, List[str]] = {}
+        for old_id in removed:
+            signature = self._raw_record_signature(previous[old_id])
+            matches = [
+                new_id
+                for new_id in added
+                if self._raw_record_signature(current[new_id]) == signature
+            ]
+            candidates[old_id] = matches
+        renames = {}
+        for old_id, matches in candidates.items():
+            if len(matches) != 1:
+                continue
+            new_id = matches[0]
+            if sum(new_id in values for values in candidates.values()) == 1:
+                renames[old_id] = new_id
+        known_ids = set(current)
+
+        def reconcile_id(connection_id: str) -> Optional[str]:
+            if connection_id in renames:
+                return renames[connection_id]
+            if connection_id in known_ids:
+                return connection_id
+            return None
+
+        groups = []
+        for group in file_state.groups:
+            members = []
+            seen = set()
+            for connection_id in group.connection_ids:
+                reconciled = reconcile_id(connection_id)
+                if reconciled is not None and reconciled not in seen:
+                    seen.add(reconciled)
+                    members.append(reconciled)
+            groups.append(
+                GroupFileState(
+                    id=group.id,
+                    name=group.name,
+                    parent_id=group.parent_id,
+                    order=group.order,
+                    color=group.color,
+                    connection_ids=tuple(members),
+                )
+            )
+
+        roots = []
+        seen_roots = set()
+        for connection_id in file_state.root_connections:
+            reconciled = reconcile_id(connection_id)
+            if reconciled is not None and reconciled not in seen_roots:
+                seen_roots.add(reconciled)
+                roots.append(reconciled)
+
+        metadata: Dict[str, Mapping[str, Any]] = {}
+        for connection_id, values in file_state.metadata.items():
+            reconciled = reconcile_id(connection_id)
+            if reconciled is not None and reconciled not in metadata:
+                metadata[reconciled] = values
+
+        return ConnectionFileState(
+            version=file_state.version,
+            non_ssh_connections=file_state.non_ssh_connections,
+            groups=tuple(groups),
+            root_connections=tuple(roots),
+            metadata=metadata,
+        )
+
     def save_ssh_config_text(
         self, request: SaveSshConfigTextRequest
     ) -> SshConfigText:
@@ -281,6 +382,11 @@ class ConnectionRepository:
             )
         with self._mutation_scope():
             before = self._begin()
+            previous_records = tuple(
+                copy.deepcopy(record)
+                for record in self._service.ordered_records()
+                if record.protocol == "ssh"
+            )
             disk_before = self._capture_transaction_files_locked(
                 self._ssh_store.root_path
             )
@@ -289,13 +395,23 @@ class ConnectionRepository:
                     request.text,
                     request.expected_revision,
                 )
-                # Record the daemon-written file before reloading: a reload
-                # failure (unparseable document) must roll the file back to
-                # its previous bytes, exactly like the CRUD mutations.
                 self._record_post_write_locked(
                     disk_before, self._ssh_store.root_path
                 )
-                self._load_state_locked()
+                ssh_config = self._ssh_store.load()
+                file_state, migrated = self._read_state()
+                if migrated:
+                    file_state = self._reconcile_legacy_state(ssh_config, file_state)
+                file_state = self._reconcile_raw_ssh_state_locked(
+                    previous_records,
+                    ssh_config,
+                    file_state,
+                )
+                self._publish_state_locked(
+                    ssh_config,
+                    file_state,
+                    migrated=migrated,
+                )
                 self._persist_state_file_locked()
                 self._record_post_write_locked(disk_before, self._state_path)
             except Exception:

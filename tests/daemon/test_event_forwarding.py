@@ -6,6 +6,7 @@ import pytest
 
 from sshpilot.api import DaemonClient, ErrorCode, EventType
 from sshpilot.api.models import ConnectionSummary
+from sshpilot.api.models.connection_store import ConnectionStoreSnapshot
 from sshpilot.daemon import DaemonServer
 from tests.helpers.fake_connection_repository import FakeConnectionRepository, _record
 
@@ -70,6 +71,33 @@ def test_connection_events_arrive_while_client_is_idle(
         assert received[0].type is event_type
         assert type(received[0].payload) is ConnectionSummary
         assert "password" not in repr(received[0].payload)
+        subscription.close()
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
+
+
+def test_connection_store_changed_event_reaches_idle_client(tmp_path):
+    server, repo = _make_daemon(tmp_path)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        received = []
+        delivered = threading.Event()
+        subscription = client.subscribe_events(
+            lambda event: (received.append(event), delivered.set())
+        )
+
+        repo.update_connection("demo", {"hostname": "updated.example"})
+
+        assert delivered.wait(2)
+        store_events = [
+            event for event in received
+            if event.type is EventType.CONNECTION_STORE_CHANGED
+        ]
+        assert store_events
+        assert type(store_events[0].payload) is ConnectionStoreSnapshot
+        assert store_events[0].payload.connections[0].hostname == "updated.example"
         subscription.close()
     finally:
         client.close()
