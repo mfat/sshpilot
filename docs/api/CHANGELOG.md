@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- Corrected the bounded SFTP file contract: `SftpReadFileResult.content` and
+  `SftpReplaceFileRequest.content` are sensitive fields (excluded from model
+  reprs and generated safe representations). Replacements serialize the complete
+  per-target compare-and-replace sequence (read, revision compare, backup,
+  temporary write, atomic replace, publish) so two concurrent replacements with
+  the same original revision resolve to exactly one success and one
+  `file_revision_conflict`, for both the remote target and the local
+  `~/.ssh/authorized_keys` target. Unrelated services and paths are not blocked.
+
 - Completed and reviewed frontend-neutral identity and authorized-key management.
   `IdentityStateService` and `DaemonIdentityService` now own provider state,
   effective identity resolution through `ssh -G`, native `ssh-add` inspection and

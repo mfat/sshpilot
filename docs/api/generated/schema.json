@@ -5215,7 +5215,7 @@
           "default": null,
           "name": "content",
           "required": true,
-          "sensitive": false,
+          "sensitive": true,
           "type": "str"
         },
         {
@@ -5302,7 +5302,7 @@
           "default": null,
           "name": "content",
           "required": true,
-          "sensitive": false,
+          "sensitive": true,
           "type": "str"
         },
         {

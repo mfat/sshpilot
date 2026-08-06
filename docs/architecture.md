@@ -83,7 +83,11 @@ The following milestones have completed their reviewed ownership migration:
   ordinary-`ssh` authorized-key operations, and shared operation lifecycle.
   `SftpServiceRuntime` owns bounded file reads and revision-safe atomic
   replacements, including backup and secure permissions for local and remote
-  authorized-key documents. GTK only stages and presents edits.
+  authorized-key documents. Replacements serialize the full compare-and-replace
+  sequence per target (a per-target lock, keyed by target kind, service, and
+  canonical/validated path) so concurrent same-revision replacements yield one
+  success and one `file_revision_conflict` without blocking unrelated targets.
+  GTK only stages and presents edits.
 
 SCP, general SFTP transfer ownership, broadcast/remote commands, architecture
  governance, and final frontend closure remain planned phases. See

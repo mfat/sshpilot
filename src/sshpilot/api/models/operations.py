@@ -259,7 +259,7 @@ class SftpReadFileRequest:
 class SftpReadFileResult:
     target: SftpFileTarget
     path: str
-    content: str
+    content: str = field(repr=False)
     exists: bool
     revision: str
     size: int
@@ -287,7 +287,7 @@ class SftpReadFileResult:
 class SftpReplaceFileRequest:
     target: SftpFileTarget
     path: str
-    content: str
+    content: str = field(repr=False)
     expected_revision: str
     backup: bool = True
     service_id: Optional[SftpServiceId] = None

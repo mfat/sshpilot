@@ -3241,7 +3241,7 @@ Synthetic representation:
 | --- | --- | ---: | --- | ---: |
 | `target` | `SftpFileTarget` | Yes | — | No |
 | `path` | `str` | Yes | — | No |
-| `content` | `str` | Yes | — | No |
+| `content` | `str` | Yes | — | Yes |
 | `exists` | `bool` | Yes | — | No |
 | `revision` | `str` | Yes | — | No |
 | `size` | `int` | Yes | — | No |
@@ -3251,7 +3251,7 @@ Synthetic representation:
 
 ```json
 {
-  "content": {},
+  "content": "<sensitive value omitted>",
   "exists": {},
   "mode": null,
   "path": "/remote/example",
@@ -3303,7 +3303,7 @@ Synthetic representation:
 | --- | --- | ---: | --- | ---: |
 | `target` | `SftpFileTarget` | Yes | — | No |
 | `path` | `str` | Yes | — | No |
-| `content` | `str` | Yes | — | No |
+| `content` | `str` | Yes | — | Yes |
 | `expected_revision` | `str` | Yes | — | No |
 | `backup` | `bool` | No | `true` | No |
 | `service_id` | `Optional[SftpServiceId]` | No | `null` | No |
@@ -3313,7 +3313,7 @@ Synthetic representation:
 ```json
 {
   "backup": true,
-  "content": {},
+  "content": "<sensitive value omitted>",
   "expected_revision": {},
   "path": "/remote/example",
   "service_id": null,

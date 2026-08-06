@@ -151,6 +151,8 @@ SENSITIVE_FIELDS = {
     "PluginOperationResult": {"values"},
     "ReplayResult": {"data"},
     "RequestEnvelope": {"params"},
+    "SftpReadFileResult": {"content"},
+    "SftpReplaceFileRequest": {"content"},
     "StoreConnectionPasswordRequest": {"password"},
     "StoreKeyPassphraseRequest": {"passphrase"},
     "StorePluginSecretRequest": {"value"},

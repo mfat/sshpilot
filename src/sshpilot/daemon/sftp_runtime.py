@@ -7,7 +7,12 @@ be unit-tested without spawning real ``ssh`` subprocesses. All remote
 filesystem operations are blocking network calls and must be invoked from a
 daemon command worker (see ``dispatch.py``); they are serialized per service
 by :class:`~sshpilot.daemon.command_executor.BoundedCommandExecutor` using the
-service id as the command key.
+service id as the command key. File *replacements* are additionally serialized
+per target inside the runtime: the complete compare-and-replace sequence (read,
+revision compare, backup, temporary write, atomic replace, publish) runs under
+a per-target lock keyed by target kind, service id, and canonical/validated
+path, so concurrent same-revision replacements yield one success and one
+``FILE_REVISION_CONFLICT`` without blocking unrelated services or paths.
 
 Interaction/host-key trust reuses :class:`~sshpilot.daemon.session_runtime.SessionLaunchSpec`
 and the existing :class:`~sshpilot.daemon.interaction_broker.InteractionBroker`
@@ -28,6 +33,7 @@ import stat as stat_module
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
@@ -291,6 +297,14 @@ class _SftpRecord:
     close_scheduled: bool = False
 
 
+@dataclass
+class _TargetLockEntry:
+    """One per-target replacement mutex plus its reference count."""
+
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    users: int = 0
+
+
 _ALLOWED_TRANSITIONS = {
     SftpServiceState.CREATED: frozenset(
         {SftpServiceState.STARTING, SftpServiceState.FAILED, SftpServiceState.CLOSED}
@@ -387,6 +401,7 @@ class SftpServiceRuntime:
         self._publisher = EventPublisher()
         self._records: Dict[SftpServiceId, _SftpRecord] = {}
         self._creation_order: List[SftpServiceId] = []
+        self._target_locks: Dict[Tuple[Any, ...], _TargetLockEntry] = {}
         self._accepting_commands = True
         self._closed = False
 
@@ -836,9 +851,26 @@ class SftpServiceRuntime:
         if request.target is SftpFileTarget.LOCAL_AUTHORIZED_KEYS:
             if request.path != _LOCAL_AUTHORIZED_KEYS_MARKER:
                 raise SshPilotError(ErrorCode.INVALID_REQUEST, "Only the local authorized_keys target is supported")
-            return self._replace_local_authorized_keys(request, payload)
-        record = self._ready_record_for_mutation(request.service_id, client_id)
+            key = (
+                SftpFileTarget.LOCAL_AUTHORIZED_KEYS,
+                os.path.abspath(os.path.expanduser(_LOCAL_AUTHORIZED_KEYS_MARKER)),
+            )
+            with self._serialized_target(key):
+                self._require_accepting_commands()
+                return self._replace_local_authorized_keys(request, payload)
         path = _validate_path(request.path)
+        key = (SftpFileTarget.REMOTE, request.service_id, path)
+        with self._serialized_target(key):
+            record = self._ready_record_for_mutation(request.service_id, client_id)
+            return self._replace_remote_file(request, payload, path, record)
+
+    def _replace_remote_file(
+        self,
+        request: SftpReplaceFileRequest,
+        payload: bytes,
+        path: str,
+        record: _SftpRecord,
+    ) -> SftpReplaceFileResult:
         client = record.handle.client
         try:
             current = self._read_remote_bytes(client, path)
@@ -1143,6 +1175,45 @@ class SftpServiceRuntime:
             raise self._map_error(exc, record) from exc
 
     # -- helpers ------------------------------------------------------
+    @contextmanager
+    def _serialized_target(self, key: Tuple[Any, ...]):
+        """Serialize the compare-and-replace sequence for one file target.
+
+        The per-target mutex is tracked under the runtime state lock but is
+        acquired *outside* it, so blocking on or waiting inside the critical
+        section never holds the global state lock across filesystem or
+        network I/O. The reference count includes waiters, so an entry is
+        only removed once no thread can still be holding or waiting on it.
+        """
+
+        with self._lock:
+            entry = self._target_locks.get(key)
+            if entry is None:
+                entry = _TargetLockEntry()
+                self._target_locks[key] = entry
+            entry.users += 1
+        try:
+            entry.lock.acquire()
+        except BaseException:
+            with self._lock:
+                entry.users -= 1
+                if entry.users <= 0:
+                    self._target_locks.pop(key, None)
+            raise
+        try:
+            yield
+        finally:
+            entry.lock.release()
+            with self._lock:
+                entry.users -= 1
+                if entry.users <= 0:
+                    self._target_locks.pop(key, None)
+
+    def _require_accepting_commands(self) -> None:
+        """Re-validate runtime state after a mutation acquired its target lock."""
+        with self._lock:
+            self._require_accepting_commands_locked()
+
     def _entry_from_attr(self, path: str, attr: sftp_proto.SFTPAttributes) -> RemoteFileEntry:
         return RemoteFileEntry(
             name=remote_path_basename(path),
