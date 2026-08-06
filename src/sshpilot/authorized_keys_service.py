@@ -12,8 +12,14 @@ import os
 import posixpath
 import shutil
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import List
+
+from sshpilot.api.models.operations import (
+    SftpFileTarget,
+    SftpReadFileRequest,
+    SftpReplaceFileRequest,
+)
 
 from .authorized_keys_parser import Item, parse_file, serialize
 
@@ -22,6 +28,61 @@ logger = logging.getLogger(__name__)
 
 REMOTE_BASENAME = "authorized_keys"
 SSH_DIR_BASENAME = ".ssh"
+
+
+class DaemonAuthorizedKeysService:
+    """GTK adapter over daemon-owned authorized_keys file operations."""
+
+    def __init__(self, client, *, service_id=None, local: bool = False) -> None:
+        if client is None:
+            raise ValueError("a daemon client is required")
+        if local and service_id is not None:
+            raise ValueError("local authorized_keys has no SFTP service")
+        if not local and service_id is None:
+            raise ValueError("remote authorized_keys requires an SFTP service")
+        self._client = client
+        self._service_id = service_id
+        self._local = local
+        self._revision = "absent"
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sshpilot-authorized-keys")
+
+    def _request(self):
+        return SftpReadFileRequest(
+            target=(SftpFileTarget.LOCAL_AUTHORIZED_KEYS if self._local else SftpFileTarget.REMOTE),
+            path=("~/.ssh/authorized_keys" if self._local else ".ssh/authorized_keys"),
+            service_id=None if self._local else self._service_id,
+        )
+
+    def load(self) -> Future:
+        def _do():
+            result = self._client.sftp_read_file(self._request())
+            self._revision = result.revision
+            return parse_file(result.content) if result.exists else []
+
+        return self._executor.submit(_do)
+
+    def save(self, items: List[Item], *, make_backup: bool = True) -> Future:
+        return self.save_text(serialize(items), make_backup=make_backup)
+
+    def save_text(self, content: str, *, make_backup: bool = True) -> Future:
+        request = SftpReplaceFileRequest(
+            target=(SftpFileTarget.LOCAL_AUTHORIZED_KEYS if self._local else SftpFileTarget.REMOTE),
+            path=("~/.ssh/authorized_keys" if self._local else ".ssh/authorized_keys"),
+            content=content,
+            expected_revision=self._revision,
+            backup=make_backup,
+            service_id=None if self._local else self._service_id,
+        )
+
+        def _do():
+            result = self._client.sftp_replace_file(request)
+            self._revision = result.revision
+            return result
+
+        return self._executor.submit(_do)
+
+    def close(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
 
 class AuthorizedKeysService:

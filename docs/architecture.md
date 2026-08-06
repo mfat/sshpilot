@@ -44,6 +44,8 @@ the file, process, secret, or service represented by that DTO.
 | Global SSH overrides | `SshOverridesService` | `ssh_overrides.*` API with revision-safe writes |
 | Secret backend selection and lifecycle | `SecretBackendService` | `secrets.*` API and protected interactions |
 | Runtime connection secret resolution | `DaemonConnectionSecretProvider` | Daemon session/connection services; no ordinary secret-bearing DTOs |
+| Identity provider state, agent inspection, effective identities, and native deployment | `IdentityStateService` and `DaemonIdentityService` | `identity.*` APIs; GTK receives safe metadata and operation snapshots only |
+| Authorized-key documents and file replacement | `SftpServiceRuntime` plus `DaemonIdentityService` | Typed bounded file reads/replacements; GTK stages and presents document edits |
 
 `ConnectionManager`, `GroupManager`, `SecretManager`, `BackupManager`, and
 other GObject or compatibility adapters may remain behind explicit compatibility
@@ -74,10 +76,18 @@ The following milestones have completed their reviewed ownership migration:
   `SecretBackendService` owns selection, configuration, lifecycle, protected
   interactions, and daemon-side backup operations. Existing backend and backup
   implementations are reused rather than rewritten.
+- **Identity providers and authorized-key management:**
+  `IdentityStateService` and `DaemonIdentityService` own provider state, native
+  `ssh-add` inspection/mutation, effective identity resolution through
+  `ssh -G`, protected authentication preparation, native `ssh-copy-id`, fixed
+  ordinary-`ssh` authorized-key operations, and shared operation lifecycle.
+  `SftpServiceRuntime` owns bounded file reads and revision-safe atomic
+  replacements, including backup and secure permissions for local and remote
+  authorized-key documents. GTK only stages and presents edits.
 
-Shared operations and identity state/provider services are implemented on the
-development branch but are not declared complete until their separate phase
-reviews finish. See [frontend-neutral-migration.md](frontend-neutral-migration.md).
+SCP, general SFTP transfer ownership, broadcast/remote commands, architecture
+ governance, and final frontend closure remain planned phases. See
+[frontend-neutral-migration.md](frontend-neutral-migration.md).
 
 ## Secret architecture
 

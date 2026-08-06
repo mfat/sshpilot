@@ -397,6 +397,30 @@ A directory removal failed because the directory still contains entries.
 
 The remote SFTP server rejected the operation as unsupported.
 
+<!-- api-error: file_content_too_large -->
+## `file_content_too_large`
+
+A file read or replacement was rejected because the content exceeds the
+daemon's bounded size limit.
+
+<!-- api-error: file_revision_conflict -->
+## `file_revision_conflict`
+
+A file replacement was rejected because the file changed since it was read;
+the optimistic revision check prevents stale-snapshot overwrites.
+
+<!-- api-error: file_replacement_failed -->
+## `file_replacement_failed`
+
+An atomic file replacement could not be completed on the remote host or the
+daemon-local target.
+
+<!-- api-error: file_backup_failed -->
+## `file_backup_failed`
+
+The pre-replacement backup copy could not be created; the replacement was not
+applied.
+
 <!-- api-error: remote_command_failed -->
 ## `remote_command_failed`
 

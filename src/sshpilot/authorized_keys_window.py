@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
-import posixpath
 import threading
 from gettext import gettext as _
-from typing import List, Optional
+from typing import List
 
 from gi.repository import Adw, GLib, Gtk
 
@@ -18,8 +16,7 @@ from .authorized_keys_parser import (
     compute_fingerprint,
     parse_file,
 )
-from .authorized_keys_service import AuthorizedKeysService, LocalAuthorizedKeysService
-from .sftp_utils import _is_password_auth_enabled
+from .authorized_keys_service import DaemonAuthorizedKeysService
 from .shortcut_utils import install_esc_to_close
 
 logger = logging.getLogger(__name__)
@@ -88,80 +85,46 @@ class AuthorizedKeysWindow(Adw.Window):
     def __init__(
         self,
         parent,
+        *,
+        client,
+        service_id=None,
         connection=None,
-        sftp_manager=None,
-        connection_manager=None,
+        local: bool = False,
         key_manager=None,
-        local_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self._parent = parent
         self._connection = connection
-        self._manager = sftp_manager
-        self._connection_manager = connection_manager
         self._key_manager = key_manager
         self._items: List[Item] = []
         self._dirty = False
         self._loaded = False
-        self._local_path: Optional[str] = None
         self._closing = False
-        # Local-key import guards (daemon-backed, off the GTK thread).
         self._listing_keys = False
         self._reading_public = False
-        self._manager_signal_ids: List[int] = []
         self._open_raw_editors: List[Gtk.Window] = []
-        self._teardown_when_idle = False
-        self._password_dialog_shown = False
-        self._password_retry_count = 0
-        self._max_password_retries = 3
-
-        if local_path is not None:
-            self._local_path = os.path.expanduser(local_path)
-            self._service = LocalAuthorizedKeysService(self._local_path)
+        self._service = DaemonAuthorizedKeysService(
+            client, service_id=service_id, local=local
+        )
+        if local:
             title = _("Authorized keys — this computer")
         else:
-            if sftp_manager is None or connection is None:
-                raise ValueError("Either local_path or (connection + sftp_manager) is required")
-            self._service = AuthorizedKeysService(sftp_manager)
             user = getattr(connection, "username", "") or ""
             host = (
                 getattr(connection, "hostname", None)
                 or getattr(connection, "host", None)
                 or getattr(connection, "nickname", "")
             )
-            title = _("Authorized keys — {who}").format(who=f"{user}@{host}" if user else host)
+            title = _("Authorized keys — {who}").format(
+                who=f"{user}@{host}" if user else host
+            )
 
         self.set_title(title)
         self.set_transient_for(parent)
         self.set_modal(False)
         self.set_default_size(720, 560)
-
         self._build_ui(title)
-
-        if self._local_path is not None:
-            GLib.idle_add(self._reload)
-        else:
-            manager = self._manager
-            assert manager is not None  # constructor enforces this
-            if getattr(manager, "_sftp", None) is None:
-                try:
-                    sid = manager.connect("connected", self._on_manager_connected)
-                    self._manager_signal_ids.append(sid)
-                    sid = manager.connect("connection-error", self._on_manager_connection_error)
-                    self._manager_signal_ids.append(sid)
-                    sid = manager.connect("authentication-required", self._on_manager_auth_required)
-                    self._manager_signal_ids.append(sid)
-                except Exception as exc:
-                    logger.debug("Could not hook SFTP signals: %s", exc)
-                if not self._ensure_password_before_connect():
-                    return
-                try:
-                    manager.connect_to_server()
-                except Exception as exc:
-                    logger.error("Failed to start SFTP connection: %s", exc)
-            else:
-                GLib.idle_add(self._reload)
-
+        GLib.idle_add(self._reload)
         self.connect("close-request", self._on_close_request)
 
     # ------------------------------------------------------------------
@@ -221,121 +184,6 @@ class AuthorizedKeysWindow(Adw.Window):
         controller.add_shortcut(save_shortcut)
         self.add_controller(controller)
         install_esc_to_close(self)
-
-    # ------------------------------------------------------------------
-    # Manager signal handlers (kept named so we can disconnect them)
-    # ------------------------------------------------------------------
-
-    def _on_manager_connected(self, _manager) -> None:
-        self._password_dialog_shown = False
-        self._password_retry_count = 0
-        if self._closing:
-            return
-        GLib.idle_add(self._reload)
-
-    def _on_manager_connection_error(self, _manager, msg) -> None:
-        if self._closing:
-            return
-        error_text = msg or ""
-        if (
-            "authentication" not in error_text.lower()
-            and "password" not in error_text.lower()
-        ):
-            self._password_dialog_shown = False
-            self._password_retry_count = 0
-        GLib.idle_add(self._toast, _("Connection error: {error}").format(error=msg))
-
-    def _connection_display_name(self) -> str:
-        user = getattr(self._connection, "username", "") or ""
-        host = (
-            getattr(self._connection, "hostname", None)
-            or getattr(self._connection, "host", None)
-            or getattr(self._connection, "nickname", "")
-        )
-        nickname = getattr(self._connection, "nickname", None)
-        if nickname:
-            return str(nickname)
-        return f"{user}@{host}" if user else str(host)
-
-    def _manager_has_password(self) -> bool:
-        manager = self._manager
-        if manager is None:
-            return False
-        password = getattr(manager, "_password", None)
-        return bool(password and str(password).strip())
-
-    def _ensure_password_before_connect(self) -> bool:
-        """Prompt for a password when required and none is available yet."""
-        if self._manager_has_password():
-            return True
-        if not _is_password_auth_enabled(self._connection):
-            return True
-        password = self._prompt_for_password()
-        if password is None:
-            self._set_status(_("Authentication cancelled"))
-            GLib.idle_add(self._toast, _("Authentication cancelled"))
-            return False
-        self._apply_manager_password(password)
-        return True
-
-    def _apply_manager_password(self, password: str) -> None:
-        manager = self._manager
-        if manager is None:
-            return
-        manager._password = password
-        if self._connection is not None:
-            self._connection.password = password
-
-    def _prompt_for_password(self) -> Optional[str]:
-        from .window import show_ssh_password_dialog
-
-        return show_ssh_password_dialog(
-            from_widget=self,
-            connection=self._connection,
-            connection_manager=self._connection_manager,
-        )
-
-    def _on_manager_auth_required(self, _manager, msg) -> None:
-        if self._closing:
-            return
-        GLib.idle_add(self._handle_auth_required, msg)
-
-    def _handle_auth_required(self, msg: str) -> bool:
-        if not _is_password_auth_enabled(self._connection):
-            self._set_status(_("Authentication failed"))
-            self._toast(_("Authentication failed: {error}").format(error=msg))
-            return False
-
-        if self._password_dialog_shown:
-            return False
-
-        if self._password_retry_count >= self._max_password_retries:
-            self._toast(
-                _("Authentication failed after {n} attempts").format(
-                    n=self._max_password_retries
-                )
-            )
-            self._set_status(_("Authentication failed"))
-            return False
-
-        self._password_dialog_shown = True
-        self._password_retry_count += 1
-        password = self._prompt_for_password()
-        self._password_dialog_shown = False
-
-        if not password:
-            self._set_status(_("Authentication cancelled"))
-            self._toast(_("Authentication cancelled"))
-            return False
-
-        self._apply_manager_password(password)
-        try:
-            assert self._manager is not None
-            self._manager.connect_to_server()
-        except Exception as exc:
-            logger.error("Failed to retry SFTP connection: %s", exc)
-            self._toast(_("Connection failed: {error}").format(error=exc))
-        return False
 
     # ------------------------------------------------------------------
     # Toast / status
@@ -717,64 +565,18 @@ class AuthorizedKeysWindow(Adw.Window):
     def _on_raw_edit_clicked(self, _btn) -> None:
         try:
             from .text_editor import RemoteFileEditorWindow
-        except Exception as exc:
-            self._toast(_("Raw editor unavailable: {error}").format(error=exc))
-            return
-
-        if self._local_path is not None:
-            try:
-                editor = RemoteFileEditorWindow(
-                    parent=self,
-                    file_path=self._local_path,
-                    file_name="authorized_keys",
-                    is_local=True,
-                )
-                editor.connect("close-request", self._on_raw_editor_close)
-                self._open_raw_editors.append(editor)
-                editor.present()
-            except Exception as exc:
-                logger.error("Failed to open raw editor: %s", exc)
-                self._toast(_("Raw editor failed: {error}").format(error=exc))
-            return
-
-        sftp = getattr(self._manager, "_sftp", None)
-        if sftp is None:
-            self._toast(_("Not connected yet — please wait."))
-            return
-        try:
-            home = sftp.normalize(".")
-        except Exception as exc:
-            self._toast(_("Could not resolve home dir: {error}").format(error=exc))
-            return
-        ak_path = posixpath.join(home, ".ssh", "authorized_keys")
-        try:
             editor = RemoteFileEditorWindow(
                 parent=self,
-                file_path=ak_path,
+                file_path=("~/.ssh/authorized_keys" if self._service._local else ".ssh/authorized_keys"),
                 file_name="authorized_keys",
                 is_local=False,
-                sftp_manager=self._manager,
+                daemon_file_service=self._service,
             )
-            editor.connect("close-request", self._on_raw_editor_close)
             self._open_raw_editors.append(editor)
             editor.present()
         except Exception as exc:
-            logger.error("Failed to open raw editor: %s", exc)
-            self._toast(_("Raw editor failed: {error}").format(error=exc))
-
-    def _on_raw_editor_close(self, editor) -> bool:
-        try:
-            self._open_raw_editors.remove(editor)
-        except ValueError:
-            pass
-        if not self._closing:
-            # Refresh the list — the raw editor may have changed the file.
-            self._reload()
-        # If our own window was closed while a raw editor was still open,
-        # we deferred shutting down the SFTP manager. Do it now if this
-        # was the last child.
-        self._maybe_close_manager()
-        return False
+            logger.error("Failed to open daemon raw editor: %s", type(exc).__name__)
+            self._toast(_("Raw editor unavailable"))
 
     # ------------------------------------------------------------------
     # Close
@@ -809,38 +611,9 @@ class AuthorizedKeysWindow(Adw.Window):
 
     def _teardown(self) -> None:
         self._closing = True
-        # Disconnect any handlers we attached to the manager so it can't
-        # call back into a destroyed widget.
-        manager = self._manager
-        if manager is not None:
-            for sid in self._manager_signal_ids:
-                try:
-                    manager.disconnect(sid)
-                except Exception as exc:
-                    logger.debug("disconnect %s failed: %s", sid, exc)
-            self._manager_signal_ids.clear()
-
-        if self._local_path is not None:
-            return
-
-        # Defer closing the SFTP manager if a raw editor is still using it.
-        # The raw editor's close-request handler calls _maybe_close_manager
-        # which will close it once we're the last reference.
-        if self._open_raw_editors:
-            self._teardown_when_idle = True
-            return
-        self._close_manager_now()
-
-    def _close_manager_now(self) -> None:
-        try:
-            if self._manager is not None:
-                self._manager.close()
-        except Exception as exc:
-            logger.debug("Error closing SFTP manager: %s", exc)
-
-    def _maybe_close_manager(self) -> None:
-        if not self._open_raw_editors and self._teardown_when_idle:
-            self._close_manager_now()
+        close = getattr(self._service, "close", None)
+        if callable(close):
+            close()
 
 
 # ---------------------------------------------------------------------------

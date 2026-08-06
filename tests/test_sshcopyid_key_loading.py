@@ -183,17 +183,15 @@ def test_close_prevents_starting_a_new_load(monkeypatch, idle):
     assert _ThreadSpy.instances == []
 
 
-def test_browse_adds_key_with_exact_public_path():
+def test_browse_does_not_create_a_local_key_fallback():
     window = _make_window()
     window._existing_keys_cache = []
 
     window._add_browsed_public_key("/home/alice/keys/server.pub")
 
-    keys = window._existing_keys_cache
-    assert keys[0].public_path == "/home/alice/keys/server.pub"
-    names = window._rebuild_existing_dropdown.call_args[0][0]
-    assert names == ["server"]
-    window.radio_existing.set_active.assert_called_with(True)
+    assert window._existing_keys_cache == []
+    window._error.assert_called_once()
+    window._rebuild_existing_dropdown.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +224,7 @@ def test_existing_key_ok_disabled_when_list_empty_or_failed():
     window.btn_ok.set_sensitive.assert_called_with(False)
 
 
-def test_browsing_a_key_enables_ok():
+def test_browsing_a_key_keeps_ok_disabled():
     window = _make_window()
     window._conn = object()
     window._existing_keys_cache = []
@@ -234,7 +232,7 @@ def test_browsing_a_key_enables_ok():
 
     window._add_browsed_public_key("/home/alice/keys/server.pub")
 
-    window.btn_ok.set_sensitive.assert_called_with(True)
+    window.btn_ok.set_sensitive.assert_not_called()
 
 
 def test_ok_click_does_nothing_while_closed_loading_or_generating(monkeypatch):

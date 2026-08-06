@@ -83,24 +83,41 @@ and compatibility behavior are documented and tested.
   failure envelope, native producer behavior, in-memory/non-resumable scope,
   and ordinary event queue overflow semantics remain intact.
 
-## Implemented, pending phase review
+### Identity providers and authorized-key management
 
-These implementations are present on `dev` but are not declared complete here:
-
-- identity state and provider services, including identity operation producers;
-- authorized-key management and native `ssh-copy-id` deployment as an identity
-  feature phase.
-
-Each requires its own phase review before the frontend-neutral migration status
-changes to completed.
+- **Owner:** `IdentityStateService` for provider selection/environment state and
+  `DaemonIdentityService` for agent inspection/mutation, effective identity
+  resolution, authorized-key operations, authentication preparation, and native
+  key deployment. `SftpServiceRuntime` owns the generic remote/local file
+  session and replacement path used by the full authorized-key editor.
+- **Typed API:** `identity.read`, `identity.write`, and `identity.operate` for
+  provider/state, agent, deployment, and authorized-key methods; existing SFTP
+  capabilities now also expose bounded file-content reads and revision-safe
+  atomic replacement for the editor.
+- **GTK ownership removed:** GTK no longer invokes `ssh-add`, `ssh-copy-id`,
+  `ssh-keygen`, `ssh`, or SFTP backends for these workflows; it presents daemon
+  DTOs, stages authorized-key documents, confirms mutations, and renders typed
+  operation/interactions. Local and remote authorized-key file I/O, backups,
+  temporary files, atomic replacement, and permissions are daemon-owned.
+- **Compatibility retained:** SSH `Host` aliases, native `ssh -G`, `ssh-add`,
+  `ssh-keygen`, `ssh-copy-id`, and the existing OpenSSH SFTP client remain the
+  implementation sources of truth. Legacy provider/file-manager adapters may
+  remain for unrelated compatibility routes but are not selected by the normal
+  daemon-backed identity UI. Unsupported capabilities never trigger a local
+  fallback.
+- **Security:** identity DTOs contain metadata and bounded public/document text
+  only. Private keys, passphrases, passwords, askpass answers, secret records,
+  agent protocol handles, and process environments stay in daemon-owned key,
+  interaction, and secret-provider paths.
 
 ## Planned
 
-- Authorized-key management and native `ssh-copy-id` deployment.
-- SCP path-to-path operations using native `scp`.
-- Browser transfer streaming through the existing SFTP infrastructure.
-- Broadcast and remote-command execution through native `ssh`.
-- Final frontend-boundary closure and a functional CLI/reference client.
+- Remote operations: SCP, SFTP transfer ownership, and broadcast/remote-command
+  execution through native OpenSSH.
+- Architecture governance: contributor rules and CI guardrails that reject new
+  UI-owned operational features, API bypasses, and unnecessary reimplementations.
+- Frontend closure: remaining unrelated frontend backend debt, a reference CLI,
+  and the final architecture/security audit.
 
 ## Native-first rules
 

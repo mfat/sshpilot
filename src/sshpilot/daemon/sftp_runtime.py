@@ -20,7 +20,10 @@ trust path is introduced.
 from __future__ import annotations
 
 import errno
+import hashlib
 import logging
+import os
+import posixpath
 import stat as stat_module
 import subprocess
 import threading
@@ -55,8 +58,13 @@ from sshpilot.api.models.operations import (
     RemoteFileType,
     ServiceFailure,
     SftpChmodRequest,
+    SftpFileTarget,
     SftpPathRequest,
+    SftpReadFileRequest,
+    SftpReadFileResult,
     SftpRenameRequest,
+    SftpReplaceFileRequest,
+    SftpReplaceFileResult,
     SftpServiceState,
     SftpServiceSummary,
     SftpSymlinkRequest,
@@ -77,8 +85,37 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RETAINED_CLOSED_SERVICES = 50
 DEFAULT_LIST_LIMIT = 2000
+DEFAULT_MAX_FILE_BYTES = 1024 * 1024
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_TERMINATE_GRACE_SECONDS = 2.0
+_LOCAL_AUTHORIZED_KEYS_MARKER = "~/.ssh/authorized_keys"
+
+
+def _file_revision(content: bytes, exists: bool) -> str:
+    if not exists:
+        return "absent"
+    return hashlib.sha256(content).hexdigest()
+
+
+def _read_local_authorized_keys() -> tuple[str, bytes, int | None]:
+    path = os.path.expanduser(_LOCAL_AUTHORIZED_KEYS_MARKER)
+    try:
+        with open(path, "rb") as handle:
+            content = handle.read(DEFAULT_MAX_FILE_BYTES + 1)
+        mode = os.stat(path).st_mode & 0o7777
+    except FileNotFoundError:
+        return path, b"", None
+    except OSError as exc:
+        raise SshPilotError(
+            ErrorCode.REMOTE_PERMISSION_DENIED,
+            "The local authorized_keys file could not be read",
+        ) from exc
+    if len(content) > DEFAULT_MAX_FILE_BYTES:
+        raise SshPilotError(
+            ErrorCode.FILE_CONTENT_TOO_LARGE,
+            "The authorized_keys file is too large",
+        )
+    return path, content, mode
 
 
 class SftpProcessHandle(Protocol):
@@ -711,6 +748,246 @@ class SftpServiceRuntime:
             self._runner.close()
         finally:
             self._publisher.close()
+
+    # -- bounded file content operations ----------------------------------
+    def read_file(
+        self,
+        request: SftpReadFileRequest,
+        *,
+        client_id: ClientId,
+    ) -> SftpReadFileResult:
+        if type(request) is not SftpReadFileRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP read file request is required")
+        if request.target is SftpFileTarget.LOCAL_AUTHORIZED_KEYS:
+            if request.path != _LOCAL_AUTHORIZED_KEYS_MARKER:
+                raise SshPilotError(ErrorCode.INVALID_REQUEST, "Only the local authorized_keys target is supported")
+            path, content, mode = _read_local_authorized_keys()
+            return SftpReadFileResult(
+                target=request.target,
+                path=path,
+                content=content.decode("utf-8", errors="replace"),
+                exists=mode is not None,
+                revision=_file_revision(content, mode is not None),
+                size=len(content),
+                mode=mode,
+            )
+        record = self._ready_record_for_read(request.service_id, client_id)
+        path = _validate_path(request.path)
+        client = record.handle.client
+        try:
+            attr = client.stat(path)
+            if not stat_module.S_ISREG(attr.st_mode or 0):
+                raise SshPilotError(
+                    ErrorCode.REMOTE_IS_DIRECTORY,
+                    "The requested remote path is not a regular file",
+                    connection_id=record.connection_id,
+                )
+            if attr.st_size is not None and attr.st_size > DEFAULT_MAX_FILE_BYTES:
+                raise SshPilotError(
+                    ErrorCode.FILE_CONTENT_TOO_LARGE,
+                    "The remote file is too large",
+                    connection_id=record.connection_id,
+                )
+            with client.file(path, "rb") as handle:
+                content = handle.read(DEFAULT_MAX_FILE_BYTES + 1)
+        except SshPilotError:
+            raise
+        except Exception as exc:
+            if getattr(exc, "errno", None) == errno.ENOENT:
+                content = b""
+                return SftpReadFileResult(
+                    target=request.target,
+                    path=path,
+                    content="",
+                    exists=False,
+                    revision=_file_revision(content, False),
+                    size=0,
+                    mode=None,
+                )
+            raise self._map_error(exc, record) from exc
+        if len(content) > DEFAULT_MAX_FILE_BYTES:
+            raise SshPilotError(
+                ErrorCode.FILE_CONTENT_TOO_LARGE,
+                "The remote file is too large",
+                connection_id=record.connection_id,
+            )
+        mode = (attr.st_mode & 0o7777) if attr.st_mode else None
+        return SftpReadFileResult(
+            target=request.target,
+            path=path,
+            content=content.decode("utf-8", errors="replace"),
+            exists=True,
+            revision=_file_revision(content, True),
+            size=len(content),
+            mode=mode,
+        )
+
+    def replace_file(
+        self,
+        request: SftpReplaceFileRequest,
+        *,
+        client_id: ClientId,
+    ) -> SftpReplaceFileResult:
+        if type(request) is not SftpReplaceFileRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP replace file request is required")
+        payload = request.content.encode("utf-8")
+        if len(payload) > DEFAULT_MAX_FILE_BYTES:
+            raise SshPilotError(ErrorCode.FILE_CONTENT_TOO_LARGE, "The replacement file is too large")
+        if request.target is SftpFileTarget.LOCAL_AUTHORIZED_KEYS:
+            if request.path != _LOCAL_AUTHORIZED_KEYS_MARKER:
+                raise SshPilotError(ErrorCode.INVALID_REQUEST, "Only the local authorized_keys target is supported")
+            return self._replace_local_authorized_keys(request, payload)
+        record = self._ready_record_for_mutation(request.service_id, client_id)
+        path = _validate_path(request.path)
+        client = record.handle.client
+        try:
+            current = self._read_remote_bytes(client, path)
+            current_content, current_mode = current
+            current_revision = _file_revision(current_content, current_mode is not None)
+            if current_revision != request.expected_revision:
+                raise SshPilotError(
+                    ErrorCode.FILE_REVISION_CONFLICT,
+                    "The remote file changed since it was read",
+                    connection_id=record.connection_id,
+                )
+            parent = posixpath.dirname(path)
+            if parent:
+                try:
+                    client.mkdir(parent, 0o700)
+                except Exception as exc:
+                    if getattr(exc, "errno", None) not in (errno.EEXIST, errno.EISDIR):
+                        raise self._map_error(exc, record) from exc
+                try:
+                    client.chmod(parent, 0o700)
+                except Exception:
+                    logger.debug("Could not enforce remote directory mode", exc_info=True)
+            backup_path = None
+            if request.backup and current_mode is not None:
+                backup_path = f"{path}.bak-{time.time_ns()}"
+                try:
+                    self._write_remote_bytes(client, backup_path, current_content, 0o600)
+                except Exception as exc:
+                    raise SshPilotError(
+                        ErrorCode.FILE_BACKUP_FAILED,
+                        "The remote file backup could not be created",
+                        connection_id=record.connection_id,
+                    ) from exc
+            temporary = f"{path}.sshpilot.tmp-{time.time_ns()}"
+            try:
+                self._write_remote_bytes(client, temporary, payload, 0o600)
+                try:
+                    client.posix_rename(temporary, path)
+                except Exception:
+                    try:
+                        client.remove(path)
+                    except Exception:
+                        pass
+                    client.rename(temporary, path)
+                try:
+                    client.chmod(path, 0o600)
+                except Exception:
+                    logger.debug("Could not enforce remote file mode", exc_info=True)
+            except SshPilotError:
+                raise
+            except Exception as exc:
+                try:
+                    client.remove(temporary)
+                except Exception:
+                    pass
+                raise SshPilotError(
+                    ErrorCode.FILE_REPLACEMENT_FAILED,
+                    "The remote file could not be replaced",
+                    connection_id=record.connection_id,
+                ) from exc
+            return SftpReplaceFileResult(
+                target=request.target,
+                path=path,
+                revision=_file_revision(payload, True),
+                size=len(payload),
+                backup_path=backup_path,
+            )
+        except SshPilotError:
+            raise
+        except Exception as exc:
+            raise self._map_error(exc, record) from exc
+
+    @staticmethod
+    def _read_remote_bytes(client: OpenSSHSFTPClient, path: str) -> tuple[bytes, int | None]:
+        try:
+            attr = client.stat(path)
+        except Exception as exc:
+            if getattr(exc, "errno", None) == errno.ENOENT:
+                return b"", None
+            raise
+        if not stat_module.S_ISREG(attr.st_mode or 0):
+            raise SshPilotError(ErrorCode.REMOTE_IS_DIRECTORY, "The remote path is not a regular file")
+        if attr.st_size is not None and attr.st_size > DEFAULT_MAX_FILE_BYTES:
+            raise SshPilotError(ErrorCode.FILE_CONTENT_TOO_LARGE, "The remote file is too large")
+        with client.file(path, "rb") as handle:
+            content = handle.read(DEFAULT_MAX_FILE_BYTES + 1)
+        if len(content) > DEFAULT_MAX_FILE_BYTES:
+            raise SshPilotError(ErrorCode.FILE_CONTENT_TOO_LARGE, "The remote file is too large")
+        return content, ((attr.st_mode or 0) & 0o7777)
+
+    @staticmethod
+    def _write_remote_bytes(client: OpenSSHSFTPClient, path: str, content: bytes, mode: int) -> None:
+        with client.file(path, "wb") as handle:
+            client.chmod(path, mode)
+            handle.write(content)
+        client.chmod(path, mode)
+
+    @staticmethod
+    def _replace_local_authorized_keys(
+        request: SftpReplaceFileRequest,
+        payload: bytes,
+    ) -> SftpReplaceFileResult:
+        path, current, mode = _read_local_authorized_keys()
+        current_revision = _file_revision(current, mode is not None)
+        if current_revision != request.expected_revision:
+            raise SshPilotError(
+                ErrorCode.FILE_REVISION_CONFLICT,
+                "The local authorized_keys file changed since it was read",
+            )
+        directory = os.path.dirname(path)
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+        backup_path = None
+        if request.backup and mode is not None:
+            backup_path = f"{path}.bak-{time.time_ns()}"
+            try:
+                with open(backup_path, "wb") as handle:
+                    handle.write(current)
+                os.chmod(backup_path, 0o600)
+            except OSError as exc:
+                raise SshPilotError(
+                    ErrorCode.FILE_BACKUP_FAILED,
+                    "The local authorized_keys backup could not be created",
+                ) from exc
+        temporary = f"{path}.sshpilot.tmp-{time.time_ns()}"
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, payload)
+            finally:
+                os.close(fd)
+            os.replace(temporary, path)
+            os.chmod(path, 0o600)
+        except OSError as exc:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise SshPilotError(
+                ErrorCode.FILE_REPLACEMENT_FAILED,
+                "The local authorized_keys file could not be replaced",
+            ) from exc
+        return SftpReplaceFileResult(
+            target=request.target,
+            path=path,
+            revision=_file_revision(payload, True),
+            size=len(payload),
+            backup_path=backup_path,
+        )
 
     # -- remote filesystem operations -------------------------------------
     def list_directory(

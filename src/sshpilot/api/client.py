@@ -115,7 +115,11 @@ from .models.operations import (
     RemoteFileEntry,
     SftpChmodRequest,
     SftpPathRequest,
+    SftpReadFileRequest,
+    SftpReadFileResult,
     SftpRenameRequest,
+    SftpReplaceFileRequest,
+    SftpReplaceFileResult,
     SftpServiceSummary,
     SftpSymlinkRequest,
 )
@@ -359,6 +363,12 @@ class SshPilotClient(Protocol):
         ...
 
     def sftp_readlink(self, request: SftpPathRequest) -> str:
+        ...
+
+    def sftp_read_file(self, request: SftpReadFileRequest) -> SftpReadFileResult:
+        ...
+
+    def sftp_replace_file(self, request: SftpReplaceFileRequest) -> SftpReplaceFileResult:
         ...
 
     def sftp_mkdir(self, request: SftpPathRequest) -> None:

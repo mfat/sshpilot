@@ -230,6 +230,107 @@ class SftpPathRequest:
             raise ValueError("SFTP path must not contain NUL")
 
 
+class SftpFileTarget(str, Enum):
+    REMOTE = "remote"
+    LOCAL_AUTHORIZED_KEYS = "local_authorized_keys"
+
+
+@dataclass(frozen=True)
+class SftpReadFileRequest:
+    target: SftpFileTarget
+    path: str
+    service_id: Optional[SftpServiceId] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, SftpFileTarget):
+            raise TypeError("SFTP file target must be a SftpFileTarget")
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP file path must be a non-empty safe string")
+        if self.target is SftpFileTarget.REMOTE and self.service_id is None:
+            raise ValueError("remote file reads require an SFTP service")
+        if self.target is SftpFileTarget.LOCAL_AUTHORIZED_KEYS:
+            if self.service_id is not None:
+                raise ValueError("local authorized_keys reads must not include an SFTP service")
+            if self.path != "~/.ssh/authorized_keys":
+                raise ValueError("only the local authorized_keys target is supported")
+
+
+@dataclass(frozen=True)
+class SftpReadFileResult:
+    target: SftpFileTarget
+    path: str
+    content: str
+    exists: bool
+    revision: str
+    size: int
+    mode: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, SftpFileTarget):
+            raise TypeError("SFTP file target must be a SftpFileTarget")
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP file result path must be safe")
+        if type(self.content) is not str:
+            raise TypeError("SFTP file content must be text")
+        if type(self.exists) is not bool:
+            raise TypeError("SFTP file exists must be a boolean")
+        require_identifier(self.revision, "file revision")
+        if type(self.size) is not int or self.size < 0:
+            raise ValueError("SFTP file size must be non-negative")
+        if self.mode is not None and (type(self.mode) is not int or self.mode < 0):
+            raise ValueError("SFTP file mode must be non-negative or None")
+        if not self.exists and (self.content or self.size or self.mode is not None):
+            raise ValueError("missing files must not carry content or metadata")
+
+
+@dataclass(frozen=True)
+class SftpReplaceFileRequest:
+    target: SftpFileTarget
+    path: str
+    content: str
+    expected_revision: str
+    backup: bool = True
+    service_id: Optional[SftpServiceId] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, SftpFileTarget):
+            raise TypeError("SFTP file target must be a SftpFileTarget")
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP file path must be a non-empty safe string")
+        if type(self.content) is not str or "\x00" in self.content:
+            raise ValueError("SFTP file content must be safe text")
+        require_identifier(self.expected_revision, "expected file revision")
+        if type(self.backup) is not bool:
+            raise TypeError("SFTP file backup must be a boolean")
+        if self.target is SftpFileTarget.REMOTE and self.service_id is None:
+            raise ValueError("remote file replacements require an SFTP service")
+        if self.target is SftpFileTarget.LOCAL_AUTHORIZED_KEYS:
+            if self.service_id is not None:
+                raise ValueError("local authorized_keys replacements must not include an SFTP service")
+            if self.path != "~/.ssh/authorized_keys":
+                raise ValueError("only the local authorized_keys target is supported")
+
+
+@dataclass(frozen=True)
+class SftpReplaceFileResult:
+    target: SftpFileTarget
+    path: str
+    revision: str
+    size: int
+    backup_path: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, SftpFileTarget):
+            raise TypeError("SFTP file target must be a SftpFileTarget")
+        if not self.path:
+            raise ValueError("SFTP replacement path must not be empty")
+        require_identifier(self.revision, "new file revision")
+        if type(self.size) is not int or self.size < 0:
+            raise ValueError("SFTP replacement size must be non-negative")
+        if self.backup_path is not None and "\x00" in self.backup_path:
+            raise ValueError("SFTP backup path must not contain NUL")
+
+
 @dataclass(frozen=True)
 class SftpRenameRequest:
     service_id: SftpServiceId

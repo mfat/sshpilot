@@ -148,8 +148,13 @@ from ..models.operations import (
     RemoteFileType,
     ServiceFailure,
     SftpChmodRequest,
+    SftpFileTarget,
     SftpPathRequest,
+    SftpReadFileRequest,
+    SftpReadFileResult,
     SftpRenameRequest,
+    SftpReplaceFileRequest,
+    SftpReplaceFileResult,
     SftpServiceState,
     SftpServiceSummary,
     SftpSymlinkRequest,
@@ -3564,6 +3569,145 @@ def list_directory_result_from_wire(value: Any) -> ListDirectoryResult:
         entries=tuple(remote_file_entry_from_wire(item) for item in entries),
         truncated=_boolean(data["truncated"], "truncated"),
         next_cursor=next_cursor,
+    )
+
+
+def _sftp_file_target_to_wire(target: SftpFileTarget) -> str:
+    if not isinstance(target, SftpFileTarget):
+        raise TypeError("SFTP file target is required")
+    return target.value
+
+
+def _sftp_file_target_from_wire(value: Any) -> SftpFileTarget:
+    try:
+        return SftpFileTarget(_identifier(value, "SFTP file target"))
+    except (TypeError, ValueError):
+        raise ValueError("SFTP file target is unknown") from None
+
+
+def sftp_read_file_request_to_wire(request: SftpReadFileRequest) -> Dict[str, Any]:
+    if type(request) is not SftpReadFileRequest:
+        raise TypeError("SFTP read file request is required")
+    return {
+        "target": _sftp_file_target_to_wire(request.target),
+        "path": request.path,
+        "service_id": request.service_id,
+    }
+
+
+def sftp_read_file_request_from_wire(value: Any) -> SftpReadFileRequest:
+    data = _strict_fields(
+        value,
+        required={"target", "path"},
+        optional={"service_id"},
+        context="SFTP read file request",
+    )
+    service_id = data.get("service_id")
+    return SftpReadFileRequest(
+        target=_sftp_file_target_from_wire(data["target"]),
+        path=_text(data["path"], "SFTP file path"),
+        service_id=(
+            _sftp_service_id(service_id, "SFTP service id")
+            if service_id is not None
+            else None
+        ),
+    )
+
+
+def sftp_read_file_result_to_wire(result: SftpReadFileResult) -> Dict[str, Any]:
+    if type(result) is not SftpReadFileResult:
+        raise TypeError("SFTP read file result is required")
+    return {
+        "target": _sftp_file_target_to_wire(result.target),
+        "path": result.path,
+        "content": result.content,
+        "exists": result.exists,
+        "revision": result.revision,
+        "size": result.size,
+        "mode": result.mode,
+    }
+
+
+def sftp_read_file_result_from_wire(value: Any) -> SftpReadFileResult:
+    data = _strict_fields(
+        value,
+        required={"target", "path", "content", "exists", "revision", "size", "mode"},
+        context="SFTP read file result",
+    )
+    mode = data["mode"]
+    return SftpReadFileResult(
+        target=_sftp_file_target_from_wire(data["target"]),
+        path=_text(data["path"], "SFTP file result path"),
+        content=_text(data["content"], "SFTP file content", allow_empty=True),
+        exists=_boolean(data["exists"], "SFTP file exists"),
+        revision=_identifier(data["revision"], "file revision"),
+        size=_integer(data["size"], "SFTP file size"),
+        mode=None if mode is None else _integer(mode, "SFTP file mode"),
+    )
+
+
+def sftp_replace_file_request_to_wire(request: SftpReplaceFileRequest) -> Dict[str, Any]:
+    if type(request) is not SftpReplaceFileRequest:
+        raise TypeError("SFTP replace file request is required")
+    return {
+        "target": _sftp_file_target_to_wire(request.target),
+        "path": request.path,
+        "content": request.content,
+        "expected_revision": request.expected_revision,
+        "backup": request.backup,
+        "service_id": request.service_id,
+    }
+
+
+def sftp_replace_file_request_from_wire(value: Any) -> SftpReplaceFileRequest:
+    data = _strict_fields(
+        value,
+        required={"target", "path", "content", "expected_revision", "backup"},
+        optional={"service_id"},
+        context="SFTP replace file request",
+    )
+    service_id = data.get("service_id")
+    return SftpReplaceFileRequest(
+        target=_sftp_file_target_from_wire(data["target"]),
+        path=_text(data["path"], "SFTP file path"),
+        content=_text(data["content"], "SFTP file content", allow_empty=True),
+        expected_revision=_identifier(data["expected_revision"], "expected file revision"),
+        backup=_boolean(data["backup"], "SFTP file backup"),
+        service_id=(
+            _sftp_service_id(service_id, "SFTP service id")
+            if service_id is not None
+            else None
+        ),
+    )
+
+
+def sftp_replace_file_result_to_wire(result: SftpReplaceFileResult) -> Dict[str, Any]:
+    if type(result) is not SftpReplaceFileResult:
+        raise TypeError("SFTP replace file result is required")
+    return {
+        "target": _sftp_file_target_to_wire(result.target),
+        "path": result.path,
+        "revision": result.revision,
+        "size": result.size,
+        "backup_path": result.backup_path,
+    }
+
+
+def sftp_replace_file_result_from_wire(value: Any) -> SftpReplaceFileResult:
+    data = _strict_fields(
+        value,
+        required={"target", "path", "revision", "size", "backup_path"},
+        context="SFTP replace file result",
+    )
+    backup_path = data["backup_path"]
+    if backup_path is not None:
+        backup_path = _text(backup_path, "SFTP backup path", allow_empty=False)
+    return SftpReplaceFileResult(
+        target=_sftp_file_target_from_wire(data["target"]),
+        path=_text(data["path"], "SFTP replacement path"),
+        revision=_identifier(data["revision"], "new file revision"),
+        size=_integer(data["size"], "SFTP replacement size"),
+        backup_path=backup_path,
     )
 
 

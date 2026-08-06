@@ -128,10 +128,12 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: sftp_list_directory status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: sftp_lstat status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_mkdir status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_read_file status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: sftp_readlink status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_realpath status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_remove status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_rename status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_replace_file status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_rmdir status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_stat status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_symlink status=daemon-only capability=sftp.mutate -->
@@ -390,10 +392,12 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sftp.lstat capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.mkdir capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.open capability=sftp.write -->
+<!-- api-daemon-method: sftp.read_file capability=sftp.read -->
 <!-- api-daemon-method: sftp.readlink capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.realpath capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.remove capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.rename capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.replace_file capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.rmdir capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.stat capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.symlink capability=sftp.mutate -->
@@ -942,6 +946,20 @@ Resolves a remote path to its absolute form and returns the path string.
 ## `sftp_readlink`
 
 Returns the symlink target string for one remote path.
+
+<!-- api-method: sftp_read_file -->
+## `sftp_read_file`
+
+Daemon-only `sftp.read`. Reads a bounded remote file through a ready SFTP
+service, or the daemon-local `~/.ssh/authorized_keys` target. Returns
+`SftpReadFileResult` with a daemon-computed content revision.
+
+<!-- api-method: sftp_replace_file -->
+## `sftp_replace_file`
+
+Daemon-only `sftp.mutate`. Replaces a bounded remote file (or the daemon-local
+`~/.ssh/authorized_keys` target) with atomic, revision-checked content,
+returning `SftpReplaceFileResult` with a new revision and optional backup path.
 
 <!-- api-method: sftp_mkdir -->
 ## `sftp_mkdir`

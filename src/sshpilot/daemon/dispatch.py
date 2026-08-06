@@ -105,6 +105,10 @@ from sshpilot.api.transport.codec import (
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
     sftp_path_request_from_wire,
+    sftp_read_file_request_from_wire,
+    sftp_read_file_result_to_wire,
+    sftp_replace_file_request_from_wire,
+    sftp_replace_file_result_to_wire,
     sftp_rename_request_from_wire,
     sftp_service_summary_to_wire,
     sftp_symlink_request_from_wire,
@@ -194,6 +198,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.lstat": Capability.SFTP_METADATA,
     "sftp.realpath": Capability.SFTP_METADATA,
     "sftp.readlink": Capability.SFTP_METADATA,
+    "sftp.read_file": Capability.SFTP_READ,
+    "sftp.replace_file": Capability.SFTP_MUTATE,
     "sftp.mkdir": Capability.SFTP_MUTATE,
     "sftp.rmdir": Capability.SFTP_MUTATE,
     "sftp.rename": Capability.SFTP_MUTATE,
@@ -612,6 +618,8 @@ class RequestDispatcher:
             "sftp.lstat": self._handle_sftp_lstat,
             "sftp.realpath": self._handle_sftp_realpath,
             "sftp.readlink": self._handle_sftp_readlink,
+            "sftp.read_file": self._handle_sftp_read_file,
+            "sftp.replace_file": self._handle_sftp_replace_file,
             "sftp.mkdir": self._handle_sftp_mkdir,
             "sftp.rmdir": self._handle_sftp_rmdir,
             "sftp.rename": self._handle_sftp_rename,
@@ -1800,6 +1808,40 @@ class RequestDispatcher:
                 "path": runtime.readlink(path_request, client_id=client_id)
             },
             command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_read_file(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        file_request = sftp_read_file_request_from_wire(request.params)
+        command_key = file_request.service_id or "local-authorized-keys"
+        return DeferredResult(
+            operation=lambda: sftp_read_file_result_to_wire(
+                runtime.read_file(file_request, client_id=client_id)
+            ),
+            command_key=command_key,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_replace_file(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        file_request = sftp_replace_file_request_from_wire(request.params)
+        command_key = file_request.service_id or "local-authorized-keys"
+        return DeferredResult(
+            operation=lambda: sftp_replace_file_result_to_wire(
+                runtime.replace_file(file_request, client_id=client_id)
+            ),
+            command_key=command_key,
             on_rejected=lambda: None,
         )
 

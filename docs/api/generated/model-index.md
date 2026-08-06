@@ -3201,6 +3201,66 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpReadFileRequest -->
+## `SftpReadFileRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** SftpReadFileRequest(target: 'SftpFileTarget', path: 'str', service_id: 'Optional[SftpServiceId]' = None)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `target` | `SftpFileTarget` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+| `service_id` | `Optional[SftpServiceId]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "path": "/remote/example",
+  "service_id": null,
+  "target": {}
+}
+```
+
+<!-- api-model: SftpReadFileResult -->
+## `SftpReadFileResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** SftpReadFileResult(target: 'SftpFileTarget', path: 'str', content: 'str', exists: 'bool', revision: 'str', size: 'int', mode: 'Optional[int]' = None)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `target` | `SftpFileTarget` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+| `content` | `str` | Yes | — | No |
+| `exists` | `bool` | Yes | — | No |
+| `revision` | `str` | Yes | — | No |
+| `size` | `int` | Yes | — | No |
+| `mode` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "content": {},
+  "exists": {},
+  "mode": null,
+  "path": "/remote/example",
+  "revision": {},
+  "size": {},
+  "target": {}
+}
+```
+
 <!-- api-model: SftpRenameRequest -->
 ## `SftpRenameRequest`
 
@@ -3226,6 +3286,68 @@ Synthetic representation:
   "overwrite": false,
   "service_id": {},
   "source_path": {}
+}
+```
+
+<!-- api-model: SftpReplaceFileRequest -->
+## `SftpReplaceFileRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** SftpReplaceFileRequest(target: 'SftpFileTarget', path: 'str', content: 'str', expected_revision: 'str', backup: 'bool' = True, service_id: 'Optional[SftpServiceId]' = None)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `target` | `SftpFileTarget` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+| `content` | `str` | Yes | — | No |
+| `expected_revision` | `str` | Yes | — | No |
+| `backup` | `bool` | No | `true` | No |
+| `service_id` | `Optional[SftpServiceId]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "backup": true,
+  "content": {},
+  "expected_revision": {},
+  "path": "/remote/example",
+  "service_id": null,
+  "target": {}
+}
+```
+
+<!-- api-model: SftpReplaceFileResult -->
+## `SftpReplaceFileResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** SftpReplaceFileResult(target: 'SftpFileTarget', path: 'str', revision: 'str', size: 'int', backup_path: 'Optional[str]' = None)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `target` | `SftpFileTarget` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+| `revision` | `str` | Yes | — | No |
+| `size` | `int` | Yes | — | No |
+| `backup_path` | `Optional[str]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "backup_path": null,
+  "path": "/remote/example",
+  "revision": {},
+  "size": {},
+  "target": {}
 }
 ```
 

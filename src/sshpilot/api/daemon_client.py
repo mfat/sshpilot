@@ -95,7 +95,11 @@ from .models.operations import (
     RemoteFileEntry,
     SftpChmodRequest,
     SftpPathRequest,
+    SftpReadFileRequest,
+    SftpReadFileResult,
     SftpRenameRequest,
+    SftpReplaceFileRequest,
+    SftpReplaceFileResult,
     SftpServiceSummary,
     SftpSymlinkRequest,
 )
@@ -190,7 +194,11 @@ from .transport.codec import (
     session_summary_from_wire,
     sftp_chmod_request_to_wire,
     sftp_path_request_to_wire,
+    sftp_read_file_request_to_wire,
+    sftp_replace_file_request_to_wire,
     sftp_rename_request_to_wire,
+    sftp_read_file_result_from_wire,
+    sftp_replace_file_result_from_wire,
     sftp_service_summary_from_wire,
     sftp_symlink_request_to_wire,
     start_transfer_request_to_wire,
@@ -283,6 +291,8 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_lstat": Capability.SFTP_METADATA,
     "sftp_realpath": Capability.SFTP_METADATA,
     "sftp_readlink": Capability.SFTP_METADATA,
+    "sftp_read_file": Capability.SFTP_READ,
+    "sftp_replace_file": Capability.SFTP_MUTATE,
     "sftp_mkdir": Capability.SFTP_MUTATE,
     "sftp_rmdir": Capability.SFTP_MUTATE,
     "sftp_remove": Capability.SFTP_MUTATE,
@@ -1114,6 +1124,25 @@ class DaemonClient:
         if type(result) is not dict or type(result.get("path")) is not str:
             self._fail_protocol("The daemon returned an invalid readlink result")
         return result["path"]
+
+    def sftp_read_file(self, request: SftpReadFileRequest) -> SftpReadFileResult:
+        self._require_capability(Capability.SFTP_READ)
+        result = self._request("sftp.read_file", sftp_read_file_request_to_wire(request))
+        try:
+            return sftp_read_file_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid file read result")
+
+    def sftp_replace_file(self, request: SftpReplaceFileRequest) -> SftpReplaceFileResult:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request(
+            "sftp.replace_file",
+            sftp_replace_file_request_to_wire(request),
+        )
+        try:
+            return sftp_replace_file_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid file replacement result")
 
     def sftp_mkdir(self, request: SftpPathRequest) -> None:
         self._require_capability(Capability.SFTP_MUTATE)

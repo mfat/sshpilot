@@ -474,6 +474,10 @@
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
+    "sftp_read_file": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
     "sftp_readlink": {
       "capability": "sftp.metadata",
       "status": "daemon-only"
@@ -487,6 +491,10 @@
       "status": "daemon-only"
     },
     "sftp_rename": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_replace_file": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
@@ -675,10 +683,12 @@
     "sftp_list_directory",
     "sftp_lstat",
     "sftp_mkdir",
+    "sftp_read_file",
     "sftp_readlink",
     "sftp_realpath",
     "sftp_remove",
     "sftp_rename",
+    "sftp_replace_file",
     "sftp_rmdir",
     "sftp_stat",
     "sftp_symlink",
@@ -1711,6 +1721,16 @@
       ],
       "return": "None"
     },
+    "sftp_read_file": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpReadFileRequest"
+        }
+      ],
+      "return": "SftpReadFileResult"
+    },
     "sftp_readlink": {
       "parameters": [
         {
@@ -1750,6 +1770,16 @@
         }
       ],
       "return": "None"
+    },
+    "sftp_replace_file": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpReplaceFileRequest"
+        }
+      ],
+      "return": "SftpReplaceFileResult"
     },
     "sftp_rmdir": {
       "parameters": [
@@ -2307,6 +2337,9 @@
     "sftp.open": {
       "capability": "sftp.write"
     },
+    "sftp.read_file": {
+      "capability": "sftp.read"
+    },
     "sftp.readlink": {
       "capability": "sftp.metadata"
     },
@@ -2317,6 +2350,9 @@
       "capability": "sftp.mutate"
     },
     "sftp.rename": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.replace_file": {
       "capability": "sftp.mutate"
     },
     "sftp.rmdir": {
@@ -2380,6 +2416,10 @@
     "daemon_restart_required",
     "daemon_shutting_down",
     "daemon_unavailable",
+    "file_backup_failed",
+    "file_content_too_large",
+    "file_replacement_failed",
+    "file_revision_conflict",
     "forward_bind_failed",
     "forward_destination_invalid",
     "forward_not_active",
@@ -2663,8 +2703,13 @@
     "SetGroupColorRequest",
     "SftpChmodRequest",
     "SftpEntry",
+    "SftpFileTarget",
     "SftpPathRequest",
+    "SftpReadFileRequest",
+    "SftpReadFileResult",
     "SftpRenameRequest",
+    "SftpReplaceFileRequest",
+    "SftpReplaceFileResult",
     "SftpServiceId",
     "SftpServiceState",
     "SftpServiceSummary",
@@ -3396,11 +3441,40 @@
       "service_id",
       "path"
     ],
+    "SftpReadFileRequest": [
+      "target",
+      "path",
+      "service_id"
+    ],
+    "SftpReadFileResult": [
+      "target",
+      "path",
+      "content",
+      "exists",
+      "revision",
+      "size",
+      "mode"
+    ],
     "SftpRenameRequest": [
       "service_id",
       "source_path",
       "destination_path",
       "overwrite"
+    ],
+    "SftpReplaceFileRequest": [
+      "target",
+      "path",
+      "content",
+      "expected_revision",
+      "backup",
+      "service_id"
+    ],
+    "SftpReplaceFileResult": [
+      "target",
+      "path",
+      "revision",
+      "size",
+      "backup_path"
     ],
     "SftpServiceSummary": [
       "id",
@@ -3664,6 +3738,10 @@
       "remote_is_directory",
       "remote_directory_not_empty",
       "remote_unsupported_operation",
+      "file_content_too_large",
+      "file_revision_conflict",
+      "file_replacement_failed",
+      "file_backup_failed",
       "transfer_not_found",
       "transfer_conflict",
       "transfer_cancelled",
@@ -3835,6 +3913,10 @@
       "exited",
       "failed",
       "closed"
+    ],
+    "SftpFileTarget": [
+      "remote",
+      "local_authorized_keys"
     ],
     "SftpServiceState": [
       "created",

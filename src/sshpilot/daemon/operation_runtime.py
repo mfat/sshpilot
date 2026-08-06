@@ -15,6 +15,8 @@ the shared ``EventPublisher`` so frontends observe ``operation.created`` /
 from __future__ import annotations
 
 import logging
+import os
+import signal
 import threading
 import time
 from collections import OrderedDict, deque
@@ -575,6 +577,12 @@ class OperationRuntime:
 
     @staticmethod
     def _terminate_process(process: object) -> None:
+        if getattr(process, "_sshpilot_process_group", False):
+            try:
+                pid = int(getattr(process, "pid"))
+                os.killpg(pid, signal.SIGTERM)
+            except Exception:
+                logger.debug("operation process-group terminate failed", exc_info=True)
         try:
             process.terminate()  # type: ignore[attr-defined]
         except Exception:
@@ -582,6 +590,12 @@ class OperationRuntime:
         try:
             process.wait(timeout=2.0)  # type: ignore[attr-defined]
         except Exception:
+            if getattr(process, "_sshpilot_process_group", False):
+                try:
+                    pid = int(getattr(process, "pid"))
+                    os.killpg(pid, signal.SIGKILL)
+                except Exception:
+                    logger.debug("operation process-group kill failed", exc_info=True)
             try:
                 process.kill()  # type: ignore[attr-defined]
             except Exception:

@@ -5864,89 +5864,46 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
 
     def on_manage_local_authorized_keys_action(self, action, param=None):
-        """Open the structured editor on the local user's ~/.ssh/authorized_keys."""
-        try:
-            from .authorized_keys_window import AuthorizedKeysWindow
-        except Exception as exc:
-            logger.error("authorized_keys editor unavailable: %s", exc)
+        """Open the daemon-owned local authorized_keys editor."""
+        if self.client is None:
+            logger.debug("Local authorized_keys editor requires the daemon")
             return
         try:
+            from .authorized_keys_window import AuthorizedKeysWindow
             window = AuthorizedKeysWindow(
                 parent=self,
-                local_path="~/.ssh/authorized_keys",
-                connection_manager=self.connection_manager,
-                key_manager=getattr(self, 'key_manager', None),
+                client=self.client,
+                local=True,
+                key_manager=getattr(self, "key_manager", None),
             )
             window.present()
         except Exception as exc:
-            logger.error("Failed to open local authorized_keys editor: %s", exc)
+            logger.error("Failed to open local authorized_keys editor: %s", type(exc).__name__)
 
     def on_manage_authorized_keys_action(self, action, param=None):
-        """Open the structured authorized_keys editor for the right-clicked connection."""
-        if not (hasattr(self, '_context_menu_connection') and self._context_menu_connection):
+        """Open the daemon-owned authorized_keys editor for the selected connection."""
+        if self.client is None:
             return
-        connection = self._context_menu_connection
+        connection = getattr(self, "_context_menu_connection", None)
+        if connection is None:
+            return
         if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
-            logger.debug("authorized_keys editor unavailable: protocol %r has no key deployment",
-                         getattr(connection, 'protocol', 'ssh'))
             return
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
-            from .file_manager import create_file_manager_backend
-        except Exception as exc:
-            logger.error("authorized_keys editor unavailable: %s", exc)
-            return
-
-        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        username = getattr(connection, 'username', '') or ''
-        port_value = getattr(connection, 'port', 22) or 22
-
-        ssh_config = None
-        if hasattr(self, 'config') and self.config is not None:
-            try:
-                ssh_config = self.config.get_ssh_config()
-            except Exception as exc:
-                logger.debug("Failed to read SSH configuration for authorized_keys editor: %s", exc)
-                ssh_config = None
-
-        initial_password = getattr(connection, 'password', None) or None
-
-        connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
-
-        try:
-            manager = create_file_manager_backend(
-                str(host_value or ''),
-                str(username or ''),
-                int(port_value),
-                password=initial_password,
-                connection=connection,
-                connection_manager=self.connection_manager,
-                ssh_config=ssh_config,
-                daemon_client=getattr(self, "client", None),
-                bridge=getattr(self, "client_bridge", None),
-                connection_id=connection_id,
-                parent_widget=self,
-                config=getattr(self, "config", None),
-            )
-        except Exception as exc:
-            logger.error("Failed to create SFTP manager for authorized_keys: %s", exc)
-            return
-
-        try:
+            from .api.models.operations import OpenSftpRequest
+            from .api.connection_identity import connection_id_for
+            service = self.client.open_sftp(OpenSftpRequest(connection_id=connection_id_for(connection)))
             window = AuthorizedKeysWindow(
                 parent=self,
+                client=self.client,
+                service_id=service.id,
                 connection=connection,
-                sftp_manager=manager,
-                connection_manager=self.connection_manager,
-                key_manager=getattr(self, 'key_manager', None),
+                key_manager=getattr(self, "key_manager", None),
             )
             window.present()
         except Exception as exc:
-            logger.error("Failed to open authorized_keys editor: %s", exc)
-            try:
-                manager.close()
-            except Exception:
-                pass
+            logger.error("Failed to open authorized_keys editor: %s", type(exc).__name__)
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""

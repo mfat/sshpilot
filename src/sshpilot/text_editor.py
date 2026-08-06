@@ -146,6 +146,7 @@ class RemoteFileEditorWindow(Adw.Window):
         file_name: str,
         is_local: bool = False,
         sftp_manager: Optional[Any] = None,
+        daemon_file_service: Optional[Any] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
         pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
         on_local_saved: Optional[Callable[[], None]] = None,
@@ -163,6 +164,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._file_name = file_name
         self._title_text = file_name  # overridable base title (see set_editor_title)
         self._sftp_manager = sftp_manager
+        self._daemon_file_service = daemon_file_service
         self._file_manager_window = file_manager_window
         # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
         # error string to block the save, or None to allow it.
@@ -725,16 +727,30 @@ class RemoteFileEditorWindow(Adw.Window):
             pass
     
     def _download_and_load(self) -> None:
-        """Download the remote file and load it into the editor."""
+        """Load remote content through the typed daemon file provider."""
+        if self._daemon_file_service is not None:
+            def daemon_complete(future: Future) -> None:
+                try:
+                    result = future.result()
+                    self._daemon_file_revision = result.revision
+                    self._temp_file.write_text(result.content, encoding="utf-8")
+                    GLib.idle_add(self._load_file_content)
+                except Exception as e:
+                    logger.error("Failed to read daemon file for editing", exc_info=True)
+                    GLib.idle_add(self._on_remote_load_error, str(e))
+
+            future = self._daemon_file_service.load()
+            future.add_done_callback(daemon_complete)
+            return
+
         def download_complete(future: Future) -> None:
             try:
-                future.result()  # Wait for download to complete
+                future.result()
                 GLib.idle_add(self._load_file_content)
             except Exception as e:
                 logger.error(f"Failed to download file for editing: {e}", exc_info=True)
                 GLib.idle_add(self._on_remote_load_error, str(e))
-        
-        # Download file (use _file_path which contains the remote path for remote files)
+
         future = self._sftp_manager.download(self._file_path, self._temp_file)
         future.add_done_callback(download_complete)
     
@@ -1022,10 +1038,29 @@ class RemoteFileEditorWindow(Adw.Window):
             self._show_error(f"Failed to save file: {e}")
             return
         
+        if self._daemon_file_service is not None:
+            self._save_daemon_file(text)
+            return
+
         # For remote files, upload after saving
         if not self._is_local:
             self._upload_file()
     
+    def _save_daemon_file(self, text: str) -> None:
+        self._show_toast("Saving…", timeout=-1)
+        self._save_button.set_sensitive(False)
+
+        def complete(future: Future) -> None:
+            try:
+                result = future.result()
+                self._daemon_file_revision = result.revision
+                GLib.idle_add(self._on_upload_success)
+            except Exception as e:
+                GLib.idle_add(self._on_upload_error, str(e))
+
+        future = self._daemon_file_service.save_text(text, make_backup=True)
+        future.add_done_callback(complete)
+
     def _upload_file(self) -> None:
         """Upload the modified file back to the remote server."""
         if self._root_mode:

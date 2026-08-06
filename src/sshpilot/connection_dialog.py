@@ -6,7 +6,6 @@ Dialog for adding/editing SSH connections
 import os
 import logging
 import re
-import subprocess
 import threading
 import types
 from typing import Optional, Dict, Any
@@ -41,7 +40,7 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
 
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
-from .platform_utils import is_macos, get_ssh_dir, get_config_dir
+from .platform_utils import is_macos, get_ssh_dir
 from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
@@ -1771,59 +1770,23 @@ class ConnectionDialog(
 
     # ---- discovery / browse for the key & certificate FileListEditors -------
     def _agent_keys(self):
-        """List of (raw_line, blob, key_type, comment) for keys in ssh-agent."""
-        keys = []
+        """Return safe metadata for keys loaded in the daemon-selected agent."""
+        parent = self.get_transient_for()
+        client = getattr(parent, "client", None)
+        if client is None:
+            return []
         try:
-            result = subprocess.run(
-                ['ssh-add', '-L'], capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        comment = parts[2] if len(parts) >= 3 else ''
-                        keys.append((line.strip(), parts[1], parts[0], comment))
+            return [
+                (key.fingerprint, key.fingerprint, key.key_type, key.comment)
+                for key in client.list_agent_keys().keys
+            ]
         except Exception:
-            logger.debug("ssh-add -L unavailable", exc_info=True)
-        return keys
+            logger.debug("daemon agent listing unavailable", exc_info=True)
+            return []
 
     def _make_agent_materializer(self, raw_line):
-        return lambda: self._materialize_agent_pubkey(raw_line)
-
-    def _materialize_agent_pubkey(self, raw_line):
-        """Write an agent key's public key to the app config dir and return its path.
-
-        Referencing that .pub as IdentityFile makes ssh use the agent's matching
-        private key — the standard way to pin an agent-held key with no local
-        private key file. Stored under the app's own config directory (keeping
-        ~/.ssh untouched). Idempotent (named by comment + key-blob hash).
-        """
-        import hashlib
-        parts = raw_line.split()
-        if len(parts) < 2:
-            return ''
-        blob = parts[1]
-        comment = parts[2] if len(parts) >= 3 else ''
-        base = re.sub(r'[^A-Za-z0-9._-]+', '_', comment).strip('_') or 'agent'
-        digest = hashlib.sha256(blob.encode()).hexdigest()[:8]
-        try:
-            agent_dir = os.path.join(get_config_dir(), 'agent_keys')
-            os.makedirs(agent_dir, exist_ok=True)
-        except Exception:
-            return ''
-        path = os.path.join(agent_dir, f"{base}-{digest}.pub")
-        try:
-            if not os.path.exists(path):
-                with open(path, 'w') as f:
-                    f.write(raw_line.strip() + "\n")
-                try:
-                    os.chmod(path, 0o644)
-                except Exception:
-                    pass
-        except Exception:
-            logger.debug("Failed to materialise agent public key", exc_info=True)
-            return ''
-        return path
+        """Agent identities are daemon-owned and cannot become file paths."""
+        return lambda: ''
 
     @staticmethod
     def _key_type_label(pub_first_field):
@@ -1865,18 +1828,12 @@ class ConnectionDialog(
         return out
 
     def _discover_agent_keys(self):
-        """[(display, materialiser)] of every key currently loaded in ssh-agent.
-
-        Selecting one writes its public key to the app config dir so ssh can use
-        the agent's matching private key."""
-        import hashlib
+        """Return display-only metadata for daemon-owned agent identities."""
         out = []
-        for raw_line, blob, ktype, comment in self._agent_keys():
+        for fingerprint, _display, ktype, comment in self._agent_keys():
             label = self._key_type_label(ktype)
             name = comment or _("agent key")
-            short = hashlib.sha256(blob.encode()).hexdigest()[:8]
-            out.append((f"{name}  —  {label} ({short})",
-                        self._make_agent_materializer(raw_line)))
+            out.append((f"{name}  —  {label} ({fingerprint})", lambda: ""))
         return out
 
     def _discover_certs(self):
@@ -1927,14 +1884,12 @@ class ConnectionDialog(
             disk_keys.append({'name': name, 'path': path, 'ktype': ktype, 'meta': fp})
 
         agent_keys = []
-        for raw_line, blob, ktype_raw, comment in self._agent_keys():
-            ktype, fp, _c = _fingerprint_for_pub_line(raw_line)
-            title = comment or _("agent key")
+        for fingerprint, _display, ktype, comment in self._agent_keys():
             agent_keys.append({
-                'title': title,
+                'title': comment or _("agent key"),
                 'ktype': ktype,
-                'meta': fp,
-                'materializer': self._make_agent_materializer(raw_line),
+                'meta': fingerprint,
+                'materializer': lambda: "",
             })
 
         parent = self.get_root() if hasattr(self, 'get_root') else None

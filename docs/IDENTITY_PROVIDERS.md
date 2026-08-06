@@ -19,10 +19,16 @@ a key read from `~/.ssh/id_ed25519`, etc.
 
 | Piece | Location |
 | --- | --- |
-| `Identity` dataclass, `IdentityProvider` ABC, `IdentityManager`, `get_identity_manager()` | `sshpilot/identity.py` |
-| `SystemAgentProvider` | `sshpilot/providers/system_agent.py` |
-| `FileKeyProvider` | `sshpilot/providers/file_key.py` |
-| Plugin access (`ctx.identities`) | `src/sshpilot/plugins/api.py` (see `PLUGIN_SDK.md`) |
+| Typed provider/state DTOs and identity methods | `src/sshpilot/api/models/identity.py`, `src/sshpilot/api/client.py` |
+| Provider selection and daemon environment projection | `src/sshpilot/core/identity_service.py` (`IdentityStateService`) |
+| Agent, effective-identity, deployment, and authorized-key operations | `src/sshpilot/daemon/identity_service.py` (`DaemonIdentityService`) |
+| Native SFTP file reads/replacements for the full editor | `src/sshpilot/daemon/sftp_runtime.py` (`SftpServiceRuntime`) |
+| Legacy `Identity`, `IdentityProvider`, and `IdentityManager` compatibility surface | `src/sshpilot/identity.py`, `src/sshpilot/providers/` |
+
+The daemon services and typed API are authoritative for normal GTK-backed
+operation. The legacy provider singleton remains only as compatibility debt for
+unmigrated terminal/plugin routes; it does not own state for daemon identity
+operations and must not be used as a fallback after a capability error.
 
 ## The contract
 
@@ -107,14 +113,40 @@ A single private key on disk (e.g. `~/.ssh/id_ed25519`).
   **credential backend** via the shared askpass path, never libsecret directly.
 
 ### `SocketAgentProvider` (e.g. `name = "onepassword"`, `"custom"`)
-A fixed-socket ssh-agent (the 1Password agent at `~/.1password/agent.sock`, or a
-user-supplied socket), parameterised by `(name, display_name, socket_path)`.
+The daemon state service resolves a fixed-socket agent from selected settings.
 
-- `is_available()` — true when the socket file exists.
-- `apply_to_env()` — **no-op** (config-driven, not env-driven).
-- `ssh_config_directives()` — `[("IdentityAgent", socket_path)]`. The selection writes
-  this into a managed `Host *` block in `~/.ssh/config` (see below), which ssh honours
-  for every invocation and which overrides any inherited `SSH_AUTH_SOCK`.
+- `is_available()` — true when the configured socket exists.
+- The daemon launch environment applies the selected safe socket metadata and removes
+  irrelevant inherited agent metadata where required; the frontend never supplies
+  `SSH_AUTH_SOCK`.
+- OpenSSH remains the source of truth for per-host `IdentityAgent` behavior; effective
+  connection identity is resolved with `ssh -G`, not a partial config parser.
+- Custom sockets are bounded validated settings and are never returned as secret-bearing
+  provider records.
+
+## Reviewed daemon contract
+
+The production path is:
+
+```text
+GTK / future client → SshPilotClient → daemon dispatch →
+IdentityStateService / DaemonIdentityService → OpenSSH and SftpServiceRuntime
+```
+
+The daemon uses `ssh -G` for effective `IdentityFile`, `CertificateFile`,
+`IdentityAgent`, `IdentitiesOnly`, `ForwardAgent`, includes, and host-pattern
+behavior; `ssh-add -l`/`-L` for agent state; `ssh-keygen` for native key metadata;
+`ssh-copy-id` for public-key deployment; and ordinary fixed `ssh` commands only for
+remote authorized-key management. Agent unavailable, empty, loaded, unsupported,
+and command-failure states remain distinct. Public DTOs contain no private keys,
+passphrases, passwords, askpass answers, provider objects, protocol handles, or full
+environments. Long-running deployment/removal uses the shared operation runtime.
+
+The full authorized-key editor keeps its parser, options, comments, disabled records,
+raw editing, backups, atomic replacement, and secure permissions, while
+`SftpServiceRuntime` owns bounded file reads, SHA-256 content revisions, stale-write
+rejection, daemon-selected temporary/backup names, and local/remote `0700`/`0600`
+permissions. GTK owns only staged document state and presentation.
 
 ## Writing a new provider (e.g. Bitwarden Agent, PKCS#11)
 

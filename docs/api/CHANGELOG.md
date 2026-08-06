@@ -5,6 +5,29 @@ notes remain separate.
 
 ## Unreleased
 
+- Completed and reviewed frontend-neutral identity and authorized-key management.
+  `IdentityStateService` and `DaemonIdentityService` now own provider state,
+  effective identity resolution through `ssh -G`, native `ssh-add` inspection and
+  mutation, native `ssh-copy-id` deployment, fixed ordinary-`ssh` authorized-key
+  operations, authentication preparation, and shared operation cancellation.
+  `identity.read`, `identity.write`, and `identity.operate` are advertised only
+  when the production identity service is installed; unsupported clients receive
+  canonical errors without a GTK fallback.
+- Extended the existing generic SFTP contract with bounded
+  `SftpReadFileRequest`/`SftpReadFileResult` and
+  `SftpReplaceFileRequest`/`SftpReplaceFileResult`. Reads return daemon-computed
+  content revisions; replacements enforce optimistic revision checks, bounded
+  content, daemon-selected temporary/backup paths, atomic replacement, backup
+  copies, and secure `0700`/`0600` permissions. A constrained daemon-local
+  `~/.ssh/authorized_keys` target supports the local editor without exposing
+  arbitrary daemon filesystem access.
+- Migrated GTK agent discovery, public-key deployment, and the full authorized-key
+  editor to typed client calls. GTK retains selection, document editing,
+  confirmation, interaction presentation, and progress display; it no longer
+  owns SSH/SFTP subprocesses, authentication environments, agent inspection, or
+  authorized-key file I/O. Private keys, passphrases, passwords, askpass answers,
+  secret records, and full environments remain outside public DTOs/events/logs.
+
 - Completed and reviewed the shared daemon operation infrastructure. The existing
   `OperationRuntime` is the single lifecycle owner for queued/running/terminal
   snapshots, safe progress and typed failures, immutable operation events,

@@ -53,7 +53,6 @@ from sshpilot.authorized_keys_parser import (
     AuthorizedKeyEntry as ParsedKeyEntry,
 )
 from sshpilot.authorized_keys_parser import (
-    compute_fingerprint,
     parse_file,
 )
 from sshpilot.core.identity_service import IdentityStateService
@@ -69,6 +68,7 @@ _REMOTE_READ_COMMAND = (
 )
 _REMOTE_WRITE_COMMAND = (
     "umask 077; "
+    'mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" && '
     't=$(mktemp "$HOME/.ssh/.authorized_keys.XXXXXX") && '
     'cat > "$t" && chmod 600 "$t" && '
     'mv -f "$t" "$HOME/.ssh/authorized_keys"'
@@ -213,9 +213,7 @@ class DaemonIdentityService:
             # Askpass runs block on broker interactions (which carry their own
             # deadlines); plain runs get a bounded wait so a wedged agent
             # cannot stall the executor lane.
-            completed = self._run_capture(
-                argv, env, None, None if scope_id is not None else 30.0
-            )
+            completed = self._run_capture(argv, env, None, 30.0)
         finally:
             if scope_id is not None and self._broker is not None:
                 self._broker.cancel_session(scope_id)
@@ -241,21 +239,20 @@ class DaemonIdentityService:
                 "ssh-copy-id is not installed; install it to deploy keys",
                 details={"code": SSH_COPY_ID_UNAVAILABLE},
             )
-        provider = self._require_launch_provider()
+        self._require_launch_provider()
         _private_path, public_path = self._resolve_key_paths(
             request.key_id, request.scope
         )
-        # Validate the public key through the key service's safe-read path
-        # before handing the path to ssh-copy-id.
         self._keys.read_public_key(
             ReadPublicKeyRequest(key_id=request.key_id, scope=request.scope)
-        )
-        argv, env = provider.prepare_copy_id_launch(
-            request.connection_id, public_path, force=request.force
         )
         connection_id = request.connection_id
 
         def _body(handle: OperationHandle) -> str:
+            provider = self._require_launch_provider()
+            argv, env = provider.prepare_copy_id_launch(
+                request.connection_id, public_path, force=request.force
+            )
             return self._run_deploy(handle, argv, env, connection_id)
 
         return self._operations.start_operation(
@@ -294,7 +291,12 @@ class DaemonIdentityService:
                     env=final_env,
                     text=True,
                     errors="replace",
+                    start_new_session=True,
                 )
+                try:
+                    process._sshpilot_process_group = True
+                except Exception:
+                    pass
             except OSError as exc:
                 raise SshPilotError(
                     ErrorCode.SESSION_STARTUP_FAILED,
@@ -492,8 +494,17 @@ class DaemonIdentityService:
                 env=self._base_env(),
                 text=True,
                 errors="replace",
+                start_new_session=True,
             )
-            stdout, _stderr = process.communicate(key_line + "\n", timeout=10)
+            try:
+                stdout, _stderr = process.communicate(key_line + "\n", timeout=10)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                process.wait()
+                return None
         except Exception:
             logger.debug("ssh-keygen fingerprint failed", exc_info=True)
             return None
@@ -563,7 +574,12 @@ class DaemonIdentityService:
                 env=env,
                 text=True,
                 errors="replace",
+                start_new_session=True,
             )
+            try:
+                process._sshpilot_process_group = True
+            except Exception:
+                pass
         except OSError as exc:
             raise SshPilotError(
                 ErrorCode.SESSION_STARTUP_FAILED,

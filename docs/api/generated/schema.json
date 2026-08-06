@@ -397,6 +397,10 @@
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
+    "sftp_read_file": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
     "sftp_readlink": {
       "capability": "sftp.metadata",
       "status": "daemon-only"
@@ -410,6 +414,10 @@
       "status": "daemon-only"
     },
     "sftp_rename": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_replace_file": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
@@ -832,6 +840,9 @@
     "sftp.open": {
       "capability": "sftp.write"
     },
+    "sftp.read_file": {
+      "capability": "sftp.read"
+    },
     "sftp.readlink": {
       "capability": "sftp.metadata"
     },
@@ -842,6 +853,9 @@
       "capability": "sftp.mutate"
     },
     "sftp.rename": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.replace_file": {
       "capability": "sftp.mutate"
     },
     "sftp.rmdir": {
@@ -1043,6 +1057,10 @@
       "remote_is_directory",
       "remote_directory_not_empty",
       "remote_unsupported_operation",
+      "file_content_too_large",
+      "file_revision_conflict",
+      "file_replacement_failed",
+      "file_backup_failed",
       "transfer_not_found",
       "transfer_conflict",
       "transfer_cancelled",
@@ -1214,6 +1232,10 @@
       "exited",
       "failed",
       "closed"
+    ],
+    "SftpFileTarget": [
+      "remote",
+      "local_authorized_keys"
     ],
     "SftpServiceState": [
       "created",
@@ -5147,6 +5169,86 @@
       ],
       "status": "Implemented"
     },
+    "SftpReadFileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpReadFileResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "content",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "exists",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "SftpRenameRequest": {
       "fields": [
         {
@@ -5179,6 +5281,93 @@
         }
       ],
       "status": "Implemented"
+    },
+    "SftpReplaceFileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "content",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "expected_revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": true,
+          "name": "backup",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpReplaceFileResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "backup_path",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Schema only"
     },
     "SftpServiceSummary": {
       "fields": [
