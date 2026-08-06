@@ -36,6 +36,7 @@ from ...api.models.connection_store import (
     thaw_safe_metadata,
     validate_safe_metadata,
 )
+from ...api.models.operations import SshConfigTextSnapshot
 from ...api.models.connections import (
     ConnectionHealth,
     ConnectionId,
@@ -99,6 +100,12 @@ class ConnectionRepositoryProtocol(Protocol):
     def discover_paths(self) -> frozenset: ...
 
     def reload(self) -> ConnectionStoreSnapshot: ...
+
+    def read_ssh_config_text(self) -> "SshConfigTextSnapshot": ...
+
+    def write_ssh_config_text(
+        self, text: str, *, expected_revision: str
+    ) -> "SshConfigTextSnapshot": ...
 
     def add_listener(self, callback: ChangeListener) -> None: ...
 
@@ -241,6 +248,18 @@ class ConnectionRepository:
     def root_config_path(self) -> Path:
         """Return the daemon-selected SSH root for reload stability checks."""
         return Path(self._ssh_store.root_path)
+
+    def read_ssh_config_text(self) -> SshConfigTextSnapshot:
+        with self._lock:
+            return self._ssh_store.read_ssh_config_text()
+
+    def write_ssh_config_text(
+        self, text: str, *, expected_revision: str
+    ) -> SshConfigTextSnapshot:
+        with self._lock:
+            return self._ssh_store.write_ssh_config_text(
+                text, expected_revision=expected_revision
+            )
 
     def reload(self) -> ConnectionStoreSnapshot:
         """Re-read authoritative sources; publish a change only when semantics differ."""

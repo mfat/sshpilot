@@ -122,6 +122,8 @@ from .models.operations import (
     SftpReplaceFileResult,
     SftpServiceSummary,
     SftpSymlinkRequest,
+    SaveSshConfigTextRequest,
+    SshConfigTextSnapshot,
 )
 from .models.transfers import (
     CancelTransferRequest,
@@ -369,6 +371,14 @@ class SshPilotClient(Protocol):
         ...
 
     def sftp_replace_file(self, request: SftpReplaceFileRequest) -> SftpReplaceFileResult:
+        ...
+
+    def get_ssh_config_text(self) -> SshConfigTextSnapshot:
+        ...
+
+    def save_ssh_config_text(
+        self, request: SaveSshConfigTextRequest
+    ) -> SshConfigTextSnapshot:
         ...
 
     def sftp_mkdir(self, request: SftpPathRequest) -> None:

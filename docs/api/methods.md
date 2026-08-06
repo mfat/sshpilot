@@ -153,8 +153,10 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: split_connection status=implemented capability=connections.split -->
 <!-- api-method-contract: get_global_ssh_overrides status=implemented capability=ssh_overrides.read -->
+<!-- api-method-contract: get_ssh_config_text status=implemented capability=connections.config.read -->
 <!-- api-method-contract: update_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
 <!-- api-method-contract: reset_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
+<!-- api-method-contract: save_ssh_config_text status=implemented capability=connections.config.write -->
 <!-- api-method-contract: bitwarden_api_key_login status=daemon-only capability=secrets.operate -->
 <!-- api-method-contract: bitwarden_configure_server status=daemon-only capability=secrets.operate -->
 <!-- api-method-contract: bitwarden_lock status=daemon-only capability=secrets.operate -->
@@ -409,6 +411,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: transfers.get capability=transfers.read -->
 <!-- api-daemon-method: transfers.list capability=transfers.read -->
 <!-- api-daemon-method: transfers.start capability=transfers.write -->
+<!-- api-daemon-method: ssh_config.get_text capability=connections.config.read -->
+<!-- api-daemon-method: ssh_config.save_text capability=connections.config.write -->
 <!-- api-daemon-method: ssh_overrides.get capability=ssh_overrides.read -->
 <!-- api-daemon-method: ssh_overrides.update capability=ssh_overrides.write -->
 <!-- api-daemon-method: ssh_overrides.reset capability=ssh_overrides.write -->
@@ -1480,6 +1484,59 @@ finally:
   review.
 - **Capability / purpose:** `identity.operate`; cancel a cancellable operation.
 - **Parameters / return:** `OperationId`; returns `OperationSummary`.
+
+<!-- api-method: get_ssh_config_text -->
+## `get_ssh_config_text`
+
+- **Status / introduced:** Implemented through the core connection application
+  service and `DaemonClient` / Protocol v1
+- **Capability / purpose:** `connections.config.read`; read the authoritative
+  SSH configuration text for the daemon-resolved config file together with a
+  deterministic revision token.
+- **Parameters / return:** No parameters; returns `SshConfigTextSnapshot` with
+  `text`, `revision`, `display_name`, and `writable`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the capability is not
+  available. `VALIDATION_FAILED` when the resolved config is not readable.
+- **Cancellation / ordering:** Read-only; no ordering constraints.
+- **Threading:** Safe from any thread.
+- **Side effects / security:** Loads the daemon-resolved config file through
+  the shared `SshConfigStore`; never writes.
+
+```python
+snapshot = client.get_ssh_config_text()
+print(snapshot.display_name, snapshot.writable, snapshot.revision)
+```
+
+<!-- api-method: save_ssh_config_text -->
+## `save_ssh_config_text`
+
+- **Status / introduced:** Implemented through the core connection application
+  service and `DaemonClient` / Protocol v1
+- **Capability / purpose:** `connections.config.write`; atomically replace the
+  SSH configuration text with optimistic concurrency control.
+- **Parameters / return:** `SaveSshConfigTextRequest` with `text` and
+  `expected_revision`; returns the refreshed `SshConfigTextSnapshot`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the capability is not
+  available. `STALE_EDITOR` when `expected_revision` does not match the current
+  revision, leaving the file untouched. `VALIDATION_FAILED` for an unreadable
+  or unwritable resolved config.
+- **Cancellation / ordering:** Writes are serialized per daemon; concurrent
+  stale writes are rejected.
+- **Threading:** Thread-safe via internal lock.
+- **Side effects / security:** Atomically persists the edited text through the
+  daemon `SshConfigStore` and immediately triggers a connection configuration
+  reload; the text is never exposed in logs or diagnostics.
+
+```python
+from sshpilot.api.models.operations import SaveSshConfigTextRequest
+
+result = client.save_ssh_config_text(
+    SaveSshConfigTextRequest(
+        text=edited_text,
+        expected_revision=snapshot.revision,
+    )
+)
+```
 
 <!-- api-method: get_global_ssh_overrides -->
 ## `get_global_ssh_overrides`

@@ -725,6 +725,9 @@ class DaemonServer:
                 poll_interval=self.configuration_poll_interval,
             )
             self._configuration_reload.start()
+            attach_reload = getattr(self._dispatcher, "attach_configuration_reload", None)
+            if callable(attach_reload):
+                attach_reload(self._configuration_reload)
 
     def _prepare_session_launch(
         self,

@@ -100,6 +100,8 @@ from sshpilot.api.transport.codec import (
     replay_request_from_wire,
     replay_result_to_wire,
     rename_group_request_from_wire,
+    save_ssh_config_text_request_from_wire,
+    ssh_config_text_snapshot_to_wire,
     split_connection_request_from_wire,
     resize_terminal_request_from_wire,
     session_summary_to_wire,
@@ -200,6 +202,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.readlink": Capability.SFTP_METADATA,
     "sftp.read_file": Capability.SFTP_READ,
     "sftp.replace_file": Capability.SFTP_MUTATE,
+    "ssh_config.get_text": Capability.CONNECTIONS_CONFIG_READ,
+    "ssh_config.save_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "sftp.mkdir": Capability.SFTP_MUTATE,
     "sftp.rmdir": Capability.SFTP_MUTATE,
     "sftp.rename": Capability.SFTP_MUTATE,
@@ -303,6 +307,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "sftp.remove",
         "sftp.chmod",
         "sftp.symlink",
+        "ssh_config.save_text",
         "transfers.start",
         "forwards.open",
         "known_hosts.remove",
@@ -393,6 +398,8 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.remove",
         "sftp.chmod",
         "sftp.symlink",
+        "ssh_config.get_text",
+        "ssh_config.save_text",
         "transfers.start",
         "transfers.cancel",
         "forwards.open",
@@ -524,6 +531,7 @@ class RequestDispatcher:
         self._secrets_service = secrets_service
         self._identity_service = identity_service
         self._operation_runtime = operation_runtime
+        self._configuration_reload = None
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
@@ -620,6 +628,8 @@ class RequestDispatcher:
             "sftp.readlink": self._handle_sftp_readlink,
             "sftp.read_file": self._handle_sftp_read_file,
             "sftp.replace_file": self._handle_sftp_replace_file,
+            "ssh_config.get_text": self._handle_get_ssh_config_text,
+            "ssh_config.save_text": self._handle_save_ssh_config_text,
             "sftp.mkdir": self._handle_sftp_mkdir,
             "sftp.rmdir": self._handle_sftp_rmdir,
             "sftp.rename": self._handle_sftp_rename,
@@ -1844,6 +1854,60 @@ class RequestDispatcher:
             command_key=command_key,
             on_rejected=lambda: None,
         )
+
+    # -- SSH config text ---------------------------------------------------
+
+    def attach_configuration_reload(self, coordinator: Any) -> None:
+        """Attach the daemon reload coordinator for post-save reloads.
+
+        The coordinator is constructed after this dispatcher, so the
+        connection is made late and once.
+        """
+        self._configuration_reload = coordinator
+
+    def _request_configuration_reload(self) -> None:
+        coordinator = self._configuration_reload
+        if coordinator is not None:
+            reload_request = getattr(coordinator, "request_reload", None)
+            if callable(reload_request):
+                reload_request()
+
+    def _handle_get_ssh_config_text(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        self._require_empty_params(request)
+        return DeferredResult(
+            operation=lambda: ssh_config_text_snapshot_to_wire(
+                self._connections.get_ssh_config_text()
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_save_ssh_config_text(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = save_ssh_config_text_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._save_ssh_config_text(typed_request),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _save_ssh_config_text(self, typed_request: Any) -> dict:
+        snapshot = self._connections.save_ssh_config_text(
+            typed_request.text,
+            expected_revision=typed_request.expected_revision,
+        )
+        # Reload the authoritative connection state immediately (the bounded
+        # debounce path) instead of waiting for the polling watcher to detect
+        # the daemon's own write.
+        self._request_configuration_reload()
+        return ssh_config_text_snapshot_to_wire(snapshot)
 
     def _handle_sftp_mkdir(
         self,

@@ -1,4 +1,4 @@
-"""SFTP service, remote filesystem, and port-forward models."""
+"""SFTP service, remote filesystem, SSH config text, and port-forward models."""
 
 from __future__ import annotations
 
@@ -329,6 +329,44 @@ class SftpReplaceFileResult:
             raise ValueError("SFTP replacement size must be non-negative")
         if self.backup_path is not None and "\x00" in self.backup_path:
             raise ValueError("SFTP backup path must not contain NUL")
+
+
+@dataclass(frozen=True)
+class SshConfigTextSnapshot:
+    """Raw text of the daemon-selected SSH config file.
+
+    The daemon decides the active file (normal or isolated mode); clients
+    never supply a path. ``revision`` covers the root file and its recursive
+    Includes and must be echoed back to save without stale-save rejection.
+    ``display_name`` is the bare file name for presentation only.
+    """
+
+    text: str = field(repr=False)
+    revision: str
+    display_name: str
+    writable: bool
+
+    def __post_init__(self) -> None:
+        if type(self.text) is not str or "\x00" in self.text:
+            raise ValueError("SSH config text must be safe text")
+        require_identifier(self.revision, "SSH config revision")
+        if type(self.display_name) is not str or not self.display_name:
+            raise ValueError("SSH config display name must not be empty")
+        if type(self.writable) is not bool:
+            raise TypeError("SSH config writable must be a boolean")
+
+
+@dataclass(frozen=True)
+class SaveSshConfigTextRequest:
+    """Request to atomically replace the SSH config file text."""
+
+    text: str = field(repr=False)
+    expected_revision: str
+
+    def __post_init__(self) -> None:
+        if type(self.text) is not str or "\x00" in self.text:
+            raise ValueError("SSH config text must be safe text")
+        require_identifier(self.expected_revision, "expected SSH config revision")
 
 
 @dataclass(frozen=True)

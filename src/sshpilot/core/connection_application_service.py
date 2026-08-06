@@ -67,6 +67,8 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_capabilities": None,
     "get_connection": Capability.CONNECTIONS_READ,
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
+    "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
@@ -593,6 +595,53 @@ class ConnectionApplicationService:
             nickname=record.nickname,
             generation=record.generation,
         )
+
+    def get_ssh_config_text(self) -> Any:
+        """Return the daemon-selected SSH config file as raw text."""
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        try:
+            return self._repository.read_ssh_config_text()
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception:
+            logger.exception("SSH config text read failed")
+            raise SshPilotError(
+                ErrorCode.PERSISTENCE_FAILED,
+                "The SSH configuration could not be read",
+            )
+
+    def save_ssh_config_text(
+        self,
+        text: str,
+        expected_revision: str,
+    ) -> Any:
+        """Atomically replace the SSH config file text (revision-checked)."""
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
+        if type(text) is not str or "\x00" in text:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "SSH configuration text must be valid text",
+            )
+        if type(expected_revision) is not str or not expected_revision:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An expected revision is required",
+            )
+        try:
+            return self._repository.write_ssh_config_text(
+                text, expected_revision=expected_revision
+            )
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception:
+            logger.exception("SSH config text save failed")
+            raise self._persistence_error()
 
     def enable_serialized_command_threads(self) -> None:
         self._allow_cross_thread_commands = True

@@ -2963,6 +2963,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SaveSshConfigTextRequest -->
+## `SaveSshConfigTextRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Request to atomically replace the SSH config file text.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | No |
+| `expected_revision` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "expected_revision": {},
+  "text": {}
+}
+```
+
 <!-- api-model: ServiceFailure -->
 ## `ServiceFailure`
 
@@ -3457,6 +3481,39 @@ Synthetic representation:
   "port": null,
   "source_config_path": "example",
   "username": null
+}
+```
+
+<!-- api-model: SshConfigTextSnapshot -->
+## `SshConfigTextSnapshot`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Raw text of the daemon-selected SSH config file.
+
+The daemon decides the active file (normal or isolated mode); clients
+never supply a path. ``revision`` covers the root file and its recursive
+Includes and must be echoed back to save without stale-save rejection.
+``display_name`` is the bare file name for presentation only.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | No |
+| `revision` | `str` | Yes | — | No |
+| `display_name` | `str` | Yes | — | No |
+| `writable` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "display_name": {},
+  "revision": {},
+  "text": {},
+  "writable": {}
 }
 ```
 

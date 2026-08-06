@@ -4324,10 +4324,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.show_connection_dialog(connection, skip_group_warning=True)
 
     def _open_ssh_config_editor(self):
-        self.show_toast(_(
-            "Direct SSH config editing is unavailable; use connection dialogs "
-            "so changes are validated and saved by the background service."
-        ))
+        if self.client is None:
+            self.show_toast(_(
+                "Direct SSH config editing is unavailable while the "
+                "background service is not connected."
+            ))
+            return
+        from .ssh_config_editor import SSHConfigEditorWindow
+        SSHConfigEditorWindow(self, self.client).present()
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its

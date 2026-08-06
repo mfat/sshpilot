@@ -102,6 +102,8 @@ from .models.operations import (
     SftpReplaceFileResult,
     SftpServiceSummary,
     SftpSymlinkRequest,
+    SaveSshConfigTextRequest,
+    SshConfigTextSnapshot,
 )
 from .models.sessions import (
     AttachSessionRequest,
@@ -192,6 +194,8 @@ from .transport.codec import (
     resize_terminal_request_to_wire,
     restart_daemon_request_to_wire,
     session_summary_from_wire,
+    save_ssh_config_text_request_to_wire,
+    ssh_config_text_snapshot_from_wire,
     sftp_chmod_request_to_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
@@ -293,6 +297,8 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_readlink": Capability.SFTP_METADATA,
     "sftp_read_file": Capability.SFTP_READ,
     "sftp_replace_file": Capability.SFTP_MUTATE,
+    "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "sftp_mkdir": Capability.SFTP_MUTATE,
     "sftp_rmdir": Capability.SFTP_MUTATE,
     "sftp_remove": Capability.SFTP_MUTATE,
@@ -1143,6 +1149,29 @@ class DaemonClient:
             return sftp_replace_file_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid file replacement result")
+
+    def get_ssh_config_text(self) -> SshConfigTextSnapshot:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request("ssh_config.get_text", {})
+        try:
+            return ssh_config_text_snapshot_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid SSH config text")
+
+    def save_ssh_config_text(
+        self, request: SaveSshConfigTextRequest
+    ) -> SshConfigTextSnapshot:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
+        if type(request) is not SaveSshConfigTextRequest:
+            raise TypeError("a SaveSshConfigTextRequest is required")
+        result = self._request(
+            "ssh_config.save_text",
+            save_ssh_config_text_request_to_wire(request),
+        )
+        try:
+            return ssh_config_text_snapshot_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid SSH config text")
 
     def sftp_mkdir(self, request: SftpPathRequest) -> None:
         self._require_capability(Capability.SFTP_MUTATE)
