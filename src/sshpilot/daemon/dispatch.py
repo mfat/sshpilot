@@ -205,6 +205,29 @@ DAEMON_METHOD_CAPABILITIES = {
     "ssh_overrides.get": Capability.SSH_OVERRIDES_READ,
     "ssh_overrides.update": Capability.SSH_OVERRIDES_WRITE,
     "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
+    "secrets.configuration.get": Capability.SECRETS_READ,
+    "secrets.configuration.update": Capability.SECRETS_WRITE,
+    "secrets.backends.get": Capability.SECRETS_READ,
+    "secrets.state.get": Capability.SECRETS_READ,
+    "secrets.selection.update": Capability.SECRETS_WRITE,
+    "secrets.unlock": Capability.SECRETS_OPERATE,
+    "secrets.lock": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.status": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.configure_server": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.login": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.api_key_login": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.sso_login": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.unlock": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.sync": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.lock": Capability.SECRETS_OPERATE,
+    "secrets.bitwarden.logout": Capability.SECRETS_OPERATE,
+    "secrets.rbw.status": Capability.SECRETS_OPERATE,
+    "secrets.rbw.configure": Capability.SECRETS_OPERATE,
+    "secrets.rbw.unlock": Capability.SECRETS_OPERATE,
+    "secrets.rbw.sync": Capability.SECRETS_OPERATE,
+    "secrets.rbw.lock": Capability.SECRETS_OPERATE,
+    "secrets.transfer.export": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.import": Capability.SECRETS_TRANSFER,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -244,6 +267,24 @@ DRAIN_REJECTED_METHODS = frozenset(
         "keys.generate",
         "ssh_overrides.update",
         "ssh_overrides.reset",
+        "secrets.configuration.update",
+        "secrets.selection.update",
+        "secrets.unlock",
+        "secrets.lock",
+        "secrets.bitwarden.configure_server",
+        "secrets.bitwarden.login",
+        "secrets.bitwarden.api_key_login",
+        "secrets.bitwarden.sso_login",
+        "secrets.bitwarden.unlock",
+        "secrets.bitwarden.sync",
+        "secrets.bitwarden.lock",
+        "secrets.bitwarden.logout",
+        "secrets.rbw.configure",
+        "secrets.rbw.unlock",
+        "secrets.rbw.sync",
+        "secrets.rbw.lock",
+        "secrets.transfer.export",
+        "secrets.transfer.import",
     }
 )
 
@@ -301,6 +342,29 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "keys.list",
         "keys.get_public",
         "keys.generate",
+        "secrets.configuration.get",
+        "secrets.configuration.update",
+        "secrets.backends.get",
+        "secrets.state.get",
+        "secrets.selection.update",
+        "secrets.unlock",
+        "secrets.lock",
+        "secrets.bitwarden.status",
+        "secrets.bitwarden.configure_server",
+        "secrets.bitwarden.login",
+        "secrets.bitwarden.api_key_login",
+        "secrets.bitwarden.sso_login",
+        "secrets.bitwarden.unlock",
+        "secrets.bitwarden.sync",
+        "secrets.bitwarden.lock",
+        "secrets.bitwarden.logout",
+        "secrets.rbw.status",
+        "secrets.rbw.configure",
+        "secrets.rbw.unlock",
+        "secrets.rbw.sync",
+        "secrets.rbw.lock",
+        "secrets.transfer.export",
+        "secrets.transfer.import",
     }
 )
 
@@ -365,6 +429,7 @@ class RequestDispatcher:
         lifecycle_controller: Any = None,
         diagnostics_provider: Optional[Callable[[], Any]] = None,
         ssh_overrides_service: Any = None,
+        secrets_service: Any = None,
     ) -> None:
         self._connections = connection_service
         self._session_runtime = session_runtime or SessionRuntime(connection_service)
@@ -376,6 +441,7 @@ class RequestDispatcher:
         self._key_service = key_service
         self._lifecycle = lifecycle_controller
         self._ssh_overrides_service = ssh_overrides_service
+        self._secrets_service = secrets_service
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
@@ -493,6 +559,29 @@ class RequestDispatcher:
             "ssh_overrides.get": self._handle_get_ssh_overrides,
             "ssh_overrides.update": self._handle_update_ssh_overrides,
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
+            "secrets.configuration.get": self._handle_get_secret_configuration,
+            "secrets.configuration.update": self._handle_update_secret_configuration,
+            "secrets.backends.get": self._handle_get_secret_backends,
+            "secrets.state.get": self._handle_get_secret_state,
+            "secrets.selection.update": self._handle_update_secret_selection,
+            "secrets.unlock": self._handle_unlock_secrets,
+            "secrets.lock": self._handle_lock_secrets,
+            "secrets.bitwarden.status": self._handle_bitwarden_status,
+            "secrets.bitwarden.configure_server": self._handle_bitwarden_configure_server,
+            "secrets.bitwarden.login": self._handle_bitwarden_login,
+            "secrets.bitwarden.api_key_login": self._handle_bitwarden_api_key_login,
+            "secrets.bitwarden.sso_login": self._handle_bitwarden_sso_login,
+            "secrets.bitwarden.unlock": self._handle_bitwarden_unlock,
+            "secrets.bitwarden.sync": self._handle_bitwarden_sync,
+            "secrets.bitwarden.lock": self._handle_bitwarden_lock,
+            "secrets.bitwarden.logout": self._handle_bitwarden_logout,
+            "secrets.rbw.status": self._handle_rbw_status,
+            "secrets.rbw.configure": self._handle_rbw_configure,
+            "secrets.rbw.unlock": self._handle_rbw_unlock,
+            "secrets.rbw.sync": self._handle_rbw_sync,
+            "secrets.rbw.lock": self._handle_rbw_lock,
+            "secrets.transfer.export": self._handle_export_secret_backup,
+            "secrets.transfer.import": self._handle_import_secret_backup,
         }
 
     def begin_shutdown(self) -> None:
@@ -627,6 +716,7 @@ class RequestDispatcher:
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
+                secrets=self._secrets_service is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -1960,6 +2050,7 @@ class RequestDispatcher:
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
+                secrets=self._secrets_service is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -1979,6 +2070,7 @@ class RequestDispatcher:
         known_hosts: bool = False,
         keys: bool = False,
         ssh_overrides: bool = False,
+        secrets: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -2077,6 +2169,15 @@ class RequestDispatcher:
                 {
                     Capability.SSH_OVERRIDES_READ,
                     Capability.SSH_OVERRIDES_WRITE,
+                }
+            )
+        if secrets:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.SECRETS_READ,
+                    Capability.SECRETS_WRITE,
+                    Capability.SECRETS_OPERATE,
+                    Capability.SECRETS_TRANSFER,
                 }
             )
         return daemon_capabilities
@@ -2215,3 +2316,351 @@ class RequestDispatcher:
                 "SSH overrides are unavailable",
             )
         return self._ssh_overrides_service
+
+    # -- Secret backend management ----------------------------------------
+
+    def _required_secrets_service(self):
+        if not hasattr(self, "_secrets_service") or self._secrets_service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Secret backend management is unavailable",
+            )
+        return self._secrets_service
+
+    def _handle_get_secret_configuration(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_configuration_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: secret_configuration_to_wire(service.get_configuration()))
+
+    def _handle_update_secret_configuration(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import (
+            secret_configuration_to_wire,
+            update_secret_configuration_request_from_wire,
+        )
+
+        typed_request = update_secret_configuration_request_from_wire(request.params)
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_configuration_to_wire(service.update_configuration(typed_request))
+        )
+
+    def _handle_get_secret_backends(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_backend_registry_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: secret_backend_registry_to_wire(service.get_registry()))
+
+    def _handle_get_secret_state(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_backend_state_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: secret_backend_state_to_wire(service.get_state()))
+
+    def _handle_update_secret_selection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_backend_state_to_wire
+
+        if set(request.params) != {"backend"}:
+            raise ValueError("secrets.selection.update requires backend")
+        backend = request.params["backend"]
+        if type(backend) is not str or not backend.strip():
+            raise ValueError("backend must be a non-empty string")
+        service = self._required_secrets_service()
+        return self._defer(lambda: secret_backend_state_to_wire(service.update_selection(backend)))
+
+    def _handle_unlock_secrets(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_unlock_result_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: secret_unlock_result_to_wire(service.unlock()))
+
+    def _handle_lock_secrets(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_backend_state_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: secret_backend_state_to_wire(service.lock()))
+
+    def _handle_bitwarden_status(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        if set(request.params) - {"force_refresh"}:
+            raise ValueError(f"unexpected params: {sorted(set(request.params) - {'force_refresh'})}")
+        service = self._required_secrets_service()
+        force_refresh = bool(request.params.get("force_refresh", False))
+        return self._defer(
+            lambda: bitwarden_status_to_wire(service.bitwarden_status(force_refresh=force_refresh))
+        )
+
+    def _handle_bitwarden_configure_server(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        if set(request.params) != {"url"}:
+            raise ValueError("secrets.bitwarden.configure_server requires url")
+        url = request.params["url"]
+        if type(url) is not str:
+            raise ValueError("url must be a string")
+        service = self._required_secrets_service()
+        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_configure_server(url)))
+
+    def _handle_bitwarden_login(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        if set(request.params) - {"email", "twofa_method"}:
+            raise ValueError(
+                f"unexpected params: {sorted(set(request.params) - {'email', 'twofa_method'})}"
+            )
+        email = request.params.get("email")
+        if type(email) is not str or not email.strip():
+            raise ValueError("email must be a non-empty string")
+        twofa_method = request.params.get("twofa_method")
+        if twofa_method is not None and type(twofa_method) is not str:
+            raise ValueError("twofa_method must be a string or null")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: bitwarden_status_to_wire(
+                service.bitwarden_login(email, twofa_method=twofa_method)
+            )
+        )
+
+    def _handle_bitwarden_api_key_login(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        if set(request.params) != {"client_id"}:
+            raise ValueError("secrets.bitwarden.api_key_login requires client_id")
+        client_id = request.params["client_id"]
+        if type(client_id) is not str or not client_id.strip():
+            raise ValueError("client_id must be a non-empty string")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: bitwarden_status_to_wire(service.bitwarden_api_key_login(client_id))
+        )
+
+    def _handle_bitwarden_sso_login(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_sso_login()))
+
+    def _handle_bitwarden_unlock(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_unlock()))
+
+    def _handle_bitwarden_sync(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_sync()))
+
+    def _handle_bitwarden_lock(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_lock()))
+
+    def _handle_bitwarden_logout(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import bitwarden_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_logout()))
+
+    def _handle_rbw_status(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import rbw_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: rbw_status_to_wire(service.rbw_status()))
+
+    def _handle_rbw_configure(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import rbw_status_to_wire
+
+        if set(request.params) != {"email", "base_url"}:
+            raise ValueError("secrets.rbw.configure requires email and base_url")
+        email = request.params["email"]
+        base_url = request.params["base_url"]
+        if type(email) is not str or type(base_url) is not str:
+            raise ValueError("email and base_url must be strings")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: rbw_status_to_wire(service.rbw_configure(email, base_url))
+        )
+
+    def _handle_rbw_unlock(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import rbw_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: rbw_status_to_wire(service.rbw_unlock()))
+
+    def _handle_rbw_sync(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import rbw_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: rbw_status_to_wire(service.rbw_sync()))
+
+    def _handle_rbw_lock(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import rbw_status_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: rbw_status_to_wire(service.rbw_lock()))
+
+    def _handle_export_secret_backup(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_transfer_result_to_wire
+
+        params = request.params
+        if set(params) != {"destination", "connection_ids", "options", "mirror_logins"}:
+            raise ValueError("secrets.transfer.export has unexpected params")
+        destination = params["destination"]
+        if type(destination) is not str or not destination.strip():
+            raise ValueError("destination must be a non-empty string")
+        connection_ids = params["connection_ids"]
+        if not isinstance(connection_ids, list) or any(
+            type(c) is not str for c in connection_ids
+        ):
+            raise ValueError("connection_ids must be a list of strings")
+        options = params["options"]
+        if not isinstance(options, dict):
+            raise ValueError("options must be an object")
+        mirror_logins = bool(params["mirror_logins"])
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_transfer_result_to_wire(
+                service.export_backup(
+                    destination=destination,
+                    connection_ids=connection_ids,
+                    options=options,
+                    mirror_logins=mirror_logins,
+                )
+            )
+        )
+
+    def _handle_import_secret_backup(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_transfer_result_to_wire
+
+        params = request.params
+        if set(params) != {"source", "options"}:
+            raise ValueError("secrets.transfer.import has unexpected params")
+        source = params["source"]
+        if type(source) is not str or not source.strip():
+            raise ValueError("source must be a non-empty string")
+        options = params["options"]
+        if not isinstance(options, dict):
+            raise ValueError("options must be an object")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_transfer_result_to_wire(
+                service.import_backup(source=source, options=options)
+            )
+        )
+
+    def _defer(self, operation: Callable[[], Any]) -> DeferredResult:
+        return DeferredResult(
+            operation=operation,
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )

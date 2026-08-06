@@ -168,6 +168,7 @@ class CoreServices:
     known_hosts: Optional[KnownHostsService] = None
     keys: Optional[DaemonKeyService] = None
     ssh_overrides: Optional[SshOverridesService] = None
+    secrets: Any = None
 
 
 @dataclass
@@ -283,6 +284,7 @@ class DaemonServer:
         self._known_hosts_service: Optional[KnownHostsService] = None
         self._key_service: Optional[DaemonKeyService] = None
         self._ssh_overrides_service: Optional[SshOverridesService] = None
+        self._secrets_service: Any = None
         self._session_runtime: Optional[SessionRuntime] = None
         self._sftp_runtime: Optional[SftpServiceRuntime] = None
         self._transfer_runtime: Optional[TransferRuntime] = None
@@ -534,6 +536,7 @@ class DaemonServer:
                 self._known_hosts_service = core.known_hosts
                 self._key_service = core.keys
                 self._ssh_overrides_service = core.ssh_overrides
+                self._secrets_service = core.secrets
             else:
                 self._connection_service = core
             enable_workers = getattr(
@@ -621,6 +624,10 @@ class DaemonServer:
                     ),
                 )
             )
+            if self._secrets_service is not None and hasattr(
+                self._secrets_service, "attach_interaction_broker"
+            ):
+                self._secrets_service.attach_interaction_broker(self._interaction_broker)
             if gate_terminal_evidence:
                 runtime = self._session_runtime
                 broker = self._interaction_broker
@@ -637,6 +644,7 @@ class DaemonServer:
                 known_hosts_service=self._known_hosts_service,
                 key_service=self._key_service,
                 ssh_overrides_service=self._ssh_overrides_service,
+                secrets_service=self._secrets_service,
                 lifecycle_controller=self._lifecycle,
                 diagnostics_provider=self.build_diagnostics,
             )

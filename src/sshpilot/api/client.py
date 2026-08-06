@@ -49,6 +49,16 @@ from .models.keys import (
     PublicKeyResult,
     ReadPublicKeyRequest,
 )
+from .models.secrets import (
+    BitwardenStatus,
+    RbwStatus,
+    SecretBackendRegistry,
+    SecretBackendState,
+    SecretConfiguration,
+    SecretTransferResult,
+    SecretUnlockResult,
+    UpdateSecretConfigurationRequest,
+)
 from .models.known_hosts import (
     KnownHostsMutationResult,
     KnownHostsSnapshot,
@@ -413,6 +423,95 @@ class SshPilotClient(Protocol):
         self,
         expected_revision: Optional[str] = None,
     ) -> GlobalSshOverrides:
+        ...
+
+    def get_secret_configuration(self) -> SecretConfiguration:
+        ...
+
+    def update_secret_configuration(
+        self,
+        request: UpdateSecretConfigurationRequest,
+    ) -> SecretConfiguration:
+        ...
+
+    def get_secret_backends(self) -> SecretBackendRegistry:
+        ...
+
+    def get_secret_state(self) -> SecretBackendState:
+        ...
+
+    def update_secret_selection(self, backend: str) -> SecretBackendState:
+        ...
+
+    def unlock_secrets(self) -> SecretUnlockResult:
+        ...
+
+    def lock_secrets(self) -> SecretBackendState:
+        ...
+
+    def bitwarden_status(self, *, force_refresh: bool = False) -> BitwardenStatus:
+        ...
+
+    def bitwarden_configure_server(self, url: str) -> BitwardenStatus:
+        ...
+
+    def bitwarden_login(
+        self,
+        email: str,
+        *,
+        twofa_method: Optional[str] = None,
+    ) -> BitwardenStatus:
+        ...
+
+    def bitwarden_api_key_login(self, client_id: str) -> BitwardenStatus:
+        ...
+
+    def bitwarden_sso_login(self) -> BitwardenStatus:
+        ...
+
+    def bitwarden_unlock(self) -> BitwardenStatus:
+        ...
+
+    def bitwarden_sync(self) -> BitwardenStatus:
+        ...
+
+    def bitwarden_lock(self) -> BitwardenStatus:
+        ...
+
+    def bitwarden_logout(self) -> BitwardenStatus:
+        ...
+
+    def rbw_status(self) -> RbwStatus:
+        ...
+
+    def rbw_configure(self, email: str, base_url: str) -> RbwStatus:
+        ...
+
+    def rbw_unlock(self) -> RbwStatus:
+        ...
+
+    def rbw_sync(self) -> RbwStatus:
+        ...
+
+    def rbw_lock(self) -> RbwStatus:
+        ...
+
+    def export_secret_backup(
+        self,
+        *,
+        destination: str,
+        connection_ids: Optional[List[str]] = None,
+        options: Optional[Dict[str, Any]] = None,
+        mirror_logins: bool = False,
+    ) -> SecretTransferResult:
+        ...
+
+    def import_secret_backup(
+        self,
+        *,
+        source: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> SecretTransferResult:
         ...
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:

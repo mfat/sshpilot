@@ -114,8 +114,12 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `daemon.status` | Read daemon lifecycle and diagnostics | Daemon: Implemented | `get_daemon_status`, `get_daemon_diagnostics`; wire `daemon.status`, `daemon.diagnostics` | None required | `DaemonLifecycleController` | v1 / API 0.11 |
 | `daemon.control` | Stop or restart the daemon process | Daemon: Implemented | `stop_daemon`, `restart_daemon`; wire `daemon.stop`, `daemon.restart` | None required | Lifecycle drain and bounded cleanup | v1 / API 0.11 |
 | `daemon.events` | Observe daemon lifecycle state changes | Daemon: Implemented | `subscribe_events` | `daemon.state_changed` | Bounded daemon event stream | v1 / API 0.11 |
+| `secrets.read` | Read daemon-owned secret backend configuration, registry, and lock state | Daemon: Implemented when the secret backend service is installed | `get_secret_configuration`, `get_secret_backends`, `get_secret_state`; wire `secrets.configuration.get`, `secrets.backends.get`, `secrets.state.get` | None defined | Daemon `SecretBackendService` | v1 / API 0.12 |
+| `secrets.write` | Update daemon-owned secret settings and backend selection | Daemon: Implemented when the secret backend service is installed | `update_secret_configuration`, `update_secret_selection`; wire `secrets.configuration.update`, `secrets.selection.update` | None defined | Daemon `SecretBackendService` and settings persistence | v1 / API 0.12 |
+| `secrets.operate` | Unlock/lock the selected backend and run Bitwarden/rbw lifecycle operations | Daemon: Implemented when the secret backend service is installed | `unlock_secrets`, `lock_secrets`, `bitwarden_*`, `rbw_*`; wire `secrets.unlock`, `secrets.lock`, `secrets.bitwarden.*`, `secrets.rbw.*` | None defined | Daemon `SecretBackendService` and interaction broker | v1 / API 0.12 |
+| `secrets.transfer` | Export and import secret backups inside the daemon | Daemon: Implemented when the secret backend service is installed | `export_secret_backup`, `import_secret_backup`; wire `secrets.transfer.export`, `secrets.transfer.import` | None defined | Daemon `SecretBackendService` and backup archive adapters | v1 / API 0.12 |
 | `plugins` | Invoke core plugin operations | Schema only; no client method | None | None defined | Split core plugin service | v1 |
-| `secrets` | Core-mediated secret operations/interactions | Schema only; no client method | None | No dedicated event; interaction schemas may be used later | Secret service and permissions | v1 |
+| `secrets` | Core-mediated secret operations/interactions | Deprecated; superseded by `secrets.*` capabilities | None | No dedicated event; interaction schemas may be used later | Secret service and permissions | v1 |
 | `connections.config.read` | Read full editor state including filesystem paths | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_READ` capability | v1 |
 | `connections.config.write` | Write connection config fields beyond nickname/host/user/port | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_WRITE` capability | v1 |
 | `connections.secrets.write` | Read and write passwords, passphrases, and plugin secrets through authorized daemon RPCs | Daemon: Implemented | `store_connection_password`, `lookup_connection_password`, `delete_connection_password`, `store_key_passphrase`, `lookup_key_passphrase`; wire `connections.store_password`, `connections.lookup_password`, `connections.delete_password`, `connections.store_passphrase`, `connections.lookup_passphrase`, `connections.store_plugin_secret`, `connections.get_plugin_secret`, `connections.delete_plugin_secret` | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
@@ -469,6 +473,42 @@ Implemented when the SSH overrides service is installed. Partially updates
 (`ssh_overrides.update`) or resets (`ssh_overrides.reset`) global SSH overrides.
 Gated behind `SSH_OVERRIDES_WRITE`. Write operations use optimistic concurrency
 control via `expected_revision`.
+
+<!-- api-capability: secrets.read -->
+## `secrets.read`
+
+Implemented when the daemon secret backend service is installed. Returns the
+daemon-owned `secrets.*` configuration (`secrets.configuration.get`), the
+backend registry (`secrets.backends.get`), and the current backend selection and
+lock state (`secrets.state.get`). Only metadata crosses the wire; secret values
+never leave the daemon. Gated behind `SECRETS_READ`.
+
+<!-- api-capability: secrets.write -->
+## `secrets.write`
+
+Implemented when the daemon secret backend service is installed. Partially
+updates the daemon-owned `secrets.*` configuration
+(`secrets.configuration.update`) or changes the selected backend
+(`secrets.selection.update`). Secret values are never accepted or returned by
+these wire methods. Gated behind `SECRETS_WRITE`.
+
+<!-- api-capability: secrets.operate -->
+## `secrets.operate`
+
+Implemented when the daemon secret backend service is installed. Unlocks
+(`secrets.unlock`) or locks (`secrets.lock`) the selected backend and runs
+Bitwarden (`secrets.bitwarden.*`) or rbw (`secrets.rbw.*`) lifecycle operations.
+Master passwords, 2FA codes, API-key client secrets, and SSO authentication use
+the protected interaction path and never appear in ordinary JSON payloads.
+Gated behind `SECRETS_OPERATE`.
+
+<!-- api-capability: secrets.transfer -->
+## `secrets.transfer`
+
+Implemented when the daemon secret backend service is installed. Exports
+(`secrets.transfer.export`) or imports (`secrets.transfer.import`) secret
+backups entirely inside the daemon. Results carry paths, counts, and warnings
+only; no secret values are returned. Gated behind `SECRETS_TRANSFER`.
 
 ## Frontend behaviour
 

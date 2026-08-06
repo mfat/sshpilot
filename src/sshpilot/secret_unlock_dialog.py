@@ -1,20 +1,24 @@
 """GTK unlock prompt for session-backed secret backends (Bitwarden/Vaultwarden).
 
-The core ``secret_storage`` module is GTK-free and never prompts; this is the GTK
-layer that asks the user for the master password and hands it to the selected
-backend's :meth:`SecretManager.unlock_selected`.
+The daemon (``sshpilotd``) owns the secret backends: it stages the selection, holds
+the lock state, and collects master passwords / 2FA codes through **protected
+interactions** presented app-wide by :class:`SecretsInteractionPresenter`. This GTK
+module only *drives* the unlock through the daemon-backed
+:class:`SecretBackendsController` — it never reads secret values, never touches
+``SecretManager``, never imports ``secret_storage``, and never collects a master
+password in a dialog.
 
 It owns the user-facing messaging for the unlock interaction:
-- if the backend has no authenticated account, it opens the Bitwarden sign-in wizard
-  instead of showing a doomed password prompt;
-- on a failed unlock it reports an incorrect-password message.
+- if the backend has no authenticated account, the daemon reports ``login_required``
+  and this module opens the Bitwarden sign-in wizard instead of a doomed prompt;
+- on an unavailable backend it shows the unavailable notice.
+
 ``on_done(success: bool)`` is purely for flow control (success only when actually
-unlocked). Backend calls that may spawn a process (``bw login --check``/``bw unlock``) run
-off the main thread.
+unlocked). The controller call runs off the main thread (it blocks while the daemon
+waits on the protected interaction), and ``on_done`` fires on the GLib main loop.
 """
 
 import logging
-import os
 import threading
 from gettext import gettext as _
 
@@ -23,12 +27,11 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
-from .secret_storage import get_secret_manager, master_password_spec, selected_master_spec
 from .window_dialogs import parent_window
 
 logger = logging.getLogger(__name__)
 
-# Guards against duplicate prompts: while one unlock dialog is open, further
+# Guards against duplicate prompts: while one unlock is in flight, further
 # prompt_unlock() calls (e.g. an impatient second double-click) ride the current
 # one instead of opening another dialog. All their on_done callbacks fire when the
 # in-flight unlock resolves.
@@ -36,23 +39,26 @@ _unlock_in_progress = False
 _pending_callbacks = []
 
 
-def _should_finish_cancel(outcome, has_closed, closed_fired) -> bool:
-    """Whether the password prompt should finish as *cancel*.
+def _report_noop(on_done, success):
+    """Fire ``on_done(success)`` for a call that never started an unlock."""
+    if on_done:
+        try:
+            on_done(bool(success))
+        except Exception:
+            logger.debug("unlock on_done callback failed", exc_info=True)
 
-    True only when the outcome is KNOWN and is not ``'unlock'`` — and the dialog is gone
-    (``closed_fired``) or has no ``closed`` signal (legacy ``has_closed`` False). An
-    unknown outcome (``None``) never finishes: GTK may emit ``closed`` before ``response``
-    (e.g. pressing Enter), and finishing then would abort an in-progress unlock and start
-    the connection early. The ``unlock`` outcome is owned by the spinner/worker path."""
-    if outcome is None or outcome == 'unlock':
-        return False
-    return bool(closed_fired or not has_closed)
+
+def _backend_name(backend):
+    """The raw backend name string from a descriptor, a name, or a shim object."""
+    if isinstance(backend, str):
+        return backend
+    return getattr(backend, "name", "") or ""
 
 
 def _friendly_backend_name(backend):
     """A human label for the unlock heading — never the raw describe() (which for
     Vaultwarden includes the server URL, e.g. ``vaultwarden:https://…``)."""
-    name = (getattr(backend, "name", "") or "").strip().lower()
+    name = (_backend_name(backend) or "").strip().lower()
     friendly = {"bitwarden": "Bitwarden", "vaultwarden": "Vaultwarden",
                 "keepassxc": "KeePassXC"}.get(name)
     if friendly:
@@ -140,7 +146,7 @@ def _prompt_unavailable_backend(parent, backend):
 
     Shared by every backend so the startup notice is consistent; each routes to its own
     remedy (rbw → install + link, Bitwarden → set-up flow, others → a generic notice)."""
-    name = (getattr(backend, "name", "") or "").strip().lower()
+    name = (_backend_name(backend) or "").strip().lower()
     friendly = _friendly_backend_name(backend)
 
     if name == "rbw":
@@ -188,77 +194,9 @@ def _prompt_unavailable_backend(parent, backend):
     )
 
 
-def unlock_at_startup(window):
-    """If the selected secret backend is session-backed (Bitwarden/Vaultwarden) and
-    locked, prompt to unlock it at app startup — so the vault is ready (and warm) before
-    the first connection, with the same password dialog + spinner used elsewhere.
-
-    When *any* selected backend is unavailable (a missing ``bw``/``rbw``/``pass`` CLI, a
-    KeePassXC database that isn't set, …), show a user-facing notice instead of failing
-    silently — the same check for every backend, not just the session ones.
-
-    No-op for an available passive backend or an already-unlocked vault. Safe to schedule
-    via ``GLib.idle_add`` from the application's activation. Returns ``False`` so it runs
-    once when used as an idle source."""
-    try:
-        from .config import Config
-        manager = get_secret_manager()
-        # Apply the configured selection up front (idempotent with the connection
-        # manager's deferred init) so the check below is accurate regardless of order.
-        try:
-            manager.set_selected(Config().get_setting('secrets.backend', 'auto'))
-        except Exception:
-            pass
-        backend = manager.selected_backend()
-        if backend is None:
-            return False
-        # Same availability check for every selected backend, not just session ones: if the
-        # chosen store can't run (missing CLI / database), tell the user at startup instead
-        # of silently failing to autofill later. is_available() is a cheap presence check
-        # for all backends (no subprocess), so it's fine on the main loop.
-        if not backend.is_available():
-            _prompt_unavailable_backend(window, backend)
-            return False
-        # Passive backends (rbw, pass, keyring, …) have no unlock lifecycle — once we know
-        # they're available there is nothing more to do at startup.
-        if not getattr(backend, "session_backed", False):
-            return False
-        if not manager.selected_needs_unlock():
-            return False
-        # Locked. Decide off the main thread whether we can even unlock: an
-        # unauthenticated vault (no ``bw login`` yet) must not get a doomed
-        # master-password prompt at startup — the user signs in later through the
-        # connection or Preferences flow. ``selected_needs_login`` spawns ``bw
-        # status`` (a slow Node process), so keep it off the GTK main thread.
-        def _probe():
-            needs_login = manager.selected_needs_login()
-            GLib.idle_add(lambda: (_startup_unlock_after_probe(window, needs_login), False)[1])
-
-        threading.Thread(target=_probe, daemon=True).start()
-    except Exception:
-        logger.debug("startup unlock failed", exc_info=True)
-    return False
-
-
-def _startup_unlock_after_probe(window, needs_login):
-    """At startup: when signed in but locked, prompt to unlock. When not signed in,
-    show a dismissible notice offering to sign in — never a doomed unlock prompt."""
-    manager = get_secret_manager()
-    if needs_login:
-        backend = manager.selected_backend()
-        if backend is not None:
-            _prompt_not_signed_in(window, backend)
-        return
-    try:
-        if manager.selected_needs_unlock():
-            prompt_unlock(window)
-    except Exception:
-        logger.debug("deferred startup unlock failed", exc_info=True)
-
-
 def _prompt_not_signed_in(parent, backend):
     """Tell the user the selected vault is installed but not signed in, and offer sign-in."""
-    name = (getattr(backend, "name", "") or "").strip().lower()
+    name = (_backend_name(backend) or "").strip().lower()
     friendly = _friendly_backend_name(backend)
 
     if name == "bitwarden":
@@ -299,77 +237,163 @@ def _prompt_not_signed_in(parent, backend):
     )
 
 
+def _resolve_controller(parent):
+    """The daemon-backed secrets controller reachable from ``parent``, or ``None``.
+
+    Prefers the window's own ``secrets_controller``; dialogs that hold the owning
+    window (``ConnectionDialog.parent_window``) are unwrapped; and finally a plain
+    widget's root window is consulted. Returns ``None`` when no daemon controller is
+    reachable — GTK then owns nothing and must not fall back to ``secret_storage``.
+    """
+    controller = getattr(parent, "secrets_controller", None)
+    if controller is not None:
+        return controller
+    owner = getattr(parent, "parent_window", None)
+    if owner is not None:
+        controller = getattr(owner, "secrets_controller", None)
+        if controller is not None:
+            return controller
+    try:
+        root = parent.get_root()
+    except Exception:
+        return None
+    return getattr(root, "secrets_controller", None)
+
+
+def _object_needs_unlock(backend):
+    """Duck-typed "would need unlocking" for an explicitly passed backend shim.
+
+    Only the shim's own state is read (no manager, no ``secret_storage``): a
+    session-backed, available, still-locked target needs an unlock."""
+    if not getattr(backend, "session_backed", False):
+        return False
+    try:
+        if not backend.is_available():
+            return False
+    except Exception:
+        return False
+    try:
+        if backend.is_unlocked():
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _unlock_with_controller(controller, state):
+    """Run the daemon-owned unlock for the selected backend.
+
+    When the daemon reports a stale session (locked yet not needing unlock), drop it
+    with ``lock()`` first so the unlock interaction re-prompts. The result is the
+    daemon's :class:`SecretUnlockResult` — never a secret value."""
+    if state is not None and state.locked and not state.needs_unlock:
+        lock = getattr(controller, "lock", None)
+        if callable(lock):
+            try:
+                lock()
+            except Exception:
+                logger.debug("pre-unlock lock() failed", exc_info=True)
+    unlock = getattr(controller, "unlock", None)
+    if not callable(unlock):
+        raise RuntimeError("the secrets controller exposes no unlock()")
+    return unlock()
+
+
+def _unlock_result_outcome(result):
+    """Map a daemon ``SecretUnlockResult`` to ``(ok, notice)``.
+
+    ``notice`` is ``"login"`` (sign-in needed), ``"unavailable"`` (backend cannot
+    run), or ``None``. An ``interaction_required`` outcome is a user cancel and maps
+    to a plain failure."""
+    kind = getattr(getattr(result, "kind", None), "value", None)
+    if kind == "unlocked":
+        return True, None
+    if kind == "login_required":
+        return False, "login"
+    if kind == "backend_unavailable":
+        return False, "unavailable"
+    return False, None
+
+
+def unlock_at_startup(window):
+    """If the selected session-backed secret backend is locked, unlock it at startup.
+
+    The daemon owns the backend: this only reads the daemon's lock state and drives
+    an unlock when needed (the app-wide secrets interaction presenter collects any
+    master password). No-op when the daemon exposes no secrets controller — the app
+    never falls back to GTK-owned secret code. A selected-but-unavailable backend
+    gets the same notice as the manual path.
+
+    Safe to schedule via ``GLib.idle_add`` from the application's activation. Returns
+    ``False`` so it runs once when used as an idle source."""
+    controller = getattr(window, "secrets_controller", None)
+    if controller is None:
+        return False
+    try:
+        state = controller.load_state()
+    except Exception:
+        logger.debug("startup unlock state query failed", exc_info=True)
+        return False
+    if state.login_required:
+        _prompt_not_signed_in(window, state.selected_backend)
+        return False
+    if state.needs_unlock:
+        prompt_unlock(window)
+        return False
+    # Already unlocked / passive backend. Still surface a selected-but-unavailable
+    # backend once, like the manual path does (the daemon reports it as needing no
+    # unlock, so without this check the user would never hear about it).
+    try:
+        registry = controller.load_registry()
+    except Exception:
+        logger.debug("startup registry query failed", exc_info=True)
+        return False
+    for backend in getattr(registry, "backends", ()):
+        if getattr(backend, "selected", False) and not getattr(backend, "available", False):
+            _prompt_unavailable_backend(window, backend)
+            return False
+    return False
+
+
 def prompt_unlock(parent, *, backend=None, on_done=None):
-    """Prompt for the master password and unlock a session backend.
+    """Unlock a session backend through the daemon-owned secrets controller.
 
-    By default this targets the Preferences-**selected** backend. Pass ``backend`` (a name like
-    ``"bitwarden"`` or a backend object) to unlock THAT backend instead — e.g. Bitwarden used as a
-    backup *destination* while the selected secrets backend is something else.
+    By default this unlocks the selected backend. ``backend`` is accepted for the
+    backup-destination / setup shims: a non-``None`` object is duck-typed only for its
+    *state* (an already-unlocked target reports success immediately), while the actual
+    unlock always goes through the daemon — GTK never unlocks a backend directly.
 
-    ``on_done(success: bool)`` is invoked on the GLib main loop when finished. If the target
-    backend is not session-backed, already unlocked, or unavailable, this is a no-op that reports
-    success immediately. The password dialog is shown immediately (no `bw status` pre-probe);
-    whether a failure is "not signed in" vs "wrong password" is decided after the unlock attempt,
-    off the main thread.
+    ``on_done(success: bool)`` is invoked on the GLib main loop when finished. If no
+    daemon controller is reachable this is a no-op that reports ``False`` (GTK must
+    not fall back to a local backend); if no unlock is needed it reports ``True``.
+    The master password is never collected here: the daemon raises a protected
+    interaction and the app-wide secrets presenter shows the prompt.
 
     Only one prompt is ever open at a time — concurrent calls ride the in-flight one
     and all their callbacks fire when it resolves.
 
-    Returns ``True`` when this call **owns** the interaction (it showed the dialog, or no
-    unlock was needed), and ``False`` when it merely **rode** an already-open prompt. The
-    connect flow uses this to avoid silently proceeding on a *ridden* prompt that resolves
-    still-locked (e.g. a startup unlock the user cancelled).
+    Returns ``True`` when this call **owns** the interaction (it started the unlock, or
+    no unlock was needed), and ``False`` when it merely **rode** an already-open prompt.
+    The connect flow uses this to avoid silently proceeding on a *ridden* prompt that
+    resolves still-locked (e.g. a startup unlock the user cancelled).
     """
     global _unlock_in_progress
-    manager = get_secret_manager()
+    controller = _resolve_controller(parent)
 
-    # Resolve the target backend + its unlock ops. Default is the selected backend; an explicit
-    # `backend` unlocks that one (backup-destination case).
-    if backend is None:
-        target = manager.selected_backend()
-        _needs_unlock = manager.selected_needs_unlock()
-
-        def _do_unlock(pw, progress):
-            return bool(manager.unlock_selected(pw, progress=progress))
-
-        def _needs_login():
-            try:
-                return bool(manager.selected_needs_login())
-            except Exception:
-                return False
-
-        def _master_spec():
-            return selected_master_spec(manager)
+    # Explicit backend object shim: only its duck-typed state is read here; the
+    # unlock itself stays daemon-owned. An already-unlocked target needs no action.
+    if backend is not None:
+        if not _object_needs_unlock(backend):
+            _report_noop(on_done, True)
+            return True
+        target = backend
     else:
-        target = manager.get_backend(backend) if isinstance(backend, str) else backend
+        target = None
 
-        def _do_unlock(pw, progress):
-            return bool(target is not None and target.unlock(pw, progress=progress))
-
-        def _needs_login():
-            try:
-                return bool(target is not None and target.needs_login())
-            except Exception:
-                return False
-
-        def _master_spec():
-            name = (getattr(target, "name", "") or "session").strip().lower()
-            profile = (os.environ.get("SSHPILOT_KDBX_DATABASE", "") if name == "keepassxc"
-                       else os.environ.get("BITWARDENCLI_APPDATA_DIR", ""))
-            return master_password_spec(name, profile)
-
-        _needs_unlock = bool(
-            target is not None and getattr(target, "session_backed", False)
-            and target.is_available() and not target.is_unlocked())
-
-    # Cheap, non-blocking: session-backed + available + locked. (False also covers
-    # "already unlocked", "not a session backend", and "unavailable".)
-    if not _needs_unlock:
-        if on_done:
-            try:
-                on_done(True)
-            except Exception:
-                logger.debug("unlock on_done callback failed", exc_info=True)
+    # No daemon controller reachable: GTK owns nothing and must not fall back to a
+    # GTK-owned or legacy backend path.
+    if controller is None:
+        _report_noop(on_done, False)
         return True
 
     # A prompt is already open: ride it instead of stacking a second dialog.
@@ -399,80 +423,59 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
                 logger.debug("unlock on_done callback failed", exc_info=True)
         return False  # usable directly with GLib.idle_add
 
-    label = _friendly_backend_name(target)
+    label = _friendly_backend_name(target if target is not None else _("vault"))
+    backend_name = _backend_name(target) if target is not None else ""
 
     # Holds the current spinner's (close_fn, dialog) so _after_unlock can dismiss it and
-    # sequence _finish off its 'closed' signal. Shared across re-prompts (one at a time).
+    # sequence _finish off its 'closed' signal.
     _spinner = [None]
 
-    # -- run the unlock (spinner + worker) for a given password -----------
-    def _run_unlock(password, *, source, remember):
-        # ``source`` is 'manual' (typed in the entry dialog, ``remember`` = checkbox) or
-        # 'saved' (a master password read from the keyring → auto-unlock). The spinner is
-        # always shown, so startup still displays the "Unlocking…" alert when auto-unlocking.
+    # -- run the daemon unlock (spinner + worker) -----------------------
+    def _run_unlock():
         def _worker(set_status):
             ok = False
-            needs_login = False
+            notice = None
+            state = None
+            if target is None:
+                # The daemon owns the decision; when it says no unlock is needed the
+                # call resolves as a no-op success (already unlocked / passive /
+                # unavailable), mirroring the old "cheap check" contract.
+                try:
+                    state = controller.load_state()
+                except Exception:
+                    logger.debug("unlock state query failed", exc_info=True)
+                    state = None
+                if state is not None and not state.needs_unlock:
+                    ok = True
+            if not ok:
+                try:
+                    ok, notice = _unlock_result_outcome(
+                        _unlock_with_controller(controller, state)
+                    )
+                except Exception as exc:
+                    logger.error("Secret backend unlock failed: %s", exc)
+            GLib.idle_add(_after_unlock, ok, notice)
 
-            def _progress(stage):
-                text = {
-                    "starting": _("Starting the vault service…"),
-                    "unlocking": _("Unlocking your vault…"),
-                    "loading": _("Loading your vault…"),
-                }.get(stage)
-                if text:
-                    GLib.idle_add(lambda: (set_status(text), False)[1])
-
-            try:
-                ok = _do_unlock(password, _progress)
-                if not ok:
-                    needs_login = _needs_login()
-            except Exception as exc:
-                logger.error("Secret backend unlock failed: %s", exc)
-            GLib.idle_add(_after_unlock, ok, needs_login)
-
-        def _after_unlock(ok, needs_login):
+        def _after_unlock(ok, notice):
             # Sequence everything off the spinner's close so the terminal the caller opens
             # (via on_done -> retry()) never appears behind a closing dialog.
             close, spin = _spinner[0] if _spinner[0] is not None else (lambda: None, None)
 
             if ok:
-                # Persist the "remember" choice on a manual unlock; a saved password that
-                # just worked stays as-is.
-                if source == 'manual':
-                    try:
-                        if remember:
-                            manager.store_in_keyring(_master_spec(), password)
-                        else:
-                            manager.delete_in_keyring(_master_spec())
-                    except Exception:
-                        logger.debug("persisting master password failed", exc_info=True)
                 on_spinner_closed = lambda *_a: _finish(True)
-            elif source == 'saved':
-                # The saved password is stale (e.g. the master password changed). Forget it
-                # and fall back to a manual entry dialog — no error popup.
-                try:
-                    manager.delete_in_keyring(_master_spec())
-                except Exception:
-                    pass
-                on_spinner_closed = lambda *_a: _show_password_dialog()
-            elif needs_login:
-                from .bitwarden_setup import _prompt_gui_login
-
-                on_spinner_closed = lambda *_a: (
-                    _prompt_gui_login(
-                        parent, target,
-                        on_done=lambda ok: _finish(ok),
-                    )
-                )
+            elif notice == "login":
+                def _show_login_notice(*_a):
+                    _prompt_not_signed_in(parent, backend_name)
+                    return _finish(False)
+                on_spinner_closed = _show_login_notice
+            elif notice == "unavailable":
+                def _show_unavailable_notice(*_a):
+                    _prompt_unavailable_backend(parent, backend_name)
+                    return _finish(False)
+                on_spinner_closed = _show_unavailable_notice
             else:
-                on_spinner_closed = lambda *_a: _message(
-                    parent,
-                    _("Incorrect master password"),
-                    _("SSH Pilot could not unlock the secret store. Check your master "
-                      "password and try again."),
-                    on_closed=lambda: _finish(False),
-                )
+                # Cancelled (interaction_required) or an unexpected failure.
+                on_spinner_closed = lambda *_a: _finish(False)
 
             if spin is not None:
                 connected = False
@@ -501,105 +504,5 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
 
         GLib.idle_add(_present_spinner)
 
-    # -- the master-password entry dialog ---------------------------------
-    def _show_password_dialog():
-        heading = _("Unlock {backend}").format(backend=label)
-        body = _("Enter your master password to unlock the secret store.")
-        use_alert = hasattr(Adw, 'AlertDialog')
-        if use_alert:
-            dialog = Adw.AlertDialog(heading=heading, body=body)
-        else:
-            dialog = Adw.MessageDialog(
-                transient_for=parent_window(parent), modal=True, heading=heading, body=body,
-            )
-
-        entry = Gtk.PasswordEntry(show_peek_icon=True)
-        entry.set_hexpand(True)
-        # Gtk.PasswordEntry has the `activates-default` property but no
-        # set_activates_default() convenience method — set it via the property so
-        # Enter triggers the dialog's default response.
-        entry.set_property('activates-default', True)
-        remember_check = Gtk.CheckButton(label=_("Remember master password"))
-        remember_check.set_active(False)   # opt-in
-        caption = Gtk.Label(label=_("Stored in your system keyring."))
-        caption.set_xalign(0)
-        caption.set_wrap(True)
-        caption.set_margin_start(28)
-        for css in ("dim-label", "caption"):
-            try:
-                caption.add_css_class(css)
-            except Exception:
-                pass
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.append(entry)
-        box.append(remember_check)
-        box.append(caption)
-        dialog.set_extra_child(box)
-
-        dialog.add_response('cancel', _("Cancel"))
-        dialog.add_response('unlock', _("Unlock"))
-        dialog.set_default_response('unlock')
-        dialog.set_close_response('cancel')
-        try:
-            dialog.set_response_appearance('unlock', Adw.ResponseAppearance.SUGGESTED)
-        except Exception:
-            pass
-
-        # Per-dialog cancel-sequencing state (fresh each time the dialog is shown).
-        # ``_outcome`` starts None ("unknown"): GTK does NOT guarantee 'response' fires
-        # before 'closed' (Enter / activates-default can emit 'closed' first), so the
-        # default must never be treated as a cancel — that would prematurely finish the
-        # unlock and start the connection while the worker is still unlocking.
-        _outcome = [None]
-        _pw_closed_fired = [False]
-        _pw_has_closed = [False]
-
-        def _cancel_finish_if_ready():
-            if _should_finish_cancel(_outcome[0], _pw_has_closed[0], _pw_closed_fired[0]):
-                _finish(False)
-
-        def _on_response(_d, response):
-            _outcome[0] = response
-            if response != 'unlock':
-                _cancel_finish_if_ready()
-                return
-            password = entry.get_text() or ''
-            remember = bool(remember_check.get_active())
-            # _run_unlock shows the spinner once this dialog has closed.
-            _run_unlock(password, source='manual', remember=remember)
-
-        def _on_pw_closed(_d):
-            _pw_closed_fired[0] = True
-            _cancel_finish_if_ready()
-
-        dialog.connect('response', _on_response)
-        try:
-            dialog.connect('closed', _on_pw_closed)
-            _pw_has_closed[0] = True
-        except Exception:
-            _pw_has_closed[0] = False
-        if use_alert:
-            dialog.present(parent)
-        else:
-            dialog.present()
-
-        def _focus_entry():
-            try:
-                entry.grab_focus()
-            except Exception:
-                pass
-            return False
-
-        GLib.idle_add(_focus_entry)
-
-    # Auto-unlock with a saved master password (still shows the spinner), else prompt.
-    saved = None
-    try:
-        saved = manager.lookup_in_keyring(_master_spec())
-    except Exception:
-        logger.debug("saved master password lookup failed", exc_info=True)
-    if saved:
-        _run_unlock(saved, source='saved', remember=True)
-    else:
-        _show_password_dialog()
-    return True   # this call owns the (newly shown) prompt
+    _run_unlock()
+    return True   # this call owns the (newly started) unlock

@@ -13,6 +13,42 @@
       "capability": "sftp.write",
       "status": "daemon-only"
     },
+    "bitwarden_api_key_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_configure_server": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_logout": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_sso_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_status": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_sync": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_unlock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
     "cancel_interaction": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -85,6 +121,10 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "export_secret_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -117,6 +157,18 @@
       "capability": "interactions.read",
       "status": "daemon-only"
     },
+    "get_secret_backends": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
+    "get_secret_configuration": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
+    "get_secret_state": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
     "get_session": {
       "capability": "sessions.read",
       "status": "daemon-only"
@@ -127,6 +179,10 @@
     },
     "get_transfer": {
       "capability": "transfers.read",
+      "status": "daemon-only"
+    },
+    "import_secret_backup": {
+      "capability": "secrets.transfer",
       "status": "daemon-only"
     },
     "list_connections": {
@@ -153,6 +209,10 @@
       "capability": "transfers.read",
       "status": "daemon-only"
     },
+    "lock_secrets": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
     "lookup_connection_password": {
       "capability": "connections.secrets.write",
       "status": "implemented"
@@ -171,6 +231,26 @@
     },
     "open_sftp": {
       "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "rbw_configure": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_status": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_sync": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_unlock": {
+      "capability": "secrets.operate",
       "status": "daemon-only"
     },
     "release_interaction": {
@@ -285,6 +365,10 @@
       "capability": "terminal.output",
       "status": "daemon-only"
     },
+    "unlock_secrets": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
     "update_connection": {
       "capability": "connections.write",
       "status": "implemented"
@@ -296,6 +380,14 @@
     "update_global_ssh_overrides": {
       "capability": "ssh_overrides.write",
       "status": "implemented"
+    },
+    "update_secret_configuration": {
+      "capability": "secrets.write",
+      "status": "daemon-only"
+    },
+    "update_secret_selection": {
+      "capability": "secrets.write",
+      "status": "daemon-only"
     }
   },
   "daemon_method_contract": {
@@ -454,6 +546,75 @@
     },
     "known_hosts.remove": {
       "capability": "known_hosts.write"
+    },
+    "secrets.backends.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.bitwarden.api_key_login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.configure_server": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.logout": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.sso_login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.status": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.sync": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.unlock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.configuration.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.configuration.update": {
+      "capability": "secrets.write"
+    },
+    "secrets.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.configure": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.status": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.sync": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.unlock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.selection.update": {
+      "capability": "secrets.write"
+    },
+    "secrets.state.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.transfer.export": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.unlock": {
+      "capability": "secrets.operate"
     },
     "sessions.attach": {
       "capability": "sessions.write"
@@ -623,7 +784,11 @@
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",
-      "secrets"
+      "secrets",
+      "secrets.read",
+      "secrets.write",
+      "secrets.operate",
+      "secrets.transfer"
     ],
     "ConnectionHealth": [
       "unknown",

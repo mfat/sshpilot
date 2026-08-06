@@ -64,6 +64,10 @@ class Capability(str, Enum):
     SSH_OVERRIDES_WRITE = "ssh_overrides.write"
     PLUGINS = "plugins"
     SECRETS = "secrets"
+    SECRETS_READ = "secrets.read"
+    SECRETS_WRITE = "secrets.write"
+    SECRETS_OPERATE = "secrets.operate"
+    SECRETS_TRANSFER = "secrets.transfer"
 
 
 @dataclass(frozen=True)

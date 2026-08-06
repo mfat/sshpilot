@@ -153,6 +153,11 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("terminal_manager.py", "DaemonLauncher"),
         ("terminal_manager.py", "DaemonLaunchError"),
         ("terminal_manager.py", "DaemonStartupFailure"),
+        # Reserved ``secret-session`` interaction namespace: frontend dialog
+        # layers filter on it so secret-backend interactions are presented by
+        # the app-wide SecretsInteractionPresenter, never the session-scoped one.
+        ("daemon_interaction_dialogs.py", "is_secret_service_session"),
+        ("gtk/secrets_interaction_presenter.py", "is_secret_service_session"),
     }
 )
 

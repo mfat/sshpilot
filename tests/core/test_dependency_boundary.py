@@ -59,6 +59,14 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     ("daemon/connection_secret_provider.py", "sshpilot.credential_model"): "M5",
     ("daemon/connection_secret_provider.py", "sshpilot.secret_storage"): "M5",
     ("daemon/connection_secret_provider.py", "sshpilot.askpass_utils"): "M5",
+    # The daemon secret service owns the selected backend through the existing
+    # SecretManager (secret_storage) and reuses CredentialManager/credential
+    # model for export/import. These stay M5 debt until the migration moves the
+    # manager into a daemon-owned headless module; no secret value crosses the
+    # wire.
+    ("daemon/secret_backend_service.py", "sshpilot.secret_storage"): "M5",
+    ("daemon/secret_transfer.py", "sshpilot.credential_manager"): "M5",
+    ("daemon/secret_transfer.py", "sshpilot.credential_model"): "M5",
     # get_state_dir is used for the daemon log. platform_utils imports GI, so the
     # daemon runtime depends on GI for its log path; switch to the GI-free
     # sshpilot.platform.paths.get_state_dir helper when the log lands behind it.

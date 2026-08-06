@@ -4413,3 +4413,359 @@ def update_global_ssh_overrides_request_from_wire(
         patch=patch,
         expected_revision=data.get("expected_revision"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Daemon-owned secret-backend management
+# ---------------------------------------------------------------------------
+
+def secret_configuration_to_wire(configuration: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretConfiguration
+
+    if type(configuration) is not SecretConfiguration:
+        raise TypeError("SecretConfiguration is required")
+    return {
+        "revision": configuration.revision,
+        "backend": configuration.backend,
+        "session_timeout": configuration.session_timeout,
+        "remember_in_keyring": configuration.remember_in_keyring,
+        "bitwarden_profile": configuration.bitwarden_profile,
+        "bitwarden_server": configuration.bitwarden_server,
+        "keepassxc_database": configuration.keepassxc_database,
+        "keepassxc_keyfile": configuration.keepassxc_keyfile,
+    }
+
+
+def secret_configuration_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretConfiguration
+
+    data = _strict_fields(
+        value,
+        required={
+            "revision",
+            "backend",
+            "session_timeout",
+            "remember_in_keyring",
+            "bitwarden_profile",
+            "bitwarden_server",
+            "keepassxc_database",
+            "keepassxc_keyfile",
+        },
+        context="secret configuration",
+    )
+    return SecretConfiguration(
+        revision=_text(data["revision"], "revision"),
+        backend=_text(data["backend"], "backend", allow_empty=True),
+        session_timeout=_integer(data["session_timeout"], "session_timeout"),
+        remember_in_keyring=_boolean(data["remember_in_keyring"], "remember_in_keyring"),
+        bitwarden_profile=_text(data["bitwarden_profile"], "bitwarden_profile", allow_empty=True),
+        bitwarden_server=_text(data["bitwarden_server"], "bitwarden_server", allow_empty=True),
+        keepassxc_database=_text(data["keepassxc_database"], "keepassxc_database", allow_empty=True),
+        keepassxc_keyfile=_text(data["keepassxc_keyfile"], "keepassxc_keyfile", allow_empty=True),
+    )
+
+
+def update_secret_configuration_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.secrets import UpdateSecretConfigurationRequest
+
+    if type(request) is not UpdateSecretConfigurationRequest:
+        raise TypeError("UpdateSecretConfigurationRequest is required")
+    result: Dict[str, Any] = {"patch": dict(request.patch)}
+    if request.expected_revision is not None:
+        result["expected_revision"] = request.expected_revision
+    return result
+
+
+def update_secret_configuration_request_from_wire(value: Any) -> Any:
+    from ..models.secrets import UpdateSecretConfigurationRequest
+
+    data = _strict_fields(
+        value,
+        required={"patch"},
+        optional={"expected_revision"},
+        context="update secret configuration request",
+    )
+    patch = data["patch"]
+    if type(patch) is not dict:
+        raise ValueError("patch must be an object")
+    return UpdateSecretConfigurationRequest(
+        patch=patch,
+        expected_revision=data.get("expected_revision"),
+    )
+
+
+def secret_backend_descriptor_to_wire(descriptor: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretBackendDescriptor
+
+    if type(descriptor) is not SecretBackendDescriptor:
+        raise TypeError("SecretBackendDescriptor is required")
+    return {
+        "name": descriptor.name,
+        "label": descriptor.label,
+        "available": descriptor.available,
+        "selected": descriptor.selected,
+        "session_backed": descriptor.session_backed,
+        "locked": descriptor.locked,
+        "needs_unlock": descriptor.needs_unlock,
+        "login_required": descriptor.login_required,
+        "persists_secrets": descriptor.persists_secrets,
+        "capabilities": list(descriptor.capabilities),
+        "diagnostic": descriptor.diagnostic,
+    }
+
+
+def secret_backend_descriptor_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretBackendDescriptor
+
+    data = _strict_fields(
+        value,
+        required={
+            "name",
+            "label",
+            "available",
+            "selected",
+            "session_backed",
+            "locked",
+            "needs_unlock",
+            "login_required",
+            "persists_secrets",
+            "capabilities",
+        },
+        optional={"diagnostic"},
+        context="secret backend descriptor",
+    )
+    capabilities = data["capabilities"]
+    if type(capabilities) is not list or not all(
+        type(item) is str for item in capabilities
+    ):
+        raise ValueError("capabilities must be a list of strings")
+    return SecretBackendDescriptor(
+        name=_text(data["name"], "name"),
+        label=_text(data["label"], "label", allow_empty=True),
+        available=_boolean(data["available"], "available"),
+        selected=_boolean(data["selected"], "selected"),
+        session_backed=_boolean(data["session_backed"], "session_backed"),
+        locked=_boolean(data["locked"], "locked"),
+        needs_unlock=_boolean(data["needs_unlock"], "needs_unlock"),
+        login_required=_boolean(data["login_required"], "login_required"),
+        persists_secrets=_boolean(data["persists_secrets"], "persists_secrets"),
+        capabilities=tuple(capabilities),
+        diagnostic=data.get("diagnostic", ""),
+    )
+
+
+def secret_backend_registry_to_wire(registry: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretBackendRegistry
+
+    if type(registry) is not SecretBackendRegistry:
+        raise TypeError("SecretBackendRegistry is required")
+    return {
+        "backends": [secret_backend_descriptor_to_wire(b) for b in registry.backends],
+        "effective_backend": registry.effective_backend,
+        "selected_backend": registry.selected_backend,
+    }
+
+
+def secret_backend_registry_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretBackendRegistry
+
+    data = _strict_fields(
+        value,
+        required={"backends", "effective_backend", "selected_backend"},
+        context="secret backend registry",
+    )
+    backends = data["backends"]
+    if type(backends) is not list:
+        raise ValueError("backends must be a list")
+    return SecretBackendRegistry(
+        backends=tuple(
+            secret_backend_descriptor_from_wire(item) for item in backends
+        ),
+        effective_backend=_text(data["effective_backend"], "effective_backend"),
+        selected_backend=_text(data["selected_backend"], "selected_backend"),
+    )
+
+
+def secret_backend_state_to_wire(state: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretBackendState
+
+    if type(state) is not SecretBackendState:
+        raise TypeError("SecretBackendState is required")
+    return state.to_dict()
+
+
+def secret_backend_state_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretBackendState
+
+    data = _strict_fields(
+        value,
+        required={
+            "selected_backend",
+            "effective_backend",
+            "locked",
+            "needs_unlock",
+            "login_required",
+            "session_timeout",
+            "remember_in_keyring",
+            "persists_secrets",
+        },
+        context="secret backend state",
+    )
+    return SecretBackendState(
+        selected_backend=_text(data["selected_backend"], "selected_backend"),
+        effective_backend=_text(data["effective_backend"], "effective_backend"),
+        locked=_boolean(data["locked"], "locked"),
+        needs_unlock=_boolean(data["needs_unlock"], "needs_unlock"),
+        login_required=_boolean(data["login_required"], "login_required"),
+        session_timeout=_integer(data["session_timeout"], "session_timeout"),
+        remember_in_keyring=_boolean(data["remember_in_keyring"], "remember_in_keyring"),
+        persists_secrets=_boolean(data["persists_secrets"], "persists_secrets"),
+    )
+
+
+def secret_unlock_result_to_wire(result: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretUnlockResult
+
+    if type(result) is not SecretUnlockResult:
+        raise TypeError("SecretUnlockResult is required")
+    return result.to_dict()
+
+
+def secret_unlock_result_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretUnlockResult, UnlockResultKind
+
+    data = _strict_fields(
+        value,
+        required={"kind", "backend"},
+        optional={"message"},
+        context="secret unlock result",
+    )
+    kind = data["kind"]
+    if type(kind) is not str or kind not in UnlockResultKind._value2member_map_:
+        raise ValueError("kind is not a valid unlock result kind")
+    return SecretUnlockResult(
+        kind=UnlockResultKind(kind),
+        backend=_text(data["backend"], "backend"),
+        message=data.get("message", ""),
+    )
+
+
+def secret_operation_result_to_wire(result: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretOperationResult
+
+    if type(result) is not SecretOperationResult:
+        raise TypeError("SecretOperationResult is required")
+    return result.to_dict()
+
+
+def secret_operation_result_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretOperationResult, SecretOperationState
+
+    data = _strict_fields(
+        value,
+        required={"state", "backend"},
+        optional={"message"},
+        context="secret operation result",
+    )
+    state = data["state"]
+    if type(state) is not str or state not in SecretOperationState._value2member_map_:
+        raise ValueError("state is not a valid secret operation state")
+    return SecretOperationResult(
+        state=SecretOperationState(state),
+        backend=_text(data["backend"], "backend"),
+        message=data.get("message", ""),
+    )
+
+
+def bitwarden_status_to_wire(status: Any) -> Dict[str, Any]:
+    from ..models.secrets import BitwardenStatus
+
+    if type(status) is not BitwardenStatus:
+        raise TypeError("BitwardenStatus is required")
+    return status.to_dict()
+
+
+def bitwarden_status_from_wire(value: Any) -> Any:
+    from ..models.secrets import BitwardenStatus
+
+    data = _strict_fields(
+        value,
+        required={"logged_in", "unlocked", "needs_login", "email", "server_url", "profile"},
+        optional={"twofa_required", "message"},
+        context="bitwarden status",
+    )
+    return BitwardenStatus(
+        logged_in=_boolean(data["logged_in"], "logged_in"),
+        unlocked=_boolean(data["unlocked"], "unlocked"),
+        needs_login=_boolean(data["needs_login"], "needs_login"),
+        email=_text(data["email"], "email", allow_empty=True),
+        server_url=_text(data["server_url"], "server_url", allow_empty=True),
+        profile=_text(data["profile"], "profile", allow_empty=True),
+        twofa_required=_boolean(data.get("twofa_required", False), "twofa_required"),
+        message=data.get("message", ""),
+    )
+
+
+def rbw_status_to_wire(status: Any) -> Dict[str, Any]:
+    from ..models.secrets import RbwStatus
+
+    if type(status) is not RbwStatus:
+        raise TypeError("RbwStatus is required")
+    return status.to_dict()
+
+
+def rbw_status_from_wire(value: Any) -> Any:
+    from ..models.secrets import RbwStatus
+
+    data = _strict_fields(
+        value,
+        required={"installed", "configured", "unlocked", "email", "base_url"},
+        optional={"message"},
+        context="rbw status",
+    )
+    return RbwStatus(
+        installed=_boolean(data["installed"], "installed"),
+        configured=_boolean(data["configured"], "configured"),
+        unlocked=_boolean(data["unlocked"], "unlocked"),
+        email=_text(data["email"], "email", allow_empty=True),
+        base_url=_text(data["base_url"], "base_url", allow_empty=True),
+        message=data.get("message", ""),
+    )
+
+
+def secret_transfer_result_to_wire(result: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretTransferResult
+
+    if type(result) is not SecretTransferResult:
+        raise TypeError("SecretTransferResult is required")
+    return result.to_dict()
+
+
+def secret_transfer_result_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretOperationState, SecretTransferResult
+
+    data = _strict_fields(
+        value,
+        required={"operation", "path", "counts", "warnings", "status"},
+        optional={"message"},
+        context="secret transfer result",
+    )
+    counts = data["counts"]
+    if type(counts) is not dict or not all(
+        type(k) is str and type(v) is int for k, v in counts.items()
+    ):
+        raise ValueError("counts must be an object of integer counts")
+    warnings = data["warnings"]
+    if type(warnings) is not list or not all(type(w) is str for w in warnings):
+        raise ValueError("warnings must be a list of strings")
+    status = data["status"]
+    if type(status) is not str or status not in SecretOperationState._value2member_map_:
+        raise ValueError("status is not a valid secret transfer state")
+    return SecretTransferResult(
+        operation=data["operation"],
+        path=_text(data["path"], "path", allow_empty=True),
+        counts=counts,
+        warnings=tuple(warnings),
+        status=SecretOperationState(status),
+        message=data.get("message", ""),
+    )

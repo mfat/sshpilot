@@ -24,6 +24,7 @@ from .api.models import (
     SecretDecision,
     SessionId,
 )
+from .daemon.secret_backend_service import is_secret_service_session
 
 
 class DaemonInteractionDialogs:
@@ -54,6 +55,8 @@ class DaemonInteractionDialogs:
 
     def _handle_event(self, summary: InteractionSummary) -> bool:
         if self._closed:
+            return False
+        if is_secret_service_session(summary.session_id):
             return False
         if self._session_id is not None and summary.session_id != self._session_id:
             return False

@@ -338,12 +338,23 @@ def _production_core_services():
         allow_cross_thread_commands=True,
     )
 
+    def _build_secrets_service():
+        from sshpilot.daemon.secret_backend_service import SecretBackendService
+
+        return SecretBackendService(
+            get_config_dir() / "config.json",
+            connections_source=repository,
+        )
+
+    secrets_service = _build_secrets_service()
+
     return CoreServices(
         connections=connections,
         configuration_backend=AuthoritativeConfigurationBackend(repository),
         known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
         keys=DaemonKeyService(_resolve_key_root),
         ssh_overrides=overrides_service,
+        secrets=secrets_service,
     )
 
 

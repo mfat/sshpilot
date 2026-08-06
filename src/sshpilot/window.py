@@ -459,6 +459,53 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_runtime_status.attach_client(self.client)
         self.plugin_connection_services.attach_client(self.client)
         self.key_manager = KeyManager(self.client, self._key_scope)
+        self.secrets_controller = self._build_secrets_controller()
+        self._attach_secrets_interaction_presenter()
+
+    def _build_secrets_controller(self):
+        """Build the daemon-backed secrets controller for the frontend.
+
+        Returns ``None`` when the daemon does not advertise the secrets
+        capability, so backend management stays disabled instead of falling
+        back to GTK-owned secret code.
+        """
+        client = getattr(self, "client", None)
+        if client is None:
+            return None
+        try:
+            capabilities = client.get_capabilities()
+        except Exception:
+            return None
+        from sshpilot.api.capabilities import Capability
+
+        if not capabilities.supports(Capability.SECRETS_READ):
+            return None
+        from .gtk.secret_backends_controller import SecretBackendsController
+
+        return SecretBackendsController(client)
+
+    def _attach_secrets_interaction_presenter(self) -> None:
+        """Present daemon-owned secret-backend interactions app-wide.
+
+        The presenter subscribes to the daemon event stream and claims
+        interactions in the reserved ``secret-session`` namespace (unlock,
+        Bitwarden login/2FA, backup passphrases). It is not session-scoped.
+        """
+        if self.client is None or self.client_bridge is None:
+            return
+        from .gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+        presenter = getattr(self, "_secrets_interaction_presenter", None)
+        if presenter is not None:
+            presenter.close()
+        try:
+            self._secrets_interaction_presenter = SecretsInteractionPresenter(
+                self.client,
+                self.client_bridge,
+                self,
+            )
+        except Exception:
+            logger.debug("Secret interaction presenter unavailable", exc_info=True)
 
     def _begin_daemon_client_selection(self) -> None:
         """Locate/start and validate the sole backend away from the GTK thread."""
@@ -495,6 +542,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_request = None
         self.client = None
         self.key_manager = None
+        presenter = getattr(self, "_secrets_interaction_presenter", None)
+        if presenter is not None:
+            presenter.close()
+            self._secrets_interaction_presenter = None
+        self.secrets_controller = None
         controller = getattr(self, "_group_mutation_controller", None)
         if controller is not None:
             controller.close()
@@ -800,7 +852,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if getattr(self, '_preferences_window', None) is None:
                 controller = self._build_ssh_overrides_controller()
                 self._preferences_window = PreferencesWindow(
-                    self, self.config, ssh_overrides_controller=controller
+                    self,
+                    self.config,
+                    ssh_overrides_controller=controller,
                 )
         except Exception as exc:
             logger.debug("Preloading preferences page skipped/failed: %s", exc)

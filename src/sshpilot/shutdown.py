@@ -109,9 +109,17 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
             except Exception as e:
                 logger.debug(f"Final SSH cleanup failed: {e}")
             try:
-                # Drop any cached session-backend unlock token (e.g. BW_SESSION).
-                from .secret_storage import get_secret_manager
-                get_secret_manager().lock_all()
+                # Ask the daemon to drop any cached session-backend unlock token
+                # (e.g. BW_SESSION). The daemon owns the secret backends.
+                controller = getattr(window, 'secrets_controller', None)
+                if controller is not None:
+                    controller.lock()
+                else:
+                    client = getattr(window, 'client', None)
+                    if client is not None:
+                        from .api.capabilities import Capability
+                        if client.get_capabilities().supports(Capability.SECRETS_OPERATE):
+                            client.lock_secrets()
             except Exception as e:
                 logger.debug(f"Secret session lock on shutdown failed: {e}")
             window.active_terminals.clear()

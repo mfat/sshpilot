@@ -52,6 +52,8 @@ ALLOWED_EDGES = {
         "sshpilot.ssh_config_utils",
         "sshpilot.sftp",
         "sshpilot.ssh_multiplex",  # GI-free connection-multiplex helpers
+        "sshpilot.backup_archive",  # GI-free secret backup archive (daemon transfer)
+        "sshpilot.backup_backends",  # GI-free secret backup destination adapters
     ),
 }
 

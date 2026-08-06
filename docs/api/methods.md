@@ -153,6 +153,29 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: get_global_ssh_overrides status=implemented capability=ssh_overrides.read -->
 <!-- api-method-contract: update_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
 <!-- api-method-contract: reset_global_ssh_overrides status=implemented capability=ssh_overrides.write -->
+<!-- api-method-contract: bitwarden_api_key_login status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_configure_server status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_lock status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_login status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_logout status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_sso_login status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_status status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_sync status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: bitwarden_unlock status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: export_secret_backup status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: get_secret_backends status=daemon-only capability=secrets.read -->
+<!-- api-method-contract: get_secret_configuration status=daemon-only capability=secrets.read -->
+<!-- api-method-contract: get_secret_state status=daemon-only capability=secrets.read -->
+<!-- api-method-contract: import_secret_backup status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: lock_secrets status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: rbw_configure status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: rbw_lock status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: rbw_status status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: rbw_sync status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: rbw_unlock status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: unlock_secrets status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: update_secret_configuration status=daemon-only capability=secrets.write -->
+<!-- api-method-contract: update_secret_selection status=daemon-only capability=secrets.write -->
 <!-- api-method: get_connection_store_snapshot -->
 <!-- api-method: set_group_color -->
 <!-- api-method: place_group -->
@@ -262,6 +285,29 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `daemon.diagnostics` | `daemon.status` | Implemented |
 | `daemon.stop` | `daemon.control` | Implemented |
 | `daemon.restart` | `daemon.control` | Implemented |
+| `secrets.configuration.get` | `secrets.read` | Implemented |
+| `secrets.configuration.update` | `secrets.write` | Implemented |
+| `secrets.backends.get` | `secrets.read` | Implemented |
+| `secrets.state.get` | `secrets.read` | Implemented |
+| `secrets.selection.update` | `secrets.write` | Implemented |
+| `secrets.unlock` | `secrets.operate` | Implemented |
+| `secrets.lock` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.status` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.configure_server` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.login` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.api_key_login` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.sso_login` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.unlock` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.sync` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.lock` | `secrets.operate` | Implemented |
+| `secrets.bitwarden.logout` | `secrets.operate` | Implemented |
+| `secrets.rbw.status` | `secrets.operate` | Implemented |
+| `secrets.rbw.configure` | `secrets.operate` | Implemented |
+| `secrets.rbw.unlock` | `secrets.operate` | Implemented |
+| `secrets.rbw.sync` | `secrets.operate` | Implemented |
+| `secrets.rbw.lock` | `secrets.operate` | Implemented |
+| `secrets.transfer.export` | `secrets.transfer` | Implemented |
+| `secrets.transfer.import` | `secrets.transfer` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
 <!-- api-daemon-method: connections.duplicate capability=connections.write -->
@@ -340,6 +386,29 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: ssh_overrides.reset capability=ssh_overrides.write -->
 <!-- api-daemon-method: system.get_capabilities capability=none -->
 <!-- api-daemon-method: system.handshake capability=none -->
+<!-- api-daemon-method: secrets.backends.get capability=secrets.read -->
+<!-- api-daemon-method: secrets.bitwarden.api_key_login capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.configure_server capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.lock capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.login capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.logout capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.sso_login capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.status capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.sync capability=secrets.operate -->
+<!-- api-daemon-method: secrets.bitwarden.unlock capability=secrets.operate -->
+<!-- api-daemon-method: secrets.configuration.get capability=secrets.read -->
+<!-- api-daemon-method: secrets.configuration.update capability=secrets.write -->
+<!-- api-daemon-method: secrets.lock capability=secrets.operate -->
+<!-- api-daemon-method: secrets.rbw.configure capability=secrets.operate -->
+<!-- api-daemon-method: secrets.rbw.lock capability=secrets.operate -->
+<!-- api-daemon-method: secrets.rbw.status capability=secrets.operate -->
+<!-- api-daemon-method: secrets.rbw.sync capability=secrets.operate -->
+<!-- api-daemon-method: secrets.rbw.unlock capability=secrets.operate -->
+<!-- api-daemon-method: secrets.selection.update capability=secrets.write -->
+<!-- api-daemon-method: secrets.state.get capability=secrets.read -->
+<!-- api-daemon-method: secrets.transfer.export capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.import capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.unlock capability=secrets.operate -->
 
 Unknown wire methods return `unsupported_method`. Terminal output and input use
 the negotiated binary frame path; resize and replay metadata use the two
@@ -1292,6 +1361,449 @@ result = client.update_global_ssh_overrides(
 result = client.reset_global_ssh_overrides(
     expected_revision=overrides.revision,
 )
+```
+
+<!-- api-method: bitwarden_api_key_login -->
+## `bitwarden_api_key_login`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; begin a Bitwarden API-key login.
+  The client secret is never a parameter — the daemon prompts for it through the
+  protected interaction path.
+- **Parameters / return:** `client_id: str`; returns `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` for the client
+  secret and 2FA steps.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `bw` inside the daemon; the client secret
+  never crosses the wire.
+
+```python
+status = client.bitwarden_api_key_login(client_id="user.xxxx")
+```
+
+<!-- api-method: bitwarden_configure_server -->
+## `bitwarden_configure_server`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; set the Bitwarden server URL.
+- **Parameters / return:** `url: str`; returns `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `VALIDATION_FAILED` for a malformed URL.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Persists the server URL in daemon-owned
+  `secrets.*` configuration.
+
+```python
+status = client.bitwarden_configure_server("https://bitwarden.example.com")
+```
+
+<!-- api-method: bitwarden_lock -->
+## `bitwarden_lock`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; lock the Bitwarden vault session.
+- **Parameters / return:** No parameters; returns `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `bw lock` inside the daemon.
+
+```python
+status = client.bitwarden_lock()
+```
+
+<!-- api-method: bitwarden_login -->
+## `bitwarden_login`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; begin a Bitwarden master-password
+  login. The master password is never a parameter — the daemon prompts for it
+  through the protected interaction path.
+- **Parameters / return:** `email: str`, optional `twofa_method: str`; returns
+  `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` for the master
+  password and 2FA code steps.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `bw login` inside the daemon; the master
+  password and 2FA code never cross the wire.
+
+```python
+status = client.bitwarden_login(email="user@example.com")
+```
+
+<!-- api-method: bitwarden_logout -->
+## `bitwarden_logout`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; log out of the Bitwarden account.
+- **Parameters / return:** No parameters; returns `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `bw logout` inside the daemon.
+
+```python
+status = client.bitwarden_logout()
+```
+
+<!-- api-method: bitwarden_sso_login -->
+## `bitwarden_sso_login`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; begin a Bitwarden SSO login.
+  Authentication secrets are handled by the protected interaction path.
+- **Parameters / return:** No parameters; returns `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` for the
+  authentication challenge.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs the SSO flow inside the daemon; no secret
+  value crosses the wire.
+
+```python
+status = client.bitwarden_sso_login()
+```
+
+<!-- api-method: bitwarden_status -->
+## `bitwarden_status`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; read the Bitwarden vault status
+  (metadata only — never secret values).
+- **Parameters / return:** Optional `force_refresh: bool`; returns
+  `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Read-only.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** No secrets; does not persist state.
+
+```python
+status = client.bitwarden_status()
+```
+
+<!-- api-method: bitwarden_sync -->
+## `bitwarden_sync`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; sync the Bitwarden vault.
+- **Parameters / return:** No parameters; returns `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `bw sync` inside the daemon.
+
+```python
+status = client.bitwarden_sync()
+```
+
+<!-- api-method: bitwarden_unlock -->
+## `bitwarden_unlock`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; unlock the Bitwarden vault. The
+  master password is never a parameter — the daemon prompts for it through the
+  protected interaction path.
+- **Parameters / return:** No parameters; returns `BitwardenStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` for the master
+  password.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `bw unlock` inside the daemon; the master
+  password never crosses the wire.
+
+```python
+status = client.bitwarden_unlock()
+```
+
+<!-- api-method: export_secret_backup -->
+## `export_secret_backup`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; export secret backups entirely
+  inside the daemon.
+- **Parameters / return:** Keyword-only `destination: str`, optional
+  `connection_ids`, `options`, and `mirror_logins`; returns
+  `SecretTransferResult` with counts and warnings only.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the
+  destination is encrypted.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Reads the selected secret backend and writes the
+  backup archive inside the daemon; no secret values are returned.
+
+```python
+result = client.export_secret_backup(destination="/home/me/secrets.spbk")
+```
+
+<!-- api-method: get_secret_backends -->
+## `get_secret_backends`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.read`; return the backend registry with
+  availability and lock metadata — never secret values.
+- **Parameters / return:** No parameters; returns `SecretBackendRegistry`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Read-only.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Metadata only.
+
+```python
+registry = client.get_secret_backends()
+```
+
+<!-- api-method: get_secret_configuration -->
+## `get_secret_configuration`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.read`; return the daemon-owned `secrets.*`
+  configuration snapshot.
+- **Parameters / return:** No parameters; returns `SecretConfiguration`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Read-only.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Loads the daemon settings file; no secrets in the
+  payload.
+
+```python
+configuration = client.get_secret_configuration()
+```
+
+<!-- api-method: get_secret_state -->
+## `get_secret_state`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.read`; return the current backend selection
+  and lock state — metadata only.
+- **Parameters / return:** No parameters; returns `SecretBackendState`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Read-only.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** No secrets in the payload.
+
+```python
+state = client.get_secret_state()
+```
+
+<!-- api-method: import_secret_backup -->
+## `import_secret_backup`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; import a secret backup entirely
+  inside the daemon.
+- **Parameters / return:** Keyword-only `source: str`, optional `options`; returns
+  `SecretTransferResult` with counts and warnings only.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the source is
+  encrypted.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Reads the backup archive and stores secrets into
+  the selected backend inside the daemon; no secret values are returned.
+
+```python
+result = client.import_secret_backup(source="/home/me/secrets.spbk")
+```
+
+<!-- api-method: lock_secrets -->
+## `lock_secrets`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; lock the selected secret backend.
+- **Parameters / return:** No parameters; returns `SecretBackendState`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Locks the daemon-owned backend session.
+
+```python
+state = client.lock_secrets()
+```
+
+<!-- api-method: rbw_configure -->
+## `rbw_configure`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; configure the rbw Bitwarden CLI.
+- **Parameters / return:** `email: str`, `base_url: str`; returns `RbwStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Persists rbw settings in daemon-owned
+  configuration; the master password is handled by the protected interaction
+  path on unlock.
+
+```python
+status = client.rbw_configure(email="user@example.com", base_url="bitwarden.example.com")
+```
+
+<!-- api-method: rbw_lock -->
+## `rbw_lock`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; lock the rbw session.
+- **Parameters / return:** No parameters; returns `RbwStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `rbw lock` inside the daemon.
+
+```python
+status = client.rbw_lock()
+```
+
+<!-- api-method: rbw_status -->
+## `rbw_status`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; read the rbw status — metadata
+  only.
+- **Parameters / return:** No parameters; returns `RbwStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Read-only.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** No secrets in the payload.
+
+```python
+status = client.rbw_status()
+```
+
+<!-- api-method: rbw_sync -->
+## `rbw_sync`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; sync the rbw vault.
+- **Parameters / return:** No parameters; returns `RbwStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `rbw sync` inside the daemon.
+
+```python
+status = client.rbw_sync()
+```
+
+<!-- api-method: rbw_unlock -->
+## `rbw_unlock`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; unlock the rbw vault. The master
+  password is never a parameter — the daemon prompts for it through the
+  protected interaction path.
+- **Parameters / return:** No parameters; returns `RbwStatus`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` for the master
+  password.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Runs `rbw unlock` inside the daemon; the master
+  password never crosses the wire.
+
+```python
+status = client.rbw_unlock()
+```
+
+<!-- api-method: unlock_secrets -->
+## `unlock_secrets`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; unlock the selected secret
+  backend. The secret is never a parameter — the daemon prompts for it through
+  the protected interaction path.
+- **Parameters / return:** No parameters; returns `SecretUnlockResult`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` for the secret.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Unlocks the daemon-owned backend session; the
+  secret never crosses the wire.
+
+```python
+result = client.unlock_secrets()
+```
+
+<!-- api-method: update_secret_configuration -->
+## `update_secret_configuration`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.write`; partially update the daemon-owned
+  `secrets.*` configuration.
+- **Parameters / return:** `UpdateSecretConfigurationRequest`; returns
+  `SecretConfiguration`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `VALIDATION_FAILED` for invalid values; `revision_conflict` when an
+  `expected_revision` does not match.
+- **Cancellation / ordering:** Mutations serialized per daemon; stale writes are
+  rejected.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Atomically persists the daemon settings file; no
+  secret values are accepted or returned.
+
+```python
+from sshpilot.api.models.secrets import UpdateSecretConfigurationRequest
+
+configuration = client.update_secret_configuration(
+    UpdateSecretConfigurationRequest(patch={"session_timeout": 30})
+)
+```
+
+<!-- api-method: update_secret_selection -->
+## `update_secret_selection`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.write`; change the selected secret backend.
+- **Parameters / return:** `backend: str`; returns `SecretBackendState`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `VALIDATION_FAILED` for an unknown backend name.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Persists the selection in daemon-owned
+  configuration.
+
+```python
+state = client.update_secret_selection(backend="bitwarden")
 ```
 
 <!-- api-method: close -->

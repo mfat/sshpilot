@@ -19,16 +19,38 @@ try:
 except Exception:
     GTK_AVAILABLE = False
 
-# libsecret (gi Secret) and keyring are resolved lazily via secret_storage's
-# accessors inside _get_storage_info — importing them at module load would pull
-# keyring (~127 ms) onto the pre-window startup path via main's top-level
-# `from .startup_info import print_startup_info`.
+# Secret backends are daemon-owned. Storage diagnostics read metadata through the
+# daemon secrets API when a client/controller is reachable and otherwise report the
+# backends unavailable — this module never imports secret_storage and never
+# instantiates a local SecretManager (the legacy libsecret/keyring probe is gone).
 
 from . import __version__
 from .platform_utils import is_macos, is_flatpak, get_config_dir, get_ssh_dir, get_sshpass_path
 
 
 logger = logging.getLogger(__name__)
+
+# Controller-style vs client-style method names for each daemon secret metadata read.
+_DAEMON_READ_METHODS = {
+    "state": ("load_state", "get_secret_state"),
+    "registry": ("load_registry", "get_secret_backends"),
+    "configuration": ("load_configuration", "get_secret_configuration"),
+}
+
+
+def _daemon_read(reader, name):
+    """One metadata read through a controller (``load_*``) or client (``get_secret_*``).
+
+    Returns ``None`` when the reader lacks the method or the daemon errors out, so
+    diagnostics degrade to "unavailable" instead of failing the whole bundle."""
+    for attr in _DAEMON_READ_METHODS.get(name, ()):
+        fn = getattr(reader, attr, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                return None
+    return None
 
 
 class StartupInfo:
@@ -218,100 +240,87 @@ class StartupInfo:
         return tools
     
     def _get_storage_info(self):
-        """Get secure storage information"""
-        storage = {}
-        from .secret_storage import get_secret_manager, _get_secret, _get_keyring
+        """Get secure storage information (daemon-owned).
 
-        # libsecret / keyring accessibility is only rendered in the verbose dump,
-        # and probing it means a synchronous Secret Service D-Bus connect + a
-        # keyring backend resolve. The concise summary reads only the
-        # effective-backend label below, so on the default path we skip the
-        # accessibility probe. (The label still resolves the modules via the
-        # manager, but this whole gather runs on idle — off the pre-window path —
-        # since the eager module-level import was removed.)
-        if not self.verbose:
-            storage['libsecret'] = {'available': None, 'accessible': False}
-            storage['keyring'] = {'available': None, 'accessible': False}
-        else:
-            Secret = _get_secret()
-            if Secret is not None:
-                try:
-                    # Try to connect to Secret Service
-                    Secret.Service.get_sync(Secret.ServiceFlags.NONE)
-                    storage['libsecret'] = {
-                        'available': True,
-                        'accessible': True,
-                        'backend': 'Secret Service (libsecret)'
-                    }
-                except Exception as e:
-                    storage['libsecret'] = {
-                        'available': True,
-                        'accessible': False,
-                        'error': str(e)
-                    }
-            else:
-                storage['libsecret'] = {'available': False, 'accessible': False}
+        Secret backends are owned by the daemon. When a daemon client or controller
+        is reachable through ``config``, metadata (registry, lock state,
+        configuration) is read through the secrets API; otherwise every backend is
+        reported unavailable. This module never imports ``secret_storage`` and never
+        instantiates a local ``SecretManager``.
+        """
+        reader = self._daemon_secrets_reader()
+        if reader is not None:
+            return self._storage_info_from_daemon(reader)
+        return self._storage_info_unavailable()
 
-            keyring = _get_keyring()
-            if keyring is not None:
-                try:
-                    backend = keyring.get_keyring()
-                    backend_name = backend.__class__.__name__
-                    # Check if it's a usable backend (not the fail backend)
-                    if 'fail' in backend_name.lower() or 'null' in backend_name.lower():
-                        storage['keyring'] = {
-                            'available': True,
-                            'accessible': False,
-                            'backend': backend_name
-                        }
-                    else:
-                        storage['keyring'] = {
-                            'available': True,
-                            'accessible': True,
-                            'backend': backend_name
-                        }
-                except Exception as e:
-                    storage['keyring'] = {
-                        'available': True,
-                        'accessible': False,
-                        'error': str(e)
-                    }
-            else:
-                storage['keyring'] = {'available': False, 'accessible': False}
+    def _daemon_secrets_reader(self):
+        """The daemon secrets accessor reachable from ``config``, or ``None``.
 
-        # Determine effective backend via the pluggable secret manager (respects
-        # the configured selection, including 'pass').
-        effective_backend = 'none'
+        A controller (``config.secrets_controller``) is used directly; a raw daemon
+        client (``config.client``) is used only when it advertises the secrets
+        capability. ``None`` means no daemon is reachable — storage is then reported
+        unavailable rather than probed through a local SecretManager.
+        """
+        source = self._config
+        if source is None:
+            return None
+        controller = getattr(source, "secrets_controller", None)
+        if controller is not None:
+            return controller
+        client = getattr(source, "client", None)
+        if client is None:
+            return None
         try:
-            manager = get_secret_manager()
-            try:
-                cfg = self._config
-                if cfg is None:
-                    from .config import Config
-                    cfg = Config()
-                manager.set_selected(cfg.get_setting('secrets.backend', 'auto'))
-            except Exception:
-                pass
-            effective_backend = manager.active_backend_label()
-            # cheap=True uses is_discoverable() where a backend provides one
-            # (Bitwarden), avoiding a blocking `bw --version` spawn on the idle path.
-            storage['available_backends'] = manager.available_backends(cheap=True)
-            try:
-                # Session-backed backends (Bitwarden/Vaultwarden): report whether
-                # the selected one still needs unlocking.
-                storage['session_locked'] = manager.selected_needs_unlock()
-            except Exception:
-                pass
+            from sshpilot.api.capabilities import Capability
+            capabilities = client.get_capabilities()
         except Exception:
-            if not is_macos() and storage.get('libsecret', {}).get('accessible'):
-                effective_backend = 'libsecret'
-            elif storage.get('keyring', {}).get('accessible'):
-                backend_name = storage.get('keyring', {}).get('backend', 'unknown')
-                effective_backend = f"keyring ({backend_name})"
+            return None
+        if not capabilities.supports(Capability.SECRETS_READ):
+            return None
+        return client
 
-        storage['effective_backend'] = effective_backend
+    def _storage_info_from_daemon(self, reader):
+        """Storage metadata read through the daemon secrets API."""
+        state = _daemon_read(reader, "state")
+        registry = _daemon_read(reader, "registry")
+        configuration = _daemon_read(reader, "configuration")
 
+        storage = {
+            'libsecret': {'available': None, 'accessible': False},
+            'keyring': {'available': None, 'accessible': False},
+        }
+        if registry is not None:
+            storage['available_backends'] = [
+                getattr(backend, "name", "")
+                for backend in getattr(registry, "backends", ())
+                if getattr(backend, "available", False)
+            ]
+            storage['selected_backend'] = getattr(registry, "selected_backend", "none")
+        else:
+            storage['available_backends'] = []
+            storage['selected_backend'] = 'none'
+        if state is not None:
+            storage['effective_backend'] = getattr(state, "effective_backend", "none")
+            storage['session_locked'] = bool(getattr(state, "needs_unlock", False))
+        else:
+            storage['effective_backend'] = 'none'
+            storage['session_locked'] = False
+        if configuration is not None:
+            storage['backend'] = getattr(configuration, "backend", None)
+            storage['session_timeout'] = getattr(configuration, "session_timeout", None)
+            storage['remember_in_keyring'] = getattr(configuration, "remember_in_keyring", None)
         return storage
+
+    def _storage_info_unavailable(self):
+        """Storage metadata when no daemon is reachable — never a local manager."""
+        return {
+            'libsecret': {'available': None, 'accessible': False},
+            'keyring': {'available': None, 'accessible': False},
+            'effective_backend': 'none',
+            'available_backends': [],
+            'selected_backend': 'none',
+            'session_locked': False,
+        }
     
     def _get_config_info(self):
         """Get configuration information"""

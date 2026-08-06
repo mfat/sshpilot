@@ -47,6 +47,10 @@
     "plugins",
     "port_forwarding",
     "secrets",
+    "secrets.operate",
+    "secrets.read",
+    "secrets.transfer",
+    "secrets.write",
     "sessions.events",
     "sessions.read",
     "sessions.write",
@@ -81,6 +85,42 @@
     },
     "attach_sftp": {
       "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "bitwarden_api_key_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_configure_server": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_logout": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_sso_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_status": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_sync": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_unlock": {
+      "capability": "secrets.operate",
       "status": "daemon-only"
     },
     "cancel_interaction": {
@@ -155,6 +195,10 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "export_secret_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -187,6 +231,18 @@
       "capability": "interactions.read",
       "status": "daemon-only"
     },
+    "get_secret_backends": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
+    "get_secret_configuration": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
+    "get_secret_state": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
     "get_session": {
       "capability": "sessions.read",
       "status": "daemon-only"
@@ -197,6 +253,10 @@
     },
     "get_transfer": {
       "capability": "transfers.read",
+      "status": "daemon-only"
+    },
+    "import_secret_backup": {
+      "capability": "secrets.transfer",
       "status": "daemon-only"
     },
     "list_connections": {
@@ -223,6 +283,10 @@
       "capability": "transfers.read",
       "status": "daemon-only"
     },
+    "lock_secrets": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
     "lookup_connection_password": {
       "capability": "connections.secrets.write",
       "status": "implemented"
@@ -241,6 +305,26 @@
     },
     "open_sftp": {
       "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "rbw_configure": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_status": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_sync": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_unlock": {
+      "capability": "secrets.operate",
       "status": "daemon-only"
     },
     "release_interaction": {
@@ -355,6 +439,10 @@
       "capability": "terminal.output",
       "status": "daemon-only"
     },
+    "unlock_secrets": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
     "update_connection": {
       "capability": "connections.write",
       "status": "implemented"
@@ -366,12 +454,29 @@
     "update_global_ssh_overrides": {
       "capability": "ssh_overrides.write",
       "status": "implemented"
+    },
+    "update_secret_configuration": {
+      "capability": "secrets.write",
+      "status": "daemon-only"
+    },
+    "update_secret_selection": {
+      "capability": "secrets.write",
+      "status": "daemon-only"
     }
   },
   "client_methods": [
     "assign_connection_to_group",
     "attach_session",
     "attach_sftp",
+    "bitwarden_api_key_login",
+    "bitwarden_configure_server",
+    "bitwarden_lock",
+    "bitwarden_login",
+    "bitwarden_logout",
+    "bitwarden_sso_login",
+    "bitwarden_status",
+    "bitwarden_sync",
+    "bitwarden_unlock",
     "cancel_interaction",
     "cancel_transfer",
     "claim_forward",
@@ -391,6 +496,7 @@
     "detach_session",
     "detach_sftp",
     "duplicate_connection",
+    "export_secret_backup",
     "generate_key",
     "get_capabilities",
     "get_connection",
@@ -401,9 +507,13 @@
     "get_forward",
     "get_global_ssh_overrides",
     "get_interaction",
+    "get_secret_backends",
+    "get_secret_configuration",
+    "get_secret_state",
     "get_session",
     "get_sftp_service",
     "get_transfer",
+    "import_secret_backup",
     "list_connections",
     "list_forwards",
     "list_interactions",
@@ -412,12 +522,18 @@
     "list_sessions",
     "list_sftp_services",
     "list_transfers",
+    "lock_secrets",
     "lookup_connection_password",
     "lookup_key_passphrase",
     "open_forward",
     "open_session",
     "open_sftp",
     "place_group",
+    "rbw_configure",
+    "rbw_lock",
+    "rbw_status",
+    "rbw_sync",
+    "rbw_unlock",
     "read_public_key",
     "release_interaction",
     "release_terminal_input",
@@ -452,9 +568,12 @@
     "store_key_passphrase",
     "subscribe_events",
     "subscribe_terminal",
+    "unlock_secrets",
     "update_connection",
     "update_connection_metadata",
-    "update_global_ssh_overrides"
+    "update_global_ssh_overrides",
+    "update_secret_configuration",
+    "update_secret_selection"
   ],
   "client_signatures": {
     "assign_connection_to_group": {
@@ -491,6 +610,71 @@
         }
       ],
       "return": "SftpServiceSummary"
+    },
+    "bitwarden_api_key_login": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "client_id",
+          "type": "str"
+        }
+      ],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_configure_server": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "url",
+          "type": "str"
+        }
+      ],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_lock": {
+      "parameters": [],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_login": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "email",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "twofa_method",
+          "type": "str | None"
+        }
+      ],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_logout": {
+      "parameters": [],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_sso_login": {
+      "parameters": [],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_status": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "force_refresh",
+          "type": "bool"
+        }
+      ],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_sync": {
+      "parameters": [],
+      "return": "BitwardenStatus"
+    },
+    "bitwarden_unlock": {
+      "parameters": [],
+      "return": "BitwardenStatus"
     },
     "cancel_interaction": {
       "parameters": [
@@ -686,6 +870,31 @@
       ],
       "return": "ConnectionMutationResult"
     },
+    "export_secret_backup": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "destination",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "connection_ids",
+          "type": "list[str] | None"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "options",
+          "type": "dict[str, Any] | None"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "mirror_logins",
+          "type": "bool"
+        }
+      ],
+      "return": "SecretTransferResult"
+    },
     "generate_key": {
       "parameters": [
         {
@@ -756,6 +965,18 @@
       ],
       "return": "InteractionSummary"
     },
+    "get_secret_backends": {
+      "parameters": [],
+      "return": "SecretBackendRegistry"
+    },
+    "get_secret_configuration": {
+      "parameters": [],
+      "return": "SecretConfiguration"
+    },
+    "get_secret_state": {
+      "parameters": [],
+      "return": "SecretBackendState"
+    },
     "get_session": {
       "parameters": [
         {
@@ -785,6 +1006,21 @@
         }
       ],
       "return": "TransferSummary"
+    },
+    "import_secret_backup": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "source",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "options",
+          "type": "dict[str, Any] | None"
+        }
+      ],
+      "return": "SecretTransferResult"
     },
     "list_connections": {
       "parameters": [],
@@ -823,6 +1059,10 @@
     "list_transfers": {
       "parameters": [],
       "return": "list[TransferSummary]"
+    },
+    "lock_secrets": {
+      "parameters": [],
+      "return": "SecretBackendState"
     },
     "lookup_connection_password": {
       "parameters": [
@@ -883,6 +1123,37 @@
         }
       ],
       "return": "bool"
+    },
+    "rbw_configure": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "email",
+          "type": "str"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "base_url",
+          "type": "str"
+        }
+      ],
+      "return": "RbwStatus"
+    },
+    "rbw_lock": {
+      "parameters": [],
+      "return": "RbwStatus"
+    },
+    "rbw_status": {
+      "parameters": [],
+      "return": "RbwStatus"
+    },
+    "rbw_sync": {
+      "parameters": [],
+      "return": "RbwStatus"
+    },
+    "rbw_unlock": {
+      "parameters": [],
+      "return": "RbwStatus"
     },
     "read_public_key": {
       "parameters": [
@@ -1259,6 +1530,10 @@
       ],
       "return": "TerminalSubscription"
     },
+    "unlock_secrets": {
+      "parameters": [],
+      "return": "SecretUnlockResult"
+    },
     "update_connection": {
       "parameters": [
         {
@@ -1298,6 +1573,26 @@
         }
       ],
       "return": "GlobalSshOverrides"
+    },
+    "update_secret_configuration": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "UpdateSecretConfigurationRequest"
+        }
+      ],
+      "return": "SecretConfiguration"
+    },
+    "update_secret_selection": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "backend",
+          "type": "str"
+        }
+      ],
+      "return": "SecretBackendState"
     }
   },
   "daemon_method_contract": {
@@ -1456,6 +1751,75 @@
     },
     "known_hosts.remove": {
       "capability": "known_hosts.write"
+    },
+    "secrets.backends.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.bitwarden.api_key_login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.configure_server": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.logout": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.sso_login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.status": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.sync": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.unlock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.configuration.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.configuration.update": {
+      "capability": "secrets.write"
+    },
+    "secrets.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.configure": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.status": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.sync": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.unlock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.selection.update": {
+      "capability": "secrets.write"
+    },
+    "secrets.state.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.transfer.export": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.unlock": {
+      "capability": "secrets.operate"
     },
     "sessions.attach": {
       "capability": "sessions.write"
@@ -1705,6 +2069,7 @@
     "AttachmentId",
     "AttachmentInfo",
     "AuthenticationMethod",
+    "BitwardenStatus",
     "CancelTransferRequest",
     "ChallengePrompt",
     "ClaimForwardRequest",
@@ -1804,6 +2169,7 @@
     "PortForwardSummary",
     "PresencePrompt",
     "PublicKeyResult",
+    "RbwStatus",
     "ReadPublicKeyRequest",
     "ReleaseTerminalInputRequest",
     "RememberPolicy",
@@ -1820,7 +2186,15 @@
     "RequestId",
     "ResizeTerminalRequest",
     "RestartDaemonRequest",
+    "SecretBackendDescriptor",
+    "SecretBackendRegistry",
+    "SecretBackendState",
+    "SecretConfiguration",
     "SecretDecision",
+    "SecretOperationResult",
+    "SecretOperationState",
+    "SecretTransferResult",
+    "SecretUnlockResult",
     "ServiceFailure",
     "SessionCapabilities",
     "SessionExitInfo",
@@ -1853,9 +2227,11 @@
     "TransferState",
     "TransferSummary",
     "UNSET",
+    "UnlockResultKind",
     "UpdateConnectionMetadataRequest",
     "UpdateConnectionRequest",
     "UpdateGlobalSshOverridesRequest",
+    "UpdateSecretConfigurationRequest",
     "default_idle_shutdown_seconds",
     "forwarding_rule_from_dict",
     "forwarding_rule_to_dict",
@@ -2722,7 +3098,11 @@
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",
-      "secrets"
+      "secrets",
+      "secrets.read",
+      "secrets.write",
+      "secrets.operate",
+      "secrets.transfer"
     ],
     "ConnectionHealth": [
       "unknown",

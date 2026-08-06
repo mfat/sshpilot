@@ -5,6 +5,27 @@ notes remain separate.
 
 ## Unreleased
 
+- Migrated secret backend management to the daemon. `SecretBackendService`
+  inside `sshpilotd` is the authoritative owner of backend selection, unlock,
+  lock, and the Bitwarden (`secrets.bitwarden.*`) and rbw (`secrets.rbw.*`)
+  lifecycle RPCs. The daemon owns the `secrets.*` settings file, runs
+  `bw`/`rbw` itself, and prompts for master passwords, 2FA codes, API-key
+  client secrets, SSO challenges, and backup passphrases through the protected
+  interaction path. No secret value crosses the wire.
+- Added the `secrets.read`, `secrets.write`, `secrets.operate`, and
+  `secrets.transfer` capabilities, advertised only when the service is
+  installed. Otherwise clients receive canonical `unsupported_capability`
+  errors and never fall back to GTK-owned backend code.
+- Added `get_secret_configuration`, `update_secret_configuration`,
+  `get_secret_backends`, `get_secret_state`, `update_secret_selection`,
+  `unlock_secrets`, `lock_secrets`, the `bitwarden_*` and `rbw_*` methods, and
+  `export_secret_backup` / `import_secret_backup` to the client contract.
+- Published the secret-backend schema: `SecretConfiguration`,
+  `UpdateSecretConfigurationRequest`, `SecretBackendDescriptor`,
+  `SecretBackendRegistry`, `SecretBackendState`, `SecretUnlockResult`,
+  `SecretOperationResult`, `BitwardenStatus`, `RbwStatus`, and
+  `SecretTransferResult`. `PROTOCOL_VERSION` stays `1.0`.
+
 - Implemented `get_global_ssh_overrides`, `update_global_ssh_overrides`, and
   `reset_global_ssh_overrides` over the `ssh_overrides.get`, `ssh_overrides.update`,
   and `ssh_overrides.reset` RPCs. The daemon-owned `SshOverridesService` is the
