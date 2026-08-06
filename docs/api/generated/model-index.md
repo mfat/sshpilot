@@ -823,7 +823,7 @@ Synthetic representation:
 **Purpose:** CoreEvent(type: sshpilot.api.events.EventType, payload: ~PayloadT, sequence: int, timestamp: datetime.datetime = <factory>, request_id: sshpilot.api.models.common.RequestId | None = None, connection_id: sshpilot.api.models.common.ConnectionId | None = None, session_id: sshpilot.api.models.common.SessionId | None = None)
 
 **Related methods:** `subscribe_events`
-**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `connection_store.changed`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `daemon.state_changed`, `error.occurred`
+**Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `connection_store.changed`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `operation.created`, `operation.state_changed`, `daemon.state_changed`, `error.occurred`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
@@ -2283,6 +2283,48 @@ Synthetic representation:
 ```json
 {
   "connection_id": "production"
+}
+```
+
+<!-- api-model: OperationSummary -->
+## `OperationSummary`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Frontend-safe snapshot of one daemon operation.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `operation_id` | `OperationId` | Yes | — | No |
+| `kind` | `OperationKind` | Yes | — | No |
+| `state` | `OperationState` | Yes | — | No |
+| `message` | `str` | Yes | — | No |
+| `created_at` | `datetime` | Yes | — | No |
+| `connection_id` | `Optional[ConnectionId]` | No | `null` | No |
+| `started_at` | `Optional[datetime]` | No | `null` | No |
+| `finished_at` | `Optional[datetime]` | No | `null` | No |
+| `progress` | `Optional[float]` | No | `null` | No |
+| `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
+| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": null,
+  "created_at": "2030-01-01T00:00:00Z",
+  "failure": null,
+  "finished_at": null,
+  "kind": {},
+  "message": "Example request",
+  "operation_id": {},
+  "owner_client_id": null,
+  "progress": null,
+  "started_at": null,
+  "state": {}
 }
 ```
 

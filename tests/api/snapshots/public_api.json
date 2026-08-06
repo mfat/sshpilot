@@ -33,6 +33,9 @@
     "forwards.read",
     "forwards.remote",
     "forwards.write",
+    "identity.operate",
+    "identity.read",
+    "identity.write",
     "interactions",
     "interactions.events",
     "interactions.host_key",
@@ -75,6 +78,10 @@
     "transfers.write"
   ],
   "client_method_contract": {
+    "add_agent_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
     "assign_connection_to_group": {
       "capability": "connections.groups",
       "status": "implemented"
@@ -125,6 +132,10 @@
     },
     "cancel_interaction": {
       "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "cancel_operation": {
+      "capability": "identity.operate",
       "status": "daemon-only"
     },
     "cancel_transfer": {
@@ -183,6 +194,10 @@
       "capability": "connections.secrets.write",
       "status": "implemented"
     },
+    "deploy_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
     "detach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -231,8 +246,20 @@
       "capability": "ssh_overrides.read",
       "status": "implemented"
     },
+    "get_identity_providers": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "get_identity_state": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
     "get_interaction": {
       "capability": "interactions.read",
+      "status": "daemon-only"
+    },
+    "get_operation": {
+      "capability": "identity.read",
       "status": "daemon-only"
     },
     "get_secret_backends": {
@@ -281,6 +308,14 @@
     },
     "keepassxc_unlock": {
       "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "list_agent_keys": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "list_authorized_keys": {
+      "capability": "identity.read",
       "status": "daemon-only"
     },
     "list_bitwarden_backups": {
@@ -381,6 +416,14 @@
     },
     "remember_master_password": {
       "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "remove_agent_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
+    "remove_authorized_key": {
+      "capability": "identity.operate",
       "status": "daemon-only"
     },
     "rename_group": {
@@ -503,6 +546,14 @@
       "capability": "ssh_overrides.write",
       "status": "implemented"
     },
+    "update_identity_configuration": {
+      "capability": "identity.write",
+      "status": "daemon-only"
+    },
+    "update_identity_selection": {
+      "capability": "identity.write",
+      "status": "daemon-only"
+    },
     "update_secret_configuration": {
       "capability": "secrets.write",
       "status": "daemon-only"
@@ -513,6 +564,7 @@
     }
   },
   "client_methods": [
+    "add_agent_key",
     "assign_connection_to_group",
     "attach_session",
     "attach_sftp",
@@ -526,6 +578,7 @@
     "bitwarden_sync",
     "bitwarden_unlock",
     "cancel_interaction",
+    "cancel_operation",
     "cancel_transfer",
     "claim_forward",
     "claim_interaction",
@@ -541,6 +594,7 @@
     "delete_connection_password",
     "delete_group",
     "delete_key_passphrase",
+    "deploy_key",
     "detach_session",
     "detach_sftp",
     "duplicate_connection",
@@ -555,7 +609,10 @@
     "get_daemon_status",
     "get_forward",
     "get_global_ssh_overrides",
+    "get_identity_providers",
+    "get_identity_state",
     "get_interaction",
+    "get_operation",
     "get_secret_backends",
     "get_secret_configuration",
     "get_secret_state",
@@ -568,6 +625,8 @@
     "keepassxc_create_database",
     "keepassxc_lock",
     "keepassxc_unlock",
+    "list_agent_keys",
+    "list_authorized_keys",
     "list_bitwarden_backups",
     "list_connections",
     "list_forwards",
@@ -597,6 +656,8 @@
     "release_interaction",
     "release_terminal_input",
     "remember_master_password",
+    "remove_agent_key",
+    "remove_authorized_key",
     "remove_connection_from_group",
     "remove_known_host_entries",
     "rename_group",
@@ -632,10 +693,22 @@
     "update_connection",
     "update_connection_metadata",
     "update_global_ssh_overrides",
+    "update_identity_configuration",
+    "update_identity_selection",
     "update_secret_configuration",
     "update_secret_selection"
   ],
   "client_signatures": {
+    "add_agent_key": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "AgentKeyMutationRequest"
+        }
+      ],
+      "return": "AgentKeyList"
+    },
     "assign_connection_to_group": {
       "parameters": [
         {
@@ -751,6 +824,16 @@
         }
       ],
       "return": "None"
+    },
+    "cancel_operation": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "operation_id",
+          "type": "OperationId"
+        }
+      ],
+      "return": "OperationSummary"
     },
     "cancel_transfer": {
       "parameters": [
@@ -906,6 +989,16 @@
       ],
       "return": "bool"
     },
+    "deploy_key": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "DeployKeyRequest"
+        }
+      ],
+      "return": "OperationSummary"
+    },
     "detach_session": {
       "parameters": [
         {
@@ -1025,6 +1118,14 @@
       "parameters": [],
       "return": "GlobalSshOverrides"
     },
+    "get_identity_providers": {
+      "parameters": [],
+      "return": "IdentityProviderRegistry"
+    },
+    "get_identity_state": {
+      "parameters": [],
+      "return": "IdentityState"
+    },
     "get_interaction": {
       "parameters": [
         {
@@ -1034,6 +1135,16 @@
         }
       ],
       "return": "InteractionSummary"
+    },
+    "get_operation": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "operation_id",
+          "type": "OperationId"
+        }
+      ],
+      "return": "OperationSummary"
     },
     "get_secret_backends": {
       "parameters": [],
@@ -1154,6 +1265,20 @@
     "keepassxc_unlock": {
       "parameters": [],
       "return": "SecretOperationResult"
+    },
+    "list_agent_keys": {
+      "parameters": [],
+      "return": "AgentKeyList"
+    },
+    "list_authorized_keys": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "ListAuthorizedKeysRequest"
+        }
+      ],
+      "return": "AuthorizedKeyList"
     },
     "list_bitwarden_backups": {
       "parameters": [],
@@ -1380,6 +1505,26 @@
     "remember_master_password": {
       "parameters": [],
       "return": "SecretOperationResult"
+    },
+    "remove_agent_key": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "AgentKeyMutationRequest"
+        }
+      ],
+      "return": "AgentKeyList"
+    },
+    "remove_authorized_key": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "RemoveAuthorizedKeyRequest"
+        }
+      ],
+      "return": "OperationSummary"
     },
     "remove_connection_from_group": {
       "parameters": [
@@ -1770,6 +1915,26 @@
       ],
       "return": "GlobalSshOverrides"
     },
+    "update_identity_configuration": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "UpdateIdentityConfigurationRequest"
+        }
+      ],
+      "return": "IdentityState"
+    },
+    "update_identity_selection": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "UpdateIdentitySelectionRequest"
+        }
+      ],
+      "return": "IdentityState"
+    },
     "update_secret_configuration": {
       "parameters": [
         {
@@ -1797,6 +1962,12 @@
     }
   },
   "daemon_method_contract": {
+    "authorized_keys.list": {
+      "capability": "identity.read"
+    },
+    "authorized_keys.remove": {
+      "capability": "identity.operate"
+    },
     "connections.assign_to_group": {
       "capability": "connections.groups"
     },
@@ -1920,6 +2091,30 @@
     "groups.set_color": {
       "capability": "connections.groups"
     },
+    "identity.agent.key.add": {
+      "capability": "identity.operate"
+    },
+    "identity.agent.key.remove": {
+      "capability": "identity.operate"
+    },
+    "identity.agent.keys.get": {
+      "capability": "identity.read"
+    },
+    "identity.configuration.update": {
+      "capability": "identity.write"
+    },
+    "identity.deploy_key": {
+      "capability": "identity.operate"
+    },
+    "identity.providers.get": {
+      "capability": "identity.read"
+    },
+    "identity.selection.update": {
+      "capability": "identity.write"
+    },
+    "identity.state.get": {
+      "capability": "identity.read"
+    },
     "interactions.cancel": {
       "capability": "interactions.respond"
     },
@@ -1952,6 +2147,12 @@
     },
     "known_hosts.remove": {
       "capability": "known_hosts.write"
+    },
+    "operations.cancel": {
+      "capability": "identity.operate"
+    },
+    "operations.get": {
+      "capability": "identity.read"
     },
     "secrets.backends.get": {
       "capability": "secrets.read"
@@ -2205,6 +2406,7 @@
     "key_public_unavailable",
     "mutation_ambiguous",
     "operation_cancelled",
+    "operation_not_found",
     "operation_timed_out",
     "permission_denied",
     "persistence_failed",
@@ -2212,6 +2414,7 @@
     "protocol_error",
     "protocol_version_unsupported",
     "pty_allocation_failed",
+    "remote_command_failed",
     "remote_directory_not_empty",
     "remote_is_directory",
     "remote_not_directory",
@@ -2269,6 +2472,8 @@
     "forward.starting",
     "interaction.created",
     "interaction.state_changed",
+    "operation.created",
+    "operation.state_changed",
     "session.closed",
     "session.created",
     "session.exited",
@@ -2299,6 +2504,9 @@
     "TransferId"
   ],
   "model_exports": [
+    "AgentKey",
+    "AgentKeyList",
+    "AgentKeyMutationRequest",
     "AssignConnectionToGroupRequest",
     "AttachSessionRequest",
     "AttachSessionResult",
@@ -2306,6 +2514,9 @@
     "AttachmentId",
     "AttachmentInfo",
     "AuthenticationMethod",
+    "AuthorizedKeyEntry",
+    "AuthorizedKeyLineKind",
+    "AuthorizedKeyList",
     "BitwardenStatus",
     "CancelTransferRequest",
     "ChallengePrompt",
@@ -2346,6 +2557,7 @@
     "DeleteGroupRequest",
     "DeleteKeyPassphraseRequest",
     "DeletePluginSecretRequest",
+    "DeployKeyRequest",
     "DetachSessionRequest",
     "EDITABLE_CONFIG_FIELDS",
     "EDITABLE_FIELDS",
@@ -2367,6 +2579,9 @@
     "HostKeyDecision",
     "HostKeyPrompt",
     "HostKeyStatus",
+    "IdentityProviderDescriptor",
+    "IdentityProviderRegistry",
+    "IdentityState",
     "InputOwner",
     "InteractionCancellation",
     "InteractionClaim",
@@ -2390,6 +2605,7 @@
     "KnownHostEntrySummary",
     "KnownHostsMutationResult",
     "KnownHostsSnapshot",
+    "ListAuthorizedKeysRequest",
     "ListDirectoryRequest",
     "ListDirectoryResult",
     "ListKeysRequest",
@@ -2397,6 +2613,10 @@
     "OpenForwardRequest",
     "OpenSessionRequest",
     "OpenSftpRequest",
+    "OperationId",
+    "OperationKind",
+    "OperationState",
+    "OperationSummary",
     "PassphrasePrompt",
     "PasswordPrompt",
     "PlaceGroupRequest",
@@ -2412,6 +2632,7 @@
     "RememberPolicy",
     "RemoteFileEntry",
     "RemoteFileType",
+    "RemoveAuthorizedKeyRequest",
     "RemoveConnectionFromGroupRequest",
     "RemoveKnownHostEntriesRequest",
     "RenameGroupRequest",
@@ -2468,11 +2689,15 @@
     "UpdateConnectionMetadataRequest",
     "UpdateConnectionRequest",
     "UpdateGlobalSshOverridesRequest",
+    "UpdateIdentityConfigurationRequest",
+    "UpdateIdentitySelectionRequest",
     "UpdateSecretConfigurationRequest",
     "default_idle_shutdown_seconds",
     "forwarding_rule_from_dict",
     "forwarding_rule_to_dict",
+    "is_terminal_operation_state",
     "is_valid_lifecycle_transition",
+    "is_valid_operation_transition",
     "validate_config_patch"
   ],
   "models": {
@@ -2982,6 +3207,19 @@
     "OpenSftpRequest": [
       "connection_id"
     ],
+    "OperationSummary": [
+      "operation_id",
+      "kind",
+      "state",
+      "message",
+      "created_at",
+      "connection_id",
+      "started_at",
+      "finished_at",
+      "progress",
+      "owner_client_id",
+      "failure"
+    ],
     "PassphrasePrompt": [
       "key_display_name",
       "key_fingerprint",
@@ -3332,6 +3570,9 @@
       "known_hosts.write",
       "keys.read",
       "keys.write",
+      "identity.read",
+      "identity.write",
+      "identity.operate",
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",
@@ -3409,6 +3650,8 @@
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
+      "operation_not_found",
+      "remote_command_failed",
       "sftp_service_not_found",
       "sftp_service_not_ready",
       "sftp_command_failed",
@@ -3483,6 +3726,8 @@
       "forward.active",
       "forward.closed",
       "forward.failed",
+      "operation.created",
+      "operation.state_changed",
       "daemon.state_changed",
       "error.occurred"
     ],
@@ -3550,6 +3795,17 @@
     "KeyStoreScope": [
       "default",
       "isolated"
+    ],
+    "OperationKind": [
+      "key_deployment",
+      "authorized_key_removal"
+    ],
+    "OperationState": [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled"
     ],
     "RememberPolicy": [
       "do_not_store",

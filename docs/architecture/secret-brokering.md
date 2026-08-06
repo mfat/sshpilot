@@ -44,10 +44,11 @@ daemon loss, or unsupported prompt.
 
 ## Existing backends and remembering
 
-Daemon sessions reuse `ConnectionManager`/`SecretManager` canonical password
-and passphrase APIs. No parallel credential schema is introduced. Stored
-values may satisfy one bounded authentication attempt automatically. A known
-failed value is not submitted repeatedly.
+Daemon sessions use `DaemonConnectionSecretProvider` at the application
+boundary and reuse the existing `SecretManager` canonical password and
+passphrase implementations internally. No parallel credential schema is
+introduced. Stored values may satisfy one bounded authentication attempt
+automatically. A known failed value is not submitted repeatedly.
 
 `store_after_success` and `replace_stored_after_success` stage a mutable value
 inside the private session context. Consumption by askpass is not success.

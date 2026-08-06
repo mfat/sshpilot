@@ -323,7 +323,12 @@ handshaken client. Protocol v1 still has no remote access.
 <!-- api-error: operation_cancelled -->
 ## `operation_cancelled`
 
-Schema-only code. No current method accepts a cancellation token.
+The requested operation was cancelled before completion.
+
+<!-- api-error: operation_not_found -->
+## `operation_not_found`
+
+The requested daemon operation ID is unknown or no longer retained.
 
 <!-- api-error: operation_timed_out -->
 ## `operation_timed_out`
@@ -391,6 +396,12 @@ A directory removal failed because the directory still contains entries.
 ## `remote_unsupported_operation`
 
 The remote SFTP server rejected the operation as unsupported.
+
+<!-- api-error: remote_command_failed -->
+## `remote_command_failed`
+
+A native remote command operation completed unsuccessfully; safe command
+status metadata may be returned without exposing secrets.
 
 <!-- api-error: transfer_not_found -->
 ## `transfer_not_found`

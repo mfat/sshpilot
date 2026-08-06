@@ -1,6 +1,10 @@
 {
   "api_implementation_version": "0.16",
   "client_method_contract": {
+    "add_agent_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
     "assign_connection_to_group": {
       "capability": "connections.groups",
       "status": "implemented"
@@ -51,6 +55,10 @@
     },
     "cancel_interaction": {
       "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "cancel_operation": {
+      "capability": "identity.operate",
       "status": "daemon-only"
     },
     "cancel_transfer": {
@@ -109,6 +117,10 @@
       "capability": "connections.secrets.write",
       "status": "implemented"
     },
+    "deploy_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
     "detach_session": {
       "capability": "sessions.write",
       "status": "daemon-only"
@@ -157,8 +169,20 @@
       "capability": "ssh_overrides.read",
       "status": "implemented"
     },
+    "get_identity_providers": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "get_identity_state": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
     "get_interaction": {
       "capability": "interactions.read",
+      "status": "daemon-only"
+    },
+    "get_operation": {
+      "capability": "identity.read",
       "status": "daemon-only"
     },
     "get_secret_backends": {
@@ -207,6 +231,14 @@
     },
     "keepassxc_unlock": {
       "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "list_agent_keys": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "list_authorized_keys": {
+      "capability": "identity.read",
       "status": "daemon-only"
     },
     "list_bitwarden_backups": {
@@ -307,6 +339,14 @@
     },
     "remember_master_password": {
       "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "remove_agent_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
+    "remove_authorized_key": {
+      "capability": "identity.operate",
       "status": "daemon-only"
     },
     "rename_group": {
@@ -429,6 +469,14 @@
       "capability": "ssh_overrides.write",
       "status": "implemented"
     },
+    "update_identity_configuration": {
+      "capability": "identity.write",
+      "status": "daemon-only"
+    },
+    "update_identity_selection": {
+      "capability": "identity.write",
+      "status": "daemon-only"
+    },
     "update_secret_configuration": {
       "capability": "secrets.write",
       "status": "daemon-only"
@@ -439,6 +487,12 @@
     }
   },
   "daemon_method_contract": {
+    "authorized_keys.list": {
+      "capability": "identity.read"
+    },
+    "authorized_keys.remove": {
+      "capability": "identity.operate"
+    },
     "connections.assign_to_group": {
       "capability": "connections.groups"
     },
@@ -562,6 +616,30 @@
     "groups.set_color": {
       "capability": "connections.groups"
     },
+    "identity.agent.key.add": {
+      "capability": "identity.operate"
+    },
+    "identity.agent.key.remove": {
+      "capability": "identity.operate"
+    },
+    "identity.agent.keys.get": {
+      "capability": "identity.read"
+    },
+    "identity.configuration.update": {
+      "capability": "identity.write"
+    },
+    "identity.deploy_key": {
+      "capability": "identity.operate"
+    },
+    "identity.providers.get": {
+      "capability": "identity.read"
+    },
+    "identity.selection.update": {
+      "capability": "identity.write"
+    },
+    "identity.state.get": {
+      "capability": "identity.read"
+    },
     "interactions.cancel": {
       "capability": "interactions.respond"
     },
@@ -594,6 +672,12 @@
     },
     "known_hosts.remove": {
       "capability": "known_hosts.write"
+    },
+    "operations.cancel": {
+      "capability": "identity.operate"
+    },
+    "operations.get": {
+      "capability": "identity.read"
     },
     "secrets.backends.get": {
       "capability": "secrets.read"
@@ -865,6 +949,9 @@
       "known_hosts.write",
       "keys.read",
       "keys.write",
+      "identity.read",
+      "identity.write",
+      "identity.operate",
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",
@@ -942,6 +1029,8 @@
       "permission_denied",
       "operation_cancelled",
       "operation_timed_out",
+      "operation_not_found",
+      "remote_command_failed",
       "sftp_service_not_found",
       "sftp_service_not_ready",
       "sftp_command_failed",
@@ -1016,6 +1105,8 @@
       "forward.active",
       "forward.closed",
       "forward.failed",
+      "operation.created",
+      "operation.state_changed",
       "daemon.state_changed",
       "error.occurred"
     ],
@@ -1083,6 +1174,17 @@
     "KeyStoreScope": [
       "default",
       "isolated"
+    ],
+    "OperationKind": [
+      "key_deployment",
+      "authorized_key_removal"
+    ],
+    "OperationState": [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled"
     ],
     "RememberPolicy": [
       "do_not_store",
@@ -4016,6 +4118,88 @@
         }
       ],
       "status": "Implemented"
+    },
+    "OperationSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "operation_id",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationId"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationKind"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationState"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "created_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ConnectionId]"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "finished_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "progress",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        }
+      ],
+      "status": "Schema only"
     },
     "PassphrasePrompt": {
       "fields": [

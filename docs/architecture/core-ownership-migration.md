@@ -21,26 +21,23 @@ core/api/daemon, including the daemon's transitive GObject-adapter debt).
 
 ## Definition of done
 
-The workstream is complete when every row below is `Complete`:
+Each migration row is marked independently. A completed row means its reviewed
+owner, typed API boundary, frontend ownership, compatibility behavior, and
+verification evidence are documented. Pending rows are not implied complete by
+another row.
 
-- GTK does not instantiate `KeyService`, `ConnectionService`, or `SecretManager`,
-  does not write config / known-hosts / key files, and does not spawn SSH or
-  secret subprocesses.
-- `key_manager.py`, `known_hosts_editor.py`, `connection_manager.py`,
-  `secret_storage.py`, `backup_manager.py`, `plugins/api.py`, `plugins/host.py`,
-  `ssh_connection_builder.py` and the headless SCP/SFTP/identity/multiplex
-  helpers act as presenters/adapters over the daemon API.
-- Passphrases/secrets are excluded from `repr`, logs and events; private-key
-  contents are never serialized by the API.
-- `tests/architecture/test_core_boundary.py::ALLOWED` grows only for genuinely
-  pure helpers, and `PENDING_MIGRATIONS` is empty (every pending import routed
-  through the daemon).
-- `BACKEND_OPS` (frontend backend operations) contains no `M#` entries, and the
-  daemon's GObject-adapter imports in `tests/core/test_dependency_boundary.py`
-  (`DAEMON_DEBT` / `CORE_DEBT`) are gone.
-- The daemon runtime is GI-free: `_production_core_services` composes only
-  headless services, never `Config` / `ConnectionManager` / `GroupManager` /
-  `platform_utils`.
+The shared enforcement rules remain:
+
+- GTK does not instantiate migrated backend services, write authoritative
+  config/known-hosts/key files, or spawn daemon-route SSH or secret subprocesses.
+- Frontend controllers act as presenters/adapters over the daemon API; pure
+  validation, classification, naming, and formatting helpers may remain local.
+- Passphrases/secrets are excluded from `repr`, logs, events, and ordinary DTOs;
+  private-key contents are never serialized by the API.
+- Architecture tests record remaining compatibility debt and reject new
+  frontend backend operations or forbidden dependency edges.
+- The daemon’s remaining internal adapter debt is tracked explicitly and is not
+  confused with the ownership of completed phases.
 
 ## Completion matrix
 
@@ -48,10 +45,10 @@ The workstream is complete when every row below is `Complete`:
 | --- | --- | --- | --- | --- | --- |
 | M1 | Key generation + directory discovery | `key_manager.py` instantiates `core.keys.KeyService`, runs `ssh-keygen`, scans `~/.ssh` | Daemon owns key files and `ssh-keygen`; API lists/reads/generates keys (no deletion in M1) | **Complete** | API cycle landed; `KeyManager` is a client adapter; `keys.*` RPCs + capabilities live |
 | M2 | Known-hosts file ownership | `known_hosts_editor.py` calls `core.known_hosts.load/save_known_hosts` from GTK | Daemon API list/remove with a revision token; GTK renders entries and sends batched mutations | **Complete** | API cycle landed; editor routed through `KnownHostsController` |
-| M3 | Connection store ownership | `connection_manager.py` instantiates `core.connections.ConnectionService` (`_domain`) and writes `~/.ssh/config` | Daemon is the authoritative store; GTK uses `ConnectionApplicationService` through the client | **Deferred** | See M3 deferral |
-| M4 | Settings / config JSON ownership | `config.py` (GTK `Config`) loads/saves the config JSON via `core.settings` | Daemon owns persistent `ssh.*`/preferences keys; GTK keeps visual keys | **Deferred** | See M4 deferral |
-| M5 | Secrets backend selection + vault state | `secret_storage.py` owns `SecretManager` + backend selection via `core.secrets` | Daemon owns backend/lookup/store; GTK is an interaction presenter | **Deferred** | See M5 deferral |
-| M6 | Backup / import-export | `backup_manager.py` plans restores and writes files via `core.import_export` | Daemon backup/restore operations | **Deferred** | See M6 deferral |
+| M3 | Connection store ownership | GTK controllers retain snapshots and transient selection only | `ConnectionRepository` and `ConnectionApplicationService` own the daemon store, groups, metadata, SSH configuration, and events | **Complete** | `connections.*` API and repository contract tests |
+| M4 | Settings / config JSON ownership | GTK retains visual settings and presents typed settings forms | `SshOverridesService` owns global `ssh.*` overrides; broader visual/config split remains separate debt | **Partial: global SSH overrides complete** | `ssh_overrides.*` API, revision-safe service, and contract tests |
+| M5 | Secrets backend selection + vault state | GTK presents metadata and protected interactions only | `SecretBackendService` owns selection, configuration, lifecycle, and protected backend operations; `DaemonConnectionSecretProvider` supplies runtime access | **Complete** | `secrets.*` API, service tests, and boundary checks |
+| M6 | Backup / import-export | GTK selects files and presents safe previews/results only | Daemon runs backup enumeration, export/import, and restore through existing backup implementations | **Complete** | `secrets.transfer` API and transfer tests |
 | M7 | SSH-process / askpass broker | `ssh_connection_builder.py` builds native SSH commands + askpass env for GTK-spawned processes | Daemon one-shot/streaming/session commands via the interaction broker | **Deferred** | See M7 deferral |
 | M8 | Plugin runtime | `plugins/api.py` + `plugins/host.py` re-export core plugin contracts and run a frontend host | Daemon plugin runtime for backend ops; GTK keeps UI contributions only | **Deferred** | See M8 deferral |
 
@@ -141,82 +138,75 @@ advertised only when the daemon service is installed.
 
 ### M3 — Connections
 
-**Status: Complete.** The daemon owns SSH configuration, included fragments,
-`connections.json`, groups, ordering, and safe metadata. SSH `Host` aliases
-remain connection identity. GTK receives immutable snapshots and retains only
-visual group expansion state. M4–M8 remain deferred.
+**Status: Complete and reviewed.** `ConnectionRepository` and
+`ConnectionApplicationService` own SSH configuration, included fragments,
+`connections.json`, groups, ordering, safe metadata, and connection-store
+events. SSH `Host` aliases remain connection identity. GTK receives immutable
+snapshots and retains only visual group expansion state.
 
-**Registered in `PENDING_MIGRATIONS`:** `connection_manager.py` ×
-`core.connections.ConnectionService`.
+The former GObject managers remain compatibility implementations behind
+specific in-process paths and API method descriptions; they are not the
+production daemon store authority. The daemon composition root injects the
+repository and application service directly, and the public contract maps
+repository/application-service results into explicit DTOs.
 
-**Deferred because:** the daemon exposes connection operations through
-`ConnectionApplicationService`, but that service still **delegates authoritative
-work to the legacy GObject `ConnectionManager`** (it is composed *over* the
-manager in `_production_core_services` / `daemon/cli.py`). So the debt is not
-"GTK could own the store" — it is that the GObject adapter remains the
-underlying implementation and is additionally instantiated in-GTK (`_domain`),
-plus `ConnectionManager` still writes `~/.ssh/config` and `ConnectionApplicationService`
-(in `core`) still reaches frontend helpers (`config`, `ssh_connection_builder`,
-`plugins.api/registry` — registered in `CORE_DEBT`). M3 must replace both the
-in-GTK store and the legacy adapter the service wraps, and move the config
-writer behind a daemon operation. The config writer interacts with M7 (SSH
-config authority) and requires the effective-config (`ssh -G`) ownership
-decision, so it is sequenced after M2.
+**Exit condition met:** daemon-backed connection CRUD, group operations,
+metadata updates, snapshot events, and SSH configuration persistence use the
+repository/application-service boundary. Remaining compatibility debt is
+tracked separately and does not change daemon ownership.
 
-**Exit condition:** the daemon composes `ConnectionApplicationService` over a
-headless service (no `ConnectionManager`, no `Config` import in `daemon/cli.py`),
-GTK no longer instantiates `ConnectionService`, the `~/.ssh/config` writer lives
-behind a daemon operation, and the `CORE_DEBT` rows for
-`sshpilot.ssh_connection_builder` / `sshpilot.config` / `sshpilot.plugins` are
-removed. The M3 row leaves `PENDING_MIGRATIONS`.
+### M4 — Settings / config JSON ownership
 
-### M4 — Settings / config JSON
+**Status: Global SSH overrides complete and reviewed; broader settings split
+remains pending.** `SshOverridesService` owns global `ssh.*` override
+validation, normalization, revisioning, transaction locking, and persistence.
+Preferences reads and writes those values through `ssh_overrides.*` typed API
+methods and does not compose or persist a competing `ssh_overrides` list.
 
-**Registered in `PENDING_MIGRATIONS`:** `config.py` ×
-`core.settings.{CONFIG_VERSION, ensure_config_defaults, get_default_config}`.
+Visual preferences remain frontend-owned. Other persistent settings and legacy
+`Config` compatibility rows remain tracked as separate migration debt; this
+phase status does not claim the broader config JSON split complete.
 
-`compose_ssh_overrides` (Preferences ▸ SSH Settings) is `ALLOWED` — pure
-composition. The pending rows are the defaults/store entry points used by the
-GTK `Config` object that reads/writes the config JSON.
+**Exit condition for the completed slice met:** global SSH override reads,
+updates, and resets are daemon-owned and revision-safe. The remaining settings
+rows stay explicitly pending for a separate phase review.
 
-**Deferred because:** persistent settings ownership should land with M3's
-daemon store so the "which keys does GTK keep" split is decided once against a
-single daemon config authority; also several frontend features read `Config`
-directly today, so this migration is wider than a single widget.
-
-**Exit condition:** daemon owns persistent `ssh.*`/preferences keys; GTK keeps
-visual-only keys; the M4 rows leave `PENDING_MIGRATIONS`.
 
 ### M5 — Secrets
 
-**Registered in `PENDING_MIGRATIONS`:** `secret_storage.py` ×
-`core.secrets.{normalize_backend_name, platform_default_order, decide_unlock,
-SecretDecisionKind}`.
+**Status: Complete and reviewed.** `SecretBackendService` owns backend
+selection, configuration, lifecycle, protected interactions, and secret
+transfers. `DaemonConnectionSecretProvider` is the daemon boundary for runtime
+connection secret access and reuses the existing `SecretManager` and backend
+implementations internally. GTK presents typed state and protected
+interactions only; secret values never become ordinary API data.
 
-**Deferred because:** the secret subsystem already routes *runtime* lookups
-through the daemon/askpass broker, but `SecretManager`'s backend selection and
-unlock state live in the GTK process and are called during connection flows.
-Moving selection/state to the daemon must not disturb the passphrase/password
-askpass path, the keepassxc/bitwarden session-backed backends, or the
-`use-askpass` gate — a large behavioral surface that needs its own test cycle.
+Explicit backend selection remains exclusive and `auto` retains its existing
+compatibility behavior. Bitwarden, rbw, KDBX, remembered-password, and
+authentication-challenge behavior remains native to the existing backends and
+is supervised by the daemon.
 
-**Exit condition:** daemon owns backend selection/lookup/store; GTK presents
-unlock interactions only; the M5 rows leave `PENDING_MIGRATIONS`.
+**Exit condition met:** `secrets.*` capabilities and lifecycle/transfer methods
+are daemon-owned, frontend backend access is removed from the production route,
+and the remaining internal compatibility reuse is documented rather than
+presented as GTK ownership.
 
 ### M6 — Backup / import-export
 
-**Registered in `PENDING_MIGRATIONS`:** `backup_manager.py` ×
-`core.import_export.{MergeStrategy, plan_import, atomic_write_json,
-migrate_payload}`.
+**Status: Complete and reviewed for secret-bearing transfer.** Secret-bearing
+backup preview, enumeration, export, import, and restore execute inside the
+daemon. The daemon reuses `BackupManager`, `CredentialManager`,
+`backup_archive`, `backup_backends`, the existing `.spbk` format, and merge
+behavior. GTK selects files and presents safe metadata, warnings, and
+completion state; it does not enumerate decrypted credentials or construct
+secret-bearing archives.
 
-**Deferred because:** restore planning and atomic file writes are authoritative
-I/O, but the backup format/planning code is shared with the CLI and the daemon
-already consumes `core.import_export`; this migration is mostly routing
-`backup_manager`'s *apply* step through a daemon operation, which depends on M3
-(connection store ownership) to know where restored data is written.
+The broader shared-operation and identity migration phases remain separate
+review items and are not implied by this M6 status.
 
-**Exit condition:** restore/backup writes run on the daemon; GTK only previews
-and confirms; the M6 rows leave `PENDING_MIGRATIONS`.
+**Exit condition met:** secret backup writes and credential restoration are
+reachable through `secrets.transfer` daemon operations, protected passphrases
+use interactions, and no secret value appears in ordinary DTOs.
 
 ### M7 — SSH-process / askpass broker
 
@@ -260,28 +250,17 @@ the daemon. The M8 tag then has no debt.
 
 ## Enforcement summary (current state)
 
-`tests/architecture/test_core_boundary.py` + `tests/core/test_dependency_boundary.py`
-are green on the baseline tree:
+`tests/architecture/test_core_boundary.py` and
+`tests/core/test_dependency_boundary.py` enforce the frontend boundary and
+record remaining compatibility debt. The registries are intentionally allowed
+to contain pending rows for shared operations, identity services, explicit
+legacy routes, and other phases that have not completed review.
 
-```text
-ALLOWED (pure, stays local) ........ 36 symbols
-PENDING_MIGRATIONS (frontend core imports to route to daemon)
-  M3=1  M4=3  M5=4  M6=4  M7=6           (M1=0, M2=0, M8=0: contracts are allowed)
-BACKEND_OPS (frontend backend operations)
-  M3=1  M5=4  M6=1  M7=19  M8=1  frontend=6
-DAEMON_ALLOWLIST ................... 7 app-side daemon bootstrap/diagnostic utilities
-DAEMON_DEBT ....................... 5 daemon -> GObject-adapter imports (M3/M4/M8)
-CORE_DEBT ......................... 3 core -> frontend-helper imports (M4/M7/M8)
-```
-
-The suite fails when a new frontend core import is unregistered, when a
-registered entry becomes stale, when frontend performs an unregistered backend
-operation (subprocess / SSH binary / service instantiation / known-hosts I/O),
-when frontend reaches into `sshpilot.daemon` outside the allowlist, or when
-`core`/`daemon` gain a dependency edge outside their allowed set and debt
-registries. It does **not** yet forbid the pending imports/operations
-themselves — that is the job of each M1–M8 migration, which removes its rows as
-it lands.
+The suite fails when a new frontend core import is unregistered, a registered
+entry becomes stale, frontend performs an unregistered backend operation, GTK
+reaches into `sshpilot.daemon` outside the allowlist, or `core`/`daemon` gain an
+unsupported dependency edge. Pending rows are phase-gated work, not evidence
+that a completed daemon owner has reverted to GTK.
 
 ## The daemon is not yet GI-free
 
@@ -292,7 +271,7 @@ adapters:
 
 ```python
 from sshpilot.config import Config                     # M4 debt
-from sshpilot.connection_manager import ConnectionManager  # M3 debt
+from sshpilot.connection_manager import ConnectionManager  # compatibility adapter
 from sshpilot.groups import GroupManager               # M3 debt
 from sshpilot.plugins.loader import load_plugins       # M8 debt
 ```

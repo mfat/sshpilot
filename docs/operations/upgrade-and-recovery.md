@@ -55,7 +55,8 @@ reasons where possible.
 
 ## Data preserved across restart
 
-- Saved connections in `~/.ssh/config` / app config (via `ConnectionManager`)
+- Saved connections in daemon-owned `~/.ssh/config` / app configuration
+  (with `ConnectionManager` retained only by explicit compatibility paths)
 - OS keyring / secret backend entries
 - Application preferences and logs under the state directory
 

@@ -5,26 +5,24 @@ notes remain separate.
 
 ## Unreleased
 
-- Migrated secret backend management to the daemon. `SecretBackendService`
-  inside `sshpilotd` is the authoritative owner of backend selection, unlock,
-  lock, and the Bitwarden (`secrets.bitwarden.*`) and rbw (`secrets.rbw.*`)
-  lifecycle RPCs. The daemon owns the `secrets.*` settings file, runs
-  `bw`/`rbw` itself, and prompts for master passwords, 2FA codes, API-key
-  client secrets, SSO challenges, and backup passphrases through the protected
-  interaction path. No secret value crosses the wire.
-- Added the `secrets.read`, `secrets.write`, `secrets.operate`, and
-  `secrets.transfer` capabilities, advertised only when the service is
-  installed. Otherwise clients receive canonical `unsupported_capability`
-  errors and never fall back to GTK-owned backend code.
-- Added `get_secret_configuration`, `update_secret_configuration`,
-  `get_secret_backends`, `get_secret_state`, `update_secret_selection`,
-  `unlock_secrets`, `lock_secrets`, the `bitwarden_*` and `rbw_*` methods, and
-  `export_secret_backup` / `import_secret_backup` to the client contract.
-- Published the secret-backend schema: `SecretConfiguration`,
-  `UpdateSecretConfigurationRequest`, `SecretBackendDescriptor`,
-  `SecretBackendRegistry`, `SecretBackendState`, `SecretUnlockResult`,
-  `SecretOperationResult`, `BitwardenStatus`, `RbwStatus`, and
-  `SecretTransferResult`. `PROTOCOL_VERSION` stays `1.0`.
+- Completed the reviewed daemon-owned secret backend phase. `SecretBackendService`
+  is authoritative for backend selection, revision-safe configuration and
+  selection, lifecycle, and `secrets.*` operations. Preferences, Bitwarden, and
+  rbw setup use the typed frontend-neutral API; the daemon runs the existing
+  backend implementations rather than rewriting them. Bitwarden password,
+  API-key, SSO, 2FA, and authentication-challenge flows are daemon-owned; rbw
+  retains its native agent/pinentry lifecycle; KDBX create, unlock, lock, and
+  remembered-password support remain daemon-owned through existing
+  platform-keyring identities. The daemon also owns `.spbk`, Bitwarden, and
+  SSH-server backup export/import and reuses `BackupManager`, `CredentialManager`,
+  `backup_archive`, and `backup_backends` with the existing format and merge
+  behavior. Protected interactions carry sensitive input; secret values,
+  `BW_SESSION`, transformed KDBX keys, and backup manifests do not cross the
+  ordinary public API. GTK owns presentation, file selection, and interaction
+  presentation only. Explicit backend selection remains exclusive and `auto`
+  preserves its existing compatibility behavior. Capabilities are advertised
+  only when services are installed; unsupported clients receive canonical
+  `unsupported_capability` errors and never fall back to frontend backend code.
 
 - Implemented `get_global_ssh_overrides`, `update_global_ssh_overrides`, and
   `reset_global_ssh_overrides` over the `ssh_overrides.get`, `ssh_overrides.update`,
@@ -40,18 +38,15 @@ notes remain separate.
   `revision_conflict`, `settings_malformed`, and `settings_persistence_failed`
   error codes. `PROTOCOL_VERSION` stays `1.0`.
 
-- Implemented daemon-backed `connections.snapshot`, complete group mutation
-  RPCs, and connection metadata/tag mutation methods.
-
-- Published the connection-store protocol schema: `ConnectionStoreSnapshot`,
-  `GroupSummary`, `ConnectionMetadataSummary`, `GroupId`, the group mutation
-  requests (`SetGroupColorRequest`, `PlaceGroupRequest`,
-  `CopyConnectionToGroupRequest`, `RemoveConnectionFromGroupRequest`,
-  `ReorderConnectionRequest`, `RenameTagRequest`), and the hardened
-  `UpdateConnectionMetadataRequest`. Added the `connection_store.changed`
-  event type carrying an exact `ConnectionStoreSnapshot` payload. The schema
-  is published but not yet implemented by the daemon; client methods and RPC
-  handlers land in later tasks.
+- Completed the reviewed daemon-backed connection-store phase:
+  `connections.snapshot`, group mutation RPCs, and connection metadata/tag
+  mutation methods are implemented through `ConnectionRepository` and
+  `ConnectionApplicationService`. The published `ConnectionStoreSnapshot`,
+  `GroupSummary`, `ConnectionMetadataSummary`, `GroupId`, group mutation
+  requests, hardened `UpdateConnectionMetadataRequest`, and
+  `connection_store.changed` event are runtime-backed; the daemon publishes
+  them according to the documented capability contract. `Host` aliases remain
+  connection identity and compatibility lifecycle events are retained.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.16`; `PROTOCOL_VERSION` stays
   `1.0`.
 

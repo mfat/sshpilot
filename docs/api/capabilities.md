@@ -74,9 +74,9 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 
 | Identifier | Meaning | Provider/status | Related methods | Related events | Dependencies | Introduced |
 | --- | --- | --- | --- | --- | --- | --- |
-| `connections.read` | Read saved connection DTO snapshots | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | Existing `ConnectionManager` through `InProcessClient` | v1 |
+| `connections.read` | Read saved connection DTO snapshots | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | `ConnectionRepository` / `ConnectionApplicationService` on daemon; compatibility adapter for in-process clients | v1 |
 | `connections.events` | Subscribe to live connection lifecycle events | `InProcessClient` and daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
-| `connections.write` | Create, duplicate, update, and delete saved connections | `InProcessClient` and daemon: Implemented | `create_connection`, `duplicate_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.duplicate`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | Existing `ConnectionManager` through the daemon application service | v1 |
+| `connections.write` | Create, duplicate, update, and delete saved connections | `InProcessClient` and daemon: Implemented | `create_connection`, `duplicate_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.duplicate`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | `ConnectionRepository` / `ConnectionApplicationService` on daemon; compatibility adapter for in-process clients | v1 |
 | `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented; in-process unsupported | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
 | `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented; in-process unsupported | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
 | `sessions.events` | Receive daemon session lifecycle events | Daemon: Implemented | `subscribe_events` | `session.created`, `session.state_changed`, `session.exited`, `session.closed` | Existing bounded event multiplexing | v1 / API 0.6 |
@@ -459,6 +459,28 @@ Implemented when the daemon key service is installed. Generates keypairs
 through the daemon-owned `ssh-keygen` in the selected key store scope
 (`keys.generate`). Gated behind `KEYS_WRITE`. Generation is unavailable while
 the daemon is draining.
+
+<!-- api-capability: identity.read -->
+## `identity.read`
+
+Implemented in the daemon identity provider service. Returns provider, identity
+state, agent-key, and authorized-key metadata only. This capability is
+implemented but pending its separate frontend-neutral phase review.
+
+<!-- api-capability: identity.write -->
+## `identity.write`
+
+Implemented in the daemon identity provider service. Updates identity selection
+and provider configuration through typed requests. This capability is
+implemented but pending its separate frontend-neutral phase review.
+
+<!-- api-capability: identity.operate -->
+## `identity.operate`
+
+Implemented in the daemon identity provider service. Runs agent-key mutations,
+key deployment, authorized-key removal, and operation cancellation. Native
+OpenSSH behavior remains authoritative. This capability is implemented but
+pending its separate frontend-neutral phase review.
 
 <!-- api-capability: ssh_overrides.read -->
 ## `ssh_overrides.read`

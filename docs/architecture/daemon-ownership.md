@@ -21,10 +21,10 @@ GTK-owned local SSH.
 
 Local shell tabs and user-selected external terminals are explicit exceptions:
 their processes are owned by GTK/the external emulator, not by `sshpilotd`.
-They must not be described as daemon sessions. GTK also still constructs a
-`ConnectionManager` for presentation and plugin compatibility; eliminating
-that duplicate configuration graph in favour of daemon-fed DTO stores remains
-follow-up architecture work.
+They must not be described as daemon sessions. A GObject `ConnectionManager`
+may remain as an explicitly selected compatibility adapter, but it is not the
+saved-connection authority for the daemon route; daemon-fed DTO stores are the
+production frontend boundary.
 
 The concrete current client contract is maintained in the
 [API reference](../api/README.md). This document describes intended ownership;

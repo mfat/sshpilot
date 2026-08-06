@@ -124,6 +124,21 @@ pytest -q tests/api
 Frontend-only changes may mark the API checklist in the pull-request template
 not applicable.
 
+## Frontend-neutral phase gates
+
+For every completed frontend-neutral phase:
+
+- update `docs/api/CHANGELOG.md`;
+- update architecture ownership;
+- update `docs/frontend-neutral-migration.md`;
+- regenerate API methods/schema when the contract changes;
+- record compatibility debt;
+- record native OpenSSH reuse;
+- do not mark the phase complete while documentation contradicts production ownership.
+
+This checklist applies to API changes, ownership changes, and completed phase
+gates. It does not require narrative documentation updates for trivial bug fixes.
+
 ## Code style
 
 - Follow [PEP 8](https://peps.python.org/pep-0008/); use type hints where appropriate.

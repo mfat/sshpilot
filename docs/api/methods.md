@@ -195,6 +195,18 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method: remove_connection_from_group -->
 <!-- api-method: reorder_connection -->
 <!-- api-method: rename_tag -->
+<!-- api-method-contract: add_agent_key status=daemon-only capability=identity.operate -->
+<!-- api-method-contract: cancel_operation status=daemon-only capability=identity.operate -->
+<!-- api-method-contract: deploy_key status=daemon-only capability=identity.operate -->
+<!-- api-method-contract: get_identity_providers status=daemon-only capability=identity.read -->
+<!-- api-method-contract: get_identity_state status=daemon-only capability=identity.read -->
+<!-- api-method-contract: get_operation status=daemon-only capability=identity.read -->
+<!-- api-method-contract: list_agent_keys status=daemon-only capability=identity.read -->
+<!-- api-method-contract: list_authorized_keys status=daemon-only capability=identity.read -->
+<!-- api-method-contract: remove_agent_key status=daemon-only capability=identity.operate -->
+<!-- api-method-contract: remove_authorized_key status=daemon-only capability=identity.operate -->
+<!-- api-method-contract: update_identity_configuration status=daemon-only capability=identity.write -->
+<!-- api-method-contract: update_identity_selection status=daemon-only capability=identity.write -->
 
 ## Daemon wire methods
 
@@ -433,6 +445,18 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: secrets.remember_master_password capability=secrets.operate -->
 <!-- api-daemon-method: secrets.forget_master_password capability=secrets.operate -->
 <!-- api-daemon-method: secrets.unlock capability=secrets.operate -->
+<!-- api-daemon-method: authorized_keys.list capability=identity.read -->
+<!-- api-daemon-method: authorized_keys.remove capability=identity.operate -->
+<!-- api-daemon-method: identity.agent.key.add capability=identity.operate -->
+<!-- api-daemon-method: identity.agent.key.remove capability=identity.operate -->
+<!-- api-daemon-method: identity.agent.keys.get capability=identity.read -->
+<!-- api-daemon-method: identity.configuration.update capability=identity.write -->
+<!-- api-daemon-method: identity.deploy_key capability=identity.operate -->
+<!-- api-daemon-method: identity.providers.get capability=identity.read -->
+<!-- api-daemon-method: identity.selection.update capability=identity.write -->
+<!-- api-daemon-method: identity.state.get capability=identity.read -->
+<!-- api-daemon-method: operations.cancel capability=identity.operate -->
+<!-- api-daemon-method: operations.get capability=identity.read -->
 
 Unknown wire methods return `unsupported_method`. Terminal output and input use
 the negotiated binary frame path; resize and replay metadata use the two
@@ -549,7 +573,8 @@ print(editor.identity_files, editor.forwarding_rules)
 - **Cancellation / ordering / threading:** In-process calls use the owner
   thread. Daemon requests are serialized and are never automatically retried.
 - **Side effects / security:** Persists only the request's basic metadata
-  through `ConnectionManager`. The request has no secret or path fields.
+  through `ConnectionRepository` and `ConnectionApplicationService`. The request
+  has no secret or path fields.
 
 ```python
 created = client.create_connection(
@@ -604,8 +629,9 @@ client.update_connection(
 - **Parameters / return:** `connection_id` and a metadata dict;
   returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `Config.set_connection_meta`;
-  metadata is persisted to the local config store.
+- **Side effects / security:** Persists through
+  `ConnectionRepository.update_connection_metadata`; metadata is merged,
+  revisioned with the connection store, and safe metadata keys are validated.
 
 ```python
 client.update_connection_metadata(
@@ -623,7 +649,8 @@ client.update_connection_metadata(
 - **Parameters / return:** `connection_id` and `group_id: str`;
   returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `GroupManager.move_connection`.
+- **Side effects / security:** Persists through the repository-owned group
+  mutation service; no frontend manager instance is authoritative.
 
 ```python
 client.assign_connection_to_group(connection_id, "group-production")
@@ -637,7 +664,8 @@ client.assign_connection_to_group(connection_id, "group-production")
 - **Parameters / return:** `name`, optional `parent_id` and `color`;
   returns the new group ID as `Optional[str]`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `GroupManager.create_group`.
+- **Side effects / security:** Persists through the repository-owned group
+  mutation service; no frontend manager instance is authoritative.
 
 ```python
 group_id = client.create_group("Production Servers", color="#4CAF50")
@@ -650,7 +678,8 @@ group_id = client.create_group("Production Servers", color="#4CAF50")
 - **Capability / purpose:** `connections.groups`; delete a group.
 - **Parameters / return:** `group_id: str`; returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `GroupManager.delete_group`.
+- **Side effects / security:** Persists through the repository-owned group
+  mutation service; no frontend manager instance is authoritative.
 
 ```python
 client.delete_group("group-production")
@@ -664,7 +693,8 @@ client.delete_group("group-production")
 - **Parameters / return:** `group_id` and `new_name: str`;
   returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `GroupManager.rename_group`.
+- **Side effects / security:** Persists through the repository-owned group
+  mutation service; no frontend manager instance is authoritative.
 
 ```python
 client.rename_group("group-production", "Staging Servers")
@@ -723,8 +753,9 @@ client.delete_connection(DeleteConnectionRequest(connection_id))
 - **Parameters / return:** `StoreConnectionPasswordRequest` (connection_id,
   password); returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `ConnectionManager.store_connection_password`;
-  passwords never cross the wire in plaintext.
+- **Side effects / security:** Delegates to the daemon's
+  `DaemonConnectionSecretProvider`; passwords never appear in ordinary DTOs or
+  cross the wire as plaintext.
 
 ```python
 client.store_connection_password(
@@ -752,7 +783,9 @@ client.store_connection_password(
 - **Parameters / return:** `DeleteConnectionPasswordRequest` (connection_id);
   returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `ConnectionManager.delete_connection_passwords`.
+- **Side effects / security:** Delegates to the daemon's
+  `DaemonConnectionSecretProvider`; deletion is idempotent and secret values
+  are not returned.
 
 ```python
 client.delete_connection_password(
@@ -769,7 +802,8 @@ client.delete_connection_password(
 - **Parameters / return:** `StoreKeyPassphraseRequest` (key_path, passphrase);
   returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `ConnectionManager.store_key_passphrase`.
+- **Side effects / security:** Delegates to the daemon-owned secret provider;
+  passphrases are protected input and never appear in ordinary API responses.
 
 ```python
 client.store_key_passphrase(
@@ -784,7 +818,8 @@ client.store_key_passphrase(
 - **Capability / purpose:** `connections.secrets.write`; delete a stored key passphrase.
 - **Parameters / return:** `DeleteKeyPassphraseRequest` (key_path); returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to `ConnectionManager.delete_key_passphrase`.
+- **Side effects / security:** Delegates to the daemon-owned secret provider;
+  deletion is idempotent and no passphrase is returned.
 
 ```python
 client.delete_key_passphrase(
@@ -1316,6 +1351,115 @@ try:
 finally:
     subscription.close()
 ```
+
+<!-- api-method: get_identity_providers -->
+## `get_identity_providers`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.read`; return provider descriptors and
+  safe availability metadata only.
+- **Parameters / return:** None; returns `IdentityProviderRegistry`.
+- **Security:** Provider credentials and private key material are omitted.
+
+<!-- api-method: get_identity_state -->
+## `get_identity_state`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.read`; return current identity selection
+  and safe state metadata.
+- **Parameters / return:** None; returns `IdentityState`.
+
+<!-- api-method: update_identity_selection -->
+## `update_identity_selection`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.write`; update the selected identity
+  provider/configuration reference.
+- **Parameters / return:** `UpdateIdentitySelectionRequest`; returns
+  `IdentityState`.
+
+<!-- api-method: update_identity_configuration -->
+## `update_identity_configuration`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.write`; update typed provider
+  configuration without exposing provider secrets in ordinary DTOs.
+- **Parameters / return:** `UpdateIdentityConfigurationRequest`; returns
+  `IdentityState`.
+
+<!-- api-method: list_agent_keys -->
+## `list_agent_keys`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.read`; list safe SSH-agent key metadata.
+- **Parameters / return:** None; returns `AgentKeyList`.
+
+<!-- api-method: add_agent_key -->
+## `add_agent_key`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.operate`; load a key through native
+  `ssh-add` supervision.
+- **Parameters / return:** `AgentKeyMutationRequest`; returns `AgentKeyList`.
+
+<!-- api-method: remove_agent_key -->
+## `remove_agent_key`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.operate`; remove an agent key through
+  native agent control.
+- **Parameters / return:** `AgentKeyMutationRequest`; returns `AgentKeyList`.
+
+<!-- api-method: deploy_key -->
+## `deploy_key`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.operate`; supervise native `ssh-copy-id`
+  deployment and return an operation summary.
+- **Parameters / return:** `DeployKeyRequest`; returns `OperationSummary`.
+
+<!-- api-method: list_authorized_keys -->
+## `list_authorized_keys`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.read`; list safe authorized-key metadata.
+- **Parameters / return:** `ListAuthorizedKeysRequest`; returns
+  `AuthorizedKeyList`.
+
+<!-- api-method: remove_authorized_key -->
+## `remove_authorized_key`
+
+- **Status / review:** Implemented in the daemon identity service; pending the
+  separate identity phase review.
+- **Capability / purpose:** `identity.operate`; remove an authorized key through
+  the daemon operation service.
+- **Parameters / return:** `RemoveAuthorizedKeyRequest`; returns
+  `OperationSummary`.
+
+<!-- api-method: get_operation -->
+## `get_operation`
+
+- **Status / review:** Implemented in the daemon identity operation service;
+  pending the separate identity phase review.
+- **Capability / purpose:** `identity.read`; inspect safe operation state.
+- **Parameters / return:** `OperationId`; returns `OperationSummary`.
+
+<!-- api-method: cancel_operation -->
+## `cancel_operation`
+
+- **Status / review:** Implemented in the daemon identity operation service;
+  pending the separate identity phase review.
+- **Capability / purpose:** `identity.operate`; cancel a cancellable operation.
+- **Parameters / return:** `OperationId`; returns `OperationSummary`.
 
 <!-- api-method: get_global_ssh_overrides -->
 ## `get_global_ssh_overrides`

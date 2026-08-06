@@ -166,8 +166,9 @@ rendering. See [terminal streaming](../architecture/terminal-streaming.md).
 
 ## Ordering
 
-- `list_connections()` preserves the order returned by the current
-  `ConnectionManager`.
+- `list_connections()` preserves the order returned by the daemon's
+  `ConnectionRepository` / `ConnectionApplicationService` snapshot; an
+  in-process compatibility client may adapt an existing manager.
 - `get_connection()` returns one current snapshot.
 - In-process events use one monotonically increasing sequence per client,
   starting at zero.

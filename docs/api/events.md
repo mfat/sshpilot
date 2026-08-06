@@ -111,26 +111,46 @@ local `error.occurred` continuity notification where delivery remains possible.
 ## `connection.created`
 
 - **Status / introduced:** Implemented in-process and over daemon transport / v1
-- **Trigger / payload:** Existing `connection-added` GObject signal;
-  `ConnectionSummary`.
+- **Trigger / payload:** A successful repository/application-service
+  persistence change; `ConnectionSummary`.
 - **Related IDs:** `connection_id` is populated and equals payload `id`.
 - **Ordering / delivery:** In-process publisher-global serial FIFO; over IPC,
   daemon-global sequence and bounded at-most-once live delivery.
 - **Coalescing / dropping:** Not coalesced. Absent/new subscribers miss prior
   events. Queue overflow disconnects the affected daemon peer.
-- **Loop behaviour:** The adapter can be tested headlessly with a fake manager.
-  Production signal timing may depend on GLib scheduling in
-  `ConnectionManager`.
+- **Compatibility:** In-process adapters may derive the event from legacy
+  manager signals, but the daemon repository is authoritative on the daemon
+  route.
 
 <!-- api-event: connection.updated -->
 ## `connection.updated`
 
 - **Status / introduced:** Implemented / v1
-- **Trigger / payload:** Existing `connection-updated` signal;
-  `ConnectionSummary`.
+- **Trigger / payload:** A successful repository/application-service
+  persistence change; `ConnectionSummary`.
 - **Related IDs/order/delivery:** Same guarantees as `connection.created`.
-- **Coalescing / dropping:** Every signal reaching the adapter is published;
-  there is no coalescing or replay.
+- **Coalescing / dropping:** Every successful store change is published; there
+  is no coalescing or replay.
+
+<!-- api-event: operation.created -->
+## `operation.created`
+
+- **Status / review:** Implemented by the daemon operation runtime; pending the
+  separate identity phase review.
+- **Trigger / payload:** A daemon-owned identity operation is accepted;
+  `OperationSummary` contains safe state and identifiers only.
+- **Security:** No private keys, credentials, or secret values are included.
+
+<!-- api-event: operation.state_changed -->
+## `operation.state_changed`
+
+- **Status / review:** Implemented by the daemon operation runtime; pending the
+  separate identity phase review.
+- **Trigger / payload:** An operation changes lifecycle state;
+  `OperationSummary` contains safe state and identifiers only.
+- **Ordering / delivery:** Delivered through the daemon event stream according
+  to the negotiated event and capability contract.
+- **Security:** No private keys, credentials, or secret values are included.
 
 <!-- api-event: connection.deleted -->
 ## `connection.deleted`

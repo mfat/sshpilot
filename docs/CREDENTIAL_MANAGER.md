@@ -1,93 +1,102 @@
 # Credential manager
 
-sshPilot stores SSH login passwords, sudo passwords, and key passphrases through
-the pluggable backends in `secret_storage.py`. The **credential manager** is a
-GTK-free normalization layer on top of that storage — it does not replace
-`SecretManager` for connect-time store/lookup.
+sshPilot’s credential model represents SSH login passwords, sudo passwords, key
+passphrases, and their canonical host identities. In production daemon mode,
+connection and runtime secret access goes through daemon-owned providers and
+protected interactions. The frontend never enumerates decrypted credentials or
+calls a backend directly.
 
-Use it when you need a **flat list of credentials** (backup export, future
-vault-to-vault migration), not when opening a connection.
+The existing credential and secret implementations remain internal building
+blocks reused by the daemon. `CredentialManager` is a GTK-free normalization
+layer for daemon backup/export work and compatibility adapters; it is not the
+authority for connect-time storage, lookup, backend selection, or vault
+lifecycle.
 
 ## Layers
 
 | Layer | Module | Role |
 | --- | --- | --- |
-| Storage | `secret_storage.py` | `SecretManager`, backends, `SecretSpec` builders |
-| Model | `credential_model.py` | `Credential` dataclass, spec ↔ credential translation, host-key helpers |
-| Orchestrator | `credential_manager.py` | `CredentialManager.list_credentials()` |
-| Adapters | `credential_adapters.py` | `SecretBackendAdapter`, `KdbxAdapter` — credential-centric load/save/delete |
-| Connect-time API | `connection_manager.py` | `store_connection_password`, `get_connection_password`, … |
+| Storage | `secret_storage.py` | Existing `SecretManager`, backends, and `SecretSpec` builders reused by the daemon |
+| Model | `credential_model.py` | `Credential` dataclass, spec-to-credential translation, host-key helpers, and identity terminology |
+| Orchestrator | `credential_manager.py` | Internal credential enumeration and normalization for daemon backup/export operations |
+| Adapters | `credential_adapters.py` | Existing `SecretBackendAdapter` and `KdbxAdapter` credential-centric import/export helpers |
+| Runtime provider | `DaemonConnectionSecretProvider` | Daemon-owned connection secret lookup and protected interaction integration |
+| Backup services | `BackupManager`, `backup_archive`, `backup_backends` | Existing `.spbk` collection, merge, and restore behavior reused inside the daemon |
 
-See also `IDENTITY_PROVIDERS.md` for the parallel **identity** side (which key /
-agent authenticates a connection).
+See [IDENTITY_PROVIDERS.md](IDENTITY_PROVIDERS.md) for the parallel identity
+side: which key or agent authenticates a connection. Identity providers and
+secret values remain separate concepts.
 
 ## Connect-time password keys
 
-SSH login passwords are keyed in the backend by `user@host`. The **canonical host**
-is always `hostname` → `host` → `nickname` (same as `Connection.get_effective_host()`).
+SSH login passwords use the existing canonical identity terminology. The
+canonical host is always `hostname` → `host` → `nickname`, matching
+`Connection.get_effective_host()`, and the backend key remains `user@host`.
 
-- **Store:** `ConnectionManager.store_connection_password(connection, password)`
-  writes under the canonical host and deletes legacy copies stored under older
-  aliases.
-- **Lookup:** `ConnectionManager.get_connection_password(connection)` probes
-  legacy aliases; on hit it **migrates** the secret to the canonical key.
-- **Low-level:** `store_password(host, user)` / `get_password(host, user)` remain
-  for callers that already know the exact key (plugin secrets, sudo passwords, …).
+The daemon-owned connection secret provider preserves the existing behavior:
 
-Host helpers live in `credential_model.py`:
+- store under the canonical host;
+- remove legacy alias copies when storing;
+- probe legacy aliases on lookup and migrate a successful match to the
+  canonical key;
+- retain low-level exact host/user keys for callers such as plugin or sudo
+  credentials where that identity is already known.
 
-- `canonical_password_host(conn)`
-- `password_host_candidates(conn)`
+These operations are reached through typed client methods and daemon services.
+They are not implemented by GTK-owned manager instances, and normal API
+responses never contain secret values.
 
 ## CredentialManager
 
-```python
-from sshpilot.credential_manager import CredentialManager
+`CredentialManager` performs the existing normalized, read-only enumeration
+needed by daemon backup/export operations:
 
-creds = CredentialManager(connection_manager).list_credentials(
-    include_orphans=True,   # default: also enumerate backend orphans
-)
-```
+- connection-derived entries include login passwords, sudo passwords, and key
+  passphrases for configured and effective identity files;
+- optional orphan enumeration uses backend adapters that support it;
+- connection-derived entries take precedence over enumerated orphans using the
+  existing `(id, type)` deduplication rule;
+- it never prompts, and a locked session-backed vault contributes nothing.
 
-**Pass 1 — connection-derived:** for each connection, resolve password, sudo
-password, and passphrases for `keyfile`, `identity_files`, and
-`resolved_identity_files` (from `ssh -G`). Uses `SecretManager.lookup_everywhere`
-so secrets are found even if the user switched backends since storing.
+The daemon invokes this internal layer while preparing a backup. GTK receives
+only safe metadata such as paths, counts, warnings, manifests without secret
+values, and completion state. Frontend code must not construct
+`CredentialManager`, call `SecretManager`, enumerate decrypted credentials, or
+assemble backup archives.
 
-**Pass 2 — enumeration** (`include_orphans=True`): backends that implement
-`iter_credentials` (libsecret, pass, bitwarden, keepassxc) surface stored secrets
-with no matching connection; tagged `metadata['orphan']=True`.
+## Backup and restore
 
-Dedup key: `(id, type)`. Connection-derived entries win over enumerated orphans.
+Secret-bearing `.spbk` export, preview, listing, and import execute inside the
+daemon through `SecretBackendService`. The daemon reuses:
 
-**Never prompts.** A locked session vault contributes nothing.
+- `BackupManager` for collection and merge behavior;
+- `CredentialManager` for normalized credential enumeration;
+- `backup_archive` and `backup_backends` for the existing format and backend
+  behavior.
 
-### Backup (`.spbk`)
+Restore planning and application remain daemon-owned. Backup passphrases are
+collected through protected one-use interactions. Decrypted manifests are
+short-lived, process-local, and consumed once; they never cross the ordinary
+public API.
 
-`BackupManager._gather_credentials` calls
-`list_credentials(include_orphans=False)` for the selected connections only.
-Restore uses `credential_to_spec` + `SecretManager.store` (current backend).
+## Backend selection compatibility
 
-## SecretManager public API
+The daemon owns backend selection and lifecycle through `SecretBackendService`.
+Explicit selection remains exclusive: normal store, lookup, and delete
+operations consult only the selected backend. `auto` preserves the existing
+compatibility behavior by consulting available backends for reads and deletes,
+so changing selection does not orphan secrets. The existing backend
+implementations were reused rather than rewritten.
 
-- `store` / `lookup` / `delete` — honor backend selection (`auto` vs explicit).
-- `lookup_everywhere(spec)` — scan all available backends; used by export.
-- `all_available_backends()` — public list for enumeration (credential manager).
-
-## Adapters
-
-`SecretBackendAdapter` wraps any `SecretBackend` with `load_all` / `save` /
-`delete` on `Credential` objects. Enumeration requires `iter_credentials` on the
-backend (keyring/agent have none).
-
-`KdbxAdapter` is a **standalone** `.kdbx` import/export target (not the
-connect-time `KdbxBackend`). Both scope enumeration to the dedicated `sshPilot`
-KeePass group.
-
-`watch_changes()` is currently a no-op on all adapters (future work).
+Session-backed Bitwarden, rbw, and KDBX lifecycle operations are daemon-owned.
+Bitwarden password, API-key, SSO, two-factor, and authentication-challenge
+flows use protected interactions; rbw retains native agent/pinentry behavior;
+KDBX create, unlock, and lock remain daemon operations. Remembered master
+passwords use the existing platform-keyring identities.
 
 ## Plugin secrets
 
-Plugin tokens use `connection_manager.store_plugin_secret` under host
-`sshpilot-plugin/<plugin_id>`. They are **not** included in `CredentialManager`
-today.
+Plugin tokens retain their existing identity and storage semantics, but runtime
+access is mediated by daemon-owned services. They are not included in ordinary
+public DTOs and are not exposed through `CredentialManager` unless an explicit
+supported backup operation includes them.
