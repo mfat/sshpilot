@@ -1885,14 +1885,18 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         self.secret_backend_row = Adw.ComboRow()
         self.secret_backend_row.set_title(_("Secret storage backend"))
-        try:
-            from .secret_storage import get_secret_manager
-            self._secret_backend_mgr = get_secret_manager()
-            registered = self._secret_backend_mgr.registered_backends()
-        except Exception:
-            self._secret_backend_mgr = None
-            registered = []
-        current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
+        # The daemon owns the backend registry: only names reach the UI.
+        registered = []
+        self._secret_registry = None
+        controller = self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                self._secret_registry = controller.load_registry()
+                registered = [b.name for b in self._secret_registry.backends]
+            except Exception:
+                logger.debug("Secret backend registry load failed", exc_info=True)
+                registered = []
+        current_backend = self._secrets_current_backend(controller) or 'auto'
         if current_backend.strip().lower() == 'vaultwarden':
             current_backend = 'bitwarden'   # merged into one bw backend
         self._secret_backend_labels = {
@@ -1918,7 +1922,10 @@ class PreferencesWindow(Adw.NavigationPage):
         # Probing availability (keyring/keepassxc is_available) costs ~400ms on
         # the main thread, so show every backend without the "(unavailable)"
         # suffix now and refine off-thread once the window is up.
-        self._set_secret_backend_model(set(self._secret_backend_ids))
+        available = self._registry_available_names()
+        self._set_secret_backend_model(
+            available if available is not None else set(self._secret_backend_ids)
+        )
         try:
             current_index = self._secret_backend_ids.index(current_backend)
         except ValueError:
@@ -1959,9 +1966,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
         # Only shown when the Bitwarden backend is selected.
         self.bw_profile_row = Adw.EntryRow(title=_("bw data directory (account/profile)"))
-        self.bw_profile_row.set_text(
-            str(self.config.get_setting('secrets.bitwarden.profile', '') or '')
-        )
+        self.bw_profile_row.set_text(self._secrets_config_value('bitwarden_profile', ''))
         try:
             from .platform_utils import is_flatpak
             flatpak_note = _(
@@ -1987,8 +1992,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # KeePass (.kdbx) database + optional key file — only shown for the KeePassXC
         # backend. The master password is typed per launch (not stored here).
         self.kdbx_db_row = Adw.EntryRow(title=_("KeePass database (.kdbx)"))
-        self.kdbx_db_row.set_text(
-            str(self.config.get_setting('secrets.keepassxc.database', '') or ''))
+        self.kdbx_db_row.set_text(self._secrets_config_value('keepassxc_database', ''))
         kdbx_new_btn = Gtk.Button(icon_name='document-new-symbolic')
         kdbx_new_btn.set_valign(Gtk.Align.CENTER)
         kdbx_new_btn.add_css_class('flat')
@@ -2005,8 +2009,7 @@ class PreferencesWindow(Adw.NavigationPage):
         secrets_group.add(self.kdbx_db_row)
 
         self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
-        self.kdbx_keyfile_row.set_text(
-            str(self.config.get_setting('secrets.keepassxc.keyfile', '') or ''))
+        self.kdbx_keyfile_row.set_text(self._secrets_config_value('keepassxc_keyfile', ''))
         kdbx_kf_btn = Gtk.Button(icon_name='document-open-symbolic')
         kdbx_kf_btn.set_valign(Gtk.Align.CENTER)
         kdbx_kf_btn.add_css_class('flat')
@@ -2024,7 +2027,7 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Re-ask for the master password after this idle time. 0 = until app exits.")
         )
         self.secret_session_timeout_row.set_value(
-            int(self.config.get_setting('secrets.session_timeout', 0) or 0)
+            int(self._secrets_config_value('session_timeout', 0) or 0)
         )
         self.secret_session_timeout_row.connect(
             'notify::value', self.on_secret_session_timeout_changed
@@ -2581,13 +2584,85 @@ class PreferencesWindow(Adw.NavigationPage):
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
 
+    def _resolve_secrets_controller(self):
+        """The daemon-backed secrets controller reachable from this page, or ``None``.
+
+        Preferences is a NavigationPage inside MainWindow; the controller lives on
+        the main window. Never falls back to ``secret_storage``.
+        """
+        controller = getattr(self, 'parent_window', None)
+        if controller is not None:
+            controller = getattr(controller, 'secrets_controller', None)
+            if controller is not None:
+                return controller
+        try:
+            return getattr(self.get_root(), 'secrets_controller', None)
+        except Exception:
+            return None
+
+    def _secrets_config_value(self, key, default=None):
+        """Read one daemon-owned ``secrets.*`` value through the controller snapshot.
+
+        Presentation-only read; the daemon owns mutations.
+        """
+        controller = self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                configuration = controller.configuration()
+                if configuration is None:
+                    configuration = controller.load_configuration()
+                value = getattr(configuration, key, None)
+                if value is not None:
+                    return value
+            except Exception:
+                logger.debug("Secret configuration read failed: %s", key, exc_info=True)
+        return default
+
+    def _secrets_current_backend(self, controller=None):
+        """The daemon-owned selected backend name (fallback to config read for
+        presentation when the daemon is unreachable)."""
+        controller = controller or self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                configuration = controller.configuration()
+                if configuration is None:
+                    configuration = controller.load_configuration()
+                value = getattr(configuration, 'backend', None)
+                if value:
+                    return str(value)
+            except Exception:
+                logger.debug("Secret backend selection read failed", exc_info=True)
+        return str(self.config.get_setting('secrets.backend', 'auto') or 'auto')
+
+    def _registry_available_names(self):
+        """Names of backends the daemon reports available, or ``None`` on failure."""
+        registry = getattr(self, '_secret_registry', None)
+        if registry is None:
+            return None
+        try:
+            return {b.name for b in registry.backends if getattr(b, 'available', False)}
+        except Exception:
+            return None
+
+    def _registry_session_backed(self, name):
+        """Whether the named backend has a lock lifecycle (daemon registry)."""
+        registry = getattr(self, '_secret_registry', None)
+        if registry is not None:
+            try:
+                for backend in registry.backends:
+                    if backend.name == (name or '').strip().lower():
+                        return bool(getattr(backend, 'session_backed', False))
+            except Exception:
+                pass
+        return name == 'bitwarden'
+
     def _current_secret_backend_name(self):
         try:
             index = self.secret_backend_row.get_selected()
             ids = getattr(self, '_secret_backend_ids', ['auto'])
             return ids[index] if 0 <= index < len(ids) else 'auto'
         except Exception:
-            return str(self.config.get_setting('secrets.backend', 'auto') or 'auto')
+            return self._secrets_current_backend() or 'auto'
 
     def _schedule_bitwarden_ui_refresh(self):
         """Probe Bitwarden readiness once on idle (avoid blocking Settings)."""
@@ -2630,15 +2705,19 @@ class PreferencesWindow(Adw.NavigationPage):
             self._secret_backend_selection_sync = False
 
     def _refresh_secret_backend_availability(self):
-        """Compute backend availability off-thread (keyring/keepassxc probes cost
-        ~400ms) and refine the combo labels once done, keeping Settings responsive."""
-        mgr = getattr(self, '_secret_backend_mgr', None)
-        if mgr is None:
+        """Refresh backend availability from the daemon registry (off-thread) and
+        refine the combo labels once done, keeping Settings responsive."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
             return
 
         def worker():
+            available = None
             try:
-                available = set(mgr.available_backends(cheap=True))
+                registry = controller.load_registry()
+                self._secret_registry = registry
+                available = {b.name for b in registry.backends
+                             if getattr(b, 'available', False)}
             except Exception:
                 available = None
             if available is not None:
@@ -2651,21 +2730,20 @@ class PreferencesWindow(Adw.NavigationPage):
     def _probe_bitwarden_async(self):
         """Probe Bitwarden readiness on a worker thread, then update the status row.
 
-        ``bw status`` blocks on a Node subprocess when the vault is locked/signed
-        out; keeping it off the main thread stops Settings from freezing (and stops
-        GNOME's force-quit dialog from appearing after logout). The logout button is
-        only shown once a probe completes, so there is never an in-flight probe
-        racing a state-changing action.
+        The daemon owns ``bw``; keeping the RPC off the main thread stops Settings
+        from freezing. The logout button is only shown once a probe completes, so
+        there is never an in-flight probe racing a state-changing action.
         """
         if self._bw_probe_in_flight:
             return
         self._bw_probe_in_flight = True
         self._apply_bitwarden_status_row(pending=True)
+        controller = self._resolve_secrets_controller()
 
         def worker():
             try:
                 from .bitwarden_setup import probe_bitwarden_status
-                status = probe_bitwarden_status()
+                status = probe_bitwarden_status(controller)
             except Exception:
                 status = None
             GLib.idle_add(lambda: (self._on_bitwarden_probe_done(status), False)[1])
@@ -2755,11 +2833,12 @@ class PreferencesWindow(Adw.NavigationPage):
             return
         self._rbw_probe_in_flight = True
         self._apply_rbw_status_row(pending=True)
+        controller = self._resolve_secrets_controller()
 
         def worker():
             try:
                 from .rbw_setup import probe_rbw_status
-                status = probe_rbw_status()
+                status = probe_rbw_status(controller)
             except Exception:
                 status = None
             GLib.idle_add(lambda: (self._on_rbw_probe_done(status), False)[1])
@@ -2788,27 +2867,18 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("rbw setup failed: %s", exc)
 
     def on_rbw_lock_clicked(self, _button):
-        """Lock the rbw agent (``rbw lock``) off the main thread."""
+        """Lock the rbw agent through the daemon (``rbw lock``) off the main thread."""
         btn = getattr(self, '_rbw_lock_btn', None)
         if btn is not None:
             btn.set_sensitive(False)
+        controller = self._resolve_secrets_controller()
 
         def worker():
-            try:
-                from .rbw_setup import _run
-                _run("lock")
-                # Also wipe the backend's in-memory secret cache so plaintext doesn't
-                # linger after an explicit lock (peek() already refuses to serve once the
-                # agent is locked, but don't keep the values around either).
+            if controller is not None:
                 try:
-                    from .secret_storage import get_secret_manager
-                    be = get_secret_manager().get_backend("rbw")
-                    if be is not None and hasattr(be, "lock"):
-                        be.lock()
+                    controller.rbw_lock()
                 except Exception:
-                    logger.debug("rbw cache clear failed", exc_info=True)
-            except Exception:
-                logger.debug("rbw lock failed", exc_info=True)
+                    logger.debug("rbw lock failed", exc_info=True)
             GLib.idle_add(lambda: (self._after_rbw_lock(), False)[1])
 
         threading.Thread(target=worker, daemon=True).start()
@@ -2887,8 +2957,7 @@ class PreferencesWindow(Adw.NavigationPage):
             name = (name or 'auto').strip().lower()
             session = False
             try:
-                from .secret_storage import get_secret_manager
-                session = get_secret_manager().is_session_backed(name)
+                session = self._registry_session_backed(name)
             except Exception:
                 session = name == 'bitwarden'
             if hasattr(self, 'bw_profile_row'):
@@ -2941,15 +3010,18 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("Failed to update secret rows visibility: %s", exc)
 
     def _refresh_forget_master_row(self):
-        """Reflect whether a master password is currently saved in the keyring."""
+        """Reflect whether a master password is currently saved (daemon-owned)."""
         if not hasattr(self, 'forget_master_row'):
             return
         saved = False
-        try:
-            from .secret_storage import get_secret_manager, selected_master_spec
-            saved = bool(get_secret_manager().lookup_in_keyring(selected_master_spec()))
-        except Exception:
-            saved = False
+        controller = self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                state = controller.load_state()
+                saved = bool(getattr(state, 'remember_in_keyring', False))
+            except Exception:
+                logger.debug("remembered-master state query failed", exc_info=True)
+                saved = False
         self.forget_master_row.set_subtitle(
             _("Remembered in your system keyring.") if saved
             else _("Not saved. Use “Remember master password” when unlocking.")
@@ -2958,29 +3030,44 @@ class PreferencesWindow(Adw.NavigationPage):
             self._forget_master_btn.set_sensitive(saved)
 
     def on_forget_master_password(self, _button):
-        """Delete the remembered master password from the OS keyring."""
-        try:
-            from .secret_storage import get_secret_manager, selected_master_spec
-            get_secret_manager().delete_in_keyring(selected_master_spec())
-            logger.info("Forgot saved vault master password")
-        except Exception:
-            logger.debug("Failed to forget master password", exc_info=True)
+        """Delete the remembered master password from the OS keyring (daemon-owned)."""
+        controller = self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                controller.forget_master_password()
+                logger.info("Forgot saved vault master password")
+            except Exception:
+                logger.debug("Failed to forget master password", exc_info=True)
         self._refresh_forget_master_row()
 
     def on_secret_backend_changed(self, combo, _pspec):
-        """Persist the selected secret storage backend and apply it live."""
+        """Apply the selected secret storage backend through the daemon (revision-checked)."""
         if getattr(self, '_secret_backend_selection_sync', False):
+            return
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("Secret storage backend change skipped: no daemon controller")
             return
         try:
             index = combo.get_selected()
             ids = getattr(self, '_secret_backend_ids', ['auto'])
             name = ids[index] if 0 <= index < len(ids) else 'auto'
-            self.config.set_setting('secrets.backend', name)
-            from .secret_storage import get_secret_manager
-            manager = get_secret_manager()
-            manager.set_selected(name)
-            # Propagate to child processes (e.g. the askpass helper).
-            os.environ['SSHPILOT_SECRET_BACKEND'] = name
+            # The daemon owns the selection; the controller stages the revision it
+            # last observed so a concurrent change can never be silently overwritten.
+            try:
+                controller.load_configuration()
+            except Exception:
+                logger.debug("Secret configuration preload failed", exc_info=True)
+            try:
+                controller.update_selection(name)
+            except Exception as exc:
+                logger.error("Secret storage backend update failed: %s", exc)
+                self._set_secret_backend_model(
+                    self._registry_available_names()
+                    if self._registry_available_names() is not None
+                    else set(self._secret_backend_ids)
+                )
+                return
             self._update_secret_rows_visibility(name)
             logger.info("Secret storage backend set to: %s", name)
 
@@ -2994,9 +3081,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         logger.debug("Failed to refresh secret backend rows", exc_info=True)
 
             if name == 'bitwarden':
-                # probe_bitwarden_status spawns bw --version/bw status (Node) — run it
-                # off the main thread so switching to Bitwarden doesn't freeze Settings.
-                self._setup_bitwarden_backend_async(manager, _done)
+                self._setup_bitwarden_backend_async(_done)
                 return
             if name == 'rbw':
                 # rbw owns its own unlock (agent + pinentry); make it ready — installed,
@@ -3005,7 +3090,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 ensure_rbw_ready(self, _done)
                 return
             # A session-backed backend must be unlocked before it can store/read.
-            if manager.selected_needs_unlock():
+            if self._selected_needs_unlock_from_state():
                 try:
                     from .secret_unlock_dialog import prompt_unlock
 
@@ -3015,27 +3100,40 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update secret storage backend: %s", exc)
 
-    def _setup_bitwarden_backend_async(self, manager, on_done):
+    def _selected_needs_unlock_from_state(self):
+        """Whether the daemon reports the selected backend needs unlocking."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            return False
+        try:
+            state = controller.load_state()
+            return bool(getattr(state, 'needs_unlock', False))
+        except Exception:
+            logger.debug("secret backend state query failed", exc_info=True)
+            return False
+
+    def _setup_bitwarden_backend_async(self, on_done):
         """Probe Bitwarden off the main thread, then unlock or run setup as needed."""
         from .bitwarden_setup import progress_dialog
         _set_status, close = progress_dialog(
             self, _("Bitwarden"), _("Checking Bitwarden…"),
         )
+        controller = self._resolve_secrets_controller()
 
         def worker():
             try:
                 from .bitwarden_setup import probe_bitwarden_status
-                status = probe_bitwarden_status(force_refresh=True)
+                status = probe_bitwarden_status(controller, force_refresh=True)
             except Exception:
                 status = None
             GLib.idle_add(lambda: (
-                self._after_bitwarden_setup_probe(status, manager, on_done, close),
+                self._after_bitwarden_setup_probe(status, on_done, close),
                 False,
             )[1])
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _after_bitwarden_setup_probe(self, status, manager, on_done, close):
+    def _after_bitwarden_setup_probe(self, status, on_done, close):
         close()
         from .bitwarden_setup import run_bitwarden_setup
         if status is not None and status.is_ready:
@@ -3046,7 +3144,7 @@ class PreferencesWindow(Adw.NavigationPage):
             status is not None
             and status.cli_installed
             and not status.needs_login
-            and manager.selected_needs_unlock()
+            and self._selected_needs_unlock_from_state()
         ):
             try:
                 from .secret_unlock_dialog import prompt_unlock
@@ -3137,15 +3235,13 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Bitwarden setup failed: %s", exc)
 
     def on_bw_logout_clicked(self, _button):
-        """Sign out of Bitwarden (``bw logout``) off the main thread."""
+        """Sign out of Bitwarden through the daemon (``bw logout``) off the main thread."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            return
         try:
             from .bitwarden_setup import invalidate_bitwarden_status_cache, progress_dialog
-            from .platform_utils import invalidate_bw_cli_cache
-            from .secret_storage import get_secret_manager
 
-            backend = get_secret_manager().get_backend('bitwarden')
-            if backend is None or not backend.is_available():
-                return
             logout_btn = getattr(self, '_bw_logout_btn', None)
             if logout_btn is not None:
                 logout_btn.set_sensitive(False)
@@ -3163,7 +3259,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 ok = False
                 if not cancelled["v"]:
                     try:
-                        ok = bool(backend.logout())
+                        # The daemon owns ``bw logout``; a completed RPC is success.
+                        controller.bitwarden_logout()
+                        ok = True
                     except Exception:
                         logger.debug("Bitwarden logout failed", exc_info=True)
                 GLib.idle_add(lambda: (_after_logout(ok), False)[1])
@@ -3186,7 +3284,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     dlg.add_response('ok', _('OK'))
                     dlg.present()
                     return
-                invalidate_bw_cli_cache()
                 invalidate_bitwarden_status_cache()
                 self._update_secret_rows_visibility('bitwarden')
                 logger.info("Signed out of Bitwarden")
@@ -3199,25 +3296,25 @@ class PreferencesWindow(Adw.NavigationPage):
                 logout_btn.set_sensitive(True)
 
     def on_bw_profile_changed(self, row):
-        """Persist and propagate the Bitwarden CLI data dir (account/profile). Changing
-        the account re-locks the vault so a stale session can't leak across accounts."""
+        """Persist the Bitwarden CLI data dir (account/profile) through the daemon.
+        Changing the account re-locks the vault so a stale session can't leak across
+        accounts."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("bw profile change skipped: no daemon controller")
+            return
         try:
             profile = (row.get_text() or '').strip()
-            prev = str(os.environ.get('BITWARDENCLI_APPDATA_DIR', '') or '')
-            self.config.set_setting('secrets.bitwarden.profile', profile)
-            if profile:
-                os.environ['BITWARDENCLI_APPDATA_DIR'] = os.path.expanduser(profile)
-            else:
-                os.environ.pop('BITWARDENCLI_APPDATA_DIR', None)
+            try:
+                controller.update_configuration({'bitwarden_profile': profile})
+            except Exception as exc:
+                logger.error("Failed to persist bw profile: %s", exc)
+                return
             # Account changed → drop any cached session/items for the old account.
-            if os.environ.get('BITWARDENCLI_APPDATA_DIR', '') != prev:
-                try:
-                    from .secret_storage import get_secret_manager
-                    be = get_secret_manager().selected_backend()
-                    if be is not None and hasattr(be, 'lock'):
-                        be.lock()
-                except Exception:
-                    pass
+            try:
+                controller.lock()
+            except Exception:
+                pass
         except Exception as exc:
             logger.error("Failed to update bw profile: %s", exc)
 
@@ -3240,36 +3337,44 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("bw profile browse failed: %s", exc)
 
     def _relock_selected_session_backend(self):
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            return
         try:
-            from .secret_storage import get_secret_manager
-            be = get_secret_manager().selected_backend()
-            if be is not None and hasattr(be, 'lock'):
-                be.lock()
+            controller.lock()
         except Exception:
             pass
 
     def on_kdbx_database_changed(self, row):
-        """Persist + propagate the KeePass database path; re-lock on change."""
+        """Persist the KeePass database path through the daemon; re-lock on change."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("KeePass database change skipped: no daemon controller")
+            return
         try:
             path = (row.get_text() or '').strip()
-            self.config.set_setting('secrets.keepassxc.database', path)
-            if path:
-                os.environ['SSHPILOT_KDBX_DATABASE'] = os.path.expanduser(path)
-            else:
-                os.environ.pop('SSHPILOT_KDBX_DATABASE', None)
+            try:
+                controller.update_configuration({'keepassxc_database': path})
+            except Exception as exc:
+                logger.error("Failed to persist KeePass database path: %s", exc)
+                return
             self._relock_selected_session_backend()
         except Exception as exc:
             logger.error("Failed to update KeePass database path: %s", exc)
 
     def on_kdbx_keyfile_changed(self, row):
-        """Persist + propagate the KeePass key file path; re-lock on change."""
+        """Persist the KeePass key file path through the daemon; re-lock on change."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("KeePass key file change skipped: no daemon controller")
+            return
         try:
             path = (row.get_text() or '').strip()
-            self.config.set_setting('secrets.keepassxc.keyfile', path)
-            if path:
-                os.environ['SSHPILOT_KDBX_KEYFILE'] = os.path.expanduser(path)
-            else:
-                os.environ.pop('SSHPILOT_KDBX_KEYFILE', None)
+            try:
+                controller.update_configuration({'keepassxc_keyfile': path})
+            except Exception as exc:
+                logger.error("Failed to persist KeePass key file path: %s", exc)
+                return
             self._relock_selected_session_backend()
         except Exception as exc:
             logger.error("Failed to update KeePass key file path: %s", exc)
@@ -3340,76 +3445,73 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("KDBX create dialog failed: %s", exc)
 
-    def _prompt_new_kdbx_password(self, path, error=None):
-        dialog = Adw.MessageDialog(
-            transient_for=self.get_root(), modal=True, heading=_("Set Master Password"),
-            body=error or _("Choose a master password for the new database “{name}”.").format(
-                name=os.path.basename(path)))
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        pw = Gtk.PasswordEntry(show_peek_icon=True)
-        pw.set_property('placeholder-text', _("Master password"))
-        pw2 = Gtk.PasswordEntry(show_peek_icon=True)
-        pw2.set_property('placeholder-text', _("Confirm password"))
-        pw2.set_property('activates-default', True)
-        box.append(pw)
-        box.append(pw2)
-        dialog.set_extra_child(box)
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('create', _('Create'))
-        dialog.set_response_appearance('create', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('create')
-        dialog.set_close_response('cancel')
+    def _prompt_new_kdbx_password(self, path):
+        """Create the new database through the daemon.
 
-        def on_response(dlg, resp):
-            if resp != 'create':
-                return
-            p1, p2 = pw.get_text() or '', pw2.get_text() or ''
-            if not p1:
-                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
-                    path, _("Enter a master password.")), False)[1])
-                return
-            if p1 != p2:
-                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
-                    path, _("Passwords don't match — try again.")), False)[1])
-                return
-            self._do_create_kdbx(path, p1)
-
-        dialog.connect('response', on_response)
-        dialog.present()
-        GLib.idle_add(lambda: (pw.grab_focus(), False)[1])
-
-    def _do_create_kdbx(self, path, password):
+        The master password is collected by the daemon through a protected
+        interaction (never in this dialog); this only starts the daemon operation
+        and reports the outcome.
+        """
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            self._kdbx_message(_("Cannot Create Database"),
+                               _("The secret-backend daemon service is not available."))
+            return
         keyfile = ''
         if hasattr(self, 'kdbx_keyfile_row'):
             keyfile = (self.kdbx_keyfile_row.get_text() or '').strip()
-        from .secret_storage import get_secret_manager
-        backend = get_secret_manager().selected_backend()
-        if backend is None or not hasattr(backend, 'create_database'):
-            self._kdbx_message(_("Cannot Create Database"),
-                               _("The KeePassXC backend is not selected."))
+
+        from .bitwarden_setup import progress_dialog
+        _set_status, close = progress_dialog(
+            self, _("Create KeePass Database"),
+            _("Creating the database… the master password prompt is shown by the daemon."),
+        )
+
+        def worker():
+            try:
+                result = controller.keepassxc_create_database(
+                    path, keyfile=keyfile or None)
+                state = getattr(getattr(result, 'state', None), 'value', None)
+                message = getattr(result, 'message', '') or ''
+                ok = state == 'success'
+                cancelled = state == 'interaction_required'
+            except Exception as exc:
+                logger.debug("KDBX create failed: %s", exc)
+                ok, message, cancelled = False, str(exc), False
+            GLib.idle_add(lambda: (
+                self._after_create_kdbx(path, ok, message, cancelled, close), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_create_kdbx(self, path, ok, message, cancelled, close):
+        close()
+        if cancelled:
             return
-        if not backend.create_database(path, password, keyfile or None):
+        if not ok:
             self._kdbx_message(
                 _("Cannot Create Database"),
-                _("Failed to create the database. Make sure pykeepass is installed and the "
-                  "location is writable."))
+                message or _("Failed to create the database. Make sure pykeepass is "
+                             "installed and the location is writable."))
             return
-        # Point config/env at the new file (the row's 'changed' handler persists + re-locks)…
-        self.kdbx_db_row.set_text(path)
-        # …then unlock it so the just-typed password isn't asked again.
-        try:
-            backend.unlock(password)
-        except Exception:
-            logger.debug("auto-unlock after create failed", exc_info=True)
+        # Point the row at the new file; the daemon already persists the path via
+        # the create flow, and unlocking happened inside the daemon.
+        if hasattr(self, 'kdbx_db_row'):
+            try:
+                self.kdbx_db_row.set_text(path)
+            except Exception:
+                pass
         self._kdbx_message(_("Database Created"),
                            _("Created and unlocked:\n{path}").format(path=path))
 
     def on_secret_session_timeout_changed(self, row, _pspec):
-        """Persist and propagate the session-backend idle unlock timeout."""
+        """Persist the session-backend idle unlock timeout through the daemon."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("Session timeout change skipped: no daemon controller")
+            return
         try:
             minutes = int(row.get_value())
-            self.config.set_setting('secrets.session_timeout', minutes)
-            os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, minutes) * 60)
+            controller.update_configuration({'session_timeout': max(0, minutes)})
         except Exception as exc:
             logger.error("Failed to update secret session timeout: %s", exc)
 

@@ -226,8 +226,20 @@ DAEMON_METHOD_CAPABILITIES = {
     "secrets.rbw.unlock": Capability.SECRETS_OPERATE,
     "secrets.rbw.sync": Capability.SECRETS_OPERATE,
     "secrets.rbw.lock": Capability.SECRETS_OPERATE,
+    "secrets.keepassxc.create_database": Capability.SECRETS_OPERATE,
+    "secrets.keepassxc.unlock": Capability.SECRETS_OPERATE,
+    "secrets.keepassxc.lock": Capability.SECRETS_OPERATE,
+    "secrets.remember_master_password": Capability.SECRETS_OPERATE,
+    "secrets.forget_master_password": Capability.SECRETS_OPERATE,
     "secrets.transfer.export": Capability.SECRETS_TRANSFER,
     "secrets.transfer.import": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.preview": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.list_bitwarden": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.import_bitwarden": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.preview_bitwarden": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.list_ssh": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.import_ssh": Capability.SECRETS_TRANSFER,
+    "secrets.transfer.preview_ssh": Capability.SECRETS_TRANSFER,
     "system.get_capabilities": None,
     "system.handshake": None,
 }
@@ -283,8 +295,20 @@ DRAIN_REJECTED_METHODS = frozenset(
         "secrets.rbw.unlock",
         "secrets.rbw.sync",
         "secrets.rbw.lock",
+        "secrets.keepassxc.create_database",
+        "secrets.keepassxc.unlock",
+        "secrets.keepassxc.lock",
+        "secrets.remember_master_password",
+        "secrets.forget_master_password",
         "secrets.transfer.export",
         "secrets.transfer.import",
+        "secrets.transfer.preview",
+        "secrets.transfer.list_bitwarden",
+        "secrets.transfer.import_bitwarden",
+        "secrets.transfer.preview_bitwarden",
+        "secrets.transfer.list_ssh",
+        "secrets.transfer.import_ssh",
+        "secrets.transfer.preview_ssh",
     }
 )
 
@@ -363,8 +387,20 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "secrets.rbw.unlock",
         "secrets.rbw.sync",
         "secrets.rbw.lock",
+        "secrets.keepassxc.create_database",
+        "secrets.keepassxc.unlock",
+        "secrets.keepassxc.lock",
+        "secrets.remember_master_password",
+        "secrets.forget_master_password",
         "secrets.transfer.export",
         "secrets.transfer.import",
+        "secrets.transfer.preview",
+        "secrets.transfer.list_bitwarden",
+        "secrets.transfer.import_bitwarden",
+        "secrets.transfer.preview_bitwarden",
+        "secrets.transfer.list_ssh",
+        "secrets.transfer.import_ssh",
+        "secrets.transfer.preview_ssh",
     }
 )
 
@@ -580,8 +616,20 @@ class RequestDispatcher:
             "secrets.rbw.unlock": self._handle_rbw_unlock,
             "secrets.rbw.sync": self._handle_rbw_sync,
             "secrets.rbw.lock": self._handle_rbw_lock,
+            "secrets.keepassxc.create_database": self._handle_keepassxc_create_database,
+            "secrets.keepassxc.unlock": self._handle_keepassxc_unlock,
+            "secrets.keepassxc.lock": self._handle_keepassxc_lock,
+            "secrets.remember_master_password": self._handle_remember_master_password,
+            "secrets.forget_master_password": self._handle_forget_master_password,
             "secrets.transfer.export": self._handle_export_secret_backup,
             "secrets.transfer.import": self._handle_import_secret_backup,
+            "secrets.transfer.preview": self._handle_preview_backup,
+            "secrets.transfer.list_bitwarden": self._handle_list_bitwarden_backups,
+            "secrets.transfer.import_bitwarden": self._handle_import_bitwarden_backup,
+            "secrets.transfer.preview_bitwarden": self._handle_preview_bitwarden_backup,
+            "secrets.transfer.list_ssh": self._handle_list_ssh_backups,
+            "secrets.transfer.import_ssh": self._handle_import_ssh_backup,
+            "secrets.transfer.preview_ssh": self._handle_preview_ssh_backup,
         }
 
     def begin_shutdown(self) -> None:
@@ -2383,13 +2431,22 @@ class RequestDispatcher:
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_backend_state_to_wire
 
-        if set(request.params) != {"backend"}:
-            raise ValueError("secrets.selection.update requires backend")
-        backend = request.params["backend"]
+        if set(request.params) - {"backend", "expected_revision"}:
+            raise ValueError("secrets.selection.update has unexpected params")
+        backend = request.params.get("backend")
         if type(backend) is not str or not backend.strip():
             raise ValueError("backend must be a non-empty string")
+        expected_revision = request.params.get("expected_revision")
+        if expected_revision is not None and type(expected_revision) is not str:
+            raise ValueError("expected_revision must be a string or null")
         service = self._required_secrets_service()
-        return self._defer(lambda: secret_backend_state_to_wire(service.update_selection(backend)))
+        return self._defer(
+            lambda: secret_backend_state_to_wire(
+                service.update_selection(
+                    backend, expected_revision=expected_revision
+                )
+            )
+        )
 
     def _handle_unlock_secrets(
         self,
@@ -2491,9 +2548,18 @@ class RequestDispatcher:
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import bitwarden_status_to_wire
 
-        self._require_empty_params(request)
+        params = request.params
+        if set(params) not in (set(), {"identifier"}):
+            raise ValueError("secrets.bitwarden.sso_login has unexpected params")
+        identifier = params.get("identifier") or ""
+        if type(identifier) is not str:
+            raise ValueError("identifier must be a string")
         service = self._required_secrets_service()
-        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_sso_login()))
+        return self._defer(
+            lambda: bitwarden_status_to_wire(
+                service.bitwarden_sso_login(identifier=identifier or None)
+            )
+        )
 
     def _handle_bitwarden_unlock(
         self,
@@ -2601,6 +2667,80 @@ class RequestDispatcher:
         service = self._required_secrets_service()
         return self._defer(lambda: rbw_status_to_wire(service.rbw_lock()))
 
+    def _handle_keepassxc_create_database(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_operation_result_to_wire
+
+        if set(request.params) - {"path", "keyfile"}:
+            raise ValueError("secrets.keepassxc.create_database has unexpected params")
+        path = request.params.get("path")
+        if type(path) is not str or not path.strip():
+            raise ValueError("path must be a non-empty string")
+        keyfile = request.params.get("keyfile")
+        if keyfile is not None and type(keyfile) is not str:
+            raise ValueError("keyfile must be a string or null")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_operation_result_to_wire(
+                service.keepassxc_create_database(path, keyfile=keyfile)
+            )
+        )
+
+    def _handle_keepassxc_unlock(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_operation_result_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_operation_result_to_wire(service.keepassxc_unlock())
+        )
+
+    def _handle_keepassxc_lock(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_operation_result_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_operation_result_to_wire(service.keepassxc_lock())
+        )
+
+    def _handle_remember_master_password(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_operation_result_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_operation_result_to_wire(service.remember_master_password())
+        )
+
+    def _handle_forget_master_password(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_operation_result_to_wire
+
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_operation_result_to_wire(service.forget_master_password())
+        )
+
     def _handle_export_secret_backup(
         self,
         request: RequestEnvelope,
@@ -2655,6 +2795,147 @@ class RequestDispatcher:
         return self._defer(
             lambda: secret_transfer_result_to_wire(
                 service.import_backup(source=source, options=options)
+            )
+        )
+
+    def _handle_preview_backup(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        params = request.params
+        if set(params) != {"source"}:
+            raise ValueError("secrets.transfer.preview has unexpected params")
+        source = params["source"]
+        if type(source) is not str or not source.strip():
+            raise ValueError("source must be a non-empty string")
+        service = self._required_secrets_service()
+        return self._defer(lambda: service.preview_backup(source=source))
+
+    def _handle_preview_bitwarden_backup(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        params = request.params
+        if set(params) != {"entry_id"}:
+            raise ValueError("secrets.transfer.preview_bitwarden has unexpected params")
+        entry_id = params["entry_id"]
+        if type(entry_id) is not str or not entry_id.strip():
+            raise ValueError("entry_id must be a non-empty string")
+        service = self._required_secrets_service()
+        return self._defer(lambda: service.preview_bitwarden_backup(entry_id=entry_id))
+
+    def _handle_preview_ssh_backup(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        params = request.params
+        if set(params) != {"connection_id", "remote_dir", "entry_id"}:
+            raise ValueError("secrets.transfer.preview_ssh has unexpected params")
+        connection_id = params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        remote_dir = params["remote_dir"]
+        if type(remote_dir) is not str or not remote_dir.strip():
+            raise ValueError("remote_dir must be a non-empty string")
+        entry_id = params["entry_id"]
+        if type(entry_id) is not str or not entry_id.strip():
+            raise ValueError("entry_id must be a non-empty string")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: service.preview_ssh_backup(
+                connection_id=connection_id,
+                remote_dir=remote_dir,
+                entry_id=entry_id,
+            )
+        )
+
+    def _handle_list_bitwarden_backups(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        self._require_empty_params(request)
+        service = self._required_secrets_service()
+        return self._defer(lambda: service.list_bitwarden_backups())
+
+    def _handle_import_bitwarden_backup(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_transfer_result_to_wire
+
+        params = request.params
+        if set(params) != {"entry_id", "options"}:
+            raise ValueError("secrets.transfer.import_bitwarden has unexpected params")
+        entry_id = params["entry_id"]
+        if type(entry_id) is not str or not entry_id.strip():
+            raise ValueError("entry_id must be a non-empty string")
+        options = params["options"]
+        if not isinstance(options, dict):
+            raise ValueError("options must be an object")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_transfer_result_to_wire(
+                service.import_bitwarden_backup(entry_id=entry_id, options=options)
+            )
+        )
+
+    def _handle_list_ssh_backups(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        params = request.params
+        if set(params) != {"connection_id", "remote_dir"}:
+            raise ValueError("secrets.transfer.list_ssh has unexpected params")
+        connection_id = params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        remote_dir = params["remote_dir"]
+        if type(remote_dir) is not str or not remote_dir.strip():
+            raise ValueError("remote_dir must be a non-empty string")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: service.list_ssh_backups(
+                connection_id=connection_id, remote_dir=remote_dir
+            )
+        )
+
+    def _handle_import_ssh_backup(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import secret_transfer_result_to_wire
+
+        params = request.params
+        if set(params) != {"connection_id", "remote_dir", "entry_id", "options"}:
+            raise ValueError("secrets.transfer.import_ssh has unexpected params")
+        connection_id = params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        remote_dir = params["remote_dir"]
+        if type(remote_dir) is not str or not remote_dir.strip():
+            raise ValueError("remote_dir must be a non-empty string")
+        entry_id = params["entry_id"]
+        if type(entry_id) is not str or not entry_id.strip():
+            raise ValueError("entry_id must be a non-empty string")
+        options = params["options"]
+        if not isinstance(options, dict):
+            raise ValueError("options must be an object")
+        service = self._required_secrets_service()
+        return self._defer(
+            lambda: secret_transfer_result_to_wire(
+                service.import_ssh_backup(
+                    connection_id=connection_id,
+                    remote_dir=remote_dir,
+                    entry_id=entry_id,
+                    options=options,
+                )
             )
         )
 

@@ -176,6 +176,18 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: unlock_secrets status=daemon-only capability=secrets.operate -->
 <!-- api-method-contract: update_secret_configuration status=daemon-only capability=secrets.write -->
 <!-- api-method-contract: update_secret_selection status=daemon-only capability=secrets.write -->
+<!-- api-method-contract: forget_master_password status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: import_bitwarden_backup status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: import_ssh_backup status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: keepassxc_create_database status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: keepassxc_lock status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: keepassxc_unlock status=daemon-only capability=secrets.operate -->
+<!-- api-method-contract: list_bitwarden_backups status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: list_ssh_backups status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: preview_backup status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: preview_bitwarden_backup status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: preview_ssh_backup status=daemon-only capability=secrets.transfer -->
+<!-- api-method-contract: remember_master_password status=daemon-only capability=secrets.operate -->
 <!-- api-method: get_connection_store_snapshot -->
 <!-- api-method: set_group_color -->
 <!-- api-method: place_group -->
@@ -408,6 +420,18 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: secrets.state.get capability=secrets.read -->
 <!-- api-daemon-method: secrets.transfer.export capability=secrets.transfer -->
 <!-- api-daemon-method: secrets.transfer.import capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.preview capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.list_bitwarden capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.import_bitwarden capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.preview_bitwarden capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.list_ssh capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.import_ssh capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.transfer.preview_ssh capability=secrets.transfer -->
+<!-- api-daemon-method: secrets.keepassxc.create_database capability=secrets.operate -->
+<!-- api-daemon-method: secrets.keepassxc.unlock capability=secrets.operate -->
+<!-- api-daemon-method: secrets.keepassxc.lock capability=secrets.operate -->
+<!-- api-daemon-method: secrets.remember_master_password capability=secrets.operate -->
+<!-- api-daemon-method: secrets.forget_master_password capability=secrets.operate -->
 <!-- api-daemon-method: secrets.unlock capability=secrets.operate -->
 
 Unknown wire methods return `unsupported_method`. Terminal output and input use
@@ -1804,6 +1828,246 @@ configuration = client.update_secret_configuration(
 
 ```python
 state = client.update_secret_selection(backend="bitwarden")
+```
+
+<!-- api-method: preview_backup -->
+## `preview_backup`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; inspect a backup file's kind,
+  encryption flag and included categories without exposing its contents.
+- **Parameters / return:** Keyword-only `source: str`; returns a metadata dict
+  (`kind`, `encrypted`, `included`) — never manifest contents.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the archive
+  is encrypted.
+- **Cancellation / ordering:** Reads serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Decryption happens inside the daemon; the
+  decrypted manifest is cached briefly so the following import never re-prompts
+  for the passphrase.
+
+```python
+preview = client.preview_backup(source="/home/me/secrets.spbk")
+```
+
+<!-- api-method: list_bitwarden_backups -->
+## `list_bitwarden_backups`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; list Bitwarden backup-note
+  metadata (id/name/date only).
+- **Parameters / return:** None; returns a list of metadata dicts.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Reads serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** The Bitwarden backend is touched only inside the
+  daemon; note contents are never returned.
+
+```python
+entries = client.list_bitwarden_backups()
+```
+
+<!-- api-method: import_bitwarden_backup -->
+## `import_bitwarden_backup`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; restore one Bitwarden backup
+  note entirely inside the daemon.
+- **Parameters / return:** Keyword-only `entry_id: str`, optional `options`;
+  returns `SecretTransferResult` with counts and warnings only.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Reads the note and restores secrets inside the
+  daemon; no decrypted values are returned.
+
+```python
+result = client.import_bitwarden_backup(entry_id="abc123")
+```
+
+<!-- api-method: preview_bitwarden_backup -->
+## `preview_bitwarden_backup`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; inspect one Bitwarden backup
+  note's included categories (metadata only).
+- **Parameters / return:** Keyword-only `entry_id: str`; returns a metadata
+  dict (`kind`, `included`) — never manifest contents.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Reads serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Note contents are read only inside the daemon;
+  the decrypted manifest is cached briefly for the following import.
+
+```python
+preview = client.preview_bitwarden_backup(entry_id="abc123")
+```
+
+<!-- api-method: list_ssh_backups -->
+## `list_ssh_backups`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; list sshPilot backups stored in
+  a directory on one of the user's SSH servers.
+- **Parameters / return:** Keyword-only `connection_id: str`,
+  `remote_dir: str`; returns a list of metadata dicts (id/name/date).
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Reads serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** The SSH transfer runs inside the daemon; archive
+  bytes never leave the daemon.
+
+```python
+entries = client.list_ssh_backups(connection_id="srv", remote_dir="~/sshpilot-backups")
+```
+
+<!-- api-method: import_ssh_backup -->
+## `import_ssh_backup`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; download and restore one
+  SSH-stored backup entirely inside the daemon.
+- **Parameters / return:** Keyword-only `connection_id: str`,
+  `remote_dir: str`, `entry_id: str`, optional `options`; returns
+  `SecretTransferResult` with counts and warnings only.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** The archive is read and applied inside the
+  daemon; no decrypted values are returned.
+
+```python
+result = client.import_ssh_backup(
+    connection_id="srv", remote_dir="~/sshpilot-backups", entry_id="b1")
+```
+
+<!-- api-method: preview_ssh_backup -->
+## `preview_ssh_backup`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.transfer`; inspect one SSH-stored
+  backup's included categories (metadata only).
+- **Parameters / return:** Keyword-only `connection_id: str`,
+  `remote_dir: str`, `entry_id: str`; returns a metadata dict (`kind`,
+  `included`) — never manifest contents.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Reads serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** The archive is read only inside the daemon; the
+  decrypted manifest is cached briefly for the following import.
+
+```python
+preview = client.preview_ssh_backup(
+    connection_id="srv", remote_dir="~/sshpilot-backups", entry_id="b1")
+```
+
+<!-- api-method: keepassxc_create_database -->
+## `keepassxc_create_database`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; create a KeePassXC database at
+  the configured path and unlock it.
+- **Parameters / return:** Keyword-only `path: str`, optional `keyfile`; returns
+  `SecretOperationResult`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the daemon
+  collects the new database password.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** The master password is collected by a protected
+  interaction inside the daemon, never through RPC parameters.
+
+```python
+result = client.keepassxc_create_database(path="/home/me/Secrets.kdbx")
+```
+
+<!-- api-method: keepassxc_unlock -->
+## `keepassxc_unlock`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; unlock the configured KeePassXC
+  database.
+- **Parameters / return:** None; returns `SecretOperationResult`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the daemon
+  collects the master password.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** The master password never crosses the RPC
+  surface.
+
+```python
+result = client.keepassxc_unlock()
+```
+
+<!-- api-method: keepassxc_lock -->
+## `keepassxc_lock`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; lock the KeePassXC database.
+- **Parameters / return:** None; returns `SecretOperationResult`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Locking happens inside the daemon.
+
+```python
+result = client.keepassxc_lock()
+```
+
+<!-- api-method: remember_master_password -->
+## `remember_master_password`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; store the master password in the
+  platform keyring for later automatic unlocks.
+- **Parameters / return:** None; returns `SecretOperationResult`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Uses the existing platform-keyring helpers and
+  master-password identity inside the daemon.
+
+```python
+result = client.remember_master_password()
+```
+
+<!-- api-method: forget_master_password -->
+## `forget_master_password`
+
+- **Status / introduced:** Daemon only when the secret backend service is
+  installed / Protocol v1
+- **Capability / purpose:** `secrets.operate`; remove the remembered master
+  password from the platform keyring.
+- **Parameters / return:** None; returns `SecretOperationResult`.
+- **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
+  installed.
+- **Cancellation / ordering:** Mutations serialized per daemon.
+- **Threading:** Thread-safe via the client's request lock.
+- **Side effects / security:** Keyring access happens inside the daemon.
+
+```python
+result = client.forget_master_password()
 ```
 
 <!-- api-method: close -->

@@ -179,9 +179,7 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("secret_storage.py", "subprocess"): "M5",
     ("secret_storage.py", "SecretManager"): "M5",
     ("bitwarden_setup.py", "subprocess"): "M5",
-    ("rbw_setup.py", "subprocess"): "M5",
-    # -- M6 backup -------------------------------------------------------
-    ("window_dialogs.py", "BackupManager"): "M6",
+    # -- M6 backup (complete: daemon-owned via SecretBackendsController) --
     # -- M7 ssh-process / askpass broker ---------------------------------
     ("agent_client.py", "subprocess"): "M7",
     ("askpass_utils.py", "subprocess"): "M7",
@@ -498,7 +496,7 @@ def test_backend_ops_debt_matches_exact_baseline():
     from collections import Counter
 
     debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
-    expected = {"M5": 4, "M6": 1, "M7": 19, "M8": 1}
+    expected = {"M5": 3, "M7": 19, "M8": 1}
     assert dict(debt) == expected, (
         f"BACKEND_OPS debt changed; expected {expected}, got {dict(debt)}. "
         "Only remove rows as the owning migration lands."

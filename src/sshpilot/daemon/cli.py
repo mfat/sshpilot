@@ -343,7 +343,10 @@ def _production_core_services():
 
         return SecretBackendService(
             get_config_dir() / "config.json",
-            connections_source=repository,
+            # A callable so daemon export can list records without coupling the
+            # service to the repository object (``_selected_views`` accepts a
+            # callable or an iterable of records).
+            connections_source=repository.list_records,
         )
 
     secrets_service = _build_secrets_service()

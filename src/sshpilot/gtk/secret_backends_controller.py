@@ -21,6 +21,7 @@ from sshpilot.api.models.secrets import (
     SecretBackendRegistry,
     SecretBackendState,
     SecretConfiguration,
+    SecretOperationResult,
     SecretTransferResult,
     SecretUnlockResult,
     UpdateSecretConfigurationRequest,
@@ -131,12 +132,27 @@ class SecretBackendsController:
             self._busy = False
         return snapshot
 
-    def update_selection(self, backend: str) -> SecretBackendState:
+    def update_selection(
+        self, backend: str, expected_revision: Optional[str] = None
+    ) -> SecretBackendState:
+        """Change the selected backend, revision-checked against the controller's
+        loaded configuration snapshot.
+
+        ``expected_revision`` defaults to the revision of the configuration the
+        controller last staged (``load_configuration``/``update_configuration``),
+        so a stale UI can never silently overwrite a concurrent selection change.
+        On a ``REVISION_CONFLICT`` the daemon rejects the mutation and the
+        controller keeps its snapshot untouched.
+        """
         with self._lock:
             self._ensure_idle()
+            if expected_revision is None and self._configuration is not None:
+                expected_revision = self._configuration.revision
             self._busy = True
         try:
-            snapshot = self._client.update_secret_selection(backend)
+            snapshot = self._client.update_secret_selection(
+                backend, expected_revision=expected_revision
+            )
         except BaseException:
             with self._lock:
                 self._busy = False
@@ -145,6 +161,30 @@ class SecretBackendsController:
             self._state = snapshot
             self._busy = False
         return snapshot
+
+    # -- KeePassXC lifecycle ---------------------------------------------
+
+    def keepassxc_create_database(
+        self,
+        path: str,
+        *,
+        keyfile: Optional[str] = None,
+    ) -> SecretOperationResult:
+        return self._client.keepassxc_create_database(path, keyfile=keyfile)
+
+    def keepassxc_unlock(self) -> SecretOperationResult:
+        return self._client.keepassxc_unlock()
+
+    def keepassxc_lock(self) -> SecretOperationResult:
+        return self._client.keepassxc_lock()
+
+    # -- remembered master password ---------------------------------------
+
+    def remember_master_password(self) -> SecretOperationResult:
+        return self._client.remember_master_password()
+
+    def forget_master_password(self) -> SecretOperationResult:
+        return self._client.forget_master_password()
 
     def unlock(self) -> SecretUnlockResult:
         with self._lock:
@@ -194,8 +234,8 @@ class SecretBackendsController:
     def bitwarden_api_key_login(self, client_id: str) -> BitwardenStatus:
         return self._client.bitwarden_api_key_login(client_id)
 
-    def bitwarden_sso_login(self) -> BitwardenStatus:
-        return self._client.bitwarden_sso_login()
+    def bitwarden_sso_login(self, identifier: Optional[str] = None) -> BitwardenStatus:
+        return self._client.bitwarden_sso_login(identifier=identifier)
 
     def bitwarden_unlock(self) -> BitwardenStatus:
         return self._client.bitwarden_unlock()
@@ -248,3 +288,49 @@ class SecretBackendsController:
         options: Optional[dict] = None,
     ) -> SecretTransferResult:
         return self._client.import_secret_backup(source=source, options=options)
+
+    def preview_backup(self, *, source: str):
+        return self._client.preview_backup(source=source)
+
+    def preview_bitwarden_backup(self, *, entry_id: str):
+        return self._client.preview_bitwarden_backup(entry_id=entry_id)
+
+    def preview_ssh_backup(
+        self, *, connection_id: str, remote_dir: str, entry_id: str
+    ):
+        return self._client.preview_ssh_backup(
+            connection_id=connection_id,
+            remote_dir=remote_dir,
+            entry_id=entry_id,
+        )
+
+    def list_bitwarden_backups(self):
+        return self._client.list_bitwarden_backups()
+
+    def import_bitwarden_backup(
+        self,
+        *,
+        entry_id: str,
+        options: Optional[dict] = None,
+    ) -> SecretTransferResult:
+        return self._client.import_bitwarden_backup(entry_id=entry_id, options=options)
+
+    def list_ssh_backups(self, *, connection_id: str, remote_dir: str):
+        return self._client.list_ssh_backups(
+            connection_id=connection_id, remote_dir=remote_dir
+        )
+
+    def import_ssh_backup(
+        self,
+        *,
+        connection_id: str,
+        remote_dir: str,
+        entry_id: str,
+        options: Optional[dict] = None,
+    ) -> SecretTransferResult:
+        return self._client.import_ssh_backup(
+            connection_id=connection_id,
+            remote_dir=remote_dir,
+            entry_id=entry_id,
+            options=options,
+        )

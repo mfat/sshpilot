@@ -4,30 +4,39 @@ Runs entirely inside the daemon process so no decrypted credential value ever
 travels to a frontend: the manifest is built, encrypted, decrypted and applied
 here, and callers receive only paths, counts and warnings.
 
-Reuses the existing GTK-free building blocks instead of inventing new ones:
+This module is deliberately a **thin execution adapter over the existing
+``BackupManager``** — it does not maintain a parallel backup implementation.
+Manifest construction (app settings, SSH config tree, known_hosts, credentials,
+private keys), backup-option interpretation, credential/private-key restoration,
+path rebasing, merge/non-destructive import and destination handling are all
+``BackupManager`` (plus ``backup_archive`` / ``backup_backends``) behaviors:
 
+* :mod:`sshpilot.backup_manager` — the authoritative backup/restore engine,
+  driven here through a small GTK-free ``Config``-compatible shim;
 * :mod:`sshpilot.backup_archive` — the ``.spbk`` container and its
-  scrypt + AES-256-GCM encryption.
-* :mod:`sshpilot.credential_manager` — the normalized, eager credential
-  enumeration used by the GUI export.
-* :mod:`sshpilot.credential_model` — ``Credential`` / ``credential_to_spec``,
-  the same save path normal credential writes use.
-* :mod:`sshpilot.backup_backends` — the Bitwarden backup-note destination.
-* :mod:`sshpilot.secret_storage` — the authoritative ``SecretManager``.
+  scrypt + AES-256-GCM encryption;
+* :mod:`sshpilot.backup_backends` — the Bitwarden backup-note destination;
+* :mod:`sshpilot.credential_manager` / :mod:`sshpilot.credential_model` — the
+  normalized, eager credential enumeration and the ``credential_to_spec`` save
+  path used by every normal credential write;
+* :mod:`sshpilot.secret_storage` — the authoritative ``SecretManager``
+  (the daemon shares the process-wide singleton).
 
-Restore is deliberately **non-destructive** exactly like the GUI path: a secret
-already present in the selected backend is left untouched, and an existing
-private-key file is never overwritten.
+Restore is **non-destructive exactly like the GUI path** (``merge``): a secret
+already present in the selected backend is left untouched, an existing
+private-key file is never overwritten, SSH hosts are merged into an Include
+fragment, and app settings keep this machine's local values.
 """
 
 from __future__ import annotations
 
-import base64
+import json
 import logging
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sshpilot.api.models.secrets import (
     SecretOperationState,
@@ -47,28 +56,92 @@ DEFAULT_BACKUP_OPTIONS = {
 }
 
 
-def _current_home() -> str:
-    return str(Path.home())
-
-
-def _rebase_home_path(path: str, source_home: Optional[str], target_home: str) -> str:
-    """Rebase ``path`` written on the source machine's home onto this machine's home."""
-    path = os.path.expanduser(str(path or ""))
-    if not path:
-        return path
-    source_home = os.path.expanduser(source_home or "")
-    if source_home and path.startswith(source_home + os.sep):
-        return os.path.join(target_home, path[len(source_home) + len(os.sep):])
-    return path
-
-
 def normalize_backup_options(options: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
+    """Complete boolean option map — same semantics as ``BackupManager``.
+
+    ``encrypted`` is a transfer-only flag (not a stored category): the caller
+    uses it to decide whether the daemon collects a passphrase.
+    """
     merged = dict(DEFAULT_BACKUP_OPTIONS)
     if options:
         for key in BACKUP_OPTION_KEYS:
             if key in options:
                 merged[key] = bool(options[key])
     return merged
+
+
+class _HeadlessBackupConfig:
+    """GTK-free ``Config``-compatible shim over the daemon's settings file.
+
+    ``BackupManager`` reads app settings (``get_setting``), the raw
+    ``config_data`` and a few path helpers through its ``config``; this shim
+    satisfies that surface from the same ``config.json`` the daemon owns,
+    without importing the GObject-facing ``Config`` adapter.
+    """
+
+    def __init__(self, settings_path: Path | str) -> None:
+        self._path = Path(settings_path)
+        self._data: Optional[Dict[str, Any]] = None
+
+    def _load(self) -> Dict[str, Any]:
+        if self._data is not None:
+            return self._data
+        try:
+            with open(self._path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            self._data = data if isinstance(data, dict) else {}
+        except Exception:
+            self._data = {}
+        return self._data
+
+    def _invalidate(self) -> None:
+        """Drop the cached copy so the next read reflects on-disk changes.
+
+        ``BackupManager`` mutates ``config_data`` in place after a restore
+        (``self.config.config_data = self.config.load_json_config()``); the
+        shim mirrors that contract by re-reading the settings file.
+        """
+        self._data = None
+
+    def _nested(self, dotted: str, default: Any) -> Any:
+        cur: Any = self._load()
+        for part in (dotted or "").split("."):
+            if not part:
+                return default
+            if not isinstance(cur, dict) or part not in cur:
+                return default
+            cur = cur[part]
+        return cur
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        try:
+            return self._nested(key, default)
+        except Exception:
+            return default
+
+    def load_json_config(self) -> Dict[str, Any]:
+        return self._load()
+
+    def get_default_config(self) -> Dict[str, Any]:
+        return {"config_version": CONFIG_VERSION}
+
+    @property
+    def config_data(self) -> Dict[str, Any]:
+        return self._load()
+
+    @config_data.setter
+    def config_data(self, value: Dict[str, Any]) -> None:
+        self._data = dict(value) if isinstance(value, dict) else {}
+
+    def get_ssh_config(self) -> Optional[str]:
+        return None
+
+
+def _backup_manager(settings_path: Path | str):
+    """One ``BackupManager`` driven by a headless config shim."""
+    from sshpilot.backup_manager import BackupManager
+
+    return BackupManager(_HeadlessBackupConfig(settings_path))
 
 
 def _connection_key_paths(view: Any) -> List[str]:
@@ -85,122 +158,6 @@ def _connection_key_paths(view: Any) -> List[str]:
     return paths
 
 
-def _gather_credentials(manager: Any, views: List[Any]) -> List[Dict[str, Any]]:
-    """Serialized credentials (password/sudo/key passphrase) for the given views."""
-    if not views:
-        return []
-    try:
-        from sshpilot.credential_manager import CredentialManager
-
-        creds = CredentialManager(list(views), secret_manager=manager).list_credentials(
-            include_orphans=False
-        )
-    except Exception:
-        logger.warning("Gathering credentials for backup failed", exc_info=True)
-        return []
-    out: List[Dict[str, Any]] = []
-    for c in creds:
-        if c.secret is None:
-            continue
-        out.append(
-            {
-                "id": c.id,
-                "type": c.type,
-                "host": c.host,
-                "username": c.username,
-                "secret": c.secret,
-                "metadata": c.metadata,
-            }
-        )
-    return out
-
-
-def _gather_private_keys(views: List[Any]) -> List[Dict[str, Any]]:
-    """Serialize the selected connections' private key files and matching ``.pub`` files."""
-    out: List[Dict[str, Any]] = []
-    seen: set = set()
-    for view in views:
-        for key_path in _connection_key_paths(view):
-            key_path = os.path.expanduser(str(key_path))
-            if not key_path or key_path in seen:
-                continue
-            seen.add(key_path)
-            try:
-                if not os.path.isfile(key_path):
-                    logger.warning("Export: referenced key file not found: %s", key_path)
-                    continue
-                with open(key_path, "rb") as f:
-                    private_raw = f.read()
-                stat = os.stat(key_path)
-                item: Dict[str, Any] = {
-                    "path": key_path,
-                    "mode": stat.st_mode & 0o777,
-                    "content_b64": base64.b64encode(private_raw).decode("ascii"),
-                }
-                public_path = f"{key_path}.pub"
-                if os.path.isfile(public_path):
-                    with open(public_path, "rb") as f:
-                        public_raw = f.read()
-                    item["public_path"] = public_path
-                    item["public_content_b64"] = base64.b64encode(public_raw).decode("ascii")
-                    item["public_mode"] = os.stat(public_path).st_mode & 0o777
-                out.append(item)
-            except Exception:
-                logger.warning("Failed to include private key in backup: %s", key_path,
-                               exc_info=True)
-    return out
-
-
-def _build_manifest(
-    manager: Any,
-    views: List[Any],
-    options: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """The ``.spbk`` manifest: metadata + credentials + private keys. No secret
-    value leaves this module except inside the (optionally encrypted) archive."""
-    options = normalize_backup_options(options)
-    manifest: Dict[str, Any] = {
-        "version": 1,
-        "format": "spbk",
-        "export_date": datetime.now().isoformat(),
-        "platform": os.name,
-        "config_version": CONFIG_VERSION,
-        "backup_options": options,
-        "source_home": _current_home(),
-        "isolated_mode": False,
-    }
-    manifest["credentials"] = _gather_credentials(manager, views) if options["secrets"] else []
-    manifest["private_keys"] = _gather_private_keys(views) if options["private_keys"] else []
-    return manifest
-
-
-def _mirror_credentials_to_backend(manifest: Dict[str, Any], backend: Any) -> int:
-    """Copy the manifest's credentials into ``backend`` as normal login entries
-    (updates existing) — the same ``credential_to_spec`` → ``store`` path the
-    GUI "mirror secrets" option uses. Returns the number mirrored."""
-    from sshpilot.credential_model import Credential, credential_to_spec
-
-    mirrored = 0
-    for c in manifest.get("credentials") or []:
-        secret = c.get("secret")
-        if secret is None:
-            continue
-        try:
-            cred = Credential(
-                id=c.get("id", ""),
-                type=c.get("type", ""),
-                host=c.get("host"),
-                username=c.get("username"),
-                secret=secret,
-                metadata=dict(c.get("metadata") or {}),
-            )
-            if backend.store(credential_to_spec(cred), secret):
-                mirrored += 1
-        except Exception:
-            logger.warning("Failed to mirror a credential to the target backend", exc_info=True)
-    return mirrored
-
-
 def _selected_views(
     manager: Any,
     connections_source: Optional[Any],
@@ -209,8 +166,9 @@ def _selected_views(
     """Resolve the connections to include in an export as headless views.
 
     ``connections_source`` is either a callable returning records or an
-    iterable of records. When ``connection_ids`` is non-empty, only those
-    connections are included (matched by record id or nickname).
+    iterable of records (the production composition passes
+    ``repository.list_records``). When ``connection_ids`` is non-empty, only
+    those connections are included (matched by record id or nickname).
     """
     records: Iterable[Any] = ()
     if callable(connections_source):
@@ -244,15 +202,17 @@ def daemon_export_backup(
     mirror_logins: bool = False,
     connections_source: Optional[Any] = None,
     passphrase: Optional[str] = None,
+    settings_path: Optional[Path | str] = None,
 ) -> SecretTransferResult:
-    """Export secret material to a ``.spbk`` file or a Bitwarden backup note.
+    """Export the full backup (settings, SSH config, known_hosts, secrets,
+    private keys) to a ``.spbk`` file or a Bitwarden backup note.
 
     Returns counts (``credentials`` / ``private_keys``) and warnings; no secret
     value is ever returned.
     """
     views = _selected_views(manager, connections_source, connection_ids)
     options = normalize_backup_options(options)
-    if not options["secrets"] and not options["private_keys"]:
+    if not any(options.values()):
         return SecretTransferResult(
             operation="export",
             path=destination,
@@ -261,12 +221,16 @@ def daemon_export_backup(
             status=SecretOperationState.FAILED,
             message="Nothing selected to export",
         )
-    manifest = _build_manifest(manager, views, options)
-    counts = {
-        "credentials": len(manifest["credentials"] or []),
-        "private_keys": len(manifest["private_keys"] or []),
-    }
+
+    mgr = _backup_manager(settings_path or _settings_path())
     warnings: List[str] = []
+
+    ssh_dest = _ssh_server_destination(destination)
+    if ssh_dest is not None:
+        return _daemon_export_to_ssh(
+            manager, ssh_dest, views, options, passphrase=passphrase,
+            connections_source=connections_source, settings_path=settings_path,
+        )
 
     if _is_bitwarden_destination(destination):
         backend = manager.get_backend("bitwarden")
@@ -274,20 +238,26 @@ def daemon_export_backup(
             return SecretTransferResult(
                 operation="export",
                 path=destination,
-                counts=counts,
+                counts={},
                 warnings=warnings,
                 status=SecretOperationState.FAILED,
                 message="Bitwarden is unavailable for backup",
             )
-        from sshpilot.backup_backends import BackupTooLargeForNote
+        from sshpilot.backup_backends import BackupTooLargeForNote, BitwardenBackupBackend
 
+        name = "sshPilot Backup {}".format(datetime.now().strftime("%Y-%m-%d %H:%M"))
         try:
-            backend.export(manifest, passphrase=None)
+            mgr.export_to_backend(
+                BitwardenBackupBackend(backend, item_name=name),
+                connections=views,
+                options=options,
+                mirror_to=(backend if mirror_logins else None),
+            )
         except BackupTooLargeForNote as exc:
             return SecretTransferResult(
                 operation="export",
                 path=destination,
-                counts=counts,
+                counts=dict(getattr(mgr, "last_export_counts", {})),
                 warnings=("The backup is too large for a Bitwarden note.",),
                 status=SecretOperationState.FAILED,
                 message=str(exc),
@@ -297,18 +267,19 @@ def daemon_export_backup(
             return SecretTransferResult(
                 operation="export",
                 path=destination,
-                counts=counts,
+                counts={},
                 warnings=warnings,
                 status=SecretOperationState.FAILED,
                 message=f"Bitwarden export failed: {exc}",
             )
-        if mirror_logins and options["secrets"]:
-            mirrored = _mirror_credentials_to_backend(manifest, manager.get_backend("bitwarden"))
-            counts["mirrored"] = mirrored
+        counts = dict(getattr(mgr, "last_export_counts", {}) or {})
+        mirror = getattr(mgr, "last_mirror_counts", None)
+        if mirror:
+            counts["mirrored"] = int(mirror.get("mirrored", 0))
         logger.info(
             "Backup exported to Bitwarden (%d credential(s), %d private key(s))",
-            counts["credentials"],
-            counts["private_keys"],
+            counts.get("credentials", 0),
+            counts.get("private_keys", 0),
         )
         return SecretTransferResult(
             operation="export",
@@ -320,33 +291,108 @@ def daemon_export_backup(
         )
 
     try:
-        from sshpilot.backup_archive import write_spbk
-
-        write_spbk(os.path.expanduser(destination), manifest, passphrase or None)
+        ok, error = mgr.export_backup(
+            os.path.expanduser(destination),
+            connections=views,
+            passphrase=passphrase,
+            options=options,
+        )
     except Exception as exc:
         logger.error("Backup export failed: %s", exc)
         return SecretTransferResult(
             operation="export",
             path=destination,
-            counts=counts,
+            counts={},
             warnings=warnings,
             status=SecretOperationState.FAILED,
             message=f"Failed to export backup: {exc}",
         )
+    counts = dict(getattr(mgr, "last_export_counts", {}) or {})
+    skipped = getattr(mgr, "last_export_skipped_config_files", None) or []
+    if skipped:
+        warnings.append(
+            "{} SSH config file(s) outside ~/.ssh were not included "
+            "(system or shared files): {}".format(len(skipped), ", ".join(skipped))
+        )
+    missing_keys = getattr(mgr, "last_export_missing_key_files", None) or []
+    if missing_keys:
+        warnings.append(
+            "{} referenced key file(s) were missing and not included: {}".format(
+                len(missing_keys), ", ".join(missing_keys)
+            )
+        )
     logger.info(
         "Backup exported to %s (%d credential(s), %d private key(s), encrypted=%s)",
         destination,
-        counts["credentials"],
-        counts["private_keys"],
+        counts.get("credentials", 0),
+        counts.get("private_keys", 0),
         bool(passphrase),
     )
     return SecretTransferResult(
         operation="export",
         path=destination,
         counts=counts,
-        warnings=warnings,
-        status=SecretOperationState.SUCCESS,
-        message="",
+        warnings=tuple(warnings),
+        status=(
+            SecretOperationState.SUCCESS if ok else SecretOperationState.FAILED
+        ),
+        message=error or "",
+    )
+
+
+def _daemon_export_to_ssh(
+    manager: Any,
+    ssh_dest: Tuple[str, str],
+    views: List[Any],
+    options: Dict[str, bool],
+    *,
+    passphrase: Optional[str] = None,
+    connections_source: Any = None,
+    settings_path: Optional[Path | str] = None,
+) -> SecretTransferResult:
+    """Export the backup to a ``.spbk`` file on one of the user's SSH servers.
+
+    The manifest is built and encrypted inside the daemon; only the archive is
+    uploaded over ssh. The frontend never receives the manifest.
+    """
+    connection_id, remote_dir = ssh_dest
+    from sshpilot.backup_backends import BackupError, SSHServerBackupBackend
+
+    runner = _DaemonSshRunner(
+        manager, connections_source, connection_id, settings_path or _settings_path()
+    )
+    name = "sshpilot_backup_{}.spbk".format(
+        datetime.now().strftime("%Y%m%d_%H%M%S")
+    )
+    try:
+        mgr = _backup_manager(settings_path or _settings_path())
+        mgr.export_to_backend(
+            SSHServerBackupBackend(runner, remote_dir, item_name=name),
+            connections=views,
+            passphrase=passphrase,
+            options=options,
+        )
+    except BackupError as exc:
+        logger.error("SSH server backup export failed: %s", exc)
+        return SecretTransferResult(
+            operation="export", path="ssh", counts={}, warnings=(),
+            status=SecretOperationState.FAILED, message=str(exc),
+        )
+    except Exception as exc:
+        logger.error("SSH server backup export failed: %s", exc)
+        return SecretTransferResult(
+            operation="export", path="ssh", counts={}, warnings=(),
+            status=SecretOperationState.FAILED,
+            message=f"SSH export failed: {exc}",
+        )
+    counts = dict(getattr(mgr, "last_export_counts", {}) or {})
+    logger.info(
+        "Backup exported to SSH server %s (%d credential(s), %d private key(s))",
+        connection_id, counts.get("credentials", 0), counts.get("private_keys", 0),
+    )
+    return SecretTransferResult(
+        operation="export", path="ssh", counts=counts, warnings=(),
+        status=SecretOperationState.SUCCESS, message="",
     )
 
 
@@ -356,14 +402,20 @@ def daemon_import_backup(
     source: str,
     options: Optional[Dict[str, Any]] = None,
     passphrase: Optional[str] = None,
+    settings_path: Optional[Path | str] = None,
+    manifest: Optional[Dict[str, Any]] = None,
 ) -> SecretTransferResult:
-    """Read a ``.spbk`` archive and restore its secrets into the selected backend.
+    """Import a ``.spbk`` archive or a legacy JSON config, and restore it.
+
+    The daemon owns the manifest: a ``.spbk`` is decrypted here (and the caller
+    supplies the passphrase, which the service collects through a protected
+    interaction), while a legacy JSON config is imported without secrets. The
+    ``mode`` option (``"replace"`` / ``"merge"``) selects the config-apply
+    behaviour; merge is the non-destructive default.
 
     Returns counts (``restored`` / ``skipped`` / ``keys_written`` /
-    ``keys_skipped``) and warnings. Restore is non-destructive.
+    ``keys_skipped``) and warnings. No decrypted value is ever returned.
     """
-    from sshpilot.backup_archive import read_spbk
-
     source = os.path.expanduser(source)
     if not os.path.isfile(source):
         return SecretTransferResult(
@@ -374,52 +426,97 @@ def daemon_import_backup(
             status=SecretOperationState.FAILED,
             message=f"Backup file not found: {source}",
         )
-    try:
-        manifest = read_spbk(source, passphrase or None)
-    except Exception as exc:
-        logger.error("Backup import failed (wrong passphrase or corrupt archive): %s", exc)
+    mode = str((options or {}).get("mode") or "merge")
+    if mode not in ("replace", "merge"):
+        mode = "merge"
+
+    from sshpilot.backup_archive import is_spbk
+
+    if not is_spbk(source):
+        # Legacy JSON config import — no secrets involved.
+        mgr = _backup_manager(settings_path or _settings_path())
+        try:
+            success, error = mgr.import_configuration(
+                source, mode=mode, create_backup=True
+            )
+        except Exception as exc:
+            logger.error("Config import failed: %s", exc)
+            return SecretTransferResult(
+                operation="import", path=source, counts={}, warnings=(),
+                status=SecretOperationState.FAILED,
+                message=f"Failed to import configuration: {exc}",
+            )
+        if not success:
+            return SecretTransferResult(
+                operation="import", path=source, counts={}, warnings=(),
+                status=SecretOperationState.FAILED,
+                message=error or "The configuration could not be imported",
+            )
+        ignored = int(getattr(mgr, "last_import_ignored_secrets", 0) or 0)
+        counts = {"restored": 1, "ignored_secrets": ignored}
         return SecretTransferResult(
-            operation="import",
-            path=source,
-            counts={},
-            warnings=("The archive could not be decrypted or read.",),
-            status=SecretOperationState.FAILED,
-            message="Wrong passphrase or corrupt backup",
+            operation="import", path=source, counts=counts, warnings=(),
+            status=SecretOperationState.SUCCESS, message="",
         )
-    if not isinstance(manifest, dict):
+
+    if manifest is None:
+        manifest = _read_manifest(source, passphrase)
+        if manifest is None:
+            return SecretTransferResult(
+                operation="import",
+                path=source,
+                counts={},
+                warnings=("The archive could not be decrypted or read.",),
+                status=SecretOperationState.FAILED,
+                message="Wrong passphrase or corrupt backup",
+            )
+
+    mgr = _backup_manager(settings_path or _settings_path())
+    try:
+        success, error, restored, keys_written = mgr.apply_imported_manifest(
+            manifest,
+            mode=mode,
+            create_backup=True,
+            restore_options=options,
+        )
+    except Exception as exc:
+        logger.error("Backup import failed: %s", exc)
         return SecretTransferResult(
             operation="import",
             path=source,
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message="The backup file is not a valid sshPilot backup",
+            message=f"Failed to import backup: {exc}",
         )
-
-    counts: Dict[str, int] = {"restored": 0, "skipped": 0, "keys_written": 0, "keys_skipped": 0}
+    counts = {
+        "restored": restored,
+        "skipped": int(getattr(mgr, "last_import_skipped_credentials", 0) or 0),
+        "keys_written": keys_written,
+        "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
+    }
     warnings: List[str] = []
-
+    if not success:
+        return SecretTransferResult(
+            operation="import",
+            path=source,
+            counts=counts,
+            warnings=(),
+            status=SecretOperationState.FAILED,
+            message=error or "The backup could not be imported",
+        )
     if not _persists_secrets(manager):
         warnings.append(
             "The selected secret backend does not persist secrets (agent); "
             "no credentials were restored."
         )
-    else:
-        restored, skipped = _restore_credentials(manager, manifest)
-        counts["restored"] = restored
-        counts["skipped"] = skipped
-
-    keys_written, keys_skipped = _restore_private_keys(manifest)
-    counts["keys_written"] = keys_written
-    counts["keys_skipped"] = keys_skipped
-
     logger.info(
         "Backup imported from %s (restored=%d skipped=%d keys_written=%d keys_skipped=%d)",
         source,
         restored,
-        skipped,
+        counts["skipped"],
         keys_written,
-        keys_skipped,
+        counts["keys_skipped"],
     )
     return SecretTransferResult(
         operation="import",
@@ -431,103 +528,688 @@ def daemon_import_backup(
     )
 
 
+def _included_categories(
+    settings_path: Path | str,
+    manifest: Dict[str, Any],
+) -> Dict[str, bool]:
+    """Which backup categories a manifest actually contains (metadata only).
+
+    Mirrors the GUI mode-dialog logic (``BackupManager._restore_options_for_manifest``
+    with every category requested): absent categories read ``False`` and the mode
+    dialog disables them. No credential value is ever returned.
+    """
+    from sshpilot.backup_manager import BACKUP_OPTION_KEYS
+
+    mgr = _backup_manager(settings_path)
+    all_requested = {key: True for key in BACKUP_OPTION_KEYS}
+    try:
+        return mgr._restore_options_for_manifest(manifest, restore_options=all_requested)
+    except Exception:
+        logger.debug("restore-option preview failed", exc_info=True)
+        return {}
+
+
+def _read_manifest(
+    source: str,
+    passphrase: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Decrypt/read a ``.spbk`` manifest; ``None`` on wrong passphrase or corrupt data."""
+    from sshpilot.backup_archive import read_spbk
+
+    try:
+        manifest = read_spbk(source, passphrase or None)
+    except Exception as exc:
+        logger.debug("backup manifest read failed: %s", exc)
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
+def daemon_preview_backup(
+    manager: Any,
+    *,
+    source: str,
+    passphrase: Optional[str] = None,
+    settings_path: Optional[Path | str] = None,
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Inspect a backup file without exposing its contents.
+
+    Returns ``(public, manifest)``: ``public`` carries only ``kind``
+    (``"spbk"`` / ``"json"`` / ``"unknown"``), ``encrypted``, and the
+    ``included`` category map; ``manifest`` is the decrypted payload handed to
+    the daemon's manifest cache so the subsequent import never re-prompts for
+    the passphrase. The frontend only ever sees ``public``.
+    """
+    source = os.path.expanduser(source)
+    if not os.path.isfile(source):
+        return (
+            {"kind": "unknown", "encrypted": False, "included": {},
+             "error": f"Backup file not found: {source}"},
+            None,
+        )
+    from sshpilot.backup_archive import is_spbk, spbk_is_encrypted
+
+    if not is_spbk(source):
+        # Legacy JSON config — no secret-bearing manifest to preview.
+        return {"kind": "json", "encrypted": False, "included": {}}, None
+    try:
+        encrypted = bool(spbk_is_encrypted(source))
+    except Exception:
+        encrypted = False
+    if encrypted and not passphrase:
+        return {"kind": "spbk", "encrypted": True, "included": {}}, None
+    manifest = _read_manifest(source, passphrase)
+    if manifest is None:
+        return (
+            {"kind": "spbk", "encrypted": encrypted, "included": {},
+             "error": "Wrong passphrase or corrupt backup"},
+            None,
+        )
+    settings_path = settings_path or _settings_path()
+    return (
+        {
+            "kind": "spbk",
+            "encrypted": encrypted,
+            "included": _included_categories(settings_path, manifest),
+        },
+        manifest,
+    )
+
+
+def daemon_preview_bitwarden_backup(
+    manager: Any,
+    *,
+    entry_id: str,
+    settings_path: Optional[Path | str] = None,
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Preview one Bitwarden backup note: included categories (metadata only)."""
+    from sshpilot.backup_backends import BitwardenBackupBackend
+
+    backend = manager.get_backend("bitwarden")
+    if backend is None or not _safe(lambda: backend.is_available()):
+        return (
+            {"kind": "bitwarden", "included": {},
+             "error": "Bitwarden is unavailable for backup"},
+            None,
+        )
+    bw_backend = BitwardenBackupBackend(backend)
+    try:
+        entries = bw_backend.list_exports()
+    except Exception as exc:
+        logger.error("Bitwarden backup listing failed: %s", exc)
+        return (
+            {"kind": "bitwarden", "included": {},
+             "error": "Could not list Bitwarden backups"},
+            None,
+        )
+    entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
+    if entry is None:
+        return (
+            {"kind": "bitwarden", "included": {},
+             "error": "The chosen Bitwarden backup was not found"},
+            None,
+        )
+    try:
+        manifest = bw_backend.read(entry)
+    except Exception as exc:
+        logger.error("Bitwarden backup read failed: %s", exc)
+        return (
+            {"kind": "bitwarden", "included": {},
+             "error": "The chosen Bitwarden backup could not be read"},
+            None,
+        )
+    if not isinstance(manifest, dict):
+        return (
+            {"kind": "bitwarden", "included": {},
+             "error": "The chosen backup is not a valid sshPilot backup"},
+            None,
+        )
+    settings_path = settings_path or _settings_path()
+    return (
+        {"kind": "bitwarden", "included": _included_categories(settings_path, manifest)},
+        manifest,
+    )
+
+
+def daemon_preview_ssh_backup(
+    manager: Any,
+    *,
+    connection_id: str,
+    remote_dir: str,
+    entry_id: str,
+    connections_source: Any = None,
+    settings_path: Optional[Path | str] = None,
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Preview one SSH-stored backup: included categories (metadata only)."""
+    from sshpilot.backup_backends import SSHServerBackupBackend
+
+    runner = _DaemonSshRunner(
+        manager, connections_source, connection_id, settings_path or _settings_path()
+    )
+    backend = SSHServerBackupBackend(runner, remote_dir)
+    try:
+        entries = backend.list_exports()
+    except Exception as exc:
+        logger.error("SSH backup listing failed: %s", exc)
+        return (
+            {"kind": "ssh", "included": {},
+             "error": "Could not list backups on the SSH server"},
+            None,
+        )
+    entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
+    if entry is None:
+        return (
+            {"kind": "ssh", "included": {},
+             "error": "The chosen backup was not found on the SSH server"},
+            None,
+        )
+    try:
+        manifest = backend.read(entry)
+    except Exception as exc:
+        logger.error("SSH backup read failed: %s", exc)
+        return (
+            {"kind": "ssh", "included": {},
+             "error": "The chosen backup could not be read from the SSH server"},
+            None,
+        )
+    if not isinstance(manifest, dict):
+        return (
+            {"kind": "ssh", "included": {},
+             "error": "The chosen backup is not a valid sshPilot backup"},
+            None,
+        )
+    settings_path = settings_path or _settings_path()
+    return (
+        {"kind": "ssh", "included": _included_categories(settings_path, manifest)},
+        manifest,
+    )
+
+
+def daemon_list_bitwarden_backups(manager: Any) -> List[Dict[str, str]]:
+    """List the Bitwarden backup-note entries (metadata only: id/name/date).
+
+    Runs inside the daemon so the frontend never touches the Bitwarden backend:
+    callers receive only identifiers and display names, never note contents.
+    """
+    backend = manager.get_backend("bitwarden")
+    if backend is None or not _safe(lambda: backend.is_available()):
+        return []
+    from sshpilot.backup_backends import BitwardenBackupBackend
+
+    try:
+        entries = BitwardenBackupBackend(backend).list_exports()
+    except Exception:
+        logger.debug("Bitwarden backup listing failed", exc_info=True)
+        return []
+    return [{"id": e.id, "name": e.name, "date": e.date or ""} for e in entries]
+
+
+def daemon_import_bitwarden_backup(
+    manager: Any,
+    *,
+    entry_id: str,
+    options: Optional[Dict[str, Any]] = None,
+    settings_path: Optional[Path | str] = None,
+    manifest: Optional[Dict[str, Any]] = None,
+) -> SecretTransferResult:
+    """Restore one Bitwarden backup note (merge by default, non-destructive).
+
+    Reads the note inside the daemon and applies it through the same
+    ``BackupManager.apply_imported_manifest`` path as every other restore — the
+    frontend never receives the decrypted manifest. When ``manifest`` is given
+    (from the daemon's preview cache) it is applied directly.
+    """
+    mode = str((options or {}).get("mode") or "merge")
+    if mode not in ("replace", "merge"):
+        mode = "merge"
+    backend = manager.get_backend("bitwarden")
+    if backend is None or not _safe(lambda: backend.is_available()):
+        return SecretTransferResult(
+            operation="import",
+            path="bitwarden",
+            counts={},
+            warnings=(),
+            status=SecretOperationState.FAILED,
+            message="Bitwarden is unavailable for backup",
+        )
+    from sshpilot.backup_backends import BitwardenBackupBackend
+
+    bw_backend = BitwardenBackupBackend(backend)
+    try:
+        entries = bw_backend.list_exports()
+    except Exception as exc:
+        logger.error("Bitwarden backup listing failed: %s", exc)
+        return SecretTransferResult(
+            operation="import",
+            path="bitwarden",
+            counts={},
+            warnings=(),
+            status=SecretOperationState.FAILED,
+            message="Could not list Bitwarden backups",
+        )
+    entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
+    if entry is None:
+        return SecretTransferResult(
+            operation="import",
+            path="bitwarden",
+            counts={},
+            warnings=(),
+            status=SecretOperationState.FAILED,
+            message="The chosen Bitwarden backup was not found",
+        )
+    if manifest is None:
+        try:
+            manifest = bw_backend.read(entry)
+        except Exception as exc:
+            logger.error("Bitwarden backup read failed: %s", exc)
+            return SecretTransferResult(
+                operation="import",
+                path="bitwarden",
+                counts={},
+                warnings=(),
+                status=SecretOperationState.FAILED,
+                message="The chosen Bitwarden backup could not be read",
+            )
+    if not isinstance(manifest, dict):
+        return SecretTransferResult(
+            operation="import",
+            path="bitwarden",
+            counts={},
+            warnings=(),
+            status=SecretOperationState.FAILED,
+            message="The chosen backup is not a valid sshPilot backup",
+        )
+
+    mgr = _backup_manager(settings_path or _settings_path())
+    try:
+        success, error, restored, keys_written = mgr.apply_imported_manifest(
+            manifest,
+            mode=mode,
+            create_backup=True,
+            restore_options=options,
+        )
+    except Exception as exc:
+        logger.error("Bitwarden backup import failed: %s", exc)
+        return SecretTransferResult(
+            operation="import",
+            path="bitwarden",
+            counts={},
+            warnings=(),
+            status=SecretOperationState.FAILED,
+            message=f"Failed to import backup: {exc}",
+        )
+    counts = {
+        "restored": restored,
+        "skipped": int(getattr(mgr, "last_import_skipped_credentials", 0) or 0),
+        "keys_written": keys_written,
+        "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
+    }
+    warnings: List[str] = []
+    if not success:
+        return SecretTransferResult(
+            operation="import",
+            path="bitwarden",
+            counts=counts,
+            warnings=(),
+            status=SecretOperationState.FAILED,
+            message=error or "The backup could not be imported",
+        )
+    if not _persists_secrets(manager):
+        warnings.append(
+            "The selected secret backend does not persist secrets (agent); "
+            "no credentials were restored."
+        )
+    logger.info(
+        "Backup imported from Bitwarden (restored=%d skipped=%d keys_written=%d keys_skipped=%d)",
+        restored, counts["skipped"], keys_written, counts["keys_skipped"],
+    )
+    return SecretTransferResult(
+        operation="import",
+        path="bitwarden",
+        counts=counts,
+        warnings=tuple(warnings),
+        status=SecretOperationState.SUCCESS,
+        message="",
+    )
+
+
+class _DaemonSshRunner:
+    """One-shot ``ssh <host> <command>`` runner for the SSH-server backup
+    destination, driven entirely inside the daemon.
+
+    Reuses the same native-auth argv composition as the file manager
+    (``ssh_connection_builder.build_ssh_connection`` + headless askpass env) so
+    connection passwords/passphrases are resolved from the daemon's own secret
+    manager and never cross into the frontend. The connection record is resolved
+    by id/nickname from ``connections_source`` (the daemon repository).
+    """
+
+    def __init__(
+        self,
+        manager: Any,
+        connections_source: Any,
+        connection_id: str,
+        settings_path: Path | str,
+    ) -> None:
+        self._manager = manager
+        self._connections_source = connections_source
+        self._connection_id = connection_id
+        self._settings_path = settings_path
+
+    def _resolve_record(self):
+        records: Iterable[Any] = ()
+        if callable(self._connections_source):
+            try:
+                records = list(self._connections_source())
+            except Exception:
+                records = []
+        elif self._connections_source is not None:
+            try:
+                records = list(self._connections_source)
+            except Exception:
+                records = []
+        wanted = str(self._connection_id)
+        for record in records:
+            rid = str(getattr(record, "id", "") or "")
+            nickname = str(getattr(record, "nickname", "") or "")
+            if rid == wanted or nickname == wanted:
+                return record
+        return None
+
+    def _manager_shim(self, view):
+        """Duck-typed ``connection_manager`` surface for the SSH builder's
+        password/passphrase lookups, backed by the daemon's secret manager."""
+        manager = self._manager
+
+        class _Shim:
+            def get_connection_password(self, _conn):
+                try:
+                    from sshpilot.credential_model import (
+                        canonical_password_host,
+                        password_host_candidates,
+                    )
+                    from sshpilot.secret_storage import password_spec
+
+                    user = (getattr(view, "username", "") or "").strip()
+                    if not user:
+                        return None
+                    candidates = list(password_host_candidates(view) or [])
+                    canonical = canonical_password_host(view)
+                    if canonical and canonical not in candidates:
+                        candidates.append(canonical)
+                    for host in candidates:
+                        if not host:
+                            continue
+                        value = manager.lookup(password_spec(host, user))
+                        if value:
+                            return value
+                except Exception:
+                    pass
+                return None
+
+            def get_key_passphrase(self, key_path):
+                try:
+                    from sshpilot.secret_storage import key_passphrase_spec
+
+                    value = manager.lookup_in_keyring(key_passphrase_spec(key_path))
+                    return value
+                except Exception:
+                    return None
+
+            def prepare_key_for_connection(self, key_path, *, force=True, lifetime=0):
+                try:
+                    from sshpilot.askpass_utils import ensure_key_in_agent
+
+                    return bool(ensure_key_in_agent(
+                        key_path, force=force, lifetime=lifetime))
+                except Exception:
+                    return False
+
+        return _Shim()
+
+    def _argv_env(self, command: str):
+        from sshpilot.daemon.connection_launch_provider import HeadlessConnectionView
+        from sshpilot.ssh_connection_builder import (
+            ConnectionContext,
+            apply_headless_askpass_env,
+            build_ssh_connection,
+        )
+
+        record = self._resolve_record()
+        if record is None:
+            raise LookupError(f"The SSH server connection {self._connection_id!r} was not found")
+        view = HeadlessConnectionView(record)
+        app_config = _settings_shim(self._settings_path)
+        ctx = ConnectionContext(
+            connection=view,
+            connection_manager=self._manager_shim(view),
+            config=app_config,
+            command_type="ssh",
+            native_mode=True,
+            extra_args=[],
+            remote_command=command,
+        )
+        prepared = build_ssh_connection(ctx)
+        argv = list(prepared.command or ())
+        env = apply_headless_askpass_env(
+            prepared.env,
+            view,
+            session_password=getattr(prepared, "password", None) or None,
+        )
+        return argv, env
+
+    def run_command(
+        self,
+        command: str,
+        *,
+        input: Optional[bytes] = None,
+        timeout: float = 60,
+    ):
+        try:
+            argv, env = self._argv_env(command)
+        except Exception as exc:
+            logger.debug("SSH backup runner argv failed: %s", exc)
+            return -1, b"", str(exc)
+        try:
+            proc = subprocess.run(
+                argv, env=env, input=input, capture_output=True, timeout=timeout,
+            )
+            stderr = (proc.stderr or b"").decode("utf-8", "replace")
+            return proc.returncode, (proc.stdout or b""), stderr
+        except subprocess.TimeoutExpired:
+            return -1, b"", "Command timed out"
+        except Exception as exc:
+            return -1, b"", str(exc)
+
+
+def _settings_shim(settings_path: Path | str):
+    """A minimal ``get_setting`` surface for the SSH builder (read-only)."""
+    return _HeadlessBackupConfig(settings_path)
+
+
+def _ssh_server_destination(destination: str) -> Optional[Tuple[str, str]]:
+    """Parse an ``ssh:<connection-id>`` destination into ``(connection_id, remote_dir)``."""
+    text = (destination or "").strip()
+    if not text.lower().startswith("ssh:"):
+        return None
+    parts = text[4:].split(":", 1)
+    connection_id = (parts[0] or "").strip()
+    remote_dir = (parts[1] if len(parts) > 1 else "").strip() or "~/sshpilot-backups"
+    if not connection_id:
+        return None
+    return connection_id, remote_dir
+
+
+def daemon_list_ssh_backups(
+    manager: Any,
+    *,
+    connection_id: str,
+    remote_dir: str,
+    connections_source: Any = None,
+    settings_path: Optional[Path | str] = None,
+) -> List[Dict[str, str]]:
+    """List the sshPilot backups stored in ``remote_dir`` on the given server.
+
+    Metadata only (id/name/date) — the archive bytes never leave the daemon.
+    """
+    from sshpilot.backup_backends import SSHServerBackupBackend
+
+    runner = _DaemonSshRunner(
+        manager, connections_source, connection_id, settings_path or _settings_path()
+    )
+    try:
+        entries = SSHServerBackupBackend(runner, remote_dir).list_exports()
+    except Exception:
+        logger.debug("SSH backup listing failed", exc_info=True)
+        return []
+    return [
+        {"id": getattr(e, "id", ""), "name": getattr(e, "name", ""),
+         "date": getattr(e, "date", "") or ""}
+        for e in entries
+    ]
+
+
+def daemon_import_ssh_backup(
+    manager: Any,
+    *,
+    connection_id: str,
+    remote_dir: str,
+    entry_id: str,
+    options: Optional[Dict[str, Any]] = None,
+    connections_source: Any = None,
+    settings_path: Optional[Path | str] = None,
+    manifest: Optional[Dict[str, Any]] = None,
+) -> SecretTransferResult:
+    """Download one SSH-stored backup and restore it (merge by default, non-destructive).
+
+    The archive is read inside the daemon and applied through the same
+    ``BackupManager.apply_imported_manifest`` path as every other restore. When
+    ``manifest`` is given (from the daemon's preview cache) it is applied directly.
+    """
+    mode = str((options or {}).get("mode") or "merge")
+    if mode not in ("replace", "merge"):
+        mode = "merge"
+    from sshpilot.backup_backends import SSHServerBackupBackend
+
+    runner = _DaemonSshRunner(
+        manager, connections_source, connection_id, settings_path or _settings_path()
+    )
+    backend = SSHServerBackupBackend(runner, remote_dir)
+    try:
+        entries = backend.list_exports()
+    except Exception as exc:
+        logger.error("SSH backup listing failed: %s", exc)
+        return SecretTransferResult(
+            operation="import", path="ssh", counts={}, warnings=(),
+            status=SecretOperationState.FAILED,
+            message="Could not list backups on the SSH server",
+        )
+    entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
+    if entry is None:
+        return SecretTransferResult(
+            operation="import", path="ssh", counts={}, warnings=(),
+            status=SecretOperationState.FAILED,
+            message="The chosen backup was not found on the SSH server",
+        )
+    if manifest is None:
+        try:
+            manifest = backend.read(entry)
+        except Exception as exc:
+            logger.error("SSH backup read failed: %s", exc)
+            return SecretTransferResult(
+                operation="import", path="ssh", counts={}, warnings=(),
+                status=SecretOperationState.FAILED,
+                message="The chosen backup could not be read from the SSH server",
+            )
+    if not isinstance(manifest, dict):
+        return SecretTransferResult(
+            operation="import", path="ssh", counts={}, warnings=(),
+            status=SecretOperationState.FAILED,
+            message="The chosen backup is not a valid sshPilot backup",
+        )
+
+    mgr = _backup_manager(settings_path or _settings_path())
+    try:
+        success, error, restored, keys_written = mgr.apply_imported_manifest(
+            manifest,
+            mode=mode,
+            create_backup=True,
+            restore_options=options,
+        )
+    except Exception as exc:
+        logger.error("SSH backup import failed: %s", exc)
+        return SecretTransferResult(
+            operation="import", path="ssh", counts={}, warnings=(),
+            status=SecretOperationState.FAILED,
+            message=f"Failed to import backup: {exc}",
+        )
+    counts = {
+        "restored": restored,
+        "skipped": int(getattr(mgr, "last_import_skipped_credentials", 0) or 0),
+        "keys_written": keys_written,
+        "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
+    }
+    warnings: List[str] = []
+    if not success:
+        return SecretTransferResult(
+            operation="import", path="ssh", counts=counts, warnings=(),
+            status=SecretOperationState.FAILED,
+            message=error or "The backup could not be imported",
+        )
+    if not _persists_secrets(manager):
+        warnings.append(
+            "The selected secret backend does not persist secrets (agent); "
+            "no credentials were restored."
+        )
+    logger.info(
+        "Backup imported from SSH server (restored=%d skipped=%d)",
+        restored, counts["skipped"],
+    )
+    return SecretTransferResult(
+        operation="import", path="ssh", counts=counts, warnings=tuple(warnings),
+        status=SecretOperationState.SUCCESS, message="",
+    )
+
+
+def _import_warnings(mgr: Any, persists: bool) -> List[str]:
+    """Success-dialog warnings for a daemon import: backend persistence plus
+    the merge outcomes the GUI path used to surface (``last_merge_collisions``
+    / ``last_merge_dropped_globals``)."""
+    warnings: List[str] = []
+    if not persists:
+        warnings.append(
+            "The selected secret backend does not persist secrets (agent); "
+            "no credentials were restored."
+        )
+    collisions = getattr(mgr, "last_merge_collisions", None) or []
+    if collisions:
+        names = ", ".join(" ".join(p) for p in collisions)
+        warnings.append(
+            "{} imported host(s) shared a name with an existing host; the "
+            "conflicting names were left as-is: {}.".format(
+                len(collisions), names
+            )
+        )
+    dropped = int(getattr(mgr, "last_merge_dropped_globals", 0) or 0)
+    if dropped:
+        warnings.append(
+            "{} global rule(s) from the backup (Host * / Match blocks) were not "
+            "imported — they affect every connection, so they are not merged "
+            "automatically.".format(dropped)
+        )
+    return warnings
+
+
+def _settings_path() -> Path:
+    from sshpilot.platform.paths import get_config_dir
+
+    return get_config_dir() / "config.json"
+
+
 def _persists_secrets(manager: Any) -> bool:
     try:
         return bool(manager.persists_secrets())
     except Exception:
         return True
-
-
-def _restore_credentials(manager: Any, manifest: Dict[str, Any]) -> tuple[int, int]:
-    """Non-destructive re-store of the manifest's credentials. Returns
-    ``(restored, skipped)``; an existing secret is never clobbered."""
-    from sshpilot.credential_model import Credential, credential_to_spec
-
-    creds = manifest.get("credentials") or []
-    if not creds:
-        return 0, 0
-    restored = 0
-    skipped = 0
-    source_home = manifest.get("source_home")
-    target_home = _current_home()
-    for c in creds:
-        try:
-            secret = c.get("secret")
-            if secret is None:
-                continue
-            cred = Credential(
-                id=c.get("id", ""),
-                type=c.get("type", ""),
-                host=c.get("host"),
-                username=c.get("username"),
-                secret=secret,
-                metadata=dict(c.get("metadata") or {}),
-            )
-            if cred.type == "key":
-                old_path = cred.metadata.get("key_path") or cred.id
-                new_path = _rebase_home_path(old_path, source_home, target_home)
-                if new_path != old_path:
-                    cred.metadata["key_path"] = new_path
-                    cred.id = new_path
-            spec = credential_to_spec(cred)
-            if _secret_already_present(manager, spec):
-                skipped += 1
-                continue
-            if manager.store(spec, secret):
-                restored += 1
-        except Exception:
-            logger.warning("Failed to restore a credential", exc_info=True)
-    return restored, skipped
-
-
-def _secret_already_present(manager: Any, spec: Any) -> bool:
-    lookup = getattr(manager, "lookup", None)
-    if not callable(lookup):
-        return False
-    try:
-        return lookup(spec) is not None
-    except Exception:
-        return False
-
-
-def _restore_private_keys(manifest: Dict[str, Any]) -> tuple[int, int]:
-    """Restore private keys to their (re-homed) paths. An existing file is NEVER
-    overwritten. Returns ``(written, skipped_existing)``."""
-    written = 0
-    skipped = 0
-    source_home = manifest.get("source_home")
-    target_home = _current_home()
-    for item in manifest.get("private_keys") or []:
-        try:
-            path = _rebase_home_path(
-                os.path.expanduser(str(item.get("path") or "")), source_home, target_home
-            )
-            raw = item.get("content_b64")
-            if not path or not raw:
-                continue
-            if os.path.exists(path):
-                skipped += 1
-                continue
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with open(path, "wb") as f:
-                f.write(base64.b64decode(raw.encode("ascii")))
-            private_mode = int(item.get("mode") or 0o600) & 0o777
-            os.chmod(path, (private_mode & 0o600) or 0o600)
-
-            public_path = _rebase_home_path(
-                os.path.expanduser(str(item.get("public_path") or "")),
-                source_home,
-                target_home,
-            )
-            public_raw = item.get("public_content_b64")
-            if public_path and public_raw and not os.path.exists(public_path):
-                os.makedirs(os.path.dirname(public_path) or ".", exist_ok=True)
-                with open(public_path, "wb") as f:
-                    f.write(base64.b64decode(public_raw.encode("ascii")))
-            written += 1
-        except Exception:
-            logger.warning("Failed to restore a private key", exc_info=True)
-    return written, skipped
 
 
 def _is_bitwarden_destination(destination: str) -> bool:

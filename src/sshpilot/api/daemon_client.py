@@ -326,8 +326,20 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "rbw_unlock": Capability.SECRETS_OPERATE,
     "rbw_sync": Capability.SECRETS_OPERATE,
     "rbw_lock": Capability.SECRETS_OPERATE,
+    "keepassxc_create_database": Capability.SECRETS_OPERATE,
+    "keepassxc_unlock": Capability.SECRETS_OPERATE,
+    "keepassxc_lock": Capability.SECRETS_OPERATE,
+    "remember_master_password": Capability.SECRETS_OPERATE,
+    "forget_master_password": Capability.SECRETS_OPERATE,
     "export_secret_backup": Capability.SECRETS_TRANSFER,
     "import_secret_backup": Capability.SECRETS_TRANSFER,
+    "preview_backup": Capability.SECRETS_TRANSFER,
+    "list_bitwarden_backups": Capability.SECRETS_TRANSFER,
+    "import_bitwarden_backup": Capability.SECRETS_TRANSFER,
+    "preview_bitwarden_backup": Capability.SECRETS_TRANSFER,
+    "list_ssh_backups": Capability.SECRETS_TRANSFER,
+    "import_ssh_backup": Capability.SECRETS_TRANSFER,
+    "preview_ssh_backup": Capability.SECRETS_TRANSFER,
 }
 
 
@@ -1393,9 +1405,12 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret backend state")
 
-    def update_secret_selection(self, backend: str):
+    def update_secret_selection(self, backend: str, *, expected_revision=None):
         self._require_capability(Capability.SECRETS_WRITE)
-        result = self._request("secrets.selection.update", {"backend": backend})
+        params = {"backend": backend}
+        if expected_revision:
+            params["expected_revision"] = expected_revision
+        result = self._request("secrets.selection.update", params)
         try:
             from sshpilot.api.transport.codec import secret_backend_state_from_wire
             return secret_backend_state_from_wire(result)
@@ -1461,9 +1476,12 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
 
-    def bitwarden_sso_login(self):
+    def bitwarden_sso_login(self, identifier: Optional[str] = None):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.bitwarden.sso_login", {})
+        params = {}
+        if identifier:
+            params["identifier"] = identifier
+        result = self._request("secrets.bitwarden.sso_login", params)
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
             return bitwarden_status_from_wire(result)
@@ -1553,6 +1571,58 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid rbw status")
 
+    def keepassxc_create_database(self, path: str, *, keyfile=None):
+        """Create a new KeePass database. The daemon prompts for the password."""
+        self._require_capability(Capability.SECRETS_OPERATE)
+        params = {"path": path or ""}
+        if keyfile:
+            params["keyfile"] = keyfile
+        result = self._request("secrets.keepassxc.create_database", params)
+        try:
+            from sshpilot.api.transport.codec import secret_operation_result_from_wire
+            return secret_operation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid KeePass result")
+
+    def keepassxc_unlock(self):
+        """Unlock the selected KeePass database. The daemon prompts for the password."""
+        self._require_capability(Capability.SECRETS_OPERATE)
+        result = self._request("secrets.keepassxc.unlock", {})
+        try:
+            from sshpilot.api.transport.codec import secret_operation_result_from_wire
+            return secret_operation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid KeePass result")
+
+    def keepassxc_lock(self):
+        self._require_capability(Capability.SECRETS_OPERATE)
+        result = self._request("secrets.keepassxc.lock", {})
+        try:
+            from sshpilot.api.transport.codec import secret_operation_result_from_wire
+            return secret_operation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid KeePass result")
+
+    def remember_master_password(self):
+        """Save the selected vault's master password in the OS keyring."""
+        self._require_capability(Capability.SECRETS_OPERATE)
+        result = self._request("secrets.remember_master_password", {})
+        try:
+            from sshpilot.api.transport.codec import secret_operation_result_from_wire
+            return secret_operation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid secret operation result")
+
+    def forget_master_password(self):
+        """Remove the selected vault's master password from the OS keyring."""
+        self._require_capability(Capability.SECRETS_OPERATE)
+        result = self._request("secrets.forget_master_password", {})
+        try:
+            from sshpilot.api.transport.codec import secret_operation_result_from_wire
+            return secret_operation_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid secret operation result")
+
     def export_secret_backup(self, *, destination: str, connection_ids=None,
                              options=None, mirror_logins: bool = False):
         """Export a secret backup. Runs inside the daemon; returns counts/warnings only."""
@@ -1575,6 +1645,93 @@ class DaemonClient:
         self._require_capability(Capability.SECRETS_TRANSFER)
         result = self._request(
             "secrets.transfer.import", {"source": source, "options": dict(options or {})}
+        )
+        try:
+            from sshpilot.api.transport.codec import secret_transfer_result_from_wire
+            return secret_transfer_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid secret transfer result")
+
+    def preview_backup(self, *, source: str):
+        """Inspect a backup file: kind, encryption flag, included categories.
+
+        Metadata only — no decrypted value is ever returned."""
+        self._require_capability(Capability.SECRETS_TRANSFER)
+        result = self._request("secrets.transfer.preview", {"source": source})
+        if not isinstance(result, dict):
+            self._fail_protocol("The daemon returned an invalid backup preview")
+        return result
+
+    def preview_bitwarden_backup(self, *, entry_id: str):
+        """Inspect one Bitwarden backup note: included categories (metadata only)."""
+        self._require_capability(Capability.SECRETS_TRANSFER)
+        result = self._request(
+            "secrets.transfer.preview_bitwarden", {"entry_id": entry_id}
+        )
+        if not isinstance(result, dict):
+            self._fail_protocol("The daemon returned an invalid Bitwarden preview")
+        return result
+
+    def preview_ssh_backup(self, *, connection_id: str, remote_dir: str,
+                           entry_id: str):
+        """Inspect one SSH-stored backup: included categories (metadata only)."""
+        self._require_capability(Capability.SECRETS_TRANSFER)
+        result = self._request(
+            "secrets.transfer.preview_ssh",
+            {
+                "connection_id": connection_id,
+                "remote_dir": remote_dir,
+                "entry_id": entry_id,
+            },
+        )
+        if not isinstance(result, dict):
+            self._fail_protocol("The daemon returned an invalid SSH preview")
+        return result
+
+    def list_bitwarden_backups(self):
+        """List Bitwarden backup-note metadata (id/name/date only)."""
+        self._require_capability(Capability.SECRETS_TRANSFER)
+        result = self._request("secrets.transfer.list_bitwarden", {})
+        if not isinstance(result, list):
+            self._fail_protocol("The daemon returned an invalid Bitwarden backup list")
+        return result
+
+    def import_bitwarden_backup(self, *, entry_id: str, options=None):
+        """Import a Bitwarden backup note. Runs inside the daemon."""
+        self._require_capability(Capability.SECRETS_TRANSFER)
+        result = self._request(
+            "secrets.transfer.import_bitwarden",
+            {"entry_id": entry_id, "options": dict(options or {})},
+        )
+        try:
+            from sshpilot.api.transport.codec import secret_transfer_result_from_wire
+            return secret_transfer_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid secret transfer result")
+
+    def list_ssh_backups(self, *, connection_id: str, remote_dir: str):
+        """List sshPilot backups on an SSH server. Metadata only."""
+        self._require_capability(Capability.SECRETS_TRANSFER)
+        result = self._request(
+            "secrets.transfer.list_ssh",
+            {"connection_id": connection_id, "remote_dir": remote_dir},
+        )
+        if not isinstance(result, list):
+            self._fail_protocol("The daemon returned an invalid SSH backup list")
+        return result
+
+    def import_ssh_backup(self, *, connection_id: str, remote_dir: str,
+                          entry_id: str, options=None):
+        """Import one SSH-stored backup. Runs inside the daemon."""
+        self._require_capability(Capability.SECRETS_TRANSFER)
+        result = self._request(
+            "secrets.transfer.import_ssh",
+            {
+                "connection_id": connection_id,
+                "remote_dir": remote_dir,
+                "entry_id": entry_id,
+                "options": dict(options or {}),
+            },
         )
         try:
             from sshpilot.api.transport.codec import secret_transfer_result_from_wire

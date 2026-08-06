@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from typing import Any, Dict, List, Optional, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -37,6 +38,7 @@ from sshpilot.api.models.secrets import (
     SecretBackendRegistry,
     SecretBackendState,
     SecretConfiguration,
+    SecretOperationResult,
     SecretOperationState,
     SecretTransferResult,
     SecretUnlockResult,
@@ -67,7 +69,7 @@ logger = logging.getLogger(__name__)
 # on it and the session-scoped interaction dialogs ignore it.
 SECRET_SESSION_PREFIX = "secret-session"
 _SECRET_SESSION_COUNTER = 0
-_SECRET_SESSION_LOCK = Lock()
+_SECRET_SESSION_LOCK = RLock()
 
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
 
@@ -108,7 +110,21 @@ class SecretBackendService:
         self._manager = secret_manager
         self._broker = interaction_broker
         self._connections_source = connections_source
-        self._lock = Lock()
+        # Reentrant: several public operations compose nested public calls under
+        # the lock (``update_selection`` -> ``update_configuration`` ->
+        # ``get_state``; ``bitwarden_configure_server`` -> ``bitwarden_status``;
+        # ``rbw_configure`` -> ``rbw_status``). A plain ``Lock`` deadlocks on
+        # those paths.
+        self._lock = RLock()
+        # Short-lived decrypted-manifest cache: an import preview reads the
+        # ``.spbk`` (prompting for a passphrase via a protected interaction), and
+        # the subsequent import reuses the cached manifest so the user is never
+        # prompted for the passphrase twice. Entries expire after a few minutes.
+        self._manifest_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        self._MANIFEST_CACHE_TTL = 120.0
+        # Bounded re-prompts for a wrong import passphrase; each retry goes through
+        # a fresh protected interaction so the secret never travels as an RPC param.
+        self._MAX_IMPORT_PASSPHRASE_ATTEMPTS = 3
 
     def attach_interaction_broker(self, broker: Any) -> None:
         """Inject the daemon's interaction broker once it exists (the broker is
@@ -164,10 +180,24 @@ class SecretBackendService:
             self._apply_environment(config)
             return self._snapshot(config)
 
-    def update_selection(self, backend: str) -> SecretBackendState:
+    def update_selection(
+        self,
+        backend: str,
+        *,
+        expected_revision: Optional[str] = None,
+    ) -> SecretBackendState:
+        """Change the selected backend under the same optimistic-concurrency
+        contract as any other configuration mutation.
+
+        ``expected_revision`` is the revision the caller last observed (the
+        controller passes its loaded configuration snapshot). A concurrent
+        mutation that bumps the revision rejects this update with
+        ``REVISION_CONFLICT`` instead of silently overwriting it.
+        """
         self.update_configuration(
             UpdateSecretConfigurationRequest(
-                patch={"backend": normalize_backend_name(backend)}
+                patch={"backend": normalize_backend_name(backend)},
+                expected_revision=expected_revision,
             )
         )
         return self.get_state()
@@ -255,21 +285,25 @@ class SecretBackendService:
                     message="The selected vault requires sign-in before unlock",
                 )
             if decision.kind == SecretDecisionKind.UNLOCK_REQUIRED:
-                secret = self._prompt_for_secret(
-                    f"Enter the master password to unlock {name}"
-                )
-                if secret is None:
-                    return SecretUnlockResult(
-                        kind=UnlockResultKind.INTERACTION_REQUIRED,
-                        backend=name,
-                        message="Unlock cancelled",
+                master = self._remembered_master_password()
+                if master is None:
+                    secret = self._prompt_for_secret(
+                        f"Enter the master password to unlock {name}"
                     )
+                    if secret is None:
+                        return SecretUnlockResult(
+                            kind=UnlockResultKind.INTERACTION_REQUIRED,
+                            backend=name,
+                            message="Unlock cancelled",
+                        )
+                    try:
+                        master = secret.decode("utf-8", "replace")
+                    finally:
+                        _clear_secret(secret)
                 try:
-                    ok = self._manager.unlock_selected(
-                        secret.decode("utf-8", "replace")
-                    )
+                    ok = self._manager.unlock_selected(master)
                 finally:
-                    _clear_secret(secret)
+                    master = ""  # drop the protected value after use
                 if not ok:
                     return SecretUnlockResult(
                         kind=UnlockResultKind.BACKEND_UNAVAILABLE,
@@ -357,10 +391,32 @@ class SecretBackendService:
             _clear_secret(password)
 
             # Auth-challenge client secret is only collected when the backend
-            # sign-in later reports it is required.
+            # sign-in later reports it is required — it never travels in RPC
+            # parameters and is cleared right after the retry.
             ok, detail, needs_2fa = self._bitwarden_login_with_password(
                 bw, email, password_text, twofa_method=twofa_method, twofa_code=None,
+                auth_client_secret=None,
             )
+
+            if not ok and not needs_2fa and _login_needs_challenge(detail):
+                client_secret = self._prompt_for_secret(
+                    "Enter the Bitwarden API client secret to complete the "
+                    "authentication challenge"
+                )
+                if client_secret is None:
+                    return BitwardenStatus(
+                        logged_in=False, unlocked=False, needs_login=True,
+                        email=email, server_url=_server_url(config),
+                        profile=_profile(config),
+                        message="Authentication challenge cancelled",
+                    )
+                challenge_text = client_secret.decode("utf-8", "replace")
+                _clear_secret(client_secret)
+                ok, detail, needs_2fa = self._bitwarden_login_with_password(
+                    bw, email, password_text, twofa_method=twofa_method,
+                    twofa_code=None, auth_client_secret=challenge_text,
+                )
+                challenge_text = ""  # drop the protected value after the retry
 
             if needs_2fa and twofa_method:
                 code = self._prompt_for_secret(
@@ -373,11 +429,13 @@ class SecretBackendService:
                         profile=_profile(config),
                         twofa_required=True, message="Two-step login cancelled",
                     )
+                code_text = code.decode("utf-8", "replace")
+                _clear_secret(code)
                 ok, detail, needs_2fa = self._bitwarden_login_with_password(
                     bw, email, password_text, twofa_method=twofa_method,
-                    twofa_code=code.decode("utf-8", "replace"),
+                    twofa_code=code_text, auth_client_secret=None,
                 )
-                _clear_secret(code)
+                code_text = ""  # drop the protected value after use
 
             # Mirror the CLI "log in and unlock in one step": a successful login
             # can still leave the vault locked, so unlock with the password we have.
@@ -431,7 +489,7 @@ class SecretBackendService:
                 message=detail if not ok else "",
             )
 
-    def bitwarden_sso_login(self) -> BitwardenStatus:
+    def bitwarden_sso_login(self, identifier: Optional[str] = None) -> BitwardenStatus:
         with self._lock:
             config = self._load_strict()
             self._apply_environment(config)
@@ -439,7 +497,7 @@ class SecretBackendService:
             if bw is None:
                 raise self._unavailable("Bitwarden is unavailable")
             try:
-                ok, detail = bw.login_with_sso()
+                ok, detail = bw.login_with_sso(identifier or None)
             except Exception as exc:
                 logger.debug("Bitwarden SSO login failed", exc_info=True)
                 ok, detail = False, str(exc)
@@ -573,6 +631,249 @@ class SecretBackendService:
             return _rbw_status(rbw)
 
     # ------------------------------------------------------------------
+    # KeePassXC lifecycle
+    # ------------------------------------------------------------------
+
+    def keepassxc_create_database(
+        self,
+        path: str,
+        *,
+        keyfile: Optional[str] = None,
+    ) -> SecretOperationResult:
+        """Create a new ``.kdbx`` database at ``path``.
+
+        The master password is collected through a protected interaction — it
+        never appears in RPC parameters and is cleared immediately after use.
+        """
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            backend = self._manager.get_backend("keepassxc")
+            if backend is None or not self._safe(lambda: backend.is_available()):
+                return SecretOperationResult(
+                    state=SecretOperationState.FAILED,
+                    backend="keepassxc",
+                    message="KeePassXC is unavailable (pykeepass is not installed)",
+                )
+            path = (path or "").strip()
+            if not path:
+                return SecretOperationResult(
+                    state=SecretOperationState.FAILED,
+                    backend="keepassxc",
+                    message="A database path is required",
+                )
+            password = self._prompt_for_secret(
+                "Enter a master password for the new KeePass database"
+            )
+            if password is None:
+                return SecretOperationResult(
+                    state=SecretOperationState.INTERACTION_REQUIRED,
+                    backend="keepassxc",
+                    message="Database creation cancelled",
+                )
+            try:
+                password_text = password.decode("utf-8", "replace")
+            finally:
+                _clear_secret(password)
+            try:
+                ok = backend.create_database(
+                    path, password_text, keyfile=(keyfile or None)
+                )
+                # Mirror the GUI "create and unlock in one step": the password is
+                # in hand, so unlock so it isn't asked again.
+                if ok and not self._safe_is_unlocked(backend):
+                    try:
+                        ok = bool(backend.unlock(password_text))
+                    except Exception:
+                        logger.debug("KDBX auto-unlock after create failed", exc_info=True)
+                        ok = False
+            except Exception:
+                logger.debug("KDBX database creation failed", exc_info=True)
+                ok = False
+            finally:
+                password_text = ""
+            return SecretOperationResult(
+                state=(
+                    SecretOperationState.SUCCESS
+                    if ok else SecretOperationState.FAILED
+                ),
+                backend="keepassxc",
+                message="" if ok else "The KeePass database could not be created or unlocked",
+            )
+
+    def keepassxc_unlock(self) -> SecretOperationResult:
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            backend = self._manager.get_backend("keepassxc")
+            if backend is None:
+                return SecretOperationResult(
+                    state=SecretOperationState.FAILED,
+                    backend="keepassxc",
+                    message="KeePassXC is unavailable",
+                )
+            if not self._safe_is_unlocked(backend):
+                master = self._remembered_master_password()
+                if master is None:
+                    secret = self._prompt_for_secret(
+                        "Enter the master password to unlock the KeePass database"
+                    )
+                    if secret is None:
+                        return SecretOperationResult(
+                            state=SecretOperationState.INTERACTION_REQUIRED,
+                            backend="keepassxc",
+                            message="Unlock cancelled",
+                        )
+                    try:
+                        master = secret.decode("utf-8", "replace")
+                    finally:
+                        _clear_secret(secret)
+                try:
+                    ok = self._safe(lambda: backend.unlock(master))
+                finally:
+                    master = ""  # drop the protected value after use
+                if not ok:
+                    return SecretOperationResult(
+                        state=SecretOperationState.FAILED,
+                        backend="keepassxc",
+                        message="The KeePass database could not be unlocked",
+                    )
+            return SecretOperationResult(
+                state=SecretOperationState.SUCCESS,
+                backend="keepassxc",
+            )
+
+    def keepassxc_lock(self) -> SecretOperationResult:
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            backend = self._manager.get_backend("keepassxc")
+            if backend is not None:
+                try:
+                    backend.lock()
+                except Exception:
+                    logger.debug("KDBX lock failed", exc_info=True)
+            return SecretOperationResult(
+                state=SecretOperationState.SUCCESS,
+                backend="keepassxc",
+            )
+
+    # ------------------------------------------------------------------
+    # Remembered master password (platform keyring, daemon-owned)
+    # ------------------------------------------------------------------
+
+    def remember_master_password(self) -> SecretOperationResult:
+        """Save the selected vault's master password in the OS keyring and enable
+        the ``remember_in_keyring`` policy.
+
+        The password is collected through a protected interaction, stored with
+        the existing ``master_password_spec`` identity, and never returned.
+        """
+        with self._lock:
+            config = self._load_strict()
+            semantic = self._normalize(config)
+            self._apply_environment(config)
+            backend = self._manager.selected_backend()
+            name = getattr(backend, "name", "none") or "none"
+            if backend is None or not getattr(backend, "session_backed", False):
+                return SecretOperationResult(
+                    state=SecretOperationState.FAILED,
+                    backend=name,
+                    message="Only session-backed vaults can remember their master password",
+                )
+            secret = self._prompt_for_secret(
+                f"Enter the master password to remember for {name}"
+            )
+            if secret is None:
+                return SecretOperationResult(
+                    state=SecretOperationState.INTERACTION_REQUIRED,
+                    backend=name,
+                    message="Remember cancelled",
+                )
+            try:
+                password = secret.decode("utf-8", "replace")
+            finally:
+                _clear_secret(secret)
+            try:
+                from sshpilot.secret_storage import selected_master_spec
+
+                ok = self._manager.store_in_keyring(
+                    selected_master_spec(self._manager), password
+                )
+            except Exception:
+                logger.debug("Remembering master password failed", exc_info=True)
+                ok = False
+            finally:
+                password = ""
+            if ok and not semantic["remember_in_keyring"]:
+                try:
+                    self.update_configuration(
+                        UpdateSecretConfigurationRequest(
+                            patch={"remember_in_keyring": True}
+                        )
+                    )
+                except SshPilotError:
+                    logger.debug("remember_in_keyring toggle failed", exc_info=True)
+            return SecretOperationResult(
+                state=(
+                    SecretOperationState.SUCCESS
+                    if ok else SecretOperationState.FAILED
+                ),
+                backend=name,
+                message="" if ok else "The master password could not be saved",
+            )
+
+    def forget_master_password(self) -> SecretOperationResult:
+        """Remove the selected vault's master password from the OS keyring and
+        clear the ``remember_in_keyring`` policy."""
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            backend = self._manager.selected_backend()
+            name = getattr(backend, "name", "none") or "none"
+            removed = False
+            try:
+                from sshpilot.secret_storage import selected_master_spec
+
+                removed = self._manager.delete_in_keyring(
+                    selected_master_spec(self._manager)
+                )
+            except Exception:
+                logger.debug("Forgetting master password failed", exc_info=True)
+            semantic = self._normalize(config)
+            if semantic["remember_in_keyring"]:
+                try:
+                    self.update_configuration(
+                        UpdateSecretConfigurationRequest(
+                            patch={"remember_in_keyring": False}
+                        )
+                    )
+                except SshPilotError:
+                    logger.debug("remember_in_keyring toggle failed", exc_info=True)
+            return SecretOperationResult(
+                state=SecretOperationState.SUCCESS,
+                backend=name,
+                message="" if removed else "No remembered master password was found",
+            )
+
+    def _remembered_master_password(self) -> Optional[str]:
+        """The keyring-saved master password when the ``remember_in_keyring``
+        policy is on, else ``None``. The caller owns clearing the returned value.
+        """
+        config = self._load_strict()
+        semantic = self._normalize(config)
+        if not semantic["remember_in_keyring"]:
+            return None
+        try:
+            from sshpilot.secret_storage import selected_master_spec
+
+            return self._manager.lookup_in_keyring(
+                selected_master_spec(self._manager)
+            )
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
     # Secret transfer (export / import) — runs inside the daemon
     # ------------------------------------------------------------------
 
@@ -616,7 +917,94 @@ class SecretBackendService:
                 mirror_logins=mirror_logins,
                 connections_source=self._connections_source,
                 passphrase=passphrase,
+                settings_path=self._path,
             )
+
+    def preview_backup(
+        self,
+        *,
+        source: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Inspect a backup file: kind, encryption flag, and included categories.
+
+        Metadata only — the frontend uses it to build the import-mode dialog.
+        For an encrypted ``.spbk`` the passphrase is collected through a
+        protected interaction; the decrypted manifest is cached so the
+        following import never re-prompts.
+        """
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            from sshpilot.daemon.secret_transfer import daemon_preview_backup
+
+            public, manifest = daemon_preview_backup(
+                self._manager, source=source, settings_path=self._path
+            )
+            if manifest is None and public.get("encrypted") and not public.get("error"):
+                prompt = self._prompt_for_secret(
+                    "Enter the passphrase to decrypt the backup"
+                )
+                if prompt is None:
+                    return {**public, "error": "Decryption cancelled"}
+                passphrase = prompt.decode("utf-8", "replace")
+                _clear_secret(prompt)
+                public, manifest = daemon_preview_backup(
+                    self._manager,
+                    source=source,
+                    passphrase=passphrase,
+                    settings_path=self._path,
+                )
+            if manifest is not None:
+                self._cache_manifest(self._manifest_key("file", source), manifest)
+            return public
+
+    def preview_bitwarden_backup(
+        self,
+        *,
+        entry_id: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Preview one Bitwarden backup note: included categories (metadata only)."""
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            from sshpilot.daemon.secret_transfer import daemon_preview_bitwarden_backup
+
+            public, manifest = daemon_preview_bitwarden_backup(
+                self._manager, entry_id=entry_id, settings_path=self._path
+            )
+            if manifest is not None:
+                self._cache_manifest(self._manifest_key("bw", entry_id), manifest)
+            return public
+
+    def preview_ssh_backup(
+        self,
+        *,
+        connection_id: str,
+        remote_dir: str,
+        entry_id: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Preview one SSH-stored backup: included categories (metadata only)."""
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
+
+            public, manifest = daemon_preview_ssh_backup(
+                self._manager,
+                connection_id=connection_id,
+                remote_dir=remote_dir,
+                entry_id=entry_id,
+                connections_source=self._connections_source,
+                settings_path=self._path,
+            )
+            if manifest is not None:
+                self._cache_manifest(
+                    self._manifest_key("ssh", f"{connection_id}:{entry_id}"), manifest
+                )
+            return public
 
     def import_backup(
         self,
@@ -628,31 +1016,160 @@ class SecretBackendService:
             config = self._load_strict()
             self._apply_environment(config)
             opts = dict(options or {})
+            manifest = self._pop_cached_manifest(self._manifest_key("file", source))
             passphrase = None
-            if opts.get("encrypted"):
-                prompt = self._prompt_for_secret(
-                    "Enter the passphrase to decrypt the backup"
-                )
-                if prompt is None:
-                    return SecretTransferResult(
-                        operation="import",
-                        path=source,
-                        counts={},
-                        warnings=(),
-                        status=SecretOperationState.INTERACTION_REQUIRED,
-                        message="Decryption cancelled",
-                    )
-                passphrase = prompt.decode("utf-8", "replace")
-                _clear_secret(prompt)
+            needs_prompt = bool(opts.get("encrypted"))
+            if manifest is None and not needs_prompt:
+                # The daemon decides: prompt only for genuinely encrypted .spbk.
+                try:
+                    from sshpilot.backup_archive import is_spbk, spbk_is_encrypted
+
+                    src = os.path.expanduser(source)
+                    needs_prompt = bool(is_spbk(src) and spbk_is_encrypted(src))
+                except Exception:
+                    needs_prompt = False
             from sshpilot.daemon.secret_transfer import (
                 daemon_import_backup,
             )
 
-            return daemon_import_backup(
+            # A wrong passphrase is retried through fresh protected interactions,
+            # bounded so a corrupt file cannot loop forever.
+            result = None
+            for attempt in range(self._MAX_IMPORT_PASSPHRASE_ATTEMPTS):
+                if manifest is None and (needs_prompt or attempt > 0):
+                    prompt = self._prompt_for_secret(
+                        "Enter the passphrase to decrypt the backup"
+                    )
+                    if prompt is None:
+                        return SecretTransferResult(
+                            operation="import",
+                            path=source,
+                            counts={},
+                            warnings=(),
+                            status=SecretOperationState.INTERACTION_REQUIRED,
+                            message="Decryption cancelled",
+                        )
+                    passphrase = prompt.decode("utf-8", "replace")
+                    _clear_secret(prompt)
+                result = daemon_import_backup(
+                    self._manager,
+                    source=source,
+                    options=opts,
+                    passphrase=passphrase,
+                    settings_path=self._path,
+                    manifest=manifest,
+                )
+                last_attempt = attempt + 1 >= self._MAX_IMPORT_PASSPHRASE_ATTEMPTS
+                if (
+                    result.status is SecretOperationState.FAILED
+                    and passphrase is not None
+                    and "passphrase" in (result.message or "").lower()
+                    and not last_attempt
+                ):
+                    passphrase = None
+                    needs_prompt = True
+                    continue
+                return result
+            return result
+
+    # -- manifest preview cache (import preview -> apply, one passphrase prompt) --
+
+    def _manifest_key(self, kind: str, value: str) -> str:
+        if kind == "file":
+            return "file:{}".format(os.path.abspath(os.path.expanduser(value)))
+        return "{}:{}".format(kind, value)
+
+    def _cache_manifest(self, key: str, manifest: Dict[str, Any]) -> None:
+        self._manifest_cache[key] = (time.monotonic(), manifest)
+
+    def _cached_manifest(self, key: str) -> Optional[Dict[str, Any]]:
+        entry = self._manifest_cache.get(key)
+        if entry is None:
+            return None
+        stamped, manifest = entry
+        if time.monotonic() - stamped > self._MANIFEST_CACHE_TTL:
+            self._manifest_cache.pop(key, None)
+            return None
+        return manifest
+
+    def _pop_cached_manifest(self, key: str) -> Optional[Dict[str, Any]]:
+        manifest = self._cached_manifest(key)
+        self._manifest_cache.pop(key, None)
+        return manifest
+
+    def list_bitwarden_backups(self) -> List[Dict[str, str]]:
+        """List Bitwarden backup-note metadata (id/name/date only)."""
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            from sshpilot.daemon.secret_transfer import daemon_list_bitwarden_backups
+
+            return daemon_list_bitwarden_backups(self._manager)
+
+    def list_ssh_backups(
+        self,
+        *,
+        connection_id: str,
+        remote_dir: str,
+    ) -> List[Dict[str, str]]:
+        """List sshPilot backups stored on one of the user's SSH servers."""
+        with self._lock:
+            self._load_strict()
+            from sshpilot.daemon.secret_transfer import daemon_list_ssh_backups
+
+            return daemon_list_ssh_backups(
                 self._manager,
-                source=source,
-                options=opts,
-                passphrase=passphrase,
+                connection_id=connection_id,
+                remote_dir=remote_dir,
+                connections_source=self._connections_source,
+                settings_path=self._path,
+            )
+
+    def import_ssh_backup(
+        self,
+        *,
+        connection_id: str,
+        remote_dir: str,
+        entry_id: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> SecretTransferResult:
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            from sshpilot.daemon.secret_transfer import daemon_import_ssh_backup
+
+            manifest = self._pop_cached_manifest(
+                self._manifest_key("ssh", f"{connection_id}:{entry_id}")
+            )
+            return daemon_import_ssh_backup(
+                self._manager,
+                connection_id=connection_id,
+                remote_dir=remote_dir,
+                entry_id=entry_id,
+                options=options,
+                connections_source=self._connections_source,
+                settings_path=self._path,
+                manifest=manifest,
+            )
+
+    def import_bitwarden_backup(
+        self,
+        *,
+        entry_id: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> SecretTransferResult:
+        with self._lock:
+            config = self._load_strict()
+            self._apply_environment(config)
+            from sshpilot.daemon.secret_transfer import daemon_import_bitwarden_backup
+
+            manifest = self._pop_cached_manifest(self._manifest_key("bw", entry_id))
+            return daemon_import_bitwarden_backup(
+                self._manager,
+                entry_id=entry_id,
+                options=options,
+                settings_path=self._path,
+                manifest=manifest,
             )
 
     # ------------------------------------------------------------------
@@ -881,6 +1398,7 @@ class SecretBackendService:
         *,
         twofa_method: Optional[str],
         twofa_code: Optional[str],
+        auth_client_secret: Optional[str],
     ) -> Tuple[bool, str, bool]:
         try:
             return bw.login_with_password(
@@ -888,7 +1406,7 @@ class SecretBackendService:
                 password,
                 twofa_method=twofa_method,
                 twofa_code=twofa_code,
-                auth_client_secret=None,
+                auth_client_secret=auth_client_secret,
             )
         except Exception as exc:
             logger.debug("Bitwarden password login failed", exc_info=True)
@@ -929,6 +1447,17 @@ def _clear_secret(secret: bytearray) -> None:
         secret.clear()
     except Exception:
         pass
+
+
+def _login_needs_challenge(detail: str) -> bool:
+    """True when a failed ``bw login`` reports an authentication challenge (a
+    bot-detection / auth-challenge prompt), which the CLI satisfies with the
+    account's API-key client secret."""
+    lower = (detail or "").lower()
+    return any(
+        token in lower
+        for token in ("bot", "authentication challenge", "auth challenge")
+    )
 
 
 def _apply_profile_env(key: str, value: str) -> None:

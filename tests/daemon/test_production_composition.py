@@ -173,3 +173,101 @@ def test_production_overrides_service_always_injects_controlmaster_args(
     _set_controlmaster(True)
     ssh = overrides.get_ssh_config()
     assert "ControlMaster=auto" in " ".join(ssh["ssh_overrides"])
+
+
+def test_production_daemon_export_discovers_both_saved_connections(
+    tmp_path, monkeypatch
+):
+    """The production composition wires ``connections_source`` so the daemon
+    export discovers every saved connection and exports their selected
+    credentials (regression: the repository object used to be passed and
+    ``_selected_views`` could not iterate it)."""
+    import sshpilot.backup_manager as bm
+    import sshpilot.credential_manager as cmod
+    import sshpilot.secret_storage as ss
+    from sshpilot.backup_archive import read_spbk
+    from sshpilot.platform.paths import get_config_dir, get_ssh_dir
+    from sshpilot.secret_storage import password_spec
+
+    # A dict-backed SecretManager shared by the daemon service and the
+    # credential-gather path (the production process uses the singleton).
+    class FakeMgr:
+        def __init__(self):
+            self.data = {}
+            self._selected = "auto"
+            self.active_backend_name = "libsecret"
+
+        def store(self, spec, secret):
+            self.data[spec.keyring_account] = secret
+            return True
+
+        def lookup(self, spec):
+            return self.data.get(spec.keyring_account)
+
+        def lookup_everywhere(self, spec):
+            value = self.data.get(spec.keyring_account)
+            return (value, "libsecret") if value is not None else None
+
+        def all_available_backends(self):
+            return []
+
+        def persists_secrets(self):
+            return True
+
+        def registered_backends(self):
+            return ["libsecret"]
+
+        def available_backends(self, *, cheap=False):
+            return ["libsecret"]
+
+        def get_backend(self, name):
+            return None
+
+        def set_selected(self, name):
+            self._selected = name or "auto"
+
+        def selected_backend(self):
+            return None
+
+        def unlock_selected(self, secret, progress=None):
+            return True
+
+    # ``BackupManager`` resolves its paths through ``platform_utils``; point it
+    # at the isolated config/ssh dirs the composition already uses.
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(get_config_dir()))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(get_ssh_dir()))
+
+    fake = FakeMgr()
+    fake.data[password_spec("one.example", "alice").keyring_account] = "pw-1"
+    fake.data[password_spec("two.example", "bob").keyring_account] = "pw-2"
+    monkeypatch.setattr(cmod, "get_secret_manager", lambda: fake)
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: fake)
+
+    services = _compose(tmp_path, monkeypatch)
+    repository = services.connections._repository
+    repository.create_connection(
+        {"nickname": "one", "hostname": "one.example", "username": "alice", "port": 22}
+    )
+    repository.create_connection(
+        {"nickname": "two", "hostname": "two.example", "username": "bob", "port": 22}
+    )
+    assert {r.nickname for r in repository.list_records()} == {"one", "two"}
+
+    destination = tmp_path / "production.spbk"
+    result = services.secrets.export_backup(
+        destination=str(destination),
+        options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": True,
+            "private_keys": False,
+        },
+    )
+    assert result.status.value == "success", result.message
+    assert result.counts["credentials"] == 2
+
+    manifest = read_spbk(str(destination), None)
+    creds = {(c["type"], c["id"]): c["secret"] for c in manifest["credentials"]}
+    assert creds[("password", "alice@one.example")] == "pw-1"
+    assert creds[("password", "bob@two.example")] == "pw-2"

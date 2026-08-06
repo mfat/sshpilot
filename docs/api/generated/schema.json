@@ -125,6 +125,10 @@
       "capability": "secrets.transfer",
       "status": "daemon-only"
     },
+    "forget_master_password": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -181,7 +185,31 @@
       "capability": "transfers.read",
       "status": "daemon-only"
     },
+    "import_bitwarden_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
     "import_secret_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "import_ssh_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "keepassxc_create_database": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "keepassxc_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "keepassxc_unlock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "list_bitwarden_backups": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
     },
@@ -203,6 +231,10 @@
     },
     "list_sftp_services": {
       "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "list_ssh_backups": {
+      "capability": "secrets.transfer",
       "status": "daemon-only"
     },
     "list_transfers": {
@@ -233,6 +265,18 @@
       "capability": "sftp.write",
       "status": "daemon-only"
     },
+    "preview_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "preview_bitwarden_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "preview_ssh_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
     "rbw_configure": {
       "capability": "secrets.operate",
       "status": "daemon-only"
@@ -259,6 +303,10 @@
     },
     "release_terminal_input": {
       "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "remember_master_password": {
+      "capability": "secrets.operate",
       "status": "daemon-only"
     },
     "rename_group": {
@@ -583,6 +631,18 @@
     "secrets.configuration.update": {
       "capability": "secrets.write"
     },
+    "secrets.forget_master_password": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.create_database": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.unlock": {
+      "capability": "secrets.operate"
+    },
     "secrets.lock": {
       "capability": "secrets.operate"
     },
@@ -601,6 +661,9 @@
     "secrets.rbw.unlock": {
       "capability": "secrets.operate"
     },
+    "secrets.remember_master_password": {
+      "capability": "secrets.operate"
+    },
     "secrets.selection.update": {
       "capability": "secrets.write"
     },
@@ -611,6 +674,27 @@
       "capability": "secrets.transfer"
     },
     "secrets.transfer.import": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import_ssh": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.list_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.list_ssh": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview_ssh": {
       "capability": "secrets.transfer"
     },
     "secrets.unlock": {

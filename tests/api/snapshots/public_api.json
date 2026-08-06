@@ -199,6 +199,10 @@
       "capability": "secrets.transfer",
       "status": "daemon-only"
     },
+    "forget_master_password": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
     "get_capabilities": {
       "capability": null,
       "status": "implemented"
@@ -255,7 +259,31 @@
       "capability": "transfers.read",
       "status": "daemon-only"
     },
+    "import_bitwarden_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
     "import_secret_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "import_ssh_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "keepassxc_create_database": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "keepassxc_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "keepassxc_unlock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "list_bitwarden_backups": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
     },
@@ -277,6 +305,10 @@
     },
     "list_sftp_services": {
       "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "list_ssh_backups": {
+      "capability": "secrets.transfer",
       "status": "daemon-only"
     },
     "list_transfers": {
@@ -307,6 +339,18 @@
       "capability": "sftp.write",
       "status": "daemon-only"
     },
+    "preview_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "preview_bitwarden_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "preview_ssh_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
     "rbw_configure": {
       "capability": "secrets.operate",
       "status": "daemon-only"
@@ -333,6 +377,10 @@
     },
     "release_terminal_input": {
       "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "remember_master_password": {
+      "capability": "secrets.operate",
       "status": "daemon-only"
     },
     "rename_group": {
@@ -497,6 +545,7 @@
     "detach_sftp",
     "duplicate_connection",
     "export_secret_backup",
+    "forget_master_password",
     "generate_key",
     "get_capabilities",
     "get_connection",
@@ -513,7 +562,13 @@
     "get_session",
     "get_sftp_service",
     "get_transfer",
+    "import_bitwarden_backup",
     "import_secret_backup",
+    "import_ssh_backup",
+    "keepassxc_create_database",
+    "keepassxc_lock",
+    "keepassxc_unlock",
+    "list_bitwarden_backups",
     "list_connections",
     "list_forwards",
     "list_interactions",
@@ -521,6 +576,7 @@
     "list_known_hosts",
     "list_sessions",
     "list_sftp_services",
+    "list_ssh_backups",
     "list_transfers",
     "lock_secrets",
     "lookup_connection_password",
@@ -529,6 +585,9 @@
     "open_session",
     "open_sftp",
     "place_group",
+    "preview_backup",
+    "preview_bitwarden_backup",
+    "preview_ssh_backup",
     "rbw_configure",
     "rbw_lock",
     "rbw_status",
@@ -537,6 +596,7 @@
     "read_public_key",
     "release_interaction",
     "release_terminal_input",
+    "remember_master_password",
     "remove_connection_from_group",
     "remove_known_host_entries",
     "rename_group",
@@ -655,7 +715,13 @@
       "return": "BitwardenStatus"
     },
     "bitwarden_sso_login": {
-      "parameters": [],
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "identifier",
+          "type": "str | None"
+        }
+      ],
       "return": "BitwardenStatus"
     },
     "bitwarden_status": {
@@ -895,6 +961,10 @@
       ],
       "return": "SecretTransferResult"
     },
+    "forget_master_password": {
+      "parameters": [],
+      "return": "SecretOperationResult"
+    },
     "generate_key": {
       "parameters": [
         {
@@ -1007,6 +1077,21 @@
       ],
       "return": "TransferSummary"
     },
+    "import_bitwarden_backup": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "entry_id",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "options",
+          "type": "dict[str, Any] | None"
+        }
+      ],
+      "return": "SecretTransferResult"
+    },
     "import_secret_backup": {
       "parameters": [
         {
@@ -1021,6 +1106,58 @@
         }
       ],
       "return": "SecretTransferResult"
+    },
+    "import_ssh_backup": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "connection_id",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "remote_dir",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "entry_id",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "options",
+          "type": "dict[str, Any] | None"
+        }
+      ],
+      "return": "SecretTransferResult"
+    },
+    "keepassxc_create_database": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "path",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "keyfile",
+          "type": "str | None"
+        }
+      ],
+      "return": "SecretOperationResult"
+    },
+    "keepassxc_lock": {
+      "parameters": [],
+      "return": "SecretOperationResult"
+    },
+    "keepassxc_unlock": {
+      "parameters": [],
+      "return": "SecretOperationResult"
+    },
+    "list_bitwarden_backups": {
+      "parameters": [],
+      "return": "list[dict[str, str]]"
     },
     "list_connections": {
       "parameters": [],
@@ -1055,6 +1192,21 @@
     "list_sftp_services": {
       "parameters": [],
       "return": "list[SftpServiceSummary]"
+    },
+    "list_ssh_backups": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "connection_id",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "remote_dir",
+          "type": "str"
+        }
+      ],
+      "return": "list[dict[str, str]]"
     },
     "list_transfers": {
       "parameters": [],
@@ -1124,6 +1276,46 @@
       ],
       "return": "bool"
     },
+    "preview_backup": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "source",
+          "type": "str"
+        }
+      ],
+      "return": "dict[str, Any]"
+    },
+    "preview_bitwarden_backup": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "entry_id",
+          "type": "str"
+        }
+      ],
+      "return": "dict[str, Any]"
+    },
+    "preview_ssh_backup": {
+      "parameters": [
+        {
+          "kind": "keyword_only",
+          "name": "connection_id",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "remote_dir",
+          "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "entry_id",
+          "type": "str"
+        }
+      ],
+      "return": "dict[str, Any]"
+    },
     "rbw_configure": {
       "parameters": [
         {
@@ -1184,6 +1376,10 @@
         }
       ],
       "return": "None"
+    },
+    "remember_master_password": {
+      "parameters": [],
+      "return": "SecretOperationResult"
     },
     "remove_connection_from_group": {
       "parameters": [
@@ -1590,6 +1786,11 @@
           "kind": "positional_or_keyword",
           "name": "backend",
           "type": "str"
+        },
+        {
+          "kind": "keyword_only",
+          "name": "expected_revision",
+          "type": "str | None"
         }
       ],
       "return": "SecretBackendState"
@@ -1788,6 +1989,18 @@
     "secrets.configuration.update": {
       "capability": "secrets.write"
     },
+    "secrets.forget_master_password": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.create_database": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.unlock": {
+      "capability": "secrets.operate"
+    },
     "secrets.lock": {
       "capability": "secrets.operate"
     },
@@ -1806,6 +2019,9 @@
     "secrets.rbw.unlock": {
       "capability": "secrets.operate"
     },
+    "secrets.remember_master_password": {
+      "capability": "secrets.operate"
+    },
     "secrets.selection.update": {
       "capability": "secrets.write"
     },
@@ -1816,6 +2032,27 @@
       "capability": "secrets.transfer"
     },
     "secrets.transfer.import": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import_ssh": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.list_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.list_ssh": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview_ssh": {
       "capability": "secrets.transfer"
     },
     "secrets.unlock": {

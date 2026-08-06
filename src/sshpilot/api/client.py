@@ -55,6 +55,7 @@ from .models.secrets import (
     SecretBackendRegistry,
     SecretBackendState,
     SecretConfiguration,
+    SecretOperationResult,
     SecretTransferResult,
     SecretUnlockResult,
     UpdateSecretConfigurationRequest,
@@ -440,13 +441,35 @@ class SshPilotClient(Protocol):
     def get_secret_state(self) -> SecretBackendState:
         ...
 
-    def update_secret_selection(self, backend: str) -> SecretBackendState:
+    def update_secret_selection(
+        self, backend: str, *, expected_revision: Optional[str] = None
+    ) -> SecretBackendState:
         ...
 
     def unlock_secrets(self) -> SecretUnlockResult:
         ...
 
     def lock_secrets(self) -> SecretBackendState:
+        ...
+
+    def keepassxc_create_database(
+        self,
+        path: str,
+        *,
+        keyfile: Optional[str] = None,
+    ) -> SecretOperationResult:
+        ...
+
+    def keepassxc_unlock(self) -> SecretOperationResult:
+        ...
+
+    def keepassxc_lock(self) -> SecretOperationResult:
+        ...
+
+    def remember_master_password(self) -> SecretOperationResult:
+        ...
+
+    def forget_master_password(self) -> SecretOperationResult:
         ...
 
     def bitwarden_status(self, *, force_refresh: bool = False) -> BitwardenStatus:
@@ -466,7 +489,7 @@ class SshPilotClient(Protocol):
     def bitwarden_api_key_login(self, client_id: str) -> BitwardenStatus:
         ...
 
-    def bitwarden_sso_login(self) -> BitwardenStatus:
+    def bitwarden_sso_login(self, identifier: Optional[str] = None) -> BitwardenStatus:
         ...
 
     def bitwarden_unlock(self) -> BitwardenStatus:
@@ -510,6 +533,50 @@ class SshPilotClient(Protocol):
         self,
         *,
         source: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> SecretTransferResult:
+        ...
+
+    def preview_backup(self, *, source: str) -> Dict[str, Any]:
+        ...
+
+    def preview_bitwarden_backup(self, *, entry_id: str) -> Dict[str, Any]:
+        ...
+
+    def preview_ssh_backup(
+        self,
+        *,
+        connection_id: str,
+        remote_dir: str,
+        entry_id: str,
+    ) -> Dict[str, Any]:
+        ...
+
+    def list_bitwarden_backups(self) -> List[Dict[str, str]]:
+        ...
+
+    def import_bitwarden_backup(
+        self,
+        *,
+        entry_id: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> SecretTransferResult:
+        ...
+
+    def list_ssh_backups(
+        self,
+        *,
+        connection_id: str,
+        remote_dir: str,
+    ) -> List[Dict[str, str]]:
+        ...
+
+    def import_ssh_backup(
+        self,
+        *,
+        connection_id: str,
+        remote_dir: str,
+        entry_id: str,
         options: Optional[Dict[str, Any]] = None,
     ) -> SecretTransferResult:
         ...
