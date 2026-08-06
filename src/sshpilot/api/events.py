@@ -15,7 +15,7 @@ from .models.common import ConnectionId, RequestId, SessionId, utc_now
 from .models.connection_store import ConnectionStoreSnapshot
 from .models.connections import ConnectionSummary
 from .models.interactions import InteractionRequest, InteractionSummary
-from .models.operations import ForwardSummary, SftpServiceSummary
+from .models.operations import ForwardSummary, OperationSummary, SftpServiceSummary
 from .models.sessions import SessionExitInfo, SessionSummary
 from .models.terminal import TerminalOutput
 from .models.daemon import DaemonStatus
@@ -56,6 +56,8 @@ class EventType(str, Enum):
     FORWARD_ACTIVE = "forward.active"
     FORWARD_CLOSED = "forward.closed"
     FORWARD_FAILED = "forward.failed"
+    OPERATION_CREATED = "operation.created"
+    OPERATION_STATE_CHANGED = "operation.state_changed"
     DAEMON_STATE_CHANGED = "daemon.state_changed"
     ERROR_OCCURRED = "error.occurred"
 
@@ -126,6 +128,8 @@ _EVENT_PAYLOAD_TYPES = {
     EventType.FORWARD_ACTIVE: ForwardSummary,
     EventType.FORWARD_CLOSED: ForwardSummary,
     EventType.FORWARD_FAILED: ForwardSummary,
+    EventType.OPERATION_CREATED: OperationSummary,
+    EventType.OPERATION_STATE_CHANGED: OperationSummary,
     EventType.DAEMON_STATE_CHANGED: DaemonStatus,
     EventType.ERROR_OCCURRED: Mapping,
 }

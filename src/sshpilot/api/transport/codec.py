@@ -473,6 +473,12 @@ _DAEMON_EVENT_TYPES = frozenset(
         EventType.DAEMON_STATE_CHANGED,
     }
 )
+_OPERATION_EVENT_TYPES = frozenset(
+    {
+        EventType.OPERATION_CREATED,
+        EventType.OPERATION_STATE_CHANGED,
+    }
+)
 _FORWARDED_EVENT_TYPES = (
     _CONNECTION_EVENT_TYPES
     | _SESSION_EVENT_TYPES
@@ -481,6 +487,7 @@ _FORWARDED_EVENT_TYPES = (
     | _TRANSFER_EVENT_TYPES
     | _FORWARD_EVENT_TYPES
     | _DAEMON_EVENT_TYPES
+    | _OPERATION_EVENT_TYPES
 )
 
 
@@ -527,6 +534,12 @@ def public_event_to_envelope(
         if type(event.payload) is not DaemonStatus:
             raise TypeError("daemon event payload must be DaemonStatus")
         payload = daemon_status_to_wire(event.payload)
+    elif event.type in _OPERATION_EVENT_TYPES:
+        from ..models.operations import OperationSummary
+
+        if type(event.payload) is not OperationSummary:
+            raise TypeError("operation event payload must be OperationSummary")
+        payload = operation_summary_to_wire(event.payload)
     else:
         if type(event.payload) is not SessionSummary:
             raise TypeError("session event payload must be SessionSummary")
@@ -616,6 +629,14 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             type=event_type,
             payload=status,
             sequence=envelope.sequence,
+        )
+    if event_type in _OPERATION_EVENT_TYPES:
+        operation_summary = operation_summary_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=operation_summary,
+            sequence=envelope.sequence,
+            connection_id=operation_summary.connection_id,
         )
     summary = session_summary_from_wire(dict(envelope.payload))
     return CoreEvent(
@@ -4768,4 +4789,531 @@ def secret_transfer_result_from_wire(value: Any) -> Any:
         warnings=tuple(warnings),
         status=SecretOperationState(status),
         message=data.get("message", ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Identity provider management, agent keys, deployment, authorized keys
+# ---------------------------------------------------------------------------
+
+
+def identity_provider_descriptor_to_wire(descriptor: Any) -> Dict[str, Any]:
+    from ..models.identity import IdentityProviderDescriptor
+
+    if type(descriptor) is not IdentityProviderDescriptor:
+        raise TypeError("IdentityProviderDescriptor is required")
+    return {
+        "provider_id": descriptor.provider_id,
+        "label": descriptor.label,
+        "available": descriptor.available,
+        "selected": descriptor.selected,
+        "effective_agent_socket": descriptor.effective_agent_socket,
+        "custom_socket_required": descriptor.custom_socket_required,
+        "capabilities": list(descriptor.capabilities),
+        "detail": descriptor.detail,
+    }
+
+
+def identity_provider_descriptor_from_wire(value: Any) -> Any:
+    from ..models.identity import IdentityProviderDescriptor
+
+    data = _strict_fields(
+        value,
+        required={
+            "provider_id",
+            "label",
+            "available",
+            "selected",
+            "effective_agent_socket",
+            "custom_socket_required",
+            "capabilities",
+            "detail",
+        },
+        context="identity provider descriptor",
+    )
+    capabilities = data["capabilities"]
+    if type(capabilities) is not list or not all(
+        type(item) is str for item in capabilities
+    ):
+        raise ValueError("capabilities must be a list of strings")
+    return IdentityProviderDescriptor(
+        provider_id=_identifier(data["provider_id"], "provider id"),
+        label=_text(data["label"], "provider label"),
+        available=_boolean(data["available"], "provider available"),
+        selected=_boolean(data["selected"], "provider selected"),
+        effective_agent_socket=_text(
+            data["effective_agent_socket"], "effective agent socket", allow_empty=True
+        ),
+        custom_socket_required=_boolean(
+            data["custom_socket_required"], "custom socket required"
+        ),
+        capabilities=tuple(capabilities),
+        detail=_text(data["detail"], "provider detail", allow_empty=True),
+    )
+
+
+def identity_provider_registry_to_wire(registry: Any) -> Dict[str, Any]:
+    from ..models.identity import IdentityProviderRegistry
+
+    if type(registry) is not IdentityProviderRegistry:
+        raise TypeError("IdentityProviderRegistry is required")
+    return {
+        "providers": [
+            identity_provider_descriptor_to_wire(provider)
+            for provider in registry.providers
+        ],
+        "revision": registry.revision,
+    }
+
+
+def identity_provider_registry_from_wire(value: Any) -> Any:
+    from ..models.identity import IdentityProviderRegistry
+
+    data = _strict_fields(
+        value,
+        required={"providers", "revision"},
+        context="identity provider registry",
+    )
+    providers = data["providers"]
+    if type(providers) is not list:
+        raise ValueError("providers must be a list")
+    return IdentityProviderRegistry(
+        providers=tuple(
+            identity_provider_descriptor_from_wire(provider)
+            for provider in providers
+        ),
+        revision=_identifier(data["revision"], "identity revision"),
+    )
+
+
+def identity_state_to_wire(state: Any) -> Dict[str, Any]:
+    from ..models.identity import IdentityState
+
+    if type(state) is not IdentityState:
+        raise TypeError("IdentityState is required")
+    return {
+        "provider": state.provider,
+        "custom_socket": state.custom_socket,
+        "effective_agent_socket": state.effective_agent_socket,
+        "agent_available": state.agent_available,
+        "ssh_copy_id_available": state.ssh_copy_id_available,
+        "revision": state.revision,
+    }
+
+
+def identity_state_from_wire(value: Any) -> Any:
+    from ..models.identity import IdentityState
+
+    data = _strict_fields(
+        value,
+        required={
+            "provider",
+            "custom_socket",
+            "effective_agent_socket",
+            "agent_available",
+            "ssh_copy_id_available",
+            "revision",
+        },
+        context="identity state",
+    )
+    return IdentityState(
+        provider=_identifier(data["provider"], "identity provider"),
+        custom_socket=_text(
+            data["custom_socket"], "custom socket", allow_empty=True
+        ),
+        effective_agent_socket=_text(
+            data["effective_agent_socket"], "effective agent socket", allow_empty=True
+        ),
+        agent_available=_boolean(data["agent_available"], "agent available"),
+        ssh_copy_id_available=_boolean(
+            data["ssh_copy_id_available"], "ssh-copy-id available"
+        ),
+        revision=_identifier(data["revision"], "identity revision"),
+    )
+
+
+def update_identity_selection_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import UpdateIdentitySelectionRequest
+
+    if type(request) is not UpdateIdentitySelectionRequest:
+        raise TypeError("UpdateIdentitySelectionRequest is required")
+    result: Dict[str, Any] = {"provider": request.provider}
+    if request.expected_revision is not None:
+        result["expected_revision"] = request.expected_revision
+    return result
+
+
+def update_identity_selection_request_from_wire(value: Any) -> Any:
+    from ..models.identity import UpdateIdentitySelectionRequest
+
+    data = _strict_fields(
+        value,
+        required={"provider"},
+        optional={"expected_revision"},
+        context="update identity selection request",
+    )
+    return UpdateIdentitySelectionRequest(
+        provider=_identifier(data["provider"], "identity provider"),
+        expected_revision=data.get("expected_revision"),
+    )
+
+
+def update_identity_configuration_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import UpdateIdentityConfigurationRequest
+
+    if type(request) is not UpdateIdentityConfigurationRequest:
+        raise TypeError("UpdateIdentityConfigurationRequest is required")
+    result: Dict[str, Any] = {"custom_socket": request.custom_socket}
+    if request.expected_revision is not None:
+        result["expected_revision"] = request.expected_revision
+    return result
+
+
+def update_identity_configuration_request_from_wire(value: Any) -> Any:
+    from ..models.identity import UpdateIdentityConfigurationRequest
+
+    data = _strict_fields(
+        value,
+        required={"custom_socket"},
+        optional={"expected_revision"},
+        context="update identity configuration request",
+    )
+    custom_socket = data["custom_socket"]
+    if type(custom_socket) is not str:
+        raise ValueError("custom_socket must be a string")
+    return UpdateIdentityConfigurationRequest(
+        custom_socket=custom_socket,
+        expected_revision=data.get("expected_revision"),
+    )
+
+
+def _agent_key_to_wire(key: Any) -> Dict[str, Any]:
+    from ..models.identity import AgentKey
+
+    if type(key) is not AgentKey:
+        raise TypeError("AgentKey is required")
+    return {
+        "fingerprint": key.fingerprint,
+        "comment": key.comment,
+        "key_type": key.key_type,
+    }
+
+
+def _agent_key_from_wire(value: Any) -> Any:
+    from ..models.identity import AgentKey
+
+    data = _strict_fields(
+        value,
+        required={"fingerprint", "comment", "key_type"},
+        context="agent key",
+    )
+    return AgentKey(
+        fingerprint=_identifier(data["fingerprint"], "agent key fingerprint"),
+        comment=_text(data["comment"], "agent key comment", allow_empty=True),
+        key_type=_text(data["key_type"], "agent key type", allow_empty=True),
+    )
+
+
+def agent_key_list_to_wire(key_list: Any) -> Dict[str, Any]:
+    from ..models.identity import AgentKeyList
+
+    if type(key_list) is not AgentKeyList:
+        raise TypeError("AgentKeyList is required")
+    return {"keys": [_agent_key_to_wire(key) for key in key_list.keys]}
+
+
+def agent_key_list_from_wire(value: Any) -> Any:
+    from ..models.identity import AgentKeyList
+
+    data = _strict_fields(value, required={"keys"}, context="agent key list")
+    keys = data["keys"]
+    if type(keys) is not list:
+        raise ValueError("keys must be a list")
+    return AgentKeyList(keys=tuple(_agent_key_from_wire(key) for key in keys))
+
+
+def agent_key_mutation_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import AgentKeyMutationRequest
+
+    if type(request) is not AgentKeyMutationRequest:
+        raise TypeError("AgentKeyMutationRequest is required")
+    return {"key_id": request.key_id, "scope": request.scope.value}
+
+
+def agent_key_mutation_request_from_wire(value: Any) -> Any:
+    from ..models.identity import AgentKeyMutationRequest
+
+    data = _strict_fields(
+        value,
+        required={"key_id", "scope"},
+        context="agent key mutation request",
+    )
+    return AgentKeyMutationRequest(
+        key_id=_identifier(data["key_id"], "key id"),
+        scope=_key_store_scope(data["scope"], "key store scope"),
+    )
+
+
+def deploy_key_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import DeployKeyRequest
+
+    if type(request) is not DeployKeyRequest:
+        raise TypeError("DeployKeyRequest is required")
+    return {
+        "connection_id": request.connection_id,
+        "key_id": request.key_id,
+        "scope": request.scope.value,
+        "force": request.force,
+    }
+
+
+def deploy_key_request_from_wire(value: Any) -> Any:
+    from ..models.identity import DeployKeyRequest
+
+    data = _strict_fields(
+        value,
+        required={"connection_id", "key_id", "scope", "force"},
+        context="deploy key request",
+    )
+    return DeployKeyRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        key_id=_identifier(data["key_id"], "key id"),
+        scope=_key_store_scope(data["scope"], "key store scope"),
+        force=_boolean(data["force"], "force"),
+    )
+
+
+def operation_summary_to_wire(summary: Any) -> Dict[str, Any]:
+    from ..models.operations import OperationSummary
+
+    if type(summary) is not OperationSummary:
+        raise TypeError("OperationSummary is required")
+    return {
+        "operation_id": summary.operation_id,
+        "kind": summary.kind.value,
+        "state": summary.state.value,
+        "message": summary.message,
+        "connection_id": summary.connection_id,
+        "created_at": _datetime_to_wire(summary.created_at, "operation creation time"),
+        "started_at": _optional_datetime_to_wire(
+            summary.started_at, "operation start time"
+        ),
+        "finished_at": _optional_datetime_to_wire(
+            summary.finished_at, "operation finish time"
+        ),
+        "progress": summary.progress,
+        "owner_client_id": summary.owner_client_id,
+        "failure": _service_failure_to_wire(summary.failure),
+    }
+
+
+def operation_summary_from_wire(value: Any) -> Any:
+    from ..models.operations import OperationKind, OperationState, OperationSummary
+
+    data = _strict_fields(
+        value,
+        required={
+            "operation_id",
+            "kind",
+            "state",
+            "message",
+            "connection_id",
+            "created_at",
+            "started_at",
+            "finished_at",
+            "progress",
+            "owner_client_id",
+            "failure",
+        },
+        context="operation summary",
+    )
+    try:
+        kind = OperationKind(data["kind"])
+    except (TypeError, ValueError):
+        raise ValueError("operation summary contains an unknown kind") from None
+    try:
+        state = OperationState(data["state"])
+    except (TypeError, ValueError):
+        raise ValueError("operation summary contains an unknown state") from None
+    connection_id = data["connection_id"]
+    if connection_id is not None:
+        connection_id = ConnectionId(
+            _identifier(connection_id, "operation connection id")
+        )
+    progress = data["progress"]
+    if progress is not None:
+        if type(progress) is int:
+            progress = float(progress)
+        if type(progress) is not float:
+            raise ValueError("operation progress must be a number or null")
+    return OperationSummary(
+        operation_id=_identifier(data["operation_id"], "operation id"),
+        kind=kind,
+        state=state,
+        message=_text(data["message"], "operation message", allow_empty=True),
+        connection_id=connection_id,
+        created_at=_datetime_from_wire(data["created_at"], "operation creation time"),
+        started_at=_optional_datetime_from_wire(
+            data["started_at"], "operation start time"
+        ),
+        finished_at=_optional_datetime_from_wire(
+            data["finished_at"], "operation finish time"
+        ),
+        progress=progress,
+        owner_client_id=_optional_client_id(
+            data["owner_client_id"], "operation owner client id"
+        ),
+        failure=_service_failure_from_wire(data["failure"]),
+    )
+
+
+def operation_id_request_to_wire(operation_id: Any) -> Dict[str, Any]:
+    from ..models.operations import OperationId
+
+    return {"operation_id": OperationId(_identifier(operation_id, "operation id"))}
+
+
+def operation_id_request_from_wire(value: Any) -> Any:
+    from ..models.operations import OperationId
+
+    data = _strict_fields(
+        value, required={"operation_id"}, context="operation id request"
+    )
+    return OperationId(_identifier(data["operation_id"], "operation id"))
+
+
+def _authorized_key_entry_to_wire(entry: Any) -> Dict[str, Any]:
+    from ..models.identity import AuthorizedKeyEntry
+
+    if type(entry) is not AuthorizedKeyEntry:
+        raise TypeError("AuthorizedKeyEntry is required")
+    return {
+        "line_id": entry.line_id,
+        "kind": entry.kind.value,
+        "raw_line": entry.raw_line,
+        "key_type": entry.key_type,
+        "fingerprint": entry.fingerprint,
+        "comment": entry.comment,
+        "disabled": entry.disabled,
+    }
+
+
+def _authorized_key_entry_from_wire(value: Any) -> Any:
+    from ..models.identity import AuthorizedKeyEntry, AuthorizedKeyLineKind
+
+    data = _strict_fields(
+        value,
+        required={
+            "line_id",
+            "kind",
+            "raw_line",
+            "key_type",
+            "fingerprint",
+            "comment",
+            "disabled",
+        },
+        context="authorized key entry",
+    )
+    try:
+        kind = AuthorizedKeyLineKind(data["kind"])
+    except (TypeError, ValueError):
+        raise ValueError("authorized key entry contains an unknown kind") from None
+    return AuthorizedKeyEntry(
+        line_id=_identifier(data["line_id"], "authorized key line id"),
+        kind=kind,
+        raw_line=_text(data["raw_line"], "authorized key raw line", allow_empty=True),
+        key_type=_text(data["key_type"], "authorized key type", allow_empty=True),
+        fingerprint=_text(
+            data["fingerprint"], "authorized key fingerprint", allow_empty=True
+        ),
+        comment=_text(data["comment"], "authorized key comment", allow_empty=True),
+        disabled=_boolean(data["disabled"], "authorized key disabled"),
+    )
+
+
+def authorized_key_list_to_wire(key_list: Any) -> Dict[str, Any]:
+    from ..models.identity import AuthorizedKeyList
+
+    if type(key_list) is not AuthorizedKeyList:
+        raise TypeError("AuthorizedKeyList is required")
+    return {
+        "connection_id": key_list.connection_id,
+        "entries": [
+            _authorized_key_entry_to_wire(entry) for entry in key_list.entries
+        ],
+        "file_revision": key_list.file_revision,
+    }
+
+
+def authorized_key_list_from_wire(value: Any) -> Any:
+    from ..models.identity import AuthorizedKeyList
+
+    data = _strict_fields(
+        value,
+        required={"connection_id", "entries", "file_revision"},
+        context="authorized key list",
+    )
+    entries = data["entries"]
+    if type(entries) is not list:
+        raise ValueError("entries must be a list")
+    return AuthorizedKeyList(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        entries=tuple(_authorized_key_entry_from_wire(entry) for entry in entries),
+        file_revision=_identifier(data["file_revision"], "authorized keys revision"),
+    )
+
+
+def list_authorized_keys_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import ListAuthorizedKeysRequest
+
+    if type(request) is not ListAuthorizedKeysRequest:
+        raise TypeError("ListAuthorizedKeysRequest is required")
+    return {"connection_id": request.connection_id}
+
+
+def list_authorized_keys_request_from_wire(value: Any) -> Any:
+    from ..models.identity import ListAuthorizedKeysRequest
+
+    data = _strict_fields(
+        value,
+        required={"connection_id"},
+        context="list authorized keys request",
+    )
+    return ListAuthorizedKeysRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        )
+    )
+
+
+def remove_authorized_key_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import RemoveAuthorizedKeyRequest
+
+    if type(request) is not RemoveAuthorizedKeyRequest:
+        raise TypeError("RemoveAuthorizedKeyRequest is required")
+    return {
+        "connection_id": request.connection_id,
+        "line_id": request.line_id,
+        "file_revision": request.file_revision,
+    }
+
+
+def remove_authorized_key_request_from_wire(value: Any) -> Any:
+    from ..models.identity import RemoveAuthorizedKeyRequest
+
+    data = _strict_fields(
+        value,
+        required={"connection_id", "line_id", "file_revision"},
+        context="remove authorized key request",
+    )
+    return RemoveAuthorizedKeyRequest(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection id")
+        ),
+        line_id=_identifier(data["line_id"], "authorized key line id"),
+        file_revision=_identifier(data["file_revision"], "authorized keys revision"),
     )

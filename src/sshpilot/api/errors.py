@@ -54,6 +54,8 @@ class ErrorCode(str, Enum):
     PERMISSION_DENIED = "permission_denied"
     OPERATION_CANCELLED = "operation_cancelled"
     OPERATION_TIMED_OUT = "operation_timed_out"
+    OPERATION_NOT_FOUND = "operation_not_found"
+    REMOTE_COMMAND_FAILED = "remote_command_failed"
     SFTP_SERVICE_NOT_FOUND = "sftp_service_not_found"
     SFTP_SERVICE_NOT_READY = "sftp_service_not_ready"
     SFTP_COMMAND_FAILED = "sftp_command_failed"

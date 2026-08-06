@@ -169,6 +169,8 @@ class CoreServices:
     keys: Optional[DaemonKeyService] = None
     ssh_overrides: Optional[SshOverridesService] = None
     secrets: Any = None
+    identity: Any = None
+    operations: Any = None
 
 
 @dataclass
@@ -285,6 +287,8 @@ class DaemonServer:
         self._key_service: Optional[DaemonKeyService] = None
         self._ssh_overrides_service: Optional[SshOverridesService] = None
         self._secrets_service: Any = None
+        self._identity_service: Any = None
+        self._operation_runtime: Any = None
         self._session_runtime: Optional[SessionRuntime] = None
         self._sftp_runtime: Optional[SftpServiceRuntime] = None
         self._transfer_runtime: Optional[TransferRuntime] = None
@@ -316,6 +320,7 @@ class DaemonServer:
         self._sftp_subscription: Optional[Subscription] = None
         self._transfer_subscription: Optional[Subscription] = None
         self._forward_subscription: Optional[Subscription] = None
+        self._operation_subscription: Optional[Subscription] = None
         self._terminal_queue: queue.Queue[TerminalOutput] = queue.Queue(maxsize=1024)
         self._terminal_publication_lost: Set[SessionId] = set()
         self._next_event_sequence = 0
@@ -537,6 +542,8 @@ class DaemonServer:
                 self._key_service = core.keys
                 self._ssh_overrides_service = core.ssh_overrides
                 self._secrets_service = core.secrets
+                self._identity_service = core.identity
+                self._operation_runtime = core.operations
             else:
                 self._connection_service = core
             enable_workers = getattr(
@@ -585,6 +592,10 @@ class DaemonServer:
             else:
                 self._sftp_runtime = SftpServiceRuntime(self._connection_service)
             self._transfer_runtime = TransferRuntime(self._sftp_runtime)
+            if self._operation_runtime is None:
+                from .operation_runtime import OperationRuntime
+
+                self._operation_runtime = OperationRuntime()
             forward_builder = getattr(
                 self._connection_service, "prepare_daemon_forward_launch", None
             )
@@ -628,6 +639,12 @@ class DaemonServer:
                 self._secrets_service, "attach_interaction_broker"
             ):
                 self._secrets_service.attach_interaction_broker(self._interaction_broker)
+            if self._identity_service is not None and hasattr(
+                self._identity_service, "attach_interaction_broker"
+            ):
+                self._identity_service.attach_interaction_broker(
+                    self._interaction_broker
+                )
             if gate_terminal_evidence:
                 runtime = self._session_runtime
                 broker = self._interaction_broker
@@ -645,6 +662,8 @@ class DaemonServer:
                 key_service=self._key_service,
                 ssh_overrides_service=self._ssh_overrides_service,
                 secrets_service=self._secrets_service,
+                identity_service=self._identity_service,
+                operation_runtime=self._operation_runtime,
                 lifecycle_controller=self._lifecycle,
                 diagnostics_provider=self.build_diagnostics,
             )
@@ -684,6 +703,9 @@ class DaemonServer:
             self._on_core_event
         )
         self._forward_subscription = self._forward_runtime.subscribe_events(
+            self._on_core_event
+        )
+        self._operation_subscription = self._operation_runtime.subscribe_events(
             self._on_core_event
         )
         # Defer `_accepting_core_events` until after `mark_ready()` so the
@@ -1592,6 +1614,13 @@ class DaemonServer:
 
     def _cleanup(self) -> None:
         self._stop_configuration_reload()
+        operation_runtime = self._operation_runtime
+        self._operation_runtime = None
+        if operation_runtime is not None:
+            try:
+                operation_runtime.shutdown()
+            except Exception:
+                logger.debug("operation runtime shutdown failed", exc_info=True)
         secrets = self._secrets_service
         if secrets is not None and hasattr(secrets, "shutdown"):
             try:
@@ -2031,6 +2060,8 @@ class DaemonServer:
             self._transfer_subscription = None
             forward_subscription = self._forward_subscription
             self._forward_subscription = None
+            operation_subscription = self._operation_subscription
+            self._operation_subscription = None
         if subscription is not None:
             subscription.unsubscribe()
         if session_subscription is not None:
@@ -2045,3 +2076,5 @@ class DaemonServer:
             transfer_subscription.unsubscribe()
         if forward_subscription is not None:
             forward_subscription.unsubscribe()
+        if operation_subscription is not None:
+            operation_subscription.unsubscribe()

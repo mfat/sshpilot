@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         SftpServiceId,
         TransferId,
     )
+    from sshpilot.api.models.operations import OperationId
 
 
 class RuntimeIdAllocator:
@@ -48,6 +49,7 @@ _REQUEST_ALLOCATOR = RuntimeIdAllocator("request")
 _CLIENT_ALLOCATOR = RuntimeIdAllocator("client")
 _ATTACHMENT_ALLOCATOR = RuntimeIdAllocator("attachment")
 _COMMAND_BLOCK_ALLOCATOR = RuntimeIdAllocator("cmd")
+_OPERATION_ALLOCATOR = RuntimeIdAllocator("operation")
 
 
 def new_session_id() -> SessionId:
@@ -96,6 +98,11 @@ def new_attachment_id() -> AttachmentId:
 
 def new_command_block_id() -> str:
     return _COMMAND_BLOCK_ALLOCATOR.allocate()
+
+
+def new_operation_id() -> "OperationId":
+    from sshpilot.api.models.operations import OperationId
+    return OperationId(_OPERATION_ALLOCATOR.allocate())
 
 
 def new_server_instance_id() -> str:

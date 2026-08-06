@@ -322,12 +322,20 @@ def _production_core_services():
         )
 
     overrides_service = _build_ssh_overrides_service()
+
+    def _build_identity_state_service():
+        from sshpilot.core.identity_service import IdentityStateService
+
+        return IdentityStateService(get_config_dir() / "config.json")
+
+    identity_state_service = _build_identity_state_service()
     secret_provider = DaemonConnectionSecretProvider(repository.get_record)
     launch_provider = DaemonConnectionLaunchProvider(
         repository.get_record,
         secret_provider=secret_provider,
         app_config=overrides_service,
         headless_settings=settings,
+        identity_env=identity_state_service.agent_environment,
     )
     connections = ConnectionApplicationService(
         repository,
@@ -351,13 +359,31 @@ def _production_core_services():
 
     secrets_service = _build_secrets_service()
 
+    def _build_identity_services():
+        from sshpilot.daemon.identity_service import DaemonIdentityService
+        from sshpilot.daemon.operation_runtime import OperationRuntime
+
+        key_service = DaemonKeyService(_resolve_key_root)
+        operation_runtime = OperationRuntime()
+        identity_service = DaemonIdentityService(
+            identity_state_service,
+            key_service,
+            operation_runtime,
+            launch_provider=launch_provider,
+        )
+        return key_service, operation_runtime, identity_service
+
+    key_service, operation_runtime, identity_service = _build_identity_services()
+
     return CoreServices(
         connections=connections,
         configuration_backend=AuthoritativeConfigurationBackend(repository),
         known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
-        keys=DaemonKeyService(_resolve_key_root),
+        keys=key_service,
         ssh_overrides=overrides_service,
         secrets=secrets_service,
+        identity=identity_service,
+        operations=operation_runtime,
     )
 
 

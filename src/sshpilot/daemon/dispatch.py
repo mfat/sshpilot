@@ -34,15 +34,27 @@ from sshpilot.api.models.connections import (
 )
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
+    agent_key_list_to_wire,
+    agent_key_mutation_request_from_wire,
+    authorized_key_list_to_wire,
+    deploy_key_request_from_wire,
     generate_key_request_from_wire,
     generate_key_result_to_wire,
+    identity_provider_registry_to_wire,
+    identity_state_to_wire,
     key_list_to_wire,
     known_hosts_mutation_result_to_wire,
     known_hosts_snapshot_to_wire,
+    list_authorized_keys_request_from_wire,
     list_keys_request_from_wire,
+    operation_id_request_from_wire,
+    operation_summary_to_wire,
     public_key_result_to_wire,
     read_public_key_request_from_wire,
+    remove_authorized_key_request_from_wire,
     remove_known_host_entries_request_from_wire,
+    update_identity_configuration_request_from_wire,
+    update_identity_selection_request_from_wire,
     attach_session_request_from_wire,
     attach_session_result_to_wire,
     attach_sftp_request_from_wire,
@@ -202,6 +214,18 @@ DAEMON_METHOD_CAPABILITIES = {
     "keys.list": Capability.KEYS_READ,
     "keys.get_public": Capability.KEYS_READ,
     "keys.generate": Capability.KEYS_WRITE,
+    "identity.providers.get": Capability.IDENTITY_READ,
+    "identity.state.get": Capability.IDENTITY_READ,
+    "identity.selection.update": Capability.IDENTITY_WRITE,
+    "identity.configuration.update": Capability.IDENTITY_WRITE,
+    "identity.agent.keys.get": Capability.IDENTITY_READ,
+    "identity.agent.key.add": Capability.IDENTITY_OPERATE,
+    "identity.agent.key.remove": Capability.IDENTITY_OPERATE,
+    "identity.deploy_key": Capability.IDENTITY_OPERATE,
+    "authorized_keys.list": Capability.IDENTITY_READ,
+    "authorized_keys.remove": Capability.IDENTITY_OPERATE,
+    "operations.get": Capability.IDENTITY_READ,
+    "operations.cancel": Capability.IDENTITY_OPERATE,
     "ssh_overrides.get": Capability.SSH_OVERRIDES_READ,
     "ssh_overrides.update": Capability.SSH_OVERRIDES_WRITE,
     "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
@@ -277,6 +301,12 @@ DRAIN_REJECTED_METHODS = frozenset(
         "forwards.open",
         "known_hosts.remove",
         "keys.generate",
+        "identity.selection.update",
+        "identity.configuration.update",
+        "identity.agent.key.add",
+        "identity.agent.key.remove",
+        "identity.deploy_key",
+        "authorized_keys.remove",
         "ssh_overrides.update",
         "ssh_overrides.reset",
         "secrets.configuration.update",
@@ -366,6 +396,12 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "keys.list",
         "keys.get_public",
         "keys.generate",
+        "identity.agent.keys.get",
+        "identity.agent.key.add",
+        "identity.agent.key.remove",
+        "identity.deploy_key",
+        "authorized_keys.list",
+        "authorized_keys.remove",
         "secrets.configuration.get",
         "secrets.configuration.update",
         "secrets.backends.get",
@@ -466,6 +502,8 @@ class RequestDispatcher:
         diagnostics_provider: Optional[Callable[[], Any]] = None,
         ssh_overrides_service: Any = None,
         secrets_service: Any = None,
+        identity_service: Any = None,
+        operation_runtime: Any = None,
     ) -> None:
         self._connections = connection_service
         self._session_runtime = session_runtime or SessionRuntime(connection_service)
@@ -478,6 +516,8 @@ class RequestDispatcher:
         self._lifecycle = lifecycle_controller
         self._ssh_overrides_service = ssh_overrides_service
         self._secrets_service = secrets_service
+        self._identity_service = identity_service
+        self._operation_runtime = operation_runtime
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
@@ -592,6 +632,18 @@ class RequestDispatcher:
             "keys.list": self._handle_list_keys,
             "keys.get_public": self._handle_get_public_key,
             "keys.generate": self._handle_generate_key,
+            "identity.providers.get": self._handle_get_identity_providers,
+            "identity.state.get": self._handle_get_identity_state,
+            "identity.selection.update": self._handle_update_identity_selection,
+            "identity.configuration.update": self._handle_update_identity_configuration,
+            "identity.agent.keys.get": self._handle_list_agent_keys,
+            "identity.agent.key.add": self._handle_add_agent_key,
+            "identity.agent.key.remove": self._handle_remove_agent_key,
+            "identity.deploy_key": self._handle_deploy_key,
+            "authorized_keys.list": self._handle_list_authorized_keys,
+            "authorized_keys.remove": self._handle_remove_authorized_key,
+            "operations.get": self._handle_get_operation,
+            "operations.cancel": self._handle_cancel_operation,
             "ssh_overrides.get": self._handle_get_ssh_overrides,
             "ssh_overrides.update": self._handle_update_ssh_overrides,
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
@@ -765,6 +817,7 @@ class RequestDispatcher:
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
                 secrets=self._secrets_service is not None,
+                identity=self._identity_service is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -2061,6 +2114,176 @@ class RequestDispatcher:
             on_rejected=lambda: None,
         )
 
+    # -- identity providers ------------------------------------------------
+
+    def _required_identity_service(self):
+        if not hasattr(self, "_identity_service") or self._identity_service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Identity management is unavailable",
+            )
+        return self._identity_service
+
+    def _required_operation_runtime(self):
+        if not hasattr(self, "_operation_runtime") or self._operation_runtime is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Operations are unavailable",
+            )
+        return self._operation_runtime
+
+    def _handle_get_identity_providers(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        self._require_empty_params(request)
+        service = self._required_identity_service()
+        return identity_provider_registry_to_wire(service.get_providers())
+
+    def _handle_get_identity_state(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        self._require_empty_params(request)
+        service = self._required_identity_service()
+        return identity_state_to_wire(service.get_state())
+
+    def _handle_update_identity_selection(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        typed_request = update_identity_selection_request_from_wire(request.params)
+        service = self._required_identity_service()
+        return identity_state_to_wire(service.update_selection(typed_request))
+
+    def _handle_update_identity_configuration(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        typed_request = update_identity_configuration_request_from_wire(
+            request.params
+        )
+        service = self._required_identity_service()
+        return identity_state_to_wire(service.update_configuration(typed_request))
+
+    # -- agent keys --------------------------------------------------------
+
+    def _handle_list_agent_keys(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        self._require_empty_params(request)
+        service = self._required_identity_service()
+        return DeferredResult(
+            operation=lambda: agent_key_list_to_wire(service.list_agent_keys()),
+            command_key="identity.agent",
+            on_rejected=lambda: None,
+        )
+
+    def _handle_add_agent_key(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = agent_key_mutation_request_from_wire(request.params)
+        service = self._required_identity_service()
+        return DeferredResult(
+            operation=lambda: agent_key_list_to_wire(
+                service.add_agent_key(typed_request)
+            ),
+            command_key="identity.agent",
+            on_rejected=lambda: None,
+        )
+
+    def _handle_remove_agent_key(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = agent_key_mutation_request_from_wire(request.params)
+        service = self._required_identity_service()
+        return DeferredResult(
+            operation=lambda: agent_key_list_to_wire(
+                service.remove_agent_key(typed_request)
+            ),
+            command_key="identity.agent",
+            on_rejected=lambda: None,
+        )
+
+    # -- key deployment / authorized keys ----------------------------------
+
+    def _handle_deploy_key(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = deploy_key_request_from_wire(request.params)
+        service = self._required_identity_service()
+        client_id = self._required_client_id(state)
+        return DeferredResult(
+            operation=lambda: operation_summary_to_wire(
+                service.deploy_key(typed_request, owner_client_id=client_id)
+            ),
+            command_key="identity.operations",
+            on_rejected=lambda: None,
+        )
+
+    def _handle_list_authorized_keys(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = list_authorized_keys_request_from_wire(request.params)
+        service = self._required_identity_service()
+        return DeferredResult(
+            operation=lambda: authorized_key_list_to_wire(
+                service.list_authorized_keys(typed_request)
+            ),
+            command_key=("identity.authorized_keys", typed_request.connection_id),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_remove_authorized_key(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = remove_authorized_key_request_from_wire(request.params)
+        service = self._required_identity_service()
+        client_id = self._required_client_id(state)
+        return DeferredResult(
+            operation=lambda: operation_summary_to_wire(
+                service.remove_authorized_key(
+                    typed_request, owner_client_id=client_id
+                )
+            ),
+            command_key=("identity.authorized_keys", typed_request.connection_id),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_get_operation(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        operation_id = operation_id_request_from_wire(request.params)
+        runtime = self._required_operation_runtime()
+        return operation_summary_to_wire(runtime.get_operation(operation_id))
+
+    def _handle_cancel_operation(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        operation_id = operation_id_request_from_wire(request.params)
+        runtime = self._required_operation_runtime()
+        return operation_summary_to_wire(runtime.cancel_operation(operation_id))
+
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
         if metadata is None or state.client_id is None:
@@ -2099,6 +2322,7 @@ class RequestDispatcher:
                 keys=self._key_service is not None,
                 ssh_overrides=self._ssh_overrides_service is not None,
                 secrets=self._secrets_service is not None,
+                identity=self._identity_service is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -2119,6 +2343,7 @@ class RequestDispatcher:
         keys: bool = False,
         ssh_overrides: bool = False,
         secrets: bool = False,
+        identity: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -2226,6 +2451,14 @@ class RequestDispatcher:
                     Capability.SECRETS_WRITE,
                     Capability.SECRETS_OPERATE,
                     Capability.SECRETS_TRANSFER,
+                }
+            )
+        if identity:
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.IDENTITY_READ,
+                    Capability.IDENTITY_WRITE,
+                    Capability.IDENTITY_OPERATE,
                 }
             )
         return daemon_capabilities

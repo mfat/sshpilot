@@ -33,6 +33,8 @@ ALLOWED_EDGES = {
         "sshpilot.platform.paths",  # path helpers used by CLI
         "sshpilot.ssh_config_document",  # GI-free lossless config document
         "sshpilot.ssh_config_formatter",  # GI-free managed-option registry
+        "sshpilot.identity",  # GI-free identity-provider contract
+        "sshpilot.providers",  # GI-free identity provider definitions
     ),
     "api": (
         "sshpilot.api",
@@ -49,6 +51,7 @@ ALLOWED_EDGES = {
         # GObject adapters are forbidden. Registered GObject-adapter debt is
         # tracked in tests/core/test_dependency_boundary.py::DAEMON_DEBT.
         "sshpilot.askpass_utils",
+        "sshpilot.authorized_keys_parser",  # GI-free authorized_keys parser
         "sshpilot.ssh_config_utils",
         "sshpilot.sftp",
         "sshpilot.ssh_multiplex",  # GI-free connection-multiplex helpers

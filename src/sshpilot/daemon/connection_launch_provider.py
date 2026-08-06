@@ -345,6 +345,7 @@ class DaemonConnectionLaunchProvider:
         secret_provider: Any = None,
         app_config: Any = None,
         headless_settings: Any = None,
+        identity_env: Optional[Callable[[Dict[str, str]], Dict[str, str]]] = None,
     ) -> None:
         if resolver is None:
             raise ValueError("a connection resolver is required")
@@ -352,6 +353,19 @@ class DaemonConnectionLaunchProvider:
         self._secret_provider = secret_provider
         self._app_config_view = app_config
         self._headless_settings = headless_settings
+        # Daemon-owned identity seam: applies the selected provider's agent
+        # environment (effective ``SSH_AUTH_SOCK``) to every spawned OpenSSH
+        # command.  Optional so legacy tests/compositions keep working.
+        self._identity_env = identity_env
+
+    def _apply_identity_env(self, environment: Dict[str, str]) -> Dict[str, str]:
+        if self._identity_env is None:
+            return environment
+        try:
+            return self._identity_env(environment)
+        except Exception:
+            logger.debug("identity agent environment unavailable", exc_info=True)
+            return environment
 
     def _resolve(self, connection_id: ConnectionId) -> ConnectionRecord:
         record = self._resolver(connection_id)
@@ -420,6 +434,7 @@ class DaemonConnectionLaunchProvider:
         interaction_policy: str,
         command_type: str,
         extra_args: Optional[List[str]] = None,
+        remote_command: Optional[str] = None,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
@@ -436,6 +451,7 @@ class DaemonConnectionLaunchProvider:
             config=app_config,
             command_type=command_type,
             extra_args=extra_args,
+            remote_command=remote_command,
             native_mode=True,
             interaction_policy=interaction_policy,
         )
@@ -460,6 +476,7 @@ class DaemonConnectionLaunchProvider:
         environment.pop("SSH_ASKPASS_REQUIRE", None)
         if askpass_active:
             environment["SSHPILOT_DAEMON_ASKPASS_ACTIVE"] = "1"
+        environment = self._apply_identity_env(environment)
         local_command = _string(connection.local_command)
         if local_command and len(argv) >= 2:
             argv = (
@@ -564,6 +581,176 @@ class DaemonConnectionLaunchProvider:
             ],
         )
 
+    def prepare_remote_command_launch(
+        self,
+        connection_id: ConnectionId,
+        remote_command: str,
+        *,
+        interaction_policy: str = "broker",
+    ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
+        """Canonical ``ssh <alias> <remote_command>`` for daemon remote reads/writes.
+
+        Authorized-key management runs ordinary remote shell commands through
+        the same native launch path as every other OpenSSH child: the saved
+        Host alias stays the target so the user's SSH configuration (ProxyJump,
+        identities, ports) applies unchanged.
+        """
+        if not isinstance(remote_command, str) or not remote_command.strip():
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "The remote command is invalid",
+                connection_id=connection_id,
+            )
+        record = self._resolve(connection_id)
+        connection = HeadlessConnectionView(record)
+        if connection.protocol != "ssh":
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                "Remote commands require an SSH connection",
+                connection_id=connection_id,
+            )
+        return self._prepare_ssh_launch(
+            connection,
+            interaction_policy=interaction_policy,
+            command_type="ssh",
+            extra_args=["-T"],
+            remote_command=remote_command,
+        )
+
+    def prepare_copy_id_launch(
+        self,
+        connection_id: ConnectionId,
+        public_key_path: str,
+        *,
+        force: bool = False,
+    ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
+        """Native ``ssh-copy-id`` argv/env for daemon key deployment.
+
+        Mirrors the retired frontend runner exactly: the shared base-command
+        builder composes app overrides, port and ``ClearAllForwardings`` (and
+        deliberately skips flags ``ssh-copy-id`` cannot take), then the public
+        key, known-hosts path and the connection's auth preferences are added.
+        OpenSSH — not SSH Pilot — performs the remote installation.
+        """
+        if (
+            not isinstance(public_key_path, str)
+            or not public_key_path
+            or "\x00" in public_key_path
+        ):
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "The public key path is invalid",
+                connection_id=connection_id,
+            )
+        record = self._resolve(connection_id)
+        connection = HeadlessConnectionView(record)
+        if connection.protocol != "ssh":
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                "Public-key deployment requires an SSH connection",
+                connection_id=connection_id,
+            )
+
+        host_value = connection.hostname or connection.host
+        if not host_value:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "The connection has no host or SSH alias",
+                connection_id=connection_id,
+            )
+        config_file = connection._resolve_config_override_path()
+        app_cfg = self._get_app_config()
+        from ..ssh_config_utils import get_effective_ssh_config
+        from ..ssh_connection_builder import (
+            _build_base_ssh_command,
+            resolve_native_auth,
+        )
+
+        try:
+            effective_config = get_effective_ssh_config(
+                host_value, config_file=config_file
+            )
+        except Exception:
+            effective_config = {}
+        argv = _build_base_ssh_command(
+            connection,
+            effective_config,
+            app_cfg,
+            "ssh-copy-id",
+            config_file=config_file,
+        )
+        if force:
+            argv.append("-f")
+        argv.extend(["-i", public_key_path])
+
+        known_hosts_path = None
+        if config_file:
+            known_hosts_path = os.path.join(
+                os.path.dirname(config_file), "known_hosts"
+            )
+        else:
+            try:
+                from sshpilot.platform.paths import get_ssh_dir
+
+                known_hosts_path = str(get_ssh_dir() / "known_hosts")
+            except Exception:
+                known_hosts_path = None
+        if known_hosts_path:
+            argv += ["-o", f"UserKnownHostsFile={known_hosts_path}"]
+
+        # Authentication preferences mirror the frontend runner: password
+        # method narrows PreferredAuthentications; a stored password alongside
+        # key auth keeps the combined method list.
+        manager = self._manager_shim(connection)
+        auth_method = connection.auth_method
+        prefer_password = auth_method == 1
+        stored_password = None
+        try:
+            stored_password = manager.get_connection_password(connection)
+        except Exception:
+            stored_password = None
+        combined_auth = bool(stored_password) and not prefer_password
+        if prefer_password:
+            argv += ["-o", "PreferredAuthentications=keyboard-interactive,password"]
+            if bool(connection.data.get("pubkey_auth_no")):
+                argv += ["-o", "PubkeyAuthentication=no"]
+        elif combined_auth:
+            argv += [
+                "-o",
+                "PreferredAuthentications=gssapi-with-mic,hostbased,"
+                "publickey,keyboard-interactive,password",
+            ]
+
+        target = (
+            f"{connection.username}@{host_value}"
+            if connection.username
+            else host_value
+        )
+        argv.append(target)
+
+        # Sanitized daemon base environment (same allowlist the session path
+        # uses), then the daemon-owned identity agent environment.
+        auth = resolve_native_auth(
+            connection, manager, app_cfg, interaction_policy="broker"
+        )
+        environment = dict(auth.env or {})
+        _ensure_writable_ssh_home(environment)
+        if os.path.exists("/app/bin"):
+            current_path = environment.get("PATH", "")
+            if "/app/bin" not in current_path:
+                environment["PATH"] = f"/app/bin:{current_path}"
+        environment = self._apply_identity_env(environment)
+
+        executable = _resolve_ssh_copy_id(environment.get("PATH"))
+        if executable is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "ssh-copy-id is not installed",
+                connection_id=connection_id,
+            )
+        argv[0] = executable
+        return tuple(argv), environment
+
     def _prepare_protocol_launch(
         self,
         connection: HeadlessConnectionView,
@@ -613,3 +800,28 @@ class DaemonConnectionLaunchProvider:
                 connection_id=connection.id,
             )
         return (executable, *argv[1:]), environment
+
+
+def _resolve_ssh_copy_id(path: Optional[str]) -> Optional[str]:
+    """Resolve the native ``ssh-copy-id`` executable (Flatpak-aware)."""
+    flatpak_path = "/app/bin/ssh-copy-id"
+    if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
+        return flatpak_path
+    return shutil.which("ssh-copy-id", path=path)
+
+
+def _ensure_writable_ssh_home(env: Dict[str, str]) -> None:
+    """Give ssh-copy-id a writable HOME inside the Flatpak sandbox.
+
+    Mirrors ``ssh_utils.ensure_writable_ssh_home`` without importing the
+    GI-coupled platform adapter (forbidden in the daemon).
+    """
+    if not os.path.exists("/.flatpak-info"):
+        return
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    alt_home = os.path.join(runtime_dir, "sshcopyid-home")
+    try:
+        os.makedirs(os.path.join(alt_home, ".ssh"), exist_ok=True)
+    except OSError:
+        return
+    env["HOME"] = alt_home

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
-from typing import Callable, Deque, Dict, Iterable, List, Optional, Sequence
+from typing import Callable, Deque, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -322,6 +322,77 @@ class InteractionBroker:
         if trailing_args:
             argv = (*argv, *trailing_args)
         return argv, environment
+
+    def prepare_operation_launch(
+        self,
+        argv: Sequence[str],
+        environment: Mapping[str, str],
+        *,
+        scope_id: SessionId,
+        connection_id: Optional[ConnectionId],
+        hostname: str = "",
+        username: str = "",
+        port: int = 22,
+    ) -> tuple[tuple[str, ...], dict[str, str]]:
+        """Broker askpass environment for a non-session OpenSSH launch.
+
+        Long-running daemon operations (``ssh-copy-id`` deployment, remote
+        authorized-key mutations, agent key loading) run OpenSSH children
+        that must surface password/passphrase/host-key prompts as typed
+        interactions even though no terminal session exists.  The returned
+        environment is *environment* with SSH Pilot's private askpass
+        transport replaced by the broker's, exactly like
+        :meth:`prepare_launch`.  The caller owns context cleanup via
+        ``cancel_session(scope_id)`` once the child exits.
+        """
+
+        argv = tuple(argv)
+        if not argv:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The operation launch command is invalid",
+            )
+        env = dict(environment)
+        token = secrets.token_urlsafe(32)
+        context = _AskpassContext(
+            token=token,
+            session_id=scope_id,
+            connection_id=connection_id or ConnectionId("identity-agent"),
+            hostname=hostname,
+            username=username,
+            port=port,
+            control_path="",
+            control_target=str(argv[-1]),
+            control_argv=(),
+            attempts={},
+            stored_attempted=set(),
+            pending_remember=[],
+            user_known_hosts_paths=(),
+        )
+        with self._condition:
+            self._require_open_locked()
+            self._askpass_contexts[token] = context
+            self._condition.notify_all()
+        env.pop("SSHPILOT_DAEMON_ASKPASS_ACTIVE", None)
+        for name in tuple(env):
+            if (
+                name in {"SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"}
+                or name.startswith("SSHPILOT_ASKPASS_")
+                or name.startswith("SSHPILOT_SESSION_")
+                or name.startswith("SSHPILOT_DAEMON_ASKPASS_")
+            ):
+                env.pop(name, None)
+        # Headless OpenSSH children have no TTY: every prompt must reach the
+        # broker (REQUIRE=force), never fall back to a missing terminal.
+        env["SSH_ASKPASS"] = str(self._askpass_helper_path)
+        env["SSH_ASKPASS_REQUIRE"] = "force"
+        env["DISPLAY"] = env.get("DISPLAY") or ":sshpilot-daemon"
+        env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = str(self._askpass_socket_path)
+        env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
+        append_askpass_log(
+            f"ASKPASS: daemon broker ready for operation scope={scope_id}"
+        )
+        return argv, env
 
     @staticmethod
     def _strict_host_key_mode(

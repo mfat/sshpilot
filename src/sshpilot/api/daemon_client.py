@@ -340,6 +340,18 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_ssh_backups": Capability.SECRETS_TRANSFER,
     "import_ssh_backup": Capability.SECRETS_TRANSFER,
     "preview_ssh_backup": Capability.SECRETS_TRANSFER,
+    "get_identity_providers": Capability.IDENTITY_READ,
+    "get_identity_state": Capability.IDENTITY_READ,
+    "update_identity_selection": Capability.IDENTITY_WRITE,
+    "update_identity_configuration": Capability.IDENTITY_WRITE,
+    "list_agent_keys": Capability.IDENTITY_READ,
+    "add_agent_key": Capability.IDENTITY_OPERATE,
+    "remove_agent_key": Capability.IDENTITY_OPERATE,
+    "deploy_key": Capability.IDENTITY_OPERATE,
+    "list_authorized_keys": Capability.IDENTITY_READ,
+    "remove_authorized_key": Capability.IDENTITY_OPERATE,
+    "get_operation": Capability.IDENTITY_READ,
+    "cancel_operation": Capability.IDENTITY_OPERATE,
 }
 
 
@@ -1943,6 +1955,214 @@ class DaemonClient:
         finally:
             secret[:] = b"\0" * len(secret)
             secret.clear()
+
+    # ------------------------------------------------------------------
+    # Identity providers, agent keys, deployment, authorized keys
+    # ------------------------------------------------------------------
+
+    def get_identity_providers(self):
+        """The identity provider registry (safe metadata only)."""
+        self._require_capability(Capability.IDENTITY_READ)
+        result = self._request("identity.providers.get", {})
+        try:
+            from sshpilot.api.transport.codec import (
+                identity_provider_registry_from_wire,
+            )
+            return identity_provider_registry_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid identity registry")
+
+    def get_identity_state(self):
+        """The current identity selection state (metadata only)."""
+        self._require_capability(Capability.IDENTITY_READ)
+        result = self._request("identity.state.get", {})
+        try:
+            from sshpilot.api.transport.codec import identity_state_from_wire
+            return identity_state_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid identity state")
+
+    def update_identity_selection(self, request):
+        from sshpilot.api.models.identity import UpdateIdentitySelectionRequest
+
+        self._require_capability(Capability.IDENTITY_WRITE)
+        if type(request) is not UpdateIdentitySelectionRequest:
+            raise TypeError("an UpdateIdentitySelectionRequest is required")
+        from sshpilot.api.transport.codec import (
+            identity_state_from_wire,
+            update_identity_selection_request_to_wire,
+        )
+        result = self._request(
+            "identity.selection.update",
+            update_identity_selection_request_to_wire(request),
+        )
+        try:
+            return identity_state_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid identity state")
+
+    def update_identity_configuration(self, request):
+        from sshpilot.api.models.identity import UpdateIdentityConfigurationRequest
+
+        self._require_capability(Capability.IDENTITY_WRITE)
+        if type(request) is not UpdateIdentityConfigurationRequest:
+            raise TypeError("an UpdateIdentityConfigurationRequest is required")
+        from sshpilot.api.transport.codec import (
+            identity_state_from_wire,
+            update_identity_configuration_request_to_wire,
+        )
+        result = self._request(
+            "identity.configuration.update",
+            update_identity_configuration_request_to_wire(request),
+        )
+        try:
+            return identity_state_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid identity state")
+
+    def list_agent_keys(self):
+        """Keys currently loaded in the selected agent (via native ssh-add)."""
+        self._require_capability(Capability.IDENTITY_READ)
+        result = self._request("identity.agent.keys.get", {})
+        try:
+            from sshpilot.api.transport.codec import agent_key_list_from_wire
+            return agent_key_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid agent key list")
+
+    def add_agent_key(self, request):
+        from sshpilot.api.models.identity import AgentKeyMutationRequest
+
+        self._require_capability(Capability.IDENTITY_OPERATE)
+        if type(request) is not AgentKeyMutationRequest:
+            raise TypeError("an AgentKeyMutationRequest is required")
+        from sshpilot.api.transport.codec import (
+            agent_key_list_from_wire,
+            agent_key_mutation_request_to_wire,
+        )
+        result = self._request(
+            "identity.agent.key.add",
+            agent_key_mutation_request_to_wire(request),
+        )
+        try:
+            return agent_key_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid agent key list")
+
+    def remove_agent_key(self, request):
+        from sshpilot.api.models.identity import AgentKeyMutationRequest
+
+        self._require_capability(Capability.IDENTITY_OPERATE)
+        if type(request) is not AgentKeyMutationRequest:
+            raise TypeError("an AgentKeyMutationRequest is required")
+        from sshpilot.api.transport.codec import (
+            agent_key_list_from_wire,
+            agent_key_mutation_request_to_wire,
+        )
+        result = self._request(
+            "identity.agent.key.remove",
+            agent_key_mutation_request_to_wire(request),
+        )
+        try:
+            return agent_key_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid agent key list")
+
+    def deploy_key(self, request):
+        """Start a native ssh-copy-id deployment; returns the operation."""
+        from sshpilot.api.models.identity import DeployKeyRequest
+
+        self._require_capability(Capability.IDENTITY_OPERATE)
+        if type(request) is not DeployKeyRequest:
+            raise TypeError("a DeployKeyRequest is required")
+        from sshpilot.api.transport.codec import (
+            deploy_key_request_to_wire,
+            operation_summary_from_wire,
+        )
+        result = self._request(
+            "identity.deploy_key",
+            deploy_key_request_to_wire(request),
+            mutation_description="SSH key deployment",
+        )
+        try:
+            return operation_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid operation")
+
+    def list_authorized_keys(self, request):
+        from sshpilot.api.models.identity import ListAuthorizedKeysRequest
+
+        self._require_capability(Capability.IDENTITY_READ)
+        if type(request) is not ListAuthorizedKeysRequest:
+            raise TypeError("a ListAuthorizedKeysRequest is required")
+        from sshpilot.api.transport.codec import (
+            authorized_key_list_from_wire,
+            list_authorized_keys_request_to_wire,
+        )
+        result = self._request(
+            "authorized_keys.list",
+            list_authorized_keys_request_to_wire(request),
+        )
+        try:
+            return authorized_key_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned an invalid authorized key list"
+            )
+
+    def remove_authorized_key(self, request):
+        from sshpilot.api.models.identity import RemoveAuthorizedKeyRequest
+
+        self._require_capability(Capability.IDENTITY_OPERATE)
+        if type(request) is not RemoveAuthorizedKeyRequest:
+            raise TypeError("a RemoveAuthorizedKeyRequest is required")
+        from sshpilot.api.transport.codec import (
+            operation_summary_from_wire,
+            remove_authorized_key_request_to_wire,
+        )
+        result = self._request(
+            "authorized_keys.remove",
+            remove_authorized_key_request_to_wire(request),
+            mutation_description="authorized key removal",
+        )
+        try:
+            return operation_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid operation")
+
+    def get_operation(self, operation_id):
+        from sshpilot.api.models.operations import OperationId
+
+        self._require_capability(Capability.IDENTITY_READ)
+        from sshpilot.api.transport.codec import (
+            operation_id_request_to_wire,
+            operation_summary_from_wire,
+        )
+        result = self._request(
+            "operations.get",
+            operation_id_request_to_wire(OperationId(str(operation_id))),
+        )
+        try:
+            return operation_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid operation")
+
+    def cancel_operation(self, operation_id):
+        from sshpilot.api.models.operations import OperationId
+
+        self._require_capability(Capability.IDENTITY_OPERATE)
+        from sshpilot.api.transport.codec import (
+            operation_id_request_to_wire,
+            operation_summary_from_wire,
+        )
+        result = self._request(
+            "operations.cancel",
+            operation_id_request_to_wire(OperationId(str(operation_id))),
+        )
+        try:
+            return operation_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid operation")
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         with self._state_lock:

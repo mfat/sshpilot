@@ -35,6 +35,18 @@ from .models.connection_store import (
     ReorderConnectionRequest,
     RenameTagRequest,
 )
+from .models.identity import (
+    AgentKeyList,
+    AgentKeyMutationRequest,
+    AuthorizedKeyList,
+    DeployKeyRequest,
+    IdentityProviderRegistry,
+    IdentityState,
+    ListAuthorizedKeysRequest,
+    RemoveAuthorizedKeyRequest,
+    UpdateIdentityConfigurationRequest,
+    UpdateIdentitySelectionRequest,
+)
 from .models.interactions import (
     InteractionClaim,
     InteractionDecisionRequest,
@@ -98,6 +110,8 @@ from .models.operations import (
     ListDirectoryResult,
     OpenForwardRequest,
     OpenSftpRequest,
+    OperationId,
+    OperationSummary,
     RemoteFileEntry,
     SftpChmodRequest,
     SftpPathRequest,
@@ -409,6 +423,50 @@ class SshPilotClient(Protocol):
         ...
 
     def generate_key(self, request: GenerateKeyRequest) -> GenerateKeyResult:
+        ...
+
+    def get_identity_providers(self) -> IdentityProviderRegistry:
+        ...
+
+    def get_identity_state(self) -> IdentityState:
+        ...
+
+    def update_identity_selection(
+        self, request: UpdateIdentitySelectionRequest
+    ) -> IdentityState:
+        ...
+
+    def update_identity_configuration(
+        self, request: UpdateIdentityConfigurationRequest
+    ) -> IdentityState:
+        ...
+
+    def list_agent_keys(self) -> AgentKeyList:
+        ...
+
+    def add_agent_key(self, request: AgentKeyMutationRequest) -> AgentKeyList:
+        ...
+
+    def remove_agent_key(self, request: AgentKeyMutationRequest) -> AgentKeyList:
+        ...
+
+    def deploy_key(self, request: DeployKeyRequest) -> OperationSummary:
+        ...
+
+    def list_authorized_keys(
+        self, request: ListAuthorizedKeysRequest
+    ) -> AuthorizedKeyList:
+        ...
+
+    def remove_authorized_key(
+        self, request: RemoveAuthorizedKeyRequest
+    ) -> OperationSummary:
+        ...
+
+    def get_operation(self, operation_id: OperationId) -> OperationSummary:
+        ...
+
+    def cancel_operation(self, operation_id: OperationId) -> OperationSummary:
         ...
 
     def get_global_ssh_overrides(self) -> GlobalSshOverrides:

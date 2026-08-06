@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Tuple
+from math import isfinite
+from typing import NewType, Optional, Tuple
 
 from .common import (
     ClientId,
@@ -451,3 +452,109 @@ class PluginOperationResult:
     request_id: RequestId
     plugin_id: str
     values: Tuple[Tuple[str, str], ...] = field(default=(), repr=False)
+
+
+# ---------------------------------------------------------------------------
+# Minimal shared operation lifecycle
+# ---------------------------------------------------------------------------
+#
+# User-visible daemon commands that may take time (public-key deployment,
+# remote authorized-key mutations, later SCP/broadcast work) share one small
+# lifecycle: an opaque id, a kind, a queued/running/succeeded/failed/cancelled
+# state, a safe message, start/finish timestamps and optional safe progress.
+# There is deliberately no workflow language, dependency graph, resumable
+# persistence, or plugin action framework here.
+
+OperationId = NewType("OperationId", str)
+
+
+class OperationKind(str, Enum):
+    KEY_DEPLOYMENT = "key_deployment"
+    AUTHORIZED_KEY_REMOVAL = "authorized_key_removal"
+
+
+class OperationState(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+_TERMINAL_OPERATION_STATES = frozenset(
+    {OperationState.SUCCEEDED, OperationState.FAILED, OperationState.CANCELLED}
+)
+
+
+def is_terminal_operation_state(state: OperationState) -> bool:
+    """Whether *state* ends the operation lifecycle."""
+    return state in _TERMINAL_OPERATION_STATES
+
+
+def is_valid_operation_transition(
+    current: OperationState, target: OperationState
+) -> bool:
+    """Valid transitions for the minimal operation lifecycle."""
+    if not isinstance(current, OperationState) or not isinstance(
+        target, OperationState
+    ):
+        return False
+    if current is OperationState.QUEUED:
+        return target in (
+            OperationState.RUNNING,
+            OperationState.FAILED,
+            OperationState.CANCELLED,
+        )
+    if current is OperationState.RUNNING:
+        return target in _TERMINAL_OPERATION_STATES
+    return False
+
+
+@dataclass(frozen=True)
+class OperationSummary:
+    """Frontend-safe snapshot of one daemon operation."""
+
+    operation_id: OperationId
+    kind: OperationKind
+    state: OperationState
+    message: str
+    created_at: datetime
+    connection_id: Optional[ConnectionId] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    progress: Optional[float] = None
+    owner_client_id: Optional[ClientId] = None
+    failure: Optional[ServiceFailure] = None
+
+    def __post_init__(self) -> None:
+        require_identifier(self.operation_id, "operation id")
+        if not isinstance(self.kind, OperationKind):
+            raise TypeError("operation kind must be an OperationKind")
+        if not isinstance(self.state, OperationState):
+            raise TypeError("operation state must be an OperationState")
+        if type(self.message) is not str or "\x00" in self.message:
+            raise ValueError("operation message must be a string without NUL")
+        if self.connection_id is not None:
+            require_identifier(self.connection_id, "connection id")
+        if type(self.created_at) is not datetime or self.created_at.tzinfo is None:
+            raise ValueError("operation created_at must be timezone-aware")
+        if self.started_at is not None and (
+            type(self.started_at) is not datetime
+            or self.started_at.tzinfo is None
+        ):
+            raise ValueError("operation started_at must be timezone-aware or None")
+        if self.finished_at is not None and (
+            type(self.finished_at) is not datetime
+            or self.finished_at.tzinfo is None
+        ):
+            raise ValueError("operation finished_at must be timezone-aware or None")
+        if self.progress is not None and (
+            type(self.progress) is not float
+            or not isfinite(self.progress)
+            or not 0.0 <= self.progress <= 1.0
+        ):
+            raise ValueError("operation progress must be between 0.0 and 1.0 or None")
+        if self.owner_client_id is not None:
+            require_identifier(self.owner_client_id, "operation owner client id")
+        if self.failure is not None and type(self.failure) is not ServiceFailure:
+            raise TypeError("operation failure must be ServiceFailure or None")
