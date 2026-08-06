@@ -17,8 +17,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections import OrderedDict
-from typing import Callable, Dict, Optional
+from collections import OrderedDict, deque
+from typing import Callable, Deque, Dict, Optional, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEventCallback, EventPublisher, EventType, Subscription
@@ -92,11 +92,16 @@ class OperationRuntime:
         self._terminal_records: "OrderedDict[OperationId, None]" = OrderedDict()
         self._bodies: Dict[OperationId, OperationBody] = {}
         self._threads: Dict[OperationId, threading.Thread] = {}
+        self._thread_started: set[OperationId] = set()
         self._cancel_requested: Dict[OperationId, bool] = {}
         self._cancel_hooks: Dict[OperationId, Callable[[], None]] = {}
         self._cancel_hook_called: set[OperationId] = set()
         self._processes: Dict[OperationId, object] = {}
         self._publisher = EventPublisher()
+        self._event_condition = threading.Condition(threading.Lock())
+        self._event_queue: Deque[Tuple[EventType, OperationSummary]] = deque()
+        self._event_draining = False
+        self._publisher_close_requested = False
         self._closed = False
         self._terminal_retention = terminal_retention
         self._shutdown_timeout = float(shutdown_timeout)
@@ -145,13 +150,18 @@ class OperationRuntime:
                 daemon=True,
             )
             self._threads[operation_id] = thread
-        self._publish(EventType.OPERATION_CREATED, summary)
+            should_drain = self._queue_event_locked(
+                EventType.OPERATION_CREATED, summary
+            )
+        if should_drain:
+            self._drain_events()
         with self._condition:
             current = self._records.get(operation_id)
             if current is None or current.state is not OperationState.QUEUED or self._closed:
                 self._cleanup_worker_locked(operation_id)
                 return current or summary
-        thread.start()
+            self._thread_started.add(operation_id)
+            thread.start()
         return summary
 
     def get_operation(self, operation_id: OperationId) -> OperationSummary:
@@ -193,7 +203,12 @@ class OperationRuntime:
         if process is not None:
             self._terminate_process(process)
         if summary.state is OperationState.QUEUED:
-            self._publish(EventType.OPERATION_STATE_CHANGED, updated)
+            with self._condition:
+                should_drain = self._queue_event_locked(
+                    EventType.OPERATION_STATE_CHANGED, updated
+                )
+            if should_drain:
+                self._drain_events()
         return updated
 
     def report_progress(
@@ -221,7 +236,11 @@ class OperationRuntime:
                 failure=summary.failure,
             )
             self._records[operation_id] = updated
-        self._publish(EventType.OPERATION_STATE_CHANGED, updated)
+            should_drain = self._queue_event_locked(
+                EventType.OPERATION_STATE_CHANGED, updated
+            )
+        if should_drain:
+            self._drain_events()
 
     def set_operation_process(self, operation_id: OperationId, process: object) -> None:
         with self._condition:
@@ -239,16 +258,66 @@ class OperationRuntime:
         if hook is not None and not callable(hook):
             raise TypeError("cancel hook must be callable or None")
         with self._condition:
+            summary = self._records.get(operation_id)
+            if summary is None or operation_id in self._cancel_hook_called:
+                return
             if hook is None:
                 self._cancel_hooks.pop(operation_id, None)
-            else:
-                self._cancel_hooks[operation_id] = hook
-                cancel = self._cancel_requested.get(operation_id, False)
-        if hook is not None and cancel:
-            with self._condition:
+                return
+            self._cancel_hooks[operation_id] = hook
+            cancel = self._cancel_requested.get(operation_id, False)
+            if cancel:
                 hook = self._take_cancel_hook_locked(operation_id)
-            if hook is not None:
-                self._invoke_cancel_hook(hook)
+            else:
+                hook = None
+        if hook is not None:
+            self._invoke_cancel_hook(hook)
+
+    def _queue_event_locked(
+        self, event_type: EventType, summary: OperationSummary
+    ) -> bool:
+        with self._event_condition:
+            self._event_queue.append((event_type, summary))
+            if self._event_draining:
+                return False
+            self._event_draining = True
+            return True
+
+    def _drain_events(self) -> None:
+        while True:
+            with self._event_condition:
+                if self._event_queue:
+                    event_type, summary = self._event_queue.popleft()
+                else:
+                    self._event_draining = False
+                    close = self._publisher_close_requested
+                    self._publisher_close_requested = False
+                    break
+            try:
+                self._publisher.publish(
+                    event_type,
+                    summary,
+                    connection_id=summary.connection_id,
+                )
+            except RuntimeError:
+                logger.debug("Operation event publisher is closed", exc_info=True)
+        if close:
+            self._publisher.close()
+
+    def _request_publisher_close(self) -> None:
+        with self._event_condition:
+            self._publisher_close_requested = True
+            should_drain = not self._event_draining and bool(self._event_queue)
+            close_now = not self._event_draining and not self._event_queue
+            if should_drain:
+                self._event_draining = True
+        if should_drain:
+            self._drain_events()
+        elif close_now:
+            self._publisher.close()
+
+    def _queue_terminal_event_locked(self, summary: OperationSummary) -> None:
+        self._queue_event_locked(EventType.OPERATION_STATE_CHANGED, summary)
 
     def cancel_requested(self, operation_id: OperationId) -> bool:
         with self._condition:
@@ -276,12 +345,15 @@ class OperationRuntime:
                 )
                 self._records[operation_id] = updated
                 publish = updated
+            should_drain = self._queue_event_locked(
+                EventType.OPERATION_STATE_CHANGED, publish
+            )
+        if should_drain:
+            self._drain_events()
         if publish.state is OperationState.CANCELLED:
-            self._publish(EventType.OPERATION_STATE_CHANGED, publish)
             with self._condition:
                 self._cleanup_worker_locked(operation_id)
             return
-        self._publish(EventType.OPERATION_STATE_CHANGED, publish)
         handle = OperationHandle(self, operation_id)
         try:
             final_message = body(handle)
@@ -302,7 +374,11 @@ class OperationRuntime:
                 self._records[operation_id] = updated
                 if is_terminal_operation_state(target):
                     self._remember_terminal_locked(operation_id)
-            self._publish(EventType.OPERATION_STATE_CHANGED, updated)
+                should_drain = self._queue_event_locked(
+                    EventType.OPERATION_STATE_CHANGED, updated
+                )
+            if should_drain:
+                self._drain_events()
         except OperationCancelled:
             self._finish_from_worker(
                 operation_id,
@@ -372,7 +448,11 @@ class OperationRuntime:
             )
             self._records[operation_id] = updated
             self._remember_terminal_locked(operation_id)
-        self._publish(EventType.OPERATION_STATE_CHANGED, updated)
+            should_drain = self._queue_event_locked(
+                EventType.OPERATION_STATE_CHANGED, updated
+            )
+        if should_drain:
+            self._drain_events()
 
     def _build_transition_locked(
         self,
@@ -400,16 +480,6 @@ class OperationRuntime:
             failure=failure,
         )
 
-    def _publish(self, event_type: EventType, summary: OperationSummary) -> None:
-        try:
-            self._publisher.publish(
-                event_type,
-                summary,
-                connection_id=summary.connection_id,
-            )
-        except RuntimeError:
-            logger.debug("Operation event publisher is closed", exc_info=True)
-
     def _remember_terminal_locked(self, operation_id: OperationId) -> None:
         self._terminal_records.pop(operation_id, None)
         self._terminal_records[operation_id] = None
@@ -435,6 +505,7 @@ class OperationRuntime:
     def _cleanup_worker_locked(self, operation_id: OperationId) -> None:
         self._bodies.pop(operation_id, None)
         self._threads.pop(operation_id, None)
+        self._thread_started.discard(operation_id)
         self._cancel_requested.pop(operation_id, None)
         self._cancel_hooks.pop(operation_id, None)
         self._cancel_hook_called.discard(operation_id)
@@ -471,7 +542,7 @@ class OperationRuntime:
                     )
                     self._records[operation_id] = updated
                     self._remember_terminal_locked(operation_id)
-                    terminal_events.append(updated)
+                    self._queue_terminal_event_locked(updated)
         for hook in hooks:
             self._invoke_cancel_hook(hook)
         for process in processes:
@@ -480,7 +551,9 @@ class OperationRuntime:
         for operation_id in live:
             with self._condition:
                 thread = self._threads.get(operation_id)
-            if thread is None or thread is threading.current_thread():
+            with self._condition:
+                started = operation_id in self._thread_started
+            if thread is None or not started or thread is threading.current_thread():
                 continue
             remaining = max(0.0, deadline - time.monotonic())
             thread.join(timeout=remaining)
@@ -497,9 +570,8 @@ class OperationRuntime:
                 self._records[operation_id] = updated
                 self._remember_terminal_locked(operation_id)
                 terminal_events.append(updated)
-        for summary in terminal_events:
-            self._publish(EventType.OPERATION_STATE_CHANGED, summary)
-        self._publisher.close()
+                self._queue_event_locked(EventType.OPERATION_STATE_CHANGED, updated)
+        self._request_publisher_close()
 
     @staticmethod
     def _terminate_process(process: object) -> None:

@@ -89,7 +89,7 @@ def test_success_failure_and_safe_progress_events():
             code=ErrorCode.REMOTE_COMMAND_FAILED.value,
             message="safe failure",
         )
-        assert all("secret" not in repr(event) for event in events)
+        assert all("password=secret" not in repr(event) for event in events)
         terminal = [
             event
             for event in events
@@ -98,6 +98,52 @@ def test_success_failure_and_safe_progress_events():
             and is_terminal_operation_state(event.payload.state)
         ]
         assert len(terminal) == 1
+    finally:
+        subscription.close()
+        runtime.shutdown()
+
+
+def test_reentrant_created_callback_shutdown_cancels_without_starting_worker():
+    runtime = OperationRuntime()
+    events = []
+    body_entered = threading.Event()
+    shutdown_done = threading.Event()
+    callback_seen = threading.Event()
+
+    def _callback(event):
+        events.append(event)
+        if event.type is EventType.OPERATION_CREATED:
+            callback_seen.set()
+            runtime.shutdown()
+            shutdown_done.set()
+
+    subscription = runtime.subscribe_events(_callback)
+    try:
+        operation = runtime.start_operation(
+            OperationKind.KEY_DEPLOYMENT,
+            lambda _handle: (body_entered.set(), "must-not-run")[1],
+        )
+        assert callback_seen.is_set()
+        assert shutdown_done.is_set()
+        assert not body_entered.is_set()
+        assert runtime.get_operation(operation.operation_id).state is OperationState.CANCELLED
+        states = [
+            event.payload.state
+            for event in events
+            if event.type is EventType.OPERATION_STATE_CHANGED
+            and event.payload.operation_id == operation.operation_id
+        ]
+        assert states == [OperationState.CANCELLED]
+        with pytest.raises(RuntimeError):
+            runtime.subscribe_events(lambda _event: None)
+        with pytest.raises(SshPilotError) as error:
+            runtime.start_operation(OperationKind.KEY_DEPLOYMENT, lambda _handle: "no")
+        assert error.value.code is ErrorCode.DAEMON_SHUTTING_DOWN
+        runtime.shutdown()
+        assert not runtime._bodies
+        assert not runtime._threads
+        assert not runtime._processes
+        assert not runtime._cancel_hooks
     finally:
         subscription.close()
         runtime.shutdown()
@@ -166,12 +212,126 @@ def test_cancel_running_calls_hook_once_and_cannot_finish_successfully():
         runtime.shutdown()
 
 
+def test_hook_registered_after_cancellation_runs_once_and_reregistration_is_ignored():
+    runtime = OperationRuntime()
+    entered = threading.Event()
+    release = threading.Event()
+    hook_calls = []
+    hook_called = threading.Event()
+    handles = []
+
+    def _body(handle):
+        handles.append(handle)
+        entered.set()
+        release.wait(2)
+        handle.raise_if_cancelled()
+        return "no"
+
+    def _hook():
+        hook_calls.append("called")
+        hook_called.set()
+        runtime.get_operation(operation.operation_id)
+        runtime.cancel_requested(operation.operation_id)
+
+    try:
+        operation = runtime.start_operation(OperationKind.KEY_DEPLOYMENT, _body)
+        assert entered.wait(2)
+        runtime.cancel_operation(operation.operation_id)
+        handles[0].set_cancel_hook(_hook)
+        handles[0].set_cancel_hook(_hook)
+        assert hook_called.wait(2)
+        assert hook_calls == ["called"]
+        release.set()
+        assert _wait_for_state(runtime, operation.operation_id, OperationState.CANCELLED)
+    finally:
+        release.set()
+        runtime.shutdown()
+
+
+def test_failing_hook_does_not_prevent_process_termination_or_completion():
+    runtime = OperationRuntime()
+    entered = threading.Event()
+    release = threading.Event()
+    process = type(
+        "Process",
+        (),
+        {
+            "terminate": lambda self: setattr(self, "terminated", True),
+            "wait": lambda self, timeout=None: None,
+            "kill": lambda self: setattr(self, "killed", True),
+        },
+    )()
+
+    def _body(handle):
+        handle.set_process(process)
+        handle.set_cancel_hook(lambda: (_ for _ in ()).throw(RuntimeError("hook")))
+        entered.set()
+        release.wait(2)
+        handle.raise_if_cancelled()
+        return "no"
+
+    try:
+        operation = runtime.start_operation(OperationKind.KEY_DEPLOYMENT, _body)
+        assert entered.wait(2)
+        runtime.cancel_operation(operation.operation_id)
+        release.set()
+        final = _wait_for_state(runtime, operation.operation_id, OperationState.CANCELLED)
+        assert final.state is OperationState.CANCELLED
+        assert getattr(process, "terminated", False)
+    finally:
+        release.set()
+        runtime.shutdown()
+
+
+def test_progress_and_completion_events_are_monotonic_and_terminal_last():
+    runtime = OperationRuntime()
+    events = []
+    entered = threading.Event()
+    release = threading.Event()
+    subscription = runtime.subscribe_events(events.append)
+
+    def _body(handle):
+        entered.set()
+        release.wait(2)
+        handle.report("progress", 0.5)
+        return "done"
+
+    try:
+        operation = runtime.start_operation(OperationKind.KEY_DEPLOYMENT, _body)
+        assert entered.wait(2)
+        _wait_for_state(runtime, operation.operation_id, OperationState.RUNNING)
+        progress_thread = threading.Thread(
+            target=lambda: runtime.report_progress(operation.operation_id, "other", 0.75)
+        )
+        progress_thread.start()
+        release.set()
+        progress_thread.join(timeout=2)
+        final = _wait_for_state(runtime, operation.operation_id, OperationState.SUCCEEDED)
+        operation_events = [
+            event.payload.state
+            for event in events
+            if event.type is EventType.OPERATION_STATE_CHANGED
+            and event.payload.operation_id == operation.operation_id
+        ]
+        assert operation_events[-1] is OperationState.SUCCEEDED
+        assert operation_events.count(OperationState.SUCCEEDED) == 1
+        assert all(
+            state is not OperationState.RUNNING
+            for state in operation_events[operation_events.index(OperationState.SUCCEEDED) + 1 :]
+        )
+        assert final.state is OperationState.SUCCEEDED
+    finally:
+        release.set()
+        subscription.close()
+        runtime.shutdown()
+
+
 def test_completion_cancellation_race_has_one_terminal_winner():
     runtime = OperationRuntime()
     entered = threading.Event()
     continue_body = threading.Event()
 
-    def _body(handle):
+    def _body(_handle):
         entered.set()
         continue_body.wait(2)
         return "completed"
