@@ -475,7 +475,19 @@ class RemoteFileEditorWindow(Adw.Window):
         self._apply_zoom()
 
         # Show initial loading toast
-        self._show_toast("Loading…" if self._is_local else "Downloading…", timeout=2)
+        self._show_toast(
+            self._initial_loading_message(
+                is_local=self._is_local,
+                daemon_file_service=self._daemon_file_service,
+            ),
+            timeout=2,
+        )
+
+    @staticmethod
+    def _initial_loading_message(*, is_local: bool, daemon_file_service: object) -> str:
+        if is_local or daemon_file_service is not None:
+            return "Loading…"
+        return "Downloading…"
 
     def _add_scheme_chooser(self, header_bar: Adw.HeaderBar) -> None:
         """Add the GtkSource style-scheme chooser to the header bar.

@@ -337,7 +337,7 @@ def test_client_event_handoff_overflow_closes_continuity(tmp_path):
     server, repo = _make_daemon(tmp_path)
     client = DaemonClient(
         socket_path=server.socket_path,
-        event_dispatch_limit=1,
+        event_dispatch_limit=2,
     )
     entered = threading.Event()
     release = threading.Event()
@@ -345,7 +345,10 @@ def test_client_event_handoff_overflow_closes_continuity(tmp_path):
 
     def block_first(event):
         received.append(event)
-        if event.type is EventType.CONNECTION_UPDATED and not entered.is_set():
+        if event.type in {
+            EventType.CONNECTION_UPDATED,
+            EventType.CONNECTION_STORE_CHANGED,
+        } and not entered.is_set():
             entered.set()
             assert release.wait(2)
 

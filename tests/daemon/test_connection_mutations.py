@@ -1,5 +1,6 @@
 import socket
 import threading
+import time
 from dataclasses import replace
 
 import pytest
@@ -87,6 +88,20 @@ def test_requesting_and_observing_clients_receive_one_created_event(
     )
 
     assert all(item.wait(2) for item in ready)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if all(
+            any(event.type is EventType.CONNECTION_CREATED for event in events)
+            and any(event.type is EventType.CONNECTION_STORE_CHANGED for event in events)
+            for events in received
+        ):
+            break
+        time.sleep(0.005)
+    assert all(
+        any(event.type is EventType.CONNECTION_CREATED for event in events)
+        and any(event.type is EventType.CONNECTION_STORE_CHANGED for event in events)
+        for events in received
+    )
     for events in received:
         created_events = [
             event for event in events

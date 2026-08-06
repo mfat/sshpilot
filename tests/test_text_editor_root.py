@@ -74,6 +74,14 @@ def test_resolve_root_pw_none_when_nothing_stored(monkeypatch):
     assert ed._resolve_root_pw() == (None, False)
 
 
+def test_daemon_backed_editor_uses_local_loading_label():
+    assert Ed._initial_loading_message(is_local=False, daemon_file_service=object()) == "Loading…"
+
+
+def test_sftp_editor_keeps_downloading_loading_label():
+    assert Ed._initial_loading_message(is_local=False, daemon_file_service=None) == "Downloading…"
+
+
 def test_local_save_notifies_owner(tmp_path):
     saved = []
     ed = Ed.__new__(Ed)
