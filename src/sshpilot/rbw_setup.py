@@ -213,12 +213,16 @@ def _apply_config_async(window, controller, email: str, server: str,
     _set, close = progress_dialog(window, _("rbw"), _("Saving rbw configuration…"))
 
     def worker():
-        ok = True
+        ok = False
         try:
-            controller.rbw_configure(email, server)
+            requested_email = (email or "").strip()
+            result = controller.rbw_configure(requested_email, server)
+            message = str(getattr(result, "message", "") or "").strip()
+            configured = bool(getattr(result, "configured", False))
+            returned_email = str(getattr(result, "email", "") or "").strip()
+            ok = not message and configured and returned_email == requested_email
         except Exception:
             logger.debug("rbw config set failed", exc_info=True)
-            ok = False
         GLib.idle_add(lambda: (close(), on_done(ok), False)[-1])
 
     _thread(worker)
@@ -242,19 +246,22 @@ def _login_async(window, controller, on_done: Callable[[bool], None]) -> None:
     def worker():
         detail = ""
         try:
-            controller.rbw_unlock()
+            unlock_status = controller.rbw_unlock()
+            detail = str(getattr(unlock_status, "message", "") or "")
         except Exception as exc:
             detail = str(exc)
-        try:
-            controller.rbw_sync()
-        except Exception as exc:
-            detail = detail or str(exc)
+        if not detail:
+            try:
+                sync_status = controller.rbw_sync()
+                detail = str(getattr(sync_status, "message", "") or "")
+            except Exception as exc:
+                detail = str(exc)
         status = probe_rbw_status(controller)
         GLib.idle_add(lambda: (_after_login(status, detail), False)[1])
 
     def _after_login(status: RbwStatus, detail: str):
         close()
-        if status.unlocked:
+        if status.unlocked and not detail:
             _ready_dialog(window, status, on_done)
         else:
             _error_dialog(window, detail, on_done)

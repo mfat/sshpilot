@@ -350,6 +350,48 @@ def test_native_command_failures_are_not_treated_as_success(tmp_path):
     assert service.rbw_lock().message == "rbw lock failed"
 
 
+def test_rbw_configure_uses_exact_set_and_unset_argv(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
+    )
+    backend = backends["rbw"]
+
+    service.rbw_configure("alice@example.com", "https://vault.example.com")
+    run_calls = [args for kind, args in backend.calls if kind == "_run"]
+    assert run_calls[:2] == [
+        ("config", "set", "email", "alice@example.com"),
+        ("config", "set", "base_url", "https://vault.example.com"),
+    ]
+
+    backend.calls.clear()
+    service.rbw_configure("alice@example.com", "")
+    run_calls = [args for kind, args in backend.calls if kind == "_run"]
+    assert run_calls[:2] == [
+        ("config", "set", "email", "alice@example.com"),
+        ("config", "unset", "base_url"),
+    ]
+
+
+def test_rbw_configure_unset_failure_returns_typed_failure(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
+    )
+    backend = backends["rbw"]
+    original_run = backend._run
+
+    def run(*args):
+        if args == ("config", "unset", "base_url"):
+            backend.calls.append(("_run", args))
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"failed")
+        return original_run(*args)
+
+    backend._run = run
+    status = service.rbw_configure("alice@example.com", "")
+
+    assert status.message == "rbw configuration failed"
+    assert ("_run", ("config", "unset", "base_url")) in backend.calls
+
+
 def test_rbw_configure_does_not_deadlock(tmp_path):
     """``rbw_configure`` re-enters the lock via ``rbw_status``."""
     service, manager, backends, broker, _ = _make_service(

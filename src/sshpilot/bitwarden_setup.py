@@ -1163,20 +1163,25 @@ def _prompt_gui_login(window, controller, on_done: Callable[[bool], None]):
 
         def worker():
             ok = False
+            detail = ""
             try:
-                controller.bitwarden_configure_server(url)
-                ok = True
+                api_status = controller.bitwarden_configure_server(url)
+                detail = str(getattr(api_status, "message", "") or "")
+                ok = not bool(detail)
             except Exception as exc:
-                logger.debug("Bitwarden server configuration failed: %s", exc)
-            GLib.idle_add(lambda: (_after_configure(ok), False)[1])
+                logger.debug("Bitwarden server configuration failed", exc_info=True)
+                detail = str(exc)
+            GLib.idle_add(lambda: (_after_configure(ok, detail), False)[1])
 
-        def _after_configure(ok):
+        def _after_configure(ok, detail=""):
             close()
             if not ok:
                 _show_error(
                     window,
                     _("Server configuration failed"),
-                    _("Could not set the Bitwarden server URL. Check the address and try again."),
+                    detail or _(
+                        "Could not set the Bitwarden server URL. Check the address and try again."
+                    ),
                     on_closed=lambda: on_done(False),
                 )
                 return

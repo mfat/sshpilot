@@ -1585,6 +1585,10 @@ class SecretBackendService:
             ok = self._run_safely(
                 lambda: rbw._run("config", "set", "base_url", base_url)
             ) and ok
+        else:
+            ok = self._run_safely(
+                lambda: rbw._run("config", "unset", "base_url")
+            ) and ok
         return ok
 
 

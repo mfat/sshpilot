@@ -2,10 +2,12 @@
 
 import io
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
 from sshpilot import bitwarden_setup as bs
+from sshpilot.api.models.secrets import BitwardenStatus
 
 
 @pytest.fixture(autouse=True)
@@ -195,6 +197,89 @@ def test_probe_bitwarden_status_cached(monkeypatch):
     assert bs.probe_bitwarden_status(controller).needs_login is True
     assert bs.probe_bitwarden_status(controller).needs_login is True
     assert controller.calls == 1
+
+
+def test_prompt_gui_login_typed_server_failure_does_not_enter_wizard(monkeypatch):
+    result = []
+    errors = []
+    closed = []
+
+    class Controller:
+        def bitwarden_configure_server(self, url):
+            assert url == "https://vault.example.com"
+            return BitwardenStatus(
+                logged_in=False,
+                unlocked=False,
+                needs_login=True,
+                email="",
+                server_url="",
+                profile="",
+                message="server configuration failed",
+            )
+
+    monkeypatch.setattr(
+        bs, "_prompt_server_url", lambda _window, _controller, callback: callback(
+            "https://vault.example.com"
+        ),
+    )
+    monkeypatch.setattr(
+        bs,
+        "progress_dialog",
+        lambda *args, **kwargs: (None, lambda: closed.append(True)),
+    )
+    monkeypatch.setattr(
+        bs,
+        "_show_error",
+        lambda _window, heading, body, *, on_closed: (
+            errors.append((heading, body)), on_closed()
+        ),
+    )
+    monkeypatch.setattr(bs, "_login_wizard", lambda *args: result.append("wizard"))
+    monkeypatch.setattr(bs.threading, "Thread", lambda *, target, daemon: SimpleNamespace(start=target))
+    monkeypatch.setattr(bs.GLib, "idle_add", lambda callback: callback())
+
+    bs._prompt_gui_login(object(), Controller(), result.append)
+
+    assert result == [False]
+    assert errors == [("Server configuration failed", "server configuration failed")]
+    assert closed == [True]
+
+
+def test_prompt_gui_login_successful_server_result_enters_wizard(monkeypatch):
+    result = []
+    entered = []
+    closed = []
+
+    class Controller:
+        def bitwarden_configure_server(self, _url):
+            return BitwardenStatus(
+                logged_in=False,
+                unlocked=False,
+                needs_login=True,
+                email="",
+                server_url="https://vault.example.com",
+                profile="",
+            )
+
+    monkeypatch.setattr(
+        bs, "_prompt_server_url", lambda _window, _controller, callback: callback(
+            "https://vault.example.com"
+        ),
+    )
+    monkeypatch.setattr(
+        bs,
+        "progress_dialog",
+        lambda *args, **kwargs: (None, lambda: closed.append(True)),
+    )
+    monkeypatch.setattr(bs, "_login_wizard", lambda *args: entered.append(True))
+    monkeypatch.setattr(bs.threading, "Thread", lambda *, target, daemon: SimpleNamespace(start=target))
+    monkeypatch.setattr(bs.GLib, "idle_add", lambda callback: callback())
+
+    bs._prompt_gui_login(object(), Controller(), result.append)
+
+    assert entered == [True]
+    assert result == []
+    assert closed == [True]
 
 
 def test_run_install_binary_plan(monkeypatch):
