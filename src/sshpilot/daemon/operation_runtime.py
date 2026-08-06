@@ -1,22 +1,23 @@
 """Minimal shared daemon operation lifecycle.
 
 Public-key deployment and remote authorized-key mutations are user-visible
-commands that may take time.  This runtime owns their small explicit state
+commands that may take time. This runtime owns their small explicit state
 machine — queued/running/succeeded/failed/cancelled — plus safe messages,
-timestamps, optional safe progress and cooperative cancellation.  It is
+timestamps, optional safe progress and cooperative cancellation. It is
 deliberately *not* a workflow engine: no dependency graphs, no resumable
 persistence, no plugin actions.
 
-Operations run on daemon-owned worker threads (mirroring the transfer
-runtime).  Event publication goes through the shared ``EventPublisher`` so
-frontends observe ``operation.created`` / ``operation.state_changed`` like any
-other lifecycle family.
+Operations run on daemon-owned worker threads. Event publication goes through
+the shared ``EventPublisher`` so frontends observe ``operation.created`` /
+``operation.state_changed`` like any other lifecycle family.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+import time
+from collections import OrderedDict
 from typing import Callable, Dict, Optional
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -28,11 +29,15 @@ from sshpilot.api.models.operations import (
     OperationState,
     OperationSummary,
     ServiceFailure,
+    is_terminal_operation_state,
     is_valid_operation_transition,
 )
 from sshpilot.runtime_identity import new_operation_id
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_TERMINAL_RETENTION = 128
+_DEFAULT_SHUTDOWN_TIMEOUT = 3.0
 
 
 class OperationCancelled(Exception):
@@ -40,19 +45,14 @@ class OperationCancelled(Exception):
 
 
 class OperationHandle:
-    """The body-facing control surface of one running operation.
-
-    The body reports safe progress/messages, registers the child process it
-    is supervising (so cancellation can terminate it), and periodically calls
-    :meth:`raise_if_cancelled`.
-    """
+    """The body-facing control surface of one running operation."""
 
     def __init__(self, runtime: "OperationRuntime", operation_id: OperationId) -> None:
         self._runtime = runtime
         self.operation_id = operation_id
 
     def report(self, message: str, progress: Optional[float] = None) -> None:
-        """Publish a safe status message (and optional 0..1 progress)."""
+        """Publish a safe status message and optional bounded progress."""
         self._runtime.report_progress(self.operation_id, message, progress)
 
     def set_process(self, process: object) -> None:
@@ -62,33 +62,48 @@ class OperationHandle:
     def clear_process(self) -> None:
         self._runtime.set_operation_process(self.operation_id, None)
 
+    def set_cancel_hook(self, hook: Optional[Callable[[], None]]) -> None:
+        """Register one cooperative cancellation hook for the operation."""
+        self._runtime.set_cancel_hook(self.operation_id, hook)
+
     def raise_if_cancelled(self) -> None:
         if self._runtime.cancel_requested(self.operation_id):
             raise OperationCancelled()
 
 
-# The operation body receives its handle and returns a safe terminal message.
 OperationBody = Callable[[OperationHandle], str]
 
 
 class OperationRuntime:
     """Thread-safe registry and executor for daemon operations."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        terminal_retention: int = _DEFAULT_TERMINAL_RETENTION,
+        shutdown_timeout: float = _DEFAULT_SHUTDOWN_TIMEOUT,
+    ) -> None:
+        if type(terminal_retention) is not int or terminal_retention < 0:
+            raise ValueError("terminal_retention must be a non-negative integer")
+        if shutdown_timeout < 0:
+            raise ValueError("shutdown_timeout must be non-negative")
         self._condition = threading.Condition(threading.RLock())
         self._records: Dict[OperationId, OperationSummary] = {}
+        self._terminal_records: "OrderedDict[OperationId, None]" = OrderedDict()
         self._bodies: Dict[OperationId, OperationBody] = {}
         self._threads: Dict[OperationId, threading.Thread] = {}
         self._cancel_requested: Dict[OperationId, bool] = {}
+        self._cancel_hooks: Dict[OperationId, Callable[[], None]] = {}
+        self._cancel_hook_called: set[OperationId] = set()
         self._processes: Dict[OperationId, object] = {}
         self._publisher = EventPublisher()
         self._closed = False
+        self._terminal_retention = terminal_retention
+        self._shutdown_timeout = float(shutdown_timeout)
 
-    # -- subscriptions -----------------------------------------------------
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         return self._publisher.subscribe(callback)
 
-    # -- lifecycle ---------------------------------------------------------
     def start_operation(
         self,
         kind: OperationKind,
@@ -98,7 +113,7 @@ class OperationRuntime:
         owner_client_id: Optional[ClientId] = None,
         message: str = "",
     ) -> OperationSummary:
-        """Register and queue one operation; returns its initial summary."""
+        """Register and queue one operation; return its initial summary."""
         if not isinstance(kind, OperationKind):
             raise TypeError("operation kind must be an OperationKind")
         if not callable(body):
@@ -115,7 +130,7 @@ class OperationRuntime:
                 operation_id=operation_id,
                 kind=kind,
                 state=OperationState.QUEUED,
-                message=message,
+                message=_sanitize_message(message),
                 created_at=utc_now(),
                 connection_id=connection_id,
                 owner_client_id=owner_client_id,
@@ -123,11 +138,6 @@ class OperationRuntime:
             self._records[operation_id] = summary
             self._bodies[operation_id] = body
             self._cancel_requested[operation_id] = False
-            self._publisher.publish(
-                EventType.OPERATION_CREATED,
-                summary,
-                connection_id=connection_id,
-            )
             thread = threading.Thread(
                 target=self._run_operation,
                 args=(operation_id,),
@@ -135,8 +145,14 @@ class OperationRuntime:
                 daemon=True,
             )
             self._threads[operation_id] = thread
-            thread.start()
-            return summary
+        self._publish(EventType.OPERATION_CREATED, summary)
+        with self._condition:
+            current = self._records.get(operation_id)
+            if current is None or current.state is not OperationState.QUEUED or self._closed:
+                self._cleanup_worker_locked(operation_id)
+                return current or summary
+        thread.start()
+        return summary
 
     def get_operation(self, operation_id: OperationId) -> OperationSummary:
         with self._condition:
@@ -149,7 +165,7 @@ class OperationRuntime:
             return summary
 
     def cancel_operation(self, operation_id: OperationId) -> OperationSummary:
-        """Request cancellation; kills the supervised child if one runs."""
+        """Request cancellation and interrupt registered work when possible."""
         with self._condition:
             summary = self._records.get(operation_id)
             if summary is None:
@@ -157,20 +173,29 @@ class OperationRuntime:
                     ErrorCode.OPERATION_NOT_FOUND,
                     "The requested operation does not exist",
                 )
-            if summary.state in (
-                OperationState.SUCCEEDED,
-                OperationState.FAILED,
-                OperationState.CANCELLED,
-            ):
+            if is_terminal_operation_state(summary.state):
                 return summary
             self._cancel_requested[operation_id] = True
+            hook = self._take_cancel_hook_locked(operation_id)
             process = self._processes.get(operation_id)
+            if summary.state is OperationState.QUEUED:
+                updated = self._build_transition_locked(
+                    summary,
+                    OperationState.CANCELLED,
+                    "The operation was cancelled",
+                )
+                self._records[operation_id] = updated
+                self._remember_terminal_locked(operation_id)
+            else:
+                updated = summary
+        if hook is not None:
+            self._invoke_cancel_hook(hook)
         if process is not None:
             self._terminate_process(process)
-        with self._condition:
-            return self._records[operation_id]
+        if summary.state is OperationState.QUEUED:
+            self._publish(EventType.OPERATION_STATE_CHANGED, updated)
+        return updated
 
-    # -- body-facing hooks ---------------------------------------------------
     def report_progress(
         self,
         operation_id: OperationId,
@@ -181,6 +206,7 @@ class OperationRuntime:
             summary = self._records.get(operation_id)
             if summary is None or summary.state is not OperationState.RUNNING:
                 return
+            normalized_progress = _normalize_progress(progress, summary.progress)
             updated = OperationSummary(
                 operation_id=summary.operation_id,
                 kind=summary.kind,
@@ -190,24 +216,14 @@ class OperationRuntime:
                 connection_id=summary.connection_id,
                 started_at=summary.started_at,
                 finished_at=summary.finished_at,
-                progress=(
-                    float(progress)
-                    if progress is not None
-                    else summary.progress
-                ),
+                progress=normalized_progress,
                 owner_client_id=summary.owner_client_id,
                 failure=summary.failure,
             )
             self._records[operation_id] = updated
-        self._publisher.publish(
-            EventType.OPERATION_STATE_CHANGED,
-            updated,
-            connection_id=updated.connection_id,
-        )
+        self._publish(EventType.OPERATION_STATE_CHANGED, updated)
 
-    def set_operation_process(
-        self, operation_id: OperationId, process: object
-    ) -> None:
+    def set_operation_process(self, operation_id: OperationId, process: object) -> None:
         with self._condition:
             if process is None:
                 self._processes.pop(operation_id, None)
@@ -217,48 +233,110 @@ class OperationRuntime:
         if cancel and process is not None:
             self._terminate_process(process)
 
+    def set_cancel_hook(
+        self, operation_id: OperationId, hook: Optional[Callable[[], None]]
+    ) -> None:
+        if hook is not None and not callable(hook):
+            raise TypeError("cancel hook must be callable or None")
+        with self._condition:
+            if hook is None:
+                self._cancel_hooks.pop(operation_id, None)
+            else:
+                self._cancel_hooks[operation_id] = hook
+                cancel = self._cancel_requested.get(operation_id, False)
+        if hook is not None and cancel:
+            with self._condition:
+                hook = self._take_cancel_hook_locked(operation_id)
+            if hook is not None:
+                self._invoke_cancel_hook(hook)
+
     def cancel_requested(self, operation_id: OperationId) -> bool:
         with self._condition:
             return self._cancel_requested.get(operation_id, False)
 
-    # -- worker --------------------------------------------------------------
     def _run_operation(self, operation_id: OperationId) -> None:
         with self._condition:
             body = self._bodies.get(operation_id)
             summary = self._records.get(operation_id)
-            if body is None or summary is None:
+            if body is None or summary is None or is_terminal_operation_state(summary.state):
+                self._cleanup_worker_locked(operation_id)
                 return
             if self._cancel_requested.get(operation_id, False):
-                self._transition(
-                    operation_id, OperationState.CANCELLED, "The operation was cancelled"
+                updated = self._build_transition_locked(
+                    summary,
+                    OperationState.CANCELLED,
+                    "The operation was cancelled",
                 )
-                return
-            self._transition(operation_id, OperationState.RUNNING, summary.message)
+                self._records[operation_id] = updated
+                self._remember_terminal_locked(operation_id)
+                publish = updated
+            else:
+                updated = self._build_transition_locked(
+                    summary, OperationState.RUNNING, summary.message
+                )
+                self._records[operation_id] = updated
+                publish = updated
+        if publish.state is OperationState.CANCELLED:
+            self._publish(EventType.OPERATION_STATE_CHANGED, publish)
+            with self._condition:
+                self._cleanup_worker_locked(operation_id)
+            return
+        self._publish(EventType.OPERATION_STATE_CHANGED, publish)
         handle = OperationHandle(self, operation_id)
         try:
             final_message = body(handle)
-        except OperationCancelled:
             with self._condition:
-                self._transition(
-                    operation_id, OperationState.CANCELLED, "The operation was cancelled"
+                summary = self._records.get(operation_id)
+                if summary is None or is_terminal_operation_state(summary.state):
+                    return
+                target = (
+                    OperationState.CANCELLED
+                    if self._cancel_requested.get(operation_id, False)
+                    else OperationState.SUCCEEDED
                 )
-        except SshPilotError as error:
-            logger.info(
-                "Operation %s failed: %s", operation_id, error.code.value
+                updated = self._build_transition_locked(
+                    summary,
+                    target,
+                    "The operation was cancelled" if target is OperationState.CANCELLED else final_message,
+                )
+                self._records[operation_id] = updated
+                if is_terminal_operation_state(target):
+                    self._remember_terminal_locked(operation_id)
+            self._publish(EventType.OPERATION_STATE_CHANGED, updated)
+        except OperationCancelled:
+            self._finish_from_worker(
+                operation_id,
+                OperationState.CANCELLED,
+                "The operation was cancelled",
             )
-            with self._condition:
-                self._transition(
+        except SshPilotError as error:
+            logger.info("Operation %s failed: %s", operation_id, error.code.value)
+            if self.cancel_requested(operation_id):
+                self._finish_from_worker(
+                    operation_id,
+                    OperationState.CANCELLED,
+                    "The operation was cancelled",
+                )
+            else:
+                self._finish_from_worker(
                     operation_id,
                     OperationState.FAILED,
                     error.message,
                     failure=ServiceFailure(
-                        code=error.code.value, message=error.message
+                        code=error.code.value,
+                        message=_sanitize_message(error.message),
                     ),
                 )
         except Exception:
             logger.exception("Operation %s crashed", operation_id)
-            with self._condition:
-                self._transition(
+            if self.cancel_requested(operation_id):
+                self._finish_from_worker(
+                    operation_id,
+                    OperationState.CANCELLED,
+                    "The operation was cancelled",
+                )
+            else:
+                self._finish_from_worker(
                     operation_id,
                     OperationState.FAILED,
                     "The operation failed unexpectedly",
@@ -267,17 +345,11 @@ class OperationRuntime:
                         message="The operation failed unexpectedly",
                     ),
                 )
-        else:
-            with self._condition:
-                self._transition(operation_id, OperationState.SUCCEEDED, final_message)
         finally:
             with self._condition:
-                self._bodies.pop(operation_id, None)
-                self._threads.pop(operation_id, None)
-                self._cancel_requested.pop(operation_id, None)
-                self._processes.pop(operation_id, None)
+                self._cleanup_worker_locked(operation_id)
 
-    def _transition(
+    def _finish_from_worker(
         self,
         operation_id: OperationId,
         target: OperationState,
@@ -285,71 +357,149 @@ class OperationRuntime:
         *,
         failure: Optional[ServiceFailure] = None,
     ) -> None:
-        summary = self._records.get(operation_id)
-        if summary is None:
-            return
+        with self._condition:
+            summary = self._records.get(operation_id)
+            if summary is None or is_terminal_operation_state(summary.state):
+                return
+            if target is OperationState.SUCCEEDED and self._cancel_requested.get(
+                operation_id, False
+            ):
+                target = OperationState.CANCELLED
+                message = "The operation was cancelled"
+                failure = None
+            updated = self._build_transition_locked(
+                summary, target, message, failure=failure
+            )
+            self._records[operation_id] = updated
+            self._remember_terminal_locked(operation_id)
+        self._publish(EventType.OPERATION_STATE_CHANGED, updated)
+
+    def _build_transition_locked(
+        self,
+        summary: OperationSummary,
+        target: OperationState,
+        message: str,
+        *,
+        failure: Optional[ServiceFailure] = None,
+    ) -> OperationSummary:
         if not is_valid_operation_transition(summary.state, target):
-            return
+            return summary
         now = utc_now()
-        updated = OperationSummary(
+        terminal = is_terminal_operation_state(target)
+        return OperationSummary(
             operation_id=summary.operation_id,
             kind=summary.kind,
             state=target,
             message=_sanitize_message(message),
             created_at=summary.created_at,
             connection_id=summary.connection_id,
-            started_at=summary.started_at if target is OperationState.QUEUED else (
-                summary.started_at or now
-            ),
-            finished_at=(
-                now
-                if target
-                in (
-                    OperationState.SUCCEEDED,
-                    OperationState.FAILED,
-                    OperationState.CANCELLED,
-                )
-                else summary.finished_at
-            ),
+            started_at=(summary.started_at if target is OperationState.QUEUED else summary.started_at or now),
+            finished_at=now if terminal else summary.finished_at,
             progress=summary.progress,
             owner_client_id=summary.owner_client_id,
             failure=failure,
         )
-        self._records[operation_id] = updated
-        self._publisher.publish(
-            EventType.OPERATION_STATE_CHANGED,
-            updated,
-            connection_id=updated.connection_id,
-        )
 
-    # -- shutdown --------------------------------------------------------------
+    def _publish(self, event_type: EventType, summary: OperationSummary) -> None:
+        try:
+            self._publisher.publish(
+                event_type,
+                summary,
+                connection_id=summary.connection_id,
+            )
+        except RuntimeError:
+            logger.debug("Operation event publisher is closed", exc_info=True)
+
+    def _remember_terminal_locked(self, operation_id: OperationId) -> None:
+        self._terminal_records.pop(operation_id, None)
+        self._terminal_records[operation_id] = None
+        while len(self._terminal_records) > self._terminal_retention:
+            expired, _ = self._terminal_records.popitem(last=False)
+            self._records.pop(expired, None)
+
+    def _take_cancel_hook_locked(
+        self, operation_id: OperationId
+    ) -> Optional[Callable[[], None]]:
+        hook = self._cancel_hooks.pop(operation_id, None)
+        if hook is not None:
+            self._cancel_hook_called.add(operation_id)
+        return hook
+
+    @staticmethod
+    def _invoke_cancel_hook(hook: Callable[[], None]) -> None:
+        try:
+            hook()
+        except Exception:
+            logger.debug("operation cancellation hook failed", exc_info=True)
+
+    def _cleanup_worker_locked(self, operation_id: OperationId) -> None:
+        self._bodies.pop(operation_id, None)
+        self._threads.pop(operation_id, None)
+        self._cancel_requested.pop(operation_id, None)
+        self._cancel_hooks.pop(operation_id, None)
+        self._cancel_hook_called.discard(operation_id)
+        self._processes.pop(operation_id, None)
+
     def shutdown(self) -> None:
-        """Cancel all live operations and stop accepting new ones."""
+        """Reject new work, request bounded cancellation, and close publishing."""
         with self._condition:
+            if self._closed:
+                return
             self._closed = True
-            live = [
+            live = tuple(
                 operation_id
                 for operation_id, summary in self._records.items()
-                if summary.state in (OperationState.QUEUED, OperationState.RUNNING)
-            ]
-            processes = [
-                self._processes[operation_id]
-                for operation_id in live
-                if operation_id in self._processes
-            ]
+                if not is_terminal_operation_state(summary.state)
+            )
+            hooks = []
+            processes = []
+            terminal_events = []
             for operation_id in live:
                 self._cancel_requested[operation_id] = True
-        for process in processes:
-            self._terminate_process(process)
-        with self._condition:
-            for operation_id in live:
+                hook = self._take_cancel_hook_locked(operation_id)
+                if hook is not None:
+                    hooks.append(hook)
+                process = self._processes.get(operation_id)
+                if process is not None:
+                    processes.append(process)
                 summary = self._records.get(operation_id)
                 if summary is not None and summary.state is OperationState.QUEUED:
-                    self._transition(
-                        operation_id,
+                    updated = self._build_transition_locked(
+                        summary,
                         OperationState.CANCELLED,
                         "The operation was cancelled",
                     )
+                    self._records[operation_id] = updated
+                    self._remember_terminal_locked(operation_id)
+                    terminal_events.append(updated)
+        for hook in hooks:
+            self._invoke_cancel_hook(hook)
+        for process in processes:
+            self._terminate_process(process)
+        deadline = time.monotonic() + self._shutdown_timeout
+        for operation_id in live:
+            with self._condition:
+                thread = self._threads.get(operation_id)
+            if thread is None or thread is threading.current_thread():
+                continue
+            remaining = max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+        with self._condition:
+            for operation_id in live:
+                summary = self._records.get(operation_id)
+                if summary is None or is_terminal_operation_state(summary.state):
+                    continue
+                updated = self._build_transition_locked(
+                    summary,
+                    OperationState.CANCELLED,
+                    "The operation was cancelled",
+                )
+                self._records[operation_id] = updated
+                self._remember_terminal_locked(operation_id)
+                terminal_events.append(updated)
+        for summary in terminal_events:
+            self._publish(EventType.OPERATION_STATE_CHANGED, summary)
+        self._publisher.close()
 
     @staticmethod
     def _terminate_process(process: object) -> None:
@@ -370,11 +520,40 @@ _MAX_MESSAGE_LENGTH = 240
 
 
 def _sanitize_message(message: str) -> str:
-    """Bound and strip control characters from a user-visible message."""
-    text = str(message or "")
+    """Bound and redact user-visible operation messages."""
     text = "".join(
-        char for char in text if char == "\t" or ord(char) >= 0x20
+        char for char in str(message or "") if char == "\t" or ord(char) >= 0x20
     ).strip()
+    redacted = []
+    for token in text.split():
+        if "=" in token and token.split("=", 1)[0].lower() in {
+            "password",
+            "passphrase",
+            "secret",
+            "token",
+            "session",
+            "bw_session",
+            "api_key",
+            "client_secret",
+        }:
+            redacted.append(token.split("=", 1)[0] + "=<redacted>")
+        else:
+            redacted.append(token)
+    text = " ".join(redacted)
     if len(text) > _MAX_MESSAGE_LENGTH:
         text = text[: _MAX_MESSAGE_LENGTH - 1].rstrip() + "…"
     return text
+
+
+def _normalize_progress(
+    progress: Optional[float], previous: Optional[float]
+) -> Optional[float]:
+    if progress is None:
+        return previous
+    try:
+        value = float(progress)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("operation progress must be numeric") from exc
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("operation progress must be between 0.0 and 1.0")
+    return value

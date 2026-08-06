@@ -135,17 +135,17 @@ local `error.occurred` continuity notification where delivery remains possible.
 <!-- api-event: operation.created -->
 ## `operation.created`
 
-- **Status / review:** Implemented by the daemon operation runtime; pending the
-  separate identity phase review.
-- **Trigger / payload:** A daemon-owned identity operation is accepted;
+- **Status / review:** Shared daemon operation lifecycle completed and reviewed;
+  identity operation producers remain pending their separate phase review.
+- **Trigger / payload:** A daemon-owned operation is accepted;
   `OperationSummary` contains safe state and identifiers only.
 - **Security:** No private keys, credentials, or secret values are included.
 
 <!-- api-event: operation.state_changed -->
 ## `operation.state_changed`
 
-- **Status / review:** Implemented by the daemon operation runtime; pending the
-  separate identity phase review.
+- **Status / review:** Shared daemon operation lifecycle completed and reviewed;
+  identity operation producers remain pending their separate phase review.
 - **Trigger / payload:** An operation changes lifecycle state;
   `OperationSummary` contains safe state and identifiers only.
 - **Ordering / delivery:** Delivered through the daemon event stream according

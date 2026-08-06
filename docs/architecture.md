@@ -179,6 +179,34 @@ inspect effective configuration, and preserve `Include`, `Match`, `ProxyJump`,
 `ProxyCommand`, identity, certificate, forwarding, host-key, and authentication
 semantics supplied by OpenSSH.
 
+## Shared long-running operations
+
+`OperationRuntime` is the single daemon owner of user-visible long-running
+operation lifecycle. It owns opaque operation IDs, immutable queued/running/
+terminal snapshots, safe progress and failure metadata, operation events,
+cooperative cancellation, bounded terminal retention, and bounded shutdown.
+Services do not maintain a second operation registry or terminal state machine.
+
+The approved pattern is:
+
+```text
+service starts work
+    ↓
+registers with OperationRuntime
+    ↓
+worker reports safe progress
+    ↓
+runtime owns terminal state and events
+```
+
+Operation events are ordinary typed API events. They are published only after
+the runtime stores the new snapshot, use the existing bounded event delivery
+behavior, and contain no private implementation objects or secret values.
+Cancellation is real when a producer registers a supervised process or
+cancellation hook; otherwise the producer must report cancellation truthfully
+rather than claiming an interrupted mutation. Identity operation producers use
+this runtime but remain under separate phase review.
+
 ## Sessions, transfers, and interactions
 
 Daemon-backed SSH sessions, PTYs, SFTP services, transfers, forwards, and

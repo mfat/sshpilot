@@ -15,8 +15,10 @@ from sshpilot.core.connection_application_service import ConnectionApplicationSe
 from sshpilot.core.connections.repository import ConnectionRepository
 from sshpilot.daemon.connection_launch_provider import DaemonConnectionLaunchProvider
 from sshpilot.daemon.connection_secret_provider import DaemonConnectionSecretProvider
+from sshpilot.daemon.identity_service import DaemonIdentityService
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.known_hosts_service import KnownHostsService
+from sshpilot.daemon.operation_runtime import OperationRuntime
 from sshpilot.platform.paths import get_config_dir, get_ssh_dir
 
 
@@ -60,6 +62,16 @@ def test_production_composition_installs_known_hosts_and_keys(tmp_path, monkeypa
 
     assert isinstance(services.known_hosts, KnownHostsService)
     assert isinstance(services.keys, DaemonKeyService)
+
+
+def test_production_composition_shares_operation_runtime_with_identity_service(
+    tmp_path, monkeypatch
+):
+    services = _compose(tmp_path, monkeypatch)
+
+    assert isinstance(services.identity, DaemonIdentityService)
+    assert isinstance(services.operations, OperationRuntime)
+    assert services.identity._operations is services.operations
 
 
 def test_production_repository_uses_daemon_owned_paths(tmp_path, monkeypatch):

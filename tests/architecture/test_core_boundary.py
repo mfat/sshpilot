@@ -504,6 +504,15 @@ def test_backend_ops_debt_matches_exact_baseline():
 
 
 
+def test_shared_operation_runtime_is_the_daemon_operation_registry():
+    runtime = (SOURCE / "daemon/operation_runtime.py").read_text(encoding="utf-8")
+    identity = (SOURCE / "daemon/identity_service.py").read_text(encoding="utf-8")
+    assert "class OperationRuntime" in runtime
+    assert "self._operations.start_operation" in identity
+    assert "self._operation_registry" not in identity
+    assert "self._operations =" in identity
+
+
 def test_core_api_daemon_are_gi_free():
     """core/api/daemon must never import Gtk/GLib/GI directly."""
     forbidden = {"gi", "Gtk", "Adw", "Gdk", "Vte", "GLib", "GObject", "Gio", "GtkSource"}

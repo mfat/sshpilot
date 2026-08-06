@@ -376,7 +376,7 @@ class DaemonIdentityService:
     ) -> str:
         handle.report("Reading the remote authorized_keys")
         content = self._run_remote_text(
-            request.connection_id, _REMOTE_READ_COMMAND, None
+            request.connection_id, _REMOTE_READ_COMMAND, None, handle=handle
         )
         handle.raise_if_cancelled()
         if _file_revision(content) != request.file_revision:
@@ -403,8 +403,9 @@ class DaemonIdentityService:
         handle.report("Writing the updated authorized_keys")
         handle.raise_if_cancelled()
         self._run_remote_text(
-            request.connection_id, _REMOTE_WRITE_COMMAND, new_content
+            request.connection_id, _REMOTE_WRITE_COMMAND, new_content, handle=handle
         )
+        handle.raise_if_cancelled()
         return "The authorized key was removed"
 
     # ------------------------------------------------------------------
@@ -509,6 +510,8 @@ class DaemonIdentityService:
         connection_id: ConnectionId,
         remote_command: str,
         input_text: Optional[str],
+        *,
+        handle: Optional[OperationHandle] = None,
     ) -> str:
         provider = self._require_launch_provider()
         argv, env = provider.prepare_remote_command_launch(
@@ -525,7 +528,7 @@ class DaemonIdentityService:
             )
         try:
             returncode, stdout, stderr = self._run_capture(
-                argv, env, input_text, _REMOTE_COMMAND_TIMEOUT
+                argv, env, input_text, _REMOTE_COMMAND_TIMEOUT, handle=handle
             )
         finally:
             if scope_id is not None and self._broker is not None:
@@ -548,6 +551,8 @@ class DaemonIdentityService:
         env: Dict[str, str],
         input_text: Optional[str],
         timeout: Optional[float],
+        *,
+        handle: Optional[OperationHandle] = None,
     ) -> Tuple[int, str, str]:
         try:
             process = self._popen(
@@ -564,19 +569,25 @@ class DaemonIdentityService:
                 ErrorCode.SESSION_STARTUP_FAILED,
                 "The native command could not be started",
             ) from exc
+        if handle is not None:
+            handle.set_process(process)
         try:
-            stdout, stderr = process.communicate(input_text, timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
             try:
-                process.kill()
-            except OSError:
-                pass
-            process.wait()
-            raise SshPilotError(
-                ErrorCode.OPERATION_TIMED_OUT,
-                "The remote command timed out",
-            ) from exc
-        return process.returncode, stdout or "", stderr or ""
+                stdout, stderr = process.communicate(input_text, timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                process.wait()
+                raise SshPilotError(
+                    ErrorCode.OPERATION_TIMED_OUT,
+                    "The remote command timed out",
+                ) from exc
+            return process.returncode, stdout or "", stderr or ""
+        finally:
+            if handle is not None:
+                handle.clear_process()
 
     # ------------------------------------------------------------------
     # Shared helpers

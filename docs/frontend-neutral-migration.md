@@ -69,12 +69,27 @@ and compatibility behavior are documented and tested.
   remembered-password identities and the existing `.spbk` format/merge
   behavior remain in place.
 
+### Shared long-running operation infrastructure
+
+- **Owner:** daemon `OperationRuntime`; services register work and do not own a
+  second operation registry or terminal state machine.
+- **Typed API:** existing operation summaries, `operation.created` and
+  `operation.state_changed` events, and `operations.get`/`operations.cancel`
+  transport paths using the existing capability contract.
+- **Frontend ownership removed:** operation lifecycle, safe progress, failure
+  metadata, event publication, cancellation hooks, bounded terminal retention,
+  and bounded shutdown remain daemon-owned; clients render immutable snapshots.
+- **Compatibility retained:** existing operation IDs, kinds, states, typed
+  failure envelope, native producer behavior, in-memory/non-resumable scope,
+  and ordinary event queue overflow semantics remain intact.
+
 ## Implemented, pending phase review
 
 These implementations are present on `dev` but are not declared complete here:
 
-- shared operation infrastructure;
-- identity state and provider services.
+- identity state and provider services, including identity operation producers;
+- authorized-key management and native `ssh-copy-id` deployment as an identity
+  feature phase.
 
 Each requires its own phase review before the frontend-neutral migration status
 changes to completed.

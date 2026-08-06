@@ -252,9 +252,10 @@ the daemon. The M8 tag then has no debt.
 
 `tests/architecture/test_core_boundary.py` and
 `tests/core/test_dependency_boundary.py` enforce the frontend boundary and
-record remaining compatibility debt. The registries are intentionally allowed
-to contain pending rows for shared operations, identity services, explicit
-legacy routes, and other phases that have not completed review.
+record remaining compatibility debt. Shared operation infrastructure is
+reviewed and complete; the registries remain intentionally allowed to contain
+pending rows for identity services, explicit legacy routes, and other phases
+that have not completed review.
 
 The suite fails when a new frontend core import is unregistered, a registered
 entry becomes stale, frontend performs an unregistered backend operation, GTK

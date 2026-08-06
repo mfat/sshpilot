@@ -5,6 +5,17 @@ notes remain separate.
 
 ## Unreleased
 
+- Completed and reviewed the shared daemon operation infrastructure. The existing
+  `OperationRuntime` is the single lifecycle owner for queued/running/terminal
+  snapshots, safe progress and typed failures, immutable operation events,
+  cooperative cancellation hooks and supervised processes, bounded terminal
+  retention, and bounded daemon shutdown. Runtime locking, completion-versus-
+  cancellation races, callback reentrancy, event/get consistency, codec parity,
+  capability absence, and security leakage are covered by focused tests. The
+  existing identity operation producers exercise this runtime, but identity
+  state/provider services and identity feature review remain pending and are
+  deliberately not closed by this entry.
+
 - Completed the reviewed daemon-owned secret backend phase. `SecretBackendService`
   is authoritative for backend selection, revision-safe configuration and
   selection, lifecycle, and `secrets.*` operations. Preferences, Bitwarden, and

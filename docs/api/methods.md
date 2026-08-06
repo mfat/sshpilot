@@ -1448,16 +1448,18 @@ finally:
 <!-- api-method: get_operation -->
 ## `get_operation`
 
-- **Status / review:** Implemented in the daemon identity operation service;
-  pending the separate identity phase review.
+- **Status / review:** Shared `OperationRuntime` lifecycle is completed and
+  reviewed; identity operation producers remain pending their separate phase
+  review.
 - **Capability / purpose:** `identity.read`; inspect safe operation state.
 - **Parameters / return:** `OperationId`; returns `OperationSummary`.
 
 <!-- api-method: cancel_operation -->
 ## `cancel_operation`
 
-- **Status / review:** Implemented in the daemon identity operation service;
-  pending the separate identity phase review.
+- **Status / review:** Shared `OperationRuntime` lifecycle is completed and
+  reviewed; identity operation producers remain pending their separate phase
+  review.
 - **Capability / purpose:** `identity.operate`; cancel a cancellable operation.
 - **Parameters / return:** `OperationId`; returns `OperationSummary`.
 
