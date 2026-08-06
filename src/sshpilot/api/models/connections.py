@@ -644,6 +644,51 @@ def delete_plugin_secret_request_from_wire(payload: dict) -> DeletePluginSecretR
     )
 
 
+# -- Raw SSH config text (daemon-resolved editor document) -------------------
+
+@dataclass(frozen=True)
+class SshConfigText:
+    """The daemon-selected active SSH config text plus editor metadata.
+
+    The daemon resolves which file is active (normal or isolated mode) and
+    never accepts a filesystem path from the client. ``display_name`` is the
+    daemon-computed display label (home-collapsed); ``writable`` reflects
+    whether the daemon's hardened atomic write path can replace the file.
+    """
+
+    text: str = field(repr=False)
+    revision: str
+    display_name: str
+    writable: bool
+
+    def __post_init__(self) -> None:
+        if type(self.text) is not str or "\x00" in self.text:
+            raise ValueError("SSH config text must be safe text")
+        require_identifier(self.revision, "SSH config revision")
+        if type(self.display_name) is not str or not self.display_name.strip():
+            raise ValueError("SSH config display name must be a non-empty string")
+        if type(self.writable) is not bool:
+            raise TypeError("SSH config writable must be a boolean")
+
+
+@dataclass(frozen=True)
+class SaveSshConfigTextRequest:
+    """Optimistic raw-text replacement of the daemon-selected SSH config.
+
+    ``expected_revision`` is the revision returned by the preceding load;
+    the daemon rejects the save when any participating config file changed
+    since the editor loaded it.
+    """
+
+    text: str = field(repr=False)
+    expected_revision: str
+
+    def __post_init__(self) -> None:
+        if type(self.text) is not str or "\x00" in self.text:
+            raise ValueError("SSH config text must be safe text")
+        require_identifier(self.expected_revision, "expected SSH config revision")
+
+
 # -- UpdateConnectionMetadataRequest hardening ------------------------------
 
 @dataclass(frozen=True)

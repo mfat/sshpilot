@@ -100,7 +100,9 @@ from sshpilot.api.transport.codec import (
     replay_request_from_wire,
     replay_result_to_wire,
     rename_group_request_from_wire,
+    save_ssh_config_text_request_from_wire,
     split_connection_request_from_wire,
+    ssh_config_text_to_wire,
     resize_terminal_request_from_wire,
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
@@ -143,6 +145,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.lookup_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.store_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -282,6 +286,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "connections.update",
         "connections.delete",
         "connections.split",
+        "connections.save_ssh_config_text",
         "groups.create",
         "groups.delete",
         "groups.rename",
@@ -356,6 +361,8 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.delete",
         "connections.split",
         "connections.get_editor",
+        "connections.get_ssh_config_text",
+        "connections.save_ssh_config_text",
         "connections.store_password",
         "connections.lookup_password",
         "connections.store_plugin_secret",
@@ -566,6 +573,8 @@ class RequestDispatcher:
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
             "connections.get_editor": self._handle_get_connection_editor,
+            "connections.get_ssh_config_text": self._handle_get_ssh_config_text,
+            "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
             "connections.lookup_password": self._handle_lookup_connection_password,
             "connections.store_plugin_secret": self._handle_store_plugin_secret,
@@ -1053,6 +1062,37 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_id,
+        )
+
+    def _handle_get_ssh_config_text(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if request.params:
+            raise ValueError(
+                "connections.get_ssh_config_text takes no parameters"
+            )
+        return DeferredResult(
+            operation=lambda: ssh_config_text_to_wire(
+                self._connections.get_ssh_config_text()
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_save_ssh_config_text(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = save_ssh_config_text_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: ssh_config_text_to_wire(
+                self._connections.save_ssh_config_text(typed_request)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _handle_store_connection_password(

@@ -102,6 +102,8 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
 <!-- api-method-contract: get_connection_editor status=implemented capability=connections.config.read -->
+<!-- api-method-contract: get_ssh_config_text status=implemented capability=connections.config.read -->
+<!-- api-method-contract: save_ssh_config_text status=implemented capability=connections.config.write -->
 <!-- api-method-contract: get_forward status=daemon-only capability=forwards.read -->
 <!-- api-method-contract: get_interaction status=daemon-only capability=interactions.read -->
 <!-- api-method-contract: get_session status=daemon-only capability=sessions.read -->
@@ -227,6 +229,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.update` | `connections.write` | Implemented |
 | `connections.delete` | `connections.write` | Implemented |
 | `connections.get_editor` | `connections.config.read` | Implemented |
+| `connections.get_ssh_config_text` | `connections.config.read` | Implemented |
+| `connections.save_ssh_config_text` | `connections.config.write` | Implemented |
 | `connections.store_password` | `connections.secrets.write` | Implemented |
 | `connections.delete_password` | `connections.secrets.write` | Implemented |
 | `connections.store_passphrase` | `connections.secrets.write` | Implemented |
@@ -342,6 +346,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.delete_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
+<!-- api-daemon-method: connections.get_ssh_config_text capability=connections.config.read -->
+<!-- api-daemon-method: connections.save_ssh_config_text capability=connections.config.write -->
 <!-- api-daemon-method: connections.get_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.lookup_passphrase capability=connections.secrets.write -->
@@ -559,6 +565,60 @@ details = client.get_connection(summary.id)
 summary = client.list_connections()[0]
 editor = client.get_connection_editor(summary.id)
 print(editor.identity_files, editor.forwarding_rules)
+```
+
+<!-- api-method: get_ssh_config_text -->
+## `get_ssh_config_text`
+
+- **Status / introduced:** Implemented / Protocol v1 additive extension
+- **Capability / purpose:** `connections.config.read`; return the daemon-selected
+  active SSH config text plus its revision, display name, and writability for
+  the raw text editor. The daemon resolves the root file (normal or isolated
+  mode) and never accepts a filesystem path from the client.
+- **Parameters / return:** No parameters; returns `SshConfigText`.
+- **Errors:** `unsupported_capability`, `invalid_request`, `persistence_failed`,
+  or `internal_error`. Messages are generic and never embed filesystem paths.
+- **Events:** None directly.
+- **Cancellation / ordering:** Not cancellable; one point-in-time result.
+- **Threading:** In-process calls use the owner thread; daemon calls are
+  serialized over the persistent socket.
+- **Side effects / security:** Read-only. The returned text may contain the
+  user's complete SSH configuration, so the result is excluded from model
+  reprs.
+
+```python
+ssh_config = client.get_ssh_config_text()
+print(ssh_config.display_name, ssh_config.revision, ssh_config.writable)
+```
+
+<!-- api-method: save_ssh_config_text -->
+## `save_ssh_config_text`
+
+- **Status / introduced:** Implemented / Protocol v1 additive extension
+- **Capability / purpose:** `connections.config.write`; replace the
+  daemon-selected active SSH config text through the daemon's hardened atomic
+  write (revision check, one-shot backup, permissions, symlink refusal). The
+  daemon reloads connection state immediately after a successful save so the
+  normal connection update events fire without waiting for the polling watcher.
+- **Parameters / return:** `SaveSshConfigTextRequest`; returns `SshConfigText`.
+- **Errors:** `stale_editor` when any participating file changed since the
+  editor loaded it, `validation_failed`, `persistence_failed`, and daemon
+  transport/protocol errors.
+- **Events:** Normal `connection.created` / `connection.updated` /
+  `connection.deleted` events for the reloaded configuration, plus the
+  coherent `connection_store.changed` event.
+- **Cancellation / ordering:** Not cancellable; one committed write.
+- **Threading:** In-process calls use the owner thread; daemon calls are
+  serialized over the persistent socket.
+- **Side effects / security:** The text is written exactly as provided (no
+  reformatting) to the daemon-selected file only. A failed reload rolls the
+  file back; failed writes leave the previous bytes untouched.
+
+```python
+result = client.save_ssh_config_text(
+    SaveSshConfigTextRequest(text=edited, expected_revision=ssh_config.revision)
+)
+print(result.revision)
 ```
 
 <!-- api-method: create_connection -->

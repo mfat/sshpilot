@@ -61,6 +61,18 @@ class FakeConnectionRepository:
     def reload(self) -> ConnectionStoreSnapshot:
         return self._build_snapshot()
 
+    def get_ssh_config_text(self):
+        raise CoreError(
+            ErrorCode.CONNECTION_STATE_IO_ERROR,
+            "SSH config text editing is unavailable in this test backend",
+        )
+
+    def save_ssh_config_text(self, request):
+        raise CoreError(
+            ErrorCode.CONNECTION_STATE_IO_ERROR,
+            "SSH config text editing is unavailable in this test backend",
+        )
+
     # -- listeners ----------------------------------------------------------
 
     def add_listener(self, callback) -> None:

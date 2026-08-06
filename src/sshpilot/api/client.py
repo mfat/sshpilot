@@ -22,8 +22,10 @@ from .models.connections import (
     DeleteConnectionResult,
     StoreConnectionPasswordRequest,
     DeleteKeyPassphraseRequest,
-    StoreKeyPassphraseRequest,
+    SaveSshConfigTextRequest,
     SplitConnectionRequest,
+    SshConfigText,
+    StoreKeyPassphraseRequest,
     UpdateConnectionRequest,
 )
 from .models.connection_store import (
@@ -159,6 +161,14 @@ class SshPilotClient(Protocol):
     def get_connection_editor(
         self, connection_id: ConnectionId
     ) -> ConnectionEditorDetails:
+        ...
+
+    def get_ssh_config_text(self) -> SshConfigText:
+        ...
+
+    def save_ssh_config_text(
+        self, request: SaveSshConfigTextRequest
+    ) -> SshConfigText:
         ...
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:

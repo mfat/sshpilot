@@ -188,6 +188,9 @@ class RemoteFileEditorWindow(Adw.Window):
         self._sidebar_toggle = None
         self._dark_handler_id = 0
         self._temp_file: Optional[pathlib.Path] = None
+        # Daemon-provided display label (e.g. the SSH config path); used as the
+        # subtitle until a daemon file service reports its own display name.
+        self._remote_display_path: Optional[str] = None
         self._file_monitor: Optional[Gio.FileMonitor] = None
         self._file_modified_time: float = 0.0
         self._has_unsaved_changes = False
@@ -733,7 +736,24 @@ class RemoteFileEditorWindow(Adw.Window):
                 try:
                     result = future.result()
                     self._daemon_file_revision = result.revision
-                    self._temp_file.write_text(result.content, encoding="utf-8")
+                    content = getattr(result, "content", None)
+                    if content is None:
+                        content = getattr(result, "text", "")
+                    self._temp_file.write_text(content, encoding="utf-8")
+                    display = getattr(result, "display_name", None)
+                    if isinstance(display, str) and display:
+                        self._remote_display_path = display
+                    writable = getattr(result, "writable", True)
+                    if writable is False:
+                        try:
+                            self._source_view.set_editable(False)
+                        except Exception:
+                            pass
+                        try:
+                            self._save_button.set_sensitive(False)
+                        except Exception:
+                            pass
+                        self._show_toast("Read-only file", timeout=3)
                     GLib.idle_add(self._load_file_content)
                 except Exception as e:
                     logger.error("Failed to read daemon file for editing", exc_info=True)
@@ -836,9 +856,10 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _pretty_path(self) -> str:
         """Path for the title subtitle: local paths get the home dir collapsed
-        to ``~``; remote paths are shown verbatim."""
+        to ``~``; remote paths are shown verbatim (or the daemon-provided
+        display name when a daemon file service resolved the document)."""
         if not self._is_local:
-            return self._file_path
+            return self._remote_display_path or self._file_path
         try:
             home = GLib.get_home_dir()
         except Exception:
@@ -1438,6 +1459,20 @@ class RemoteFileEditorWindow(Adw.Window):
         if self._file_monitor:
             self._file_monitor.cancel()
             self._file_monitor = None
+
+        # Release an editor-owned daemon file service (e.g. the SSH config
+        # editor). Shared services (authorized-keys raw editors reuse the
+        # parent window's service) omit the ``editor_owned`` marker and stay
+        # open.
+        close = getattr(self._daemon_file_service, "close", None)
+        if (
+            callable(close)
+            and getattr(self._daemon_file_service, "editor_owned", False)
+        ):
+            try:
+                close()
+            except Exception:
+                logger.debug("daemon file service close failed", exc_info=True)
         
         # Clean up temp file (only for remote files - local files shouldn't be deleted)
         if not self._is_local and self._temp_file and self._temp_file.exists():

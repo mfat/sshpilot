@@ -91,7 +91,9 @@ from ..models.connections import (
     GroupReference,
     LookupKeyPassphraseRequest,
     RenameGroupRequest,
+    SaveSshConfigTextRequest,
     SplitConnectionRequest,
+    SshConfigText,
     StoreConnectionPasswordRequest,
     DeleteKeyPassphraseRequest,
     StoreKeyPassphraseRequest,
@@ -2439,6 +2441,53 @@ def split_connection_request_from_wire(value: Any) -> SplitConnectionRequest:
         port=port,
         config_patch=dict(data["config_patch"]),
         expected_generation=expected_generation,
+    )
+
+
+def ssh_config_text_to_wire(result: SshConfigText) -> Dict[str, Any]:
+    """Encode the daemon-resolved SSH config text document for the editor."""
+
+    if type(result) is not SshConfigText:
+        raise TypeError("SSH config text is required")
+    return {
+        "text": result.text,
+        "revision": result.revision,
+        "display_name": result.display_name,
+        "writable": result.writable,
+    }
+
+
+def ssh_config_text_from_wire(value: Any) -> SshConfigText:
+    """Decode a daemon SSH config text document with strict validation."""
+
+    data = _strict_fields(
+        value,
+        required={"text", "revision", "display_name", "writable"},
+        context="ssh config text",
+    )
+    return SshConfigText(
+        text=_text(data["text"], "ssh config text", allow_empty=True),
+        revision=_identifier(data["revision"], "ssh config revision"),
+        display_name=_text(data["display_name"], "ssh config display name"),
+        writable=_boolean(data["writable"], "ssh config writable"),
+    )
+
+
+def save_ssh_config_text_request_from_wire(
+    value: Any,
+) -> SaveSshConfigTextRequest:
+    """Decode a raw SSH config text save request."""
+
+    data = _strict_fields(
+        value,
+        required={"text", "expected_revision"},
+        context="save ssh config text request",
+    )
+    return SaveSshConfigTextRequest(
+        text=_text(data["text"], "ssh config text", allow_empty=True),
+        expected_revision=_identifier(
+            data["expected_revision"], "expected ssh config revision"
+        ),
     )
 
 

@@ -24,6 +24,18 @@ from sshpilot.platform.paths import get_config_dir, get_ssh_dir
 from .lifecycle import resolve_socket_path
 
 
+def _resolve_ssh_root(isolated: bool) -> Path:
+    """Return the daemon-selected active SSH config root file.
+
+    Normal mode edits ``~/.ssh/config``; isolated mode owns a dedicated
+    ``ssh_config`` under the app config directory. Kept as a module-level
+    helper so the resolution is unit-testable; the daemon is the only caller.
+    """
+    if isolated:
+        return get_config_dir() / "ssh_config"
+    return get_ssh_dir() / "config"
+
+
 def _configure_logging(verbose: bool) -> None:
     """Configure daemon logging.
 
@@ -288,11 +300,6 @@ def _production_core_services():
         if scope is KeyStoreScope.ISOLATED:
             return get_config_dir()
         raise ValueError("unsupported key store scope")
-
-    def _resolve_ssh_root(isolated: bool):
-        if isolated:
-            return get_config_dir() / "ssh_config"
-        return get_ssh_dir() / "config"
 
     settings = DaemonBootstrapSettings()
     isolated = settings.use_isolated_config

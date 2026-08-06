@@ -5,6 +5,21 @@ notes remain separate.
 
 ## Unreleased
 
+- Restored the raw SSH config editor with daemon-owned file resolution and
+  writing. Added `connections.get_ssh_config_text` and
+  `connections.save_ssh_config_text` (`get_ssh_config_text` /
+  `save_ssh_config_text` client methods) plus the `SshConfigText` and
+  `SaveSshConfigTextRequest` models. The daemon selects the active SSH config
+  root (normal or isolated mode), serves exact text with a whole-configuration
+  revision, rejects stale saves, and writes through the existing hardened
+  atomic writer (one-shot backup, permissions, symlink refusal). A successful
+  save reloads connection state synchronously, so the normal connection update
+  events fire before the RPC responds; the polling configuration watcher
+  continues to handle external edits. `SshConfigText.text` and
+  `SaveSshConfigTextRequest.text` are sensitive fields (excluded from model
+  reprs and generated safe representations). GTK never resolves or writes the
+  file itself.
+
 - Corrected the bounded SFTP file contract: `SftpReadFileResult.content` and
   `SftpReplaceFileRequest.content` are sensitive fields (excluded from model
   reprs and generated safe representations). Replacements serialize the complete

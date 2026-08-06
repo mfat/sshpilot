@@ -43,8 +43,10 @@ from .models.connections import (
     DeleteConnectionRequest,
     DeleteConnectionResult,
     DeleteKeyPassphraseRequest,
+    SaveSshConfigTextRequest,
     StoreConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
+    SshConfigText,
     UpdateConnectionRequest,
 )
 from .models.connection_store import (
@@ -147,6 +149,7 @@ from .transport.codec import (
     connection_details_from_wire,
     connection_editor_details_from_wire,
     connection_summary_from_wire,
+    ssh_config_text_from_wire,
     connection_store_snapshot_from_wire,
     create_connection_request_to_wire,
     create_group_request_to_wire,
@@ -256,6 +259,8 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_daemon_diagnostics": Capability.DAEMON_STATUS,
     "get_daemon_status": Capability.DAEMON_STATUS,
     "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
+    "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "set_group_color": Capability.CONNECTIONS_GROUPS,
     "place_group": Capability.CONNECTIONS_GROUPS,
     "copy_connection_to_group": Capability.CONNECTIONS_GROUPS,
@@ -628,6 +633,42 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol(
                 "The daemon returned invalid connection editor details"
+            )
+
+    def get_ssh_config_text(self) -> SshConfigText:
+        """Load the daemon-selected active SSH config text for the raw editor."""
+
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request("connections.get_ssh_config_text", {})
+        try:
+            return ssh_config_text_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned invalid SSH config text"
+            )
+
+    def save_ssh_config_text(
+        self, request: SaveSshConfigTextRequest
+    ) -> SshConfigText:
+        """Save raw SSH config text through the daemon's hardened write path."""
+
+        self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
+        if type(request) is not SaveSshConfigTextRequest:
+            raise TypeError(
+                "request must be a SaveSshConfigTextRequest instance"
+            )
+        result = self._request(
+            "connections.save_ssh_config_text",
+            {
+                "text": request.text,
+                "expected_revision": request.expected_revision,
+            },
+        )
+        try:
+            return ssh_config_text_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned invalid SSH config text"
             )
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:

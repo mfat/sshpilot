@@ -41,7 +41,9 @@ from ..api.models.connections import (
     DeleteConnectionResult,
     ForwardingRule,
     GroupReference,
+    SaveSshConfigTextRequest,
     SplitConnectionRequest,
+    SshConfigText,
     UpdateConnectionRequest,
     UNSET,
     forwarding_rule_from_dict,
@@ -67,6 +69,8 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_capabilities": None,
     "get_connection": Capability.CONNECTIONS_READ,
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
+    "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
@@ -631,6 +635,43 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         return self._record_to_editor_details(record)
+
+    def get_ssh_config_text(self) -> SshConfigText:
+        """Return the daemon-selected active SSH config text for the raw editor."""
+
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        try:
+            return self._repository.get_ssh_config_text()
+        except CoreError as error:
+            raise _map_core_error(error)
+
+    def save_ssh_config_text(
+        self, request: SaveSshConfigTextRequest
+    ) -> SshConfigText:
+        """Save raw SSH config text through the daemon's hardened write path.
+
+        The repository reloads the SSH configuration synchronously after the
+        write, so normal connection update events fire before the RPC responds
+        (the polling watcher never has to notice the daemon's own write).
+        """
+
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
+        if type(request) is not SaveSshConfigTextRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A save SSH config text request is required",
+            )
+        try:
+            return self._repository.save_ssh_config_text(request)
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception:
+            logger.exception("Repository SSH config text save failed")
+            raise self._persistence_error()
 
     def snapshot_connection_store(self) -> Any:
         self._assert_command_thread()

@@ -2963,6 +2963,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SaveSshConfigTextRequest -->
+## `SaveSshConfigTextRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Optimistic raw-text replacement of the daemon-selected SSH config.
+
+``expected_revision`` is the revision returned by the preceding load;
+the daemon rejects the save when any participating config file changed
+since the editor loaded it.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | Yes |
+| `expected_revision` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "expected_revision": "example",
+  "text": "<sensitive value omitted>"
+}
+```
+
 <!-- api-model: ServiceFailure -->
 ## `ServiceFailure`
 
@@ -3457,6 +3485,39 @@ Synthetic representation:
   "port": null,
   "source_config_path": "example",
   "username": null
+}
+```
+
+<!-- api-model: SshConfigText -->
+## `SshConfigText`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The daemon-selected active SSH config text plus editor metadata.
+
+The daemon resolves which file is active (normal or isolated mode) and
+never accepts a filesystem path from the client. ``display_name`` is the
+daemon-computed display label (home-collapsed); ``writable`` reflects
+whether the daemon's hardened atomic write path can replace the file.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | Yes |
+| `revision` | `str` | Yes | — | No |
+| `display_name` | `str` | Yes | — | No |
+| `writable` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "display_name": "example",
+  "revision": "example",
+  "text": "<sensitive value omitted>",
+  "writable": false
 }
 ```
 

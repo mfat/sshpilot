@@ -282,6 +282,10 @@
       "capability": "sftp.read",
       "status": "daemon-only"
     },
+    "get_ssh_config_text": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "get_transfer": {
       "capability": "transfers.read",
       "status": "daemon-only"
@@ -449,6 +453,10 @@
     "restart_daemon": {
       "capability": "daemon.control",
       "status": "daemon-only"
+    },
+    "save_ssh_config_text": {
+      "capability": "connections.config.write",
+      "status": "implemented"
     },
     "send_interaction_secret": {
       "capability": "interactions.respond",
@@ -626,6 +634,7 @@
     "get_secret_state",
     "get_session",
     "get_sftp_service",
+    "get_ssh_config_text",
     "get_transfer",
     "import_bitwarden_backup",
     "import_secret_backup",
@@ -676,6 +685,7 @@
     "resize_terminal",
     "respond_to_interaction",
     "restart_daemon",
+    "save_ssh_config_text",
     "send_interaction_secret",
     "send_terminal_input",
     "set_group_color",
@@ -1188,6 +1198,10 @@
       ],
       "return": "SftpServiceSummary"
     },
+    "get_ssh_config_text": {
+      "parameters": [],
+      "return": "SshConfigText"
+    },
     "get_transfer": {
       "parameters": [
         {
@@ -1641,6 +1655,16 @@
       ],
       "return": "DaemonStopResult"
     },
+    "save_ssh_config_text": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SaveSshConfigTextRequest"
+        }
+      ],
+      "return": "SshConfigText"
+    },
     "send_interaction_secret": {
       "parameters": [
         {
@@ -2031,6 +2055,9 @@
     "connections.get_plugin_secret": {
       "capability": "connections.secrets.write"
     },
+    "connections.get_ssh_config_text": {
+      "capability": "connections.config.read"
+    },
     "connections.list": {
       "capability": "connections.read"
     },
@@ -2048,6 +2075,9 @@
     },
     "connections.rename_group": {
       "capability": "connections.groups"
+    },
+    "connections.save_ssh_config_text": {
+      "capability": "connections.config.write"
     },
     "connections.snapshot": {
       "capability": "connections.read"
@@ -2684,6 +2714,7 @@
     "RequestId",
     "ResizeTerminalRequest",
     "RestartDaemonRequest",
+    "SaveSshConfigTextRequest",
     "SecretBackendDescriptor",
     "SecretBackendRegistry",
     "SecretBackendState",
@@ -2715,6 +2746,7 @@
     "SftpServiceSummary",
     "SftpSymlinkRequest",
     "SplitConnectionRequest",
+    "SshConfigText",
     "StartTransferRequest",
     "StopDaemonRequest",
     "StoreConnectionPasswordRequest",
@@ -3395,6 +3427,10 @@
       "force",
       "confirmation"
     ],
+    "SaveSshConfigTextRequest": [
+      "text",
+      "expected_revision"
+    ],
     "ServiceFailure": [
       "code",
       "message"
@@ -3502,6 +3538,12 @@
       "port",
       "config_patch",
       "expected_generation"
+    ],
+    "SshConfigText": [
+      "text",
+      "revision",
+      "display_name",
+      "writable"
     ],
     "StartTransferRequest": [
       "connection_id",

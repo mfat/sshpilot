@@ -41,6 +41,8 @@ from ...api.models.connections import (
     ConnectionId,
     ConnectionSummary,
     GroupReference,
+    SaveSshConfigTextRequest,
+    SshConfigText,
 )
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord, GroupRecord
@@ -249,6 +251,58 @@ class ConnectionRepository:
             self._load_state_locked()
             after = self._build_snapshot_locked()
             return self._notify(before, after)
+
+    # ------------------------------------------------------------------
+    # Raw SSH config text (daemon-selected editor document)
+    # ------------------------------------------------------------------
+
+    def get_ssh_config_text(self) -> SshConfigText:
+        """Return the daemon-selected active SSH config text for the editor."""
+
+        with self._lock:
+            return self._ssh_store.get_text()
+
+    def save_ssh_config_text(
+        self, request: SaveSshConfigTextRequest
+    ) -> SshConfigText:
+        """Write raw SSH config text and reload connection state immediately.
+
+        The write goes through the daemon-owned hardened store (revision
+        check, atomic replace, backup, permissions, symlink refusal). On
+        success the SSH configuration is re-read synchronously — before the
+        RPC responds — so the normal connection update events fire at once
+        instead of waiting for the polling watcher to notice the daemon's own
+        write. A failed reload (e.g. the written document does not parse)
+        rolls the file back to its previous bytes.
+        """
+        if type(request) is not SaveSshConfigTextRequest:
+            raise TypeError(
+                "request must be a SaveSshConfigTextRequest instance"
+            )
+        with self._mutation_scope():
+            before = self._begin()
+            disk_before = self._capture_transaction_files_locked(
+                self._ssh_store.root_path
+            )
+            try:
+                result = self._ssh_store.replace_text(
+                    request.text,
+                    request.expected_revision,
+                )
+                # Record the daemon-written file before reloading: a reload
+                # failure (unparseable document) must roll the file back to
+                # its previous bytes, exactly like the CRUD mutations.
+                self._record_post_write_locked(
+                    disk_before, self._ssh_store.root_path
+                )
+                self._load_state_locked()
+                self._persist_state_file_locked()
+                self._record_post_write_locked(disk_before, self._state_path)
+            except Exception:
+                self._rollback_after_failure_locked(disk_before)
+                raise
+            self._commit(before)
+            return result
 
     def add_listener(self, callback: ChangeListener) -> None:
         with self._lock:

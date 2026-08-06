@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+from ...api.models.connections import SshConfigText
 from ...ssh_config_document import (
     HostBlock,
     RawSpan,
@@ -309,6 +310,104 @@ class SshConfigStore:
             return _compute_revision(files) == expected
         except (CoreError, OSError):
             return False
+
+    # -- raw text editor (daemon-selected document) -----------------------
+
+    def _display_name(self) -> str:
+        """Home-collapsed display label for the editor title (never a path
+        chosen by the client — the daemon resolved the root)."""
+        path = str(self._root_path)
+        try:
+            home = os.path.expanduser("~")
+        except Exception:
+            home = ""
+        if home and path.startswith(home + os.sep):
+            return "~" + path[len(home):]
+        if home and path == home:
+            return "~"
+        return path
+
+    def _is_writable(self) -> bool:
+        """True when the daemon's hardened write path can replace the root.
+
+        Mirrors ``_atomic_write_text``: same-directory temp file + atomic
+        rename, so directory write+execute access is required and symlinked
+        roots are never mutated.
+        """
+        try:
+            root = Path(self._root_path)
+            if os.path.islink(root):
+                return False
+            if not os.access(root.parent, os.W_OK | os.X_OK):
+                return False
+            if root.exists():
+                return os.access(root, os.W_OK)
+            return True
+        except OSError:
+            return False
+
+    def _read_root_text(self) -> str:
+        try:
+            return self._root_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+        except (OSError, UnicodeError) as exc:
+            raise _store_error(
+                "The connection configuration could not be read"
+            ) from exc
+
+    def _current_revision(self) -> str:
+        try:
+            return _compute_revision(_resolve_config_files(self._root_path))
+        except (CoreError, OSError) as exc:
+            raise _store_error(
+                "The connection configuration could not be read"
+            ) from exc
+
+    def get_text(self) -> SshConfigText:
+        """Return the daemon-selected root config text for the raw editor.
+
+        Reading never requires the document to *parse* (the editor is the tool
+        that fixes a malformed config); only readability of the root and its
+        recursively included files is enforced, matching the strict-load
+        policy of the daemon.
+        """
+        return SshConfigText(
+            text=self._read_root_text(),
+            revision=self._current_revision(),
+            display_name=self._display_name(),
+            writable=self._is_writable(),
+        )
+
+    def replace_text(self, text: str, expected_revision: str) -> SshConfigText:
+        """Replace the daemon-selected root config text atomically.
+
+        Reuses the hardened writer (same-directory temp, fsync, atomic
+        replace, one-shot ``.bak`` backup, mode preservation, symlink
+        refusal) and rejects stale saves when any participating file changed
+        since the editor loaded it. The text is written exactly as provided.
+        """
+        if type(text) is not str:
+            raise TypeError("SSH configuration content must be exact text")
+        if type(expected_revision) is not str or not expected_revision.strip():
+            raise TypeError("an expected SSH config revision is required")
+        self._refuse_symlinked_root()
+        current_bytes = (
+            self._root_path.read_bytes() if self._root_path.exists() else None
+        )
+        if not self._revision_matches(expected_revision):
+            raise _stale_error()
+        _atomic_write_text(
+            self._root_path,
+            text,
+            expected_bytes=current_bytes,
+        )
+        return SshConfigText(
+            text=text,
+            revision=self._current_revision(),
+            display_name=self._display_name(),
+            writable=self._is_writable(),
+        )
 
     # -- lookups -----------------------------------------------------------
 

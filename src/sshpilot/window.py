@@ -4324,10 +4324,47 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.show_connection_dialog(connection, skip_group_warning=True)
 
     def _open_ssh_config_editor(self):
-        self.show_toast(_(
-            "Direct SSH config editing is unavailable; use connection dialogs "
-            "so changes are validated and saved by the background service."
-        ))
+        """Open the SSH config text editor backed by the daemon.
+
+        GTK never decides which SSH config file is active and never writes it:
+        the daemon resolves the root (normal or isolated mode), serves the
+        text, performs the hardened atomic write, and reloads connection
+        state. This reuses the existing raw text editor UI unchanged.
+        """
+        try:
+            from .text_editor import RemoteFileEditorWindow
+            from .ssh_config_editor_service import DaemonSshConfigTextService
+
+            client = getattr(self, 'client', None)
+            if client is None or not hasattr(client, 'get_ssh_config_text'):
+                self.show_toast(_(
+                    "SSH config editing requires the background service. "
+                    "Start it and try again."
+                ))
+                return
+
+            service = DaemonSshConfigTextService(client)
+            editor = RemoteFileEditorWindow(
+                parent=self,
+                file_path="",  # the daemon resolves the active config file
+                file_name=_("SSH Config"),
+                is_local=False,
+                daemon_file_service=service,
+                file_manager_window=None,
+                language_id="sshconfig",
+                show_outline=True,
+            )
+
+            # Window/taskbar title; the header title shows the daemon-resolved
+            # display name as the subtitle automatically.
+            editor.set_title(_("Edit SSH Config"))
+            if hasattr(editor, 'set_editor_title'):
+                editor.set_editor_title(_("SSH Config"))
+
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open SSH config editor: {e}")
+            self.show_toast(_("Could not open the SSH config editor."))
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its
