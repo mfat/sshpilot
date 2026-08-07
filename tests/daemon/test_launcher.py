@@ -162,6 +162,7 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.TRANSFERS_EVENTS,
                 Capability.TRANSFERS_UPLOAD,
                 Capability.TRANSFERS_DOWNLOAD,
+                Capability.TRANSFERS_SCP,
                 Capability.FORWARDS_READ,
                 Capability.FORWARDS_WRITE,
                 Capability.FORWARDS_EVENTS,

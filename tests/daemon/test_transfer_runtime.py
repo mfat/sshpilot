@@ -12,7 +12,9 @@ from sshpilot.api.models.common import ClientId, ConnectionId
 from sshpilot.api.models.operations import OpenSftpRequest
 from sshpilot.api.models.transfers import (
     CancelTransferRequest,
+    StartScpTransferRequest,
     StartTransferRequest,
+    TransferBackend,
     TransferDirection,
     TransferState,
 )
@@ -164,6 +166,67 @@ def _wait_until(predicate, timeout=2.0, message="condition not met in time"):
             return
         time.sleep(0.01)
     raise AssertionError(message)
+
+
+class _FakeScpBackend:
+    supported = True
+
+    def __init__(self):
+        self.runs = []
+
+    def target_for_connection(self, connection_id):
+        assert connection_id == "demo"
+        return "alice@example.test"
+
+    def run(self, request, *, connection_target, connection_id, cancel_event):
+        self.runs.append((request, connection_target, connection_id, cancel_event))
+        return SimpleNamespace(returncode=0, stderr="")
+
+
+def _scp_request():
+    return StartScpTransferRequest(
+        connection_id=ConnectionId("demo"),
+        direction=TransferDirection.UPLOAD,
+        sources=("/tmp/source file",),
+        destination="/var/tmp/drop",
+    )
+
+
+def test_prepare_and_run_scp_transfer_uses_shared_lifecycle_without_sftp():
+    owner = ClientId("client:owner")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    backend = _FakeScpBackend()
+    transfer_runtime = TransferRuntime(sftp_runtime, scp_backend=backend)
+
+    prepared = transfer_runtime.prepare_start_scp_transfer(
+        _scp_request(), client_id=owner
+    )
+    assert prepared.backend is TransferBackend.NATIVE_SCP
+    assert prepared.sftp_service_id is None
+
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.COMPLETED
+    assert len(backend.runs) == 1
+    assert backend.runs[0][1] == "alice@example.test"
+
+
+def test_cancel_scp_transfer_signals_backend_before_terminal_state():
+    owner = ClientId("client:owner")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    backend = _FakeScpBackend()
+    transfer_runtime = TransferRuntime(sftp_runtime, scp_backend=backend)
+    prepared = transfer_runtime.prepare_start_scp_transfer(
+        _scp_request(), client_id=owner
+    )
+
+    assert transfer_runtime.prepare_cancel_transfer(
+        CancelTransferRequest(transfer_id=prepared.id), client_id=owner
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    assert prepared.id not in transfer_runtime._worker_threads
+    assert transfer_runtime.get_transfer(prepared.id).state is TransferState.CANCELLED
 
 
 def test_prepare_start_transfer_returns_queued_summary():

@@ -445,6 +445,10 @@
       "capability": "connections.split",
       "status": "implemented"
     },
+    "start_scp_transfer": {
+      "capability": "transfers.scp",
+      "status": "daemon-only"
+    },
     "start_transfer": {
       "capability": "transfers.write",
       "status": "daemon-only"
@@ -917,6 +921,9 @@
     "transfers.list": {
       "capability": "transfers.read"
     },
+    "transfers.scp.start": {
+      "capability": "transfers.scp"
+    },
     "transfers.start": {
       "capability": "transfers.write"
     }
@@ -963,6 +970,7 @@
       "transfers.events",
       "transfers.upload",
       "transfers.download",
+      "transfers.scp",
       "port_forwarding",
       "forwards.read",
       "forwards.write",
@@ -1258,6 +1266,10 @@
       "closing",
       "closed",
       "failed"
+    ],
+    "TransferBackend": [
+      "sftp",
+      "native_scp"
     ],
     "TransferConflictPolicy": [
       "fail",
@@ -5597,6 +5609,53 @@
       ],
       "status": "Schema only"
     },
+    "StartScpTransferRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "direction",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferDirection"
+        },
+        {
+          "default": null,
+          "name": "sources",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": null,
+          "name": "destination",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "fail",
+          "name": "conflict_policy",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferConflictPolicy"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
     "StartTransferRequest": {
       "fields": [
         {
@@ -5901,7 +5960,7 @@
           "name": "sftp_service_id",
           "required": true,
           "sensitive": false,
-          "type": "SftpServiceId"
+          "type": "Optional[SftpServiceId]"
         },
         {
           "default": null,
@@ -5930,6 +5989,13 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": "sftp",
+          "name": "backend",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferBackend"
         },
         {
           "default": null,

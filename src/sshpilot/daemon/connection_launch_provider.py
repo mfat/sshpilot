@@ -435,6 +435,7 @@ class DaemonConnectionLaunchProvider:
         command_type: str,
         extra_args: Optional[List[str]] = None,
         remote_command: Optional[str] = None,
+        target_override: Optional[str] = None,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
@@ -454,6 +455,7 @@ class DaemonConnectionLaunchProvider:
             remote_command=remote_command,
             native_mode=True,
             interaction_policy=interaction_policy,
+            target_override=target_override,
         )
         prepared = build_ssh_connection(ctx)
         connection._preload_keys_into_agent(app_config, credential_lookup=manager)
@@ -514,6 +516,47 @@ class DaemonConnectionLaunchProvider:
             interaction_policy=interaction_policy,
             command_type="ssh",
         )
+
+    def prepare_scp_launch(
+        self,
+        connection_id: ConnectionId,
+        *,
+        extra_args: Optional[List[str]] = None,
+        interaction_policy: str = "broker",
+        target_override: Optional[str] = None,
+    ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
+        record = self._resolve(connection_id)
+        connection = HeadlessConnectionView(record)
+        if connection.protocol != "ssh":
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+                "SCP transfers require an SSH connection",
+                connection_id=connection_id,
+            )
+        return self._prepare_ssh_launch(
+            connection,
+            interaction_policy=interaction_policy,
+            command_type="scp",
+            extra_args=extra_args,
+            target_override=target_override,
+        )
+
+    def scp_target(self, connection_id: ConnectionId) -> str:
+        record = self._resolve(connection_id)
+        connection = HeadlessConnectionView(record)
+        host = connection.resolve_host_identifier() if hasattr(
+            connection, "resolve_host_identifier"
+        ) else connection.host
+        host = str(host or connection.hostname or "").strip()
+        if not host:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "The connection has no SSH host identifier",
+                connection_id=connection_id,
+            )
+        if ":" in host and not (host.startswith("[") and host.endswith("]")):
+            host = f"[{host}]"
+        return f"{connection.username}@{host}" if connection.username else host
 
     def prepare_sftp_launch(
         self,

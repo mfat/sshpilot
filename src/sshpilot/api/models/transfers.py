@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 from .common import (
     ClientId,
@@ -16,6 +16,11 @@ from .common import (
     utc_now,
 )
 from .operations import ServiceFailure
+
+
+class TransferBackend(str, Enum):
+    SFTP = "sftp"
+    NATIVE_SCP = "native_scp"
 
 
 class TransferDirection(str, Enum):
@@ -52,11 +57,12 @@ class TransferLocalMode(str, Enum):
 class TransferSummary:
     id: TransferId
     connection_id: ConnectionId
-    sftp_service_id: SftpServiceId
+    sftp_service_id: Optional[SftpServiceId]
     direction: TransferDirection
     state: TransferState
     source_display: str
     destination_display: str
+    backend: TransferBackend = TransferBackend.SFTP
     bytes_total: Optional[int] = None
     bytes_completed: int = 0
     created_at: datetime = field(default_factory=utc_now)
@@ -71,7 +77,12 @@ class TransferSummary:
     def __post_init__(self) -> None:
         require_identifier(self.id, "transfer id")
         require_identifier(self.connection_id, "connection id")
-        require_identifier(self.sftp_service_id, "SFTP service id")
+        if self.sftp_service_id is not None:
+            require_identifier(self.sftp_service_id, "SFTP service id")
+        if not isinstance(self.backend, TransferBackend):
+            raise TypeError("transfer backend must be a TransferBackend")
+        if self.backend is TransferBackend.SFTP and self.sftp_service_id is None:
+            raise ValueError("SFTP transfers require an SFTP service id")
         if not isinstance(self.direction, TransferDirection):
             raise TypeError("transfer direction must be a TransferDirection")
         if not isinstance(self.state, TransferState):
@@ -132,6 +143,39 @@ class StartTransferRequest:
             raise TypeError("local_mode must be a TransferLocalMode")
         if self.local_mode is not TransferLocalMode.DAEMON_PATH:
             raise ValueError("binary streaming mode is not implemented in Phase 10")
+
+
+@dataclass(frozen=True)
+class StartScpTransferRequest:
+    connection_id: ConnectionId
+    direction: TransferDirection
+    sources: Tuple[str, ...]
+    destination: str
+    conflict_policy: TransferConflictPolicy = TransferConflictPolicy.FAIL
+    recursive: bool = False
+
+    MAX_SOURCES = 64
+    MAX_ENCODED_PATH_BYTES = 64 * 1024
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        if not isinstance(self.direction, TransferDirection):
+            raise TypeError("transfer direction must be a TransferDirection")
+        if type(self.sources) is not tuple or not self.sources:
+            raise ValueError("SCP sources must be a non-empty tuple")
+        if len(self.sources) > self.MAX_SOURCES:
+            raise ValueError("SCP source count exceeds the limit")
+        if type(self.destination) is not str or not self.destination:
+            raise ValueError("SCP destination must be a non-empty string")
+        paths = (*self.sources, self.destination)
+        if any(type(path) is not str or not path or "\x00" in path for path in paths):
+            raise ValueError("SCP paths must be non-empty NUL-free strings")
+        if sum(len(path.encode("utf-8")) for path in paths) > self.MAX_ENCODED_PATH_BYTES:
+            raise ValueError("SCP paths exceed the encoded size limit")
+        if not isinstance(self.conflict_policy, TransferConflictPolicy):
+            raise TypeError("conflict_policy must be a TransferConflictPolicy")
+        if type(self.recursive) is not bool:
+            raise TypeError("recursive must be a boolean")
 
 
 @dataclass(frozen=True)

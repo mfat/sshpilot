@@ -110,10 +110,25 @@ and compatibility behavior are documented and tested.
   agent protocol handles, and process environments stay in daemon-owned key,
   interaction, and secret-provider paths.
 
+## Completed native SCP slice
+
+- **Owner:** daemon `NativeScpBackend` behind the shared `TransferRuntime`.
+- **Typed API:** bounded `start_scp_transfer`, shared transfer summaries/events,
+  and the conditional `transfers.scp` capability.
+- **GTK ownership removed:** SCP subprocesses, VTE execution, authentication
+  environments, argv construction, legacy retry decisions, and local listing
+  subprocesses are no longer production responsibilities of GTK.
+- **Compatibility retained:** native `scp` is the normal path; one controlled
+  `-O` retry is daemon-owned and only follows clear SFTP-subsystem-unavailable
+  errors. Flatpak portal path/display separation remains frontend-owned.
+- **Remaining:** general SFTP transfer ownership, browser fallback without SFTP,
+  broadcast/remote-command execution, architecture governance, and final
+  frontend closure remain planned.
+
 ## Planned
 
-- Remote operations: SCP, SFTP transfer ownership, and broadcast/remote-command
-  execution through native OpenSSH.
+- General SFTP transfer ownership and browser fallback without SFTP, plus
+  broadcast/remote-command execution through native OpenSSH.
 - Architecture governance: contributor rules and CI guardrails that reject new
   UI-owned operational features, API bypasses, and unnecessary reimplementations.
 - Frontend closure: remaining unrelated frontend backend debt, a reference CLI,

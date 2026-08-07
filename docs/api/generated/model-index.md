@@ -3521,6 +3521,38 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: StartScpTransferRequest -->
+## `StartScpTransferRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** StartScpTransferRequest(connection_id: 'ConnectionId', direction: 'TransferDirection', sources: 'Tuple[str, ...]', destination: 'str', conflict_policy: 'TransferConflictPolicy' = <TransferConflictPolicy.FAIL: 'fail'>, recursive: 'bool' = False)
+
+**Related methods:** `start_scp_transfer`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+| `direction` | `TransferDirection` | Yes | — | No |
+| `sources` | `Tuple[str, ...]` | Yes | — | No |
+| `destination` | `str` | Yes | — | No |
+| `conflict_policy` | `TransferConflictPolicy` | No | `fail` | No |
+| `recursive` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "conflict_policy": "fail",
+  "connection_id": "production",
+  "destination": {},
+  "direction": {},
+  "recursive": false,
+  "sources": {}
+}
+```
+
 <!-- api-model: StartTransferRequest -->
 ## `StartTransferRequest`
 
@@ -3774,20 +3806,21 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** TransferSummary(id: 'TransferId', connection_id: 'ConnectionId', sftp_service_id: 'SftpServiceId', direction: 'TransferDirection', state: 'TransferState', source_display: 'str', destination_display: 'str', bytes_total: 'Optional[int]' = None, bytes_completed: 'int' = 0, created_at: 'datetime' = <factory>, started_at: 'Optional[datetime]' = None, completed_at: 'Optional[datetime]' = None, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None, bytes_transferred: 'Optional[int]' = None, total_bytes: 'Optional[int]' = None)
+**Purpose:** TransferSummary(id: 'TransferId', connection_id: 'ConnectionId', sftp_service_id: 'Optional[SftpServiceId]', direction: 'TransferDirection', state: 'TransferState', source_display: 'str', destination_display: 'str', backend: 'TransferBackend' = <TransferBackend.SFTP: 'sftp'>, bytes_total: 'Optional[int]' = None, bytes_completed: 'int' = 0, created_at: 'datetime' = <factory>, started_at: 'Optional[datetime]' = None, completed_at: 'Optional[datetime]' = None, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None, bytes_transferred: 'Optional[int]' = None, total_bytes: 'Optional[int]' = None)
 
-**Related methods:** `list_transfers`, `get_transfer`, `start_transfer`
+**Related methods:** `list_transfers`, `get_transfer`, `start_transfer`, `start_scp_transfer`
 **Related events:** `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`
 
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `id` | `TransferId` | Yes | — | No |
 | `connection_id` | `ConnectionId` | Yes | — | No |
-| `sftp_service_id` | `SftpServiceId` | Yes | — | No |
+| `sftp_service_id` | `Optional[SftpServiceId]` | Yes | — | No |
 | `direction` | `TransferDirection` | Yes | — | No |
 | `state` | `TransferState` | Yes | — | No |
 | `source_display` | `str` | Yes | — | No |
 | `destination_display` | `str` | Yes | — | No |
+| `backend` | `TransferBackend` | No | `sftp` | No |
 | `bytes_total` | `Optional[int]` | No | `null` | No |
 | `bytes_completed` | `int` | No | `0` | No |
 | `created_at` | `datetime` | No | `<UTC timestamp at creation>` | No |
@@ -3802,6 +3835,7 @@ Synthetic representation:
 
 ```json
 {
+  "backend": "sftp",
   "bytes_completed": 0,
   "bytes_total": null,
   "bytes_transferred": null,

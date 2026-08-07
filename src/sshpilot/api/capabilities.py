@@ -46,6 +46,7 @@ class Capability(str, Enum):
     TRANSFERS_EVENTS = "transfers.events"
     TRANSFERS_UPLOAD = "transfers.upload"
     TRANSFERS_DOWNLOAD = "transfers.download"
+    TRANSFERS_SCP = "transfers.scp"
     PORT_FORWARDING = "port_forwarding"
     FORWARDS_READ = "forwards.read"
     FORWARDS_WRITE = "forwards.write"

@@ -112,6 +112,7 @@ def test_runtime_capability_markers_match_the_provider(
                 Capability.TRANSFERS_EVENTS.value,
                 Capability.TRANSFERS_UPLOAD.value,
                 Capability.TRANSFERS_DOWNLOAD.value,
+                Capability.TRANSFERS_SCP.value,
                 Capability.FORWARDS_READ.value,
                 Capability.FORWARDS_WRITE.value,
                 Capability.FORWARDS_EVENTS.value,
@@ -123,7 +124,10 @@ def test_runtime_capability_markers_match_the_provider(
                 Capability.DAEMON_EVENTS.value,
             }
         )
-    assert documented == supported == expected
+    conditional = {Capability.TRANSFERS_SCP.value}
+    assert documented - conditional == supported == expected - conditional
+    if Capability.TRANSFERS_SCP.value in supported:
+        assert Capability.TRANSFERS_SCP.value in documented
     assert client.list_connections()
     assert client.get_connection(client.list_connections()[0].id)
 

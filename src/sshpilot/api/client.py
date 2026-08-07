@@ -127,6 +127,7 @@ from .models.operations import (
 )
 from .models.transfers import (
     CancelTransferRequest,
+    StartScpTransferRequest,
     StartTransferRequest,
     TransferSummary,
 )
@@ -406,6 +407,9 @@ class SshPilotClient(Protocol):
         ...
 
     def start_transfer(self, request: StartTransferRequest) -> TransferSummary:
+        ...
+
+    def start_scp_transfer(self, request: StartScpTransferRequest) -> TransferSummary:
         ...
 
     def cancel_transfer(self, request: CancelTransferRequest) -> None:

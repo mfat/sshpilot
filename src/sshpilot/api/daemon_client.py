@@ -124,6 +124,7 @@ from .models.terminal import (
 )
 from .models.transfers import (
     CancelTransferRequest,
+    StartScpTransferRequest,
     StartTransferRequest,
     TransferSummary,
 )
@@ -204,6 +205,7 @@ from .transport.codec import (
     sftp_replace_file_result_from_wire,
     sftp_service_summary_from_wire,
     sftp_symlink_request_to_wire,
+    scp_transfer_request_to_wire,
     start_transfer_request_to_wire,
     stop_daemon_request_to_wire,
     store_connection_password_request_to_wire,
@@ -307,6 +309,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_transfers": Capability.TRANSFERS_READ,
     "get_transfer": Capability.TRANSFERS_READ,
     "start_transfer": Capability.TRANSFERS_WRITE,
+    "start_scp_transfer": Capability.TRANSFERS_SCP,
     "cancel_transfer": Capability.TRANSFERS_WRITE,
     "list_forwards": Capability.FORWARDS_READ,
     "get_forward": Capability.FORWARDS_READ,
@@ -1251,6 +1254,18 @@ class DaemonClient:
             return transfer_summary_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid transfer summary")
+
+    def start_scp_transfer(self, request: StartScpTransferRequest) -> TransferSummary:
+        self._require_capability(Capability.TRANSFERS_SCP)
+        result = self._request(
+            "transfers.scp.start",
+            scp_transfer_request_to_wire(request),
+            session_mutation=True,
+        )
+        try:
+            return transfer_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid SCP transfer summary")
 
     def cancel_transfer(self, request: CancelTransferRequest) -> None:
         self._require_capability(Capability.TRANSFERS_WRITE)

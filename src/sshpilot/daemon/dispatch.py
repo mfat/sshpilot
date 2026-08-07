@@ -114,6 +114,7 @@ from sshpilot.api.transport.codec import (
     sftp_rename_request_from_wire,
     sftp_service_summary_to_wire,
     sftp_symlink_request_from_wire,
+    scp_transfer_request_from_wire,
     start_transfer_request_from_wire,
     store_connection_password_request_from_wire,
     store_key_passphrase_request_from_wire,
@@ -213,6 +214,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "transfers.list": Capability.TRANSFERS_READ,
     "transfers.get": Capability.TRANSFERS_READ,
     "transfers.start": Capability.TRANSFERS_WRITE,
+    "transfers.scp.start": Capability.TRANSFERS_SCP,
     "transfers.cancel": Capability.TRANSFERS_WRITE,
     "forwards.list": Capability.FORWARDS_READ,
     "forwards.get": Capability.FORWARDS_READ,
@@ -401,6 +403,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.chmod",
         "sftp.symlink",
         "transfers.start",
+        "transfers.scp.start",
         "transfers.cancel",
         "forwards.open",
         "forwards.close",
@@ -638,6 +641,7 @@ class RequestDispatcher:
             "transfers.list": self._handle_list_transfers,
             "transfers.get": self._handle_get_transfer,
             "transfers.start": self._handle_start_transfer,
+            "transfers.scp.start": self._handle_start_scp_transfer,
             "transfers.cancel": self._handle_cancel_transfer,
             "forwards.list": self._handle_list_forwards,
             "forwards.get": self._handle_get_forward,
@@ -829,6 +833,7 @@ class RequestDispatcher:
                 ),
                 sftp=self._sftp_runtime is not None,
                 transfers=self._transfer_runtime is not None,
+                scp=self._scp_capability_available(),
                 forwards=self._forward_runtime is not None,
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
@@ -2018,6 +2023,32 @@ class RequestDispatcher:
             on_cancel=lambda: runtime.reject_pending_start(prepared.id),
         )
 
+    def _handle_start_scp_transfer(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_transfer_runtime()
+        transfer_request = scp_transfer_request_from_wire(request.params)
+        prepared = runtime.prepare_start_scp_transfer(
+            transfer_request,
+            client_id=client_id,
+        )
+        prepared_wire = transfer_summary_to_wire(prepared)
+        return DeferredResult(
+            operation=lambda: runtime.run_transfer(prepared.id),
+            command_key=prepared.id,
+            connection_id=prepared.connection_id,
+            on_rejected=lambda: runtime.reject_pending_start(prepared.id),
+            respond_on_accept=True,
+            accepted_result=prepared_wire,
+            on_background_error=lambda error: runtime.fail_pending_start(
+                prepared.id, error
+            ),
+            on_cancel=lambda: runtime.reject_pending_start(prepared.id),
+        )
+
     def _handle_cancel_transfer(
         self,
         request: RequestEnvelope,
@@ -2399,6 +2430,7 @@ class RequestDispatcher:
                 ),
                 sftp=self._sftp_runtime is not None,
                 transfers=self._transfer_runtime is not None,
+                scp=self._scp_capability_available(),
                 forwards=self._forward_runtime is not None,
                 known_hosts=self._known_hosts_service is not None,
                 keys=self._key_service is not None,
@@ -2412,6 +2444,17 @@ class RequestDispatcher:
             ),
         )
 
+    def _scp_capability_available(self) -> bool:
+        runtime = self._transfer_runtime
+        return bool(
+            runtime is not None
+            and getattr(
+                getattr(runtime, "_scp_backend", None),
+                "supported",
+                False,
+            )
+        )
+
     @staticmethod
     def _safe_capabilities(
         supported: FrozenSet[Capability],
@@ -2420,6 +2463,7 @@ class RequestDispatcher:
         secret_frames: bool = False,
         sftp: bool = False,
         transfers: bool = False,
+        scp: bool = False,
         forwards: bool = False,
         known_hosts: bool = False,
         keys: bool = False,
@@ -2494,6 +2538,8 @@ class RequestDispatcher:
                     Capability.TRANSFERS_DOWNLOAD,
                 }
             )
+        if scp:
+            daemon_capabilities |= frozenset({Capability.TRANSFERS_SCP})
         if forwards:
             daemon_capabilities |= frozenset(
                 {

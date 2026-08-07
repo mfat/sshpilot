@@ -163,7 +163,9 @@ from ..models.operations import (
 )
 from ..models.transfers import (
     CancelTransferRequest,
+    StartScpTransferRequest,
     StartTransferRequest,
+    TransferBackend,
     TransferConflictPolicy,
     TransferDirection,
     TransferLocalMode,
@@ -3871,6 +3873,7 @@ def transfer_summary_to_wire(summary: TransferSummary) -> Dict[str, Any]:
         "id": summary.id,
         "connection_id": summary.connection_id,
         "sftp_service_id": summary.sftp_service_id,
+        "backend": summary.backend.value,
         "direction": summary.direction.value,
         "state": summary.state.value,
         "source_display": summary.source_display,
@@ -3893,7 +3896,6 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
         required={
             "id",
             "connection_id",
-            "sftp_service_id",
             "direction",
             "state",
             "source_display",
@@ -3906,8 +3908,13 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
             "owner_client_id",
             "failure",
         },
+        optional={"sftp_service_id", "backend"},
         context="transfer summary",
     )
+    try:
+        backend = TransferBackend(data.get("backend", TransferBackend.SFTP.value))
+    except (TypeError, ValueError):
+        raise ValueError("transfer summary contains an unknown backend") from None
     try:
         direction = TransferDirection(data["direction"])
     except (TypeError, ValueError):
@@ -3924,9 +3931,12 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
         connection_id=ConnectionId(
             _identifier(data["connection_id"], "transfer connection id")
         ),
-        sftp_service_id=_sftp_service_id(
-            data["sftp_service_id"], "transfer SFTP service id"
+        sftp_service_id=(
+            _sftp_service_id(data["sftp_service_id"], "transfer SFTP service id")
+            if data.get("sftp_service_id") is not None
+            else None
         ),
+        backend=backend,
         direction=direction,
         state=state,
         source_display=_text(data["source_display"], "transfer source display"),
@@ -4011,6 +4021,51 @@ def start_transfer_request_from_wire(value: Any) -> StartTransferRequest:
         conflict_policy=conflict_policy,
         recursive=_boolean(recursive, "transfer recursive flag"),
         local_mode=local_mode,
+    )
+
+
+def scp_transfer_request_to_wire(
+    request: StartScpTransferRequest,
+) -> Dict[str, Any]:
+    if type(request) is not StartScpTransferRequest:
+        raise TypeError("SCP transfer request is required")
+    return {
+        "connection_id": request.connection_id,
+        "direction": request.direction.value,
+        "sources": list(request.sources),
+        "destination": request.destination,
+        "conflict_policy": request.conflict_policy.value,
+        "recursive": request.recursive,
+    }
+
+
+def scp_transfer_request_from_wire(value: Any) -> StartScpTransferRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id", "direction", "sources", "destination"},
+        optional={"conflict_policy", "recursive"},
+        context="SCP transfer request",
+    )
+    sources = data["sources"]
+    if type(sources) is not list:
+        raise ValueError("SCP transfer sources must be an array")
+    try:
+        direction = TransferDirection(_identifier(data["direction"], "transfer direction"))
+    except (TypeError, ValueError):
+        raise ValueError("SCP transfer request contains an unknown direction") from None
+    try:
+        conflict_policy = TransferConflictPolicy(
+            data.get("conflict_policy", TransferConflictPolicy.FAIL.value)
+        )
+    except (TypeError, ValueError):
+        raise ValueError("SCP transfer request contains an unknown conflict policy") from None
+    return StartScpTransferRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
+        direction=direction,
+        sources=tuple(_text(item, "SCP source path") for item in sources),
+        destination=_text(data["destination"], "SCP destination path"),
+        conflict_policy=conflict_policy,
+        recursive=_boolean(data.get("recursive", False), "SCP recursive"),
     )
 
 

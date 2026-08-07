@@ -74,6 +74,7 @@
     "transfers.download",
     "transfers.events",
     "transfers.read",
+    "transfers.scp",
     "transfers.upload",
     "transfers.write"
   ],
@@ -522,6 +523,10 @@
       "capability": "connections.split",
       "status": "implemented"
     },
+    "start_scp_transfer": {
+      "capability": "transfers.scp",
+      "status": "daemon-only"
+    },
     "start_transfer": {
       "capability": "transfers.write",
       "status": "daemon-only"
@@ -703,6 +708,7 @@
     "sftp_stat",
     "sftp_symlink",
     "split_connection",
+    "start_scp_transfer",
     "start_transfer",
     "stop_daemon",
     "store_connection_password",
@@ -1845,6 +1851,16 @@
       ],
       "return": "ConnectionMutationResult"
     },
+    "start_scp_transfer": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "StartScpTransferRequest"
+        }
+      ],
+      "return": "TransferSummary"
+    },
     "start_transfer": {
       "parameters": [
         {
@@ -2430,6 +2446,9 @@
     "transfers.list": {
       "capability": "transfers.read"
     },
+    "transfers.scp.start": {
+      "capability": "transfers.scp"
+    },
     "transfers.start": {
       "capability": "transfers.write"
     }
@@ -2747,6 +2766,7 @@
     "SftpSymlinkRequest",
     "SplitConnectionRequest",
     "SshConfigText",
+    "StartScpTransferRequest",
     "StartTransferRequest",
     "StopDaemonRequest",
     "StoreConnectionPasswordRequest",
@@ -2755,6 +2775,7 @@
     "TerminalDimensions",
     "TerminalInput",
     "TerminalOutput",
+    "TransferBackend",
     "TransferConflictPolicy",
     "TransferDirection",
     "TransferId",
@@ -3545,6 +3566,14 @@
       "display_name",
       "writable"
     ],
+    "StartScpTransferRequest": [
+      "connection_id",
+      "direction",
+      "sources",
+      "destination",
+      "conflict_policy",
+      "recursive"
+    ],
     "StartTransferRequest": [
       "connection_id",
       "sftp_service_id",
@@ -3605,6 +3634,7 @@
       "state",
       "source_display",
       "destination_display",
+      "backend",
       "bytes_total",
       "bytes_completed",
       "created_at",
@@ -3672,6 +3702,7 @@
       "transfers.events",
       "transfers.upload",
       "transfers.download",
+      "transfers.scp",
       "port_forwarding",
       "forwards.read",
       "forwards.write",
@@ -3967,6 +3998,10 @@
       "closing",
       "closed",
       "failed"
+    ],
+    "TransferBackend": [
+      "sftp",
+      "native_scp"
     ],
     "TransferConflictPolicy": [
       "fail",

@@ -4704,123 +4704,21 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Drop rejected: no valid file paths extracted from value type: %s", type(value))
                 return False
 
-            # Legacy SCP drag-drop: only when MainWindow exposes the gated
-            # controller (daemon mode requires file_manager.legacy_scp).
             root = self.get_root()
             scp_controller = getattr(root, "scp_controller", None) if root else None
-            start_scp = getattr(scp_controller, "_start_scp_transfer", None)
+            start_scp = getattr(scp_controller, "start_scp_transfer", None)
             if not callable(start_scp):
-                logger.debug("Drop rejected: legacy SCP controller unavailable")
+                logger.debug("Drop rejected: daemon SCP controller unavailable")
                 return False
-            # Get current directory from the active terminal session
-            # Method 3: Use VTE window-title-changed approach (primary method)
-            # The remote shell emits OSC escape sequences that set the window title with the directory
             destination = self.get_current_remote_directory()
-
-            # Fallback: If we don't have directory from window title, use the terminal-based method
             if not destination:
-                logger.debug("Directory not available from window title, falling back to terminal-based method")
-                try:
-                    import time
-                    import random
-                    import subprocess
-
-                    # Generate unique temp file name using timestamp and random number
-                    temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"
-
-                    # Send pwd command to active terminal session to write current directory to temp file
-                    # Use $$ to get shell PID for uniqueness, or use the generated filename
-                    pwd_cmd = f"pwd > {temp_filename}\n"
-
-                    logger.debug(f"Sending pwd command to terminal: {pwd_cmd!r}")
-
-                    # Send command to terminal backend
-                    self.feed_child_data(pwd_cmd.encode('utf-8'))
-
-                    # Wait a moment for the command to execute
-                    time.sleep(0.5)
-
-                    # Now read the temp file via SSH using ssh_connection_builder
-                    from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-
-                    # Build SSH connection command using ssh_connection_builder
-                    ctx = ConnectionContext(
-                        connection=self.connection,
-                        connection_manager=self.connection_manager,
-                        config=self.config,
-                        command_type='ssh',
-                        extra_args=[],
-                        port_forwarding_rules=None,
-                        remote_command=f"cat {temp_filename}",
-                        local_command=None,
-                        extra_ssh_config=None,
-                        known_hosts_path=None,
-                        native_mode=True,
-                    )
-
-                    ssh_conn_cmd = build_ssh_connection(ctx)
-                    ssh_cmd = ssh_conn_cmd.command
-                    env = ssh_conn_cmd.env.copy()
-
-                    logger.debug(f"Reading pwd from temp file: {' '.join(ssh_cmd)}")
-                    result = subprocess.run(
-                        ssh_cmd,
-                        env=env,
-                        text=True,
-                        capture_output=True,
-                        timeout=5,
-                    )
-
-                    # Clean up temp file (best effort) - build cleanup command
-                    try:
-                        cleanup_ctx = ConnectionContext(
-                            connection=self.connection,
-                            connection_manager=self.connection_manager,
-                            config=self.config,
-                            command_type='ssh',
-                            extra_args=[],
-                            port_forwarding_rules=None,
-                            remote_command=f"rm -f {temp_filename}",
-                            local_command=None,
-                            extra_ssh_config=None,
-                            known_hosts_path=None,
-                            native_mode=True,
-                        )
-                        cleanup_cmd_obj = build_ssh_connection(cleanup_ctx)
-                        cleanup_cmd = cleanup_cmd_obj.command
-                        subprocess.run(cleanup_cmd, env=cleanup_cmd_obj.env, timeout=2, capture_output=True)
-                    except Exception:
-                        pass  # Ignore cleanup errors
-
-                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
-
-                    if result.returncode == 0:
-                        if result.stdout:
-                            remote_dir = result.stdout.strip()
-                            if remote_dir:
-                                destination = remote_dir
-                                logger.info(f"Remote current directory: {destination}")
-                            else:
-                                logger.warning("pwd file was empty")
-                        else:
-                            logger.warning("pwd file read succeeded but stdout is empty")
-                    else:
-                        logger.warning(f"Failed to read pwd file: returncode={result.returncode}, stderr={result.stderr}")
-                except Exception as e:
-                    logger.error(f"Failed to get remote current directory: {e}", exc_info=True)
-
-            # Fallback to home directory if we couldn't get current directory
-            if not destination:
-                destination = "~"
-                logger.warning("Could not determine remote current directory, using home directory (~)")
-
-            # Initiate legacy SCP upload (explicit compatibility path only)
-            logger.info(f"Initiating SCP upload for {len(file_paths)} file(s) to {destination}")
+                logger.debug("Drop rejected: remote directory is unavailable")
+                return False
             start_scp(
                 self.connection,
                 file_paths,
                 destination,
-                direction='upload'
+                direction="upload",
             )
 
             return True

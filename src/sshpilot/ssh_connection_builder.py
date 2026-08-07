@@ -442,6 +442,7 @@ class ConnectionContext:
     known_hosts_path: Optional[str] = None  # Custom known hosts file
     native_mode: bool = False  # Use native SSH mode (minimal command)
     interaction_policy: str = "normal"
+    target_override: Optional[str] = None
 
 
 def _get_ssh_config_value(
@@ -960,8 +961,8 @@ def build_ssh_connection(
         ):
             batch_mode = True
 
-        native_target = host_label
-        if hasattr(connection, 'resolve_host_identifier'):
+        native_target = ctx.target_override or host_label
+        if ctx.target_override is None and hasattr(connection, 'resolve_host_identifier'):
             try:
                 resolved = connection.resolve_host_identifier()
                 if resolved:

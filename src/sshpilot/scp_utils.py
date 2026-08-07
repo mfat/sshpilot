@@ -1,10 +1,8 @@
-"""Shared helpers for the legacy SCP UI (VTE transfer path in ``scp_window``).
+"""Pure SCP compatibility helpers.
 
-Headless ``download_file`` / ``upload_file`` helpers were removed; transfers
-run in a terminal via ``ScpWindowController._start_scp_transfer``.
-
-This is an explicit legacy compatibility path — production file-manager
-upload/download must use daemon-owned transfers, not these helpers.
+Native SCP execution is daemon-owned. These helpers remain for strict operand
+normalization and legacy ``-O``/SFTP-subsystem error classification; they do
+not own the production transfer lifecycle or GTK execution path.
 """
 
 from __future__ import annotations

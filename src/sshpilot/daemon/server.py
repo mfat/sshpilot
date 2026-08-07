@@ -172,6 +172,7 @@ class CoreServices:
     secrets: Any = None
     identity: Any = None
     operations: Any = None
+    scp_backend: Any = None
 
 
 @dataclass
@@ -478,6 +479,7 @@ class DaemonServer:
         configuration_backend: Optional[
             AuthoritativeConfigurationBackend
         ] = None
+        scp_backend = None
         # Bounded startup hygiene for orphaned askpass sockets.
         try:
             sweep_runtime_directory_on_startup(self.socket_path.parent)
@@ -545,6 +547,7 @@ class DaemonServer:
                 self._secrets_service = core.secrets
                 self._identity_service = core.identity
                 self._operation_runtime = core.operations
+                scp_backend = core.scp_backend
             else:
                 self._connection_service = core
             enable_workers = getattr(
@@ -592,7 +595,6 @@ class DaemonServer:
                 )
             else:
                 self._sftp_runtime = SftpServiceRuntime(self._connection_service)
-            self._transfer_runtime = TransferRuntime(self._sftp_runtime)
             if self._operation_runtime is None:
                 from .operation_runtime import OperationRuntime
 
@@ -635,6 +637,28 @@ class DaemonServer:
                         None,
                     ),
                 )
+            )
+            if scp_backend is None:
+                scp_provider = getattr(
+                    getattr(self._connection_service, "_launch_provider", None),
+                    "prepare_scp_launch",
+                    None,
+                )
+                scp_target = getattr(
+                    getattr(self._connection_service, "_launch_provider", None),
+                    "scp_target",
+                    None,
+                )
+                if callable(scp_provider) and callable(scp_target):
+                    from .native_scp_backend import NativeScpBackend
+
+                    scp_backend = NativeScpBackend(
+                        self._connection_service,
+                        self._interaction_broker,
+                    )
+            self._transfer_runtime = TransferRuntime(
+                self._sftp_runtime,
+                scp_backend=scp_backend,
             )
             if self._secrets_service is not None and hasattr(
                 self._secrets_service, "attach_interaction_broker"

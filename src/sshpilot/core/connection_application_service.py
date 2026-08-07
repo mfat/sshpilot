@@ -195,6 +195,46 @@ class ConnectionApplicationService:
             )
         return result
 
+    def prepare_daemon_scp_target(self, connection_id: ConnectionId) -> str:
+        self._assert_command_thread()
+        result = self._provider_call(
+            self._launch_provider,
+            "scp_target",
+            connection_id,
+        )
+        if result is None:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The SCP target could not be prepared",
+                connection_id=connection_id,
+            )
+        return str(result)
+
+    def prepare_daemon_scp_launch(
+        self,
+        connection_id: ConnectionId,
+        *,
+        extra_args=None,
+        interaction_policy: str = "broker",
+        target_override=None,
+    ) -> tuple:
+        self._assert_command_thread()
+        result = self._provider_call(
+            self._launch_provider,
+            "prepare_scp_launch",
+            connection_id,
+            extra_args=extra_args,
+            interaction_policy=interaction_policy,
+            target_override=target_override,
+        )
+        if result is None:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The SCP transfer could not be prepared",
+                connection_id=connection_id,
+            )
+        return result
+
     def prepare_daemon_sftp_launch(
         self,
         connection_id: ConnectionId,

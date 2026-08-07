@@ -53,6 +53,7 @@ ALLOWED_EDGES = {
         "sshpilot.askpass_utils",
         "sshpilot.authorized_keys_parser",  # GI-free authorized_keys parser
         "sshpilot.ssh_config_utils",
+        "sshpilot.transfer_scp",  # GTK-free native SCP operand helpers
         "sshpilot.sftp",
         "sshpilot.ssh_multiplex",  # GI-free connection-multiplex helpers
         "sshpilot.backup_archive",  # GI-free secret backup archive (daemon transfer)

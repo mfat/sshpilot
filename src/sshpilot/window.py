@@ -13,9 +13,7 @@ import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
 import traceback
-import weakref
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 if TYPE_CHECKING:
@@ -33,7 +31,7 @@ except Exception:
     _HAS_VTE = False
 
 gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 import threading
 
 # Feature detection for libadwaita versions across distros

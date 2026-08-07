@@ -66,6 +66,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `list_transfers` | Daemon only | `transfers.read` |
 | `get_transfer` | Daemon only | `transfers.read` |
 | `start_transfer` | Daemon only | `transfers.write` |
+| `start_scp_transfer` | Daemon only | `transfers.scp` |
 | `cancel_transfer` | Daemon only | `transfers.write` |
 | `list_forwards` | Daemon only | `forwards.read` |
 | `get_forward` | Daemon only | `forwards.read` |
@@ -139,6 +140,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: sftp_rmdir status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_stat status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_symlink status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: start_scp_transfer status=daemon-only capability=transfers.scp -->
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
 <!-- api-method-contract: store_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: store_key_passphrase status=implemented capability=connections.secrets.write -->
@@ -306,6 +308,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `transfers.list` | `transfers.read` | Implemented |
 | `transfers.get` | `transfers.read` | Implemented |
 | `transfers.start` | `transfers.write` | Implemented |
+| `transfers.scp.start` | `transfers.scp` | Implemented |
 | `transfers.cancel` | `transfers.write` | Implemented |
 | `forwards.list` | `forwards.read` | Implemented |
 | `forwards.get` | `forwards.read` | Implemented |
@@ -414,6 +417,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: transfers.cancel capability=transfers.write -->
 <!-- api-daemon-method: transfers.get capability=transfers.read -->
 <!-- api-daemon-method: transfers.list capability=transfers.read -->
+<!-- api-daemon-method: transfers.scp.start capability=transfers.scp -->
 <!-- api-daemon-method: transfers.start capability=transfers.write -->
 <!-- api-daemon-method: ssh_overrides.get capability=ssh_overrides.read -->
 <!-- api-daemon-method: ssh_overrides.update capability=ssh_overrides.write -->
@@ -1060,6 +1064,19 @@ Daemon-only `transfers.read` snapshot of transfer records.
 ## `get_transfer`
 
 Daemon-only lookup by opaque `transfer-<n>` identifier.
+
+<!-- api-method: start_scp_transfer -->
+## `start_scp_transfer`
+
+- **Status / introduced:** Daemon only / Protocol v1 additive extension
+- **Capability / purpose:** `transfers.scp`; start one daemon-owned native OpenSSH SCP upload or download.
+- **Parameters / return:** `StartScpTransferRequest`; returns the shared `TransferSummary` lifecycle DTO.
+- **Errors:** `unsupported_capability`, `invalid_request`, `server_busy`, typed transfer failure, or transport errors.
+- **Security:** sources and destination are bounded typed paths; argv, environment, passwords, passphrases, askpass data, and process handles never cross the API.
+
+```python
+summary = client.start_scp_transfer(request)
+```
 
 <!-- api-method: start_transfer -->
 ## `start_transfer`

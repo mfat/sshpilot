@@ -89,9 +89,11 @@ The following milestones have completed their reviewed ownership migration:
   success and one `file_revision_conflict` without blocking unrelated targets.
   GTK only stages and presents edits.
 
-SCP, general SFTP transfer ownership, broadcast/remote commands, architecture
- governance, and final frontend closure remain planned phases. See
-[frontend-neutral-migration.md](frontend-neutral-migration.md).
+Native SCP transfer ownership is complete through the daemon/API route; GTK
+retains chooser, portal, browser, progress, and cancellation presentation only.
+General SFTP transfer ownership, browser fallback without SFTP, broadcast/remote
+commands, architecture governance, and final frontend closure remain planned
+phases. See [frontend-neutral-migration.md](frontend-neutral-migration.md).
 
 ## Secret architecture
 

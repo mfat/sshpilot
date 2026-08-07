@@ -5,6 +5,17 @@ notes remain separate.
 
 ## Unreleased
 
+- Added the daemon-only native SCP slice through `start_scp_transfer` and the
+  `transfers.scp` capability. SCP uses the shared `TransferRuntime` lifecycle,
+  canonical OpenSSH launch/authentication and interaction-broker paths, bounded
+  multi-source typed paths, direct native `scp`, and one controlled `-O`
+  compatibility retry. GTK retains chooser, portal, browser, progress, and
+  cancellation presentation only; it no longer owns SCP subprocesses, VTE
+  execution, authentication environments, argv construction, or remote listing.
+  SFTP transfer ownership and general remote operations remain separate and
+  pending.
+
+
 - Restored the raw SSH config editor with daemon-owned file resolution and
   writing. Added `connections.get_ssh_config_text` and
   `connections.save_ssh_config_text` (`get_ssh_config_text` /

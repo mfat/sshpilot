@@ -35,7 +35,9 @@ from sshpilot.api.models.common import ClientId, ConnectionId, SftpServiceId, Tr
 from sshpilot.api.models.operations import ServiceFailure
 from sshpilot.api.models.transfers import (
     CancelTransferRequest,
+    StartScpTransferRequest,
     StartTransferRequest,
+    TransferBackend,
     TransferConflictPolicy,
     TransferDirection,
     TransferState,
@@ -136,6 +138,9 @@ class _TransferRecord:
     remote_temp_path: Optional[str] = None
     last_progress_monotonic: float = 0.0
     last_progress_bytes: int = 0
+    backend: TransferBackend = TransferBackend.SFTP
+    scp_request: Optional[StartScpTransferRequest] = None
+    scp_cancel_event: Optional[threading.Event] = None
 
 
 class TransferRuntime:
@@ -155,6 +160,7 @@ class TransferRuntime:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         progress_min_interval_seconds: float = DEFAULT_PROGRESS_MIN_INTERVAL_SECONDS,
         progress_min_bytes: int = DEFAULT_PROGRESS_MIN_BYTES,
+        scp_backend=None,
     ) -> None:
         if shutdown_timeout_seconds < 0:
             raise ValueError("transfer shutdown timeout must not be negative")
@@ -180,6 +186,7 @@ class TransferRuntime:
         self._chunk_size = chunk_size
         self._progress_min_interval_seconds = float(progress_min_interval_seconds)
         self._progress_min_bytes = progress_min_bytes
+        self._scp_backend = scp_backend
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[TransferId, _TransferRecord] = {}
@@ -231,7 +238,6 @@ class TransferRuntime:
                 OverwritePolicy,
                 PathRef,
                 TransferDirection as CoreDirection,
-                TransferQueuePolicy,
                 TransferRequest,
             )
 
@@ -304,27 +310,59 @@ class TransferRuntime:
         )
         with self._lock:
             self._require_accepting_commands_locked()
-            capacity = self._max_concurrent_transfers + self._max_queued_transfers
-            inflight = self._count_inflight_locked()
-            # Core queue policy: treat combined in-flight capacity as the admit limit.
-            policy = TransferQueuePolicy(
-                max_queued=capacity,
-                max_concurrent=self._max_concurrent_transfers,
-            )
-            if policy.admit(inflight, 0) is not None:
-                raise SshPilotError(
-                    ErrorCode.SERVER_BUSY,
-                    "The transfer queue is full; try again when an in-flight transfer finishes",
-                    retryable=True,
-                )
-            if transfer_id in self._records:
-                raise RuntimeError("transfer id factory reused an active identifier")
+            self._admit_record_locked(record)
             self._records[transfer_id] = record
             self._creation_order.append(transfer_id)
             created_event = self._event_locked(record, EventType.TRANSFER_CREATED)
         self._publish((created_event,))
         with self._lock:
             return self._summary_locked(record)
+
+    def prepare_start_scp_transfer(
+        self,
+        request: StartScpTransferRequest,
+        *,
+        client_id: ClientId,
+    ) -> TransferSummary:
+        if type(request) is not StartScpTransferRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An SCP transfer request is required",
+            )
+        if self._scp_backend is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Native SCP transfers are unavailable",
+            )
+        transfer_id = self._id_factory()
+        now = self._clock()
+        source_display = ", ".join(request.sources)
+        destination_display = request.destination
+        record = _TransferRecord(
+            transfer_id=transfer_id,
+            connection_id=request.connection_id,
+            sftp_service_id=None,
+            direction=request.direction,
+            remote_path=request.destination,
+            local_path=request.destination,
+            conflict_policy=request.conflict_policy,
+            source_display=source_display,
+            destination_display=destination_display,
+            state=TransferState.QUEUED,
+            created_at=now,
+            owner_client_id=client_id,
+            backend=TransferBackend.NATIVE_SCP,
+            scp_request=request,
+            scp_cancel_event=threading.Event(),
+        )
+        with self._lock:
+            self._require_accepting_commands_locked()
+            self._admit_record_locked(record)
+            self._records[transfer_id] = record
+            self._creation_order.append(transfer_id)
+            created_event = self._event_locked(record, EventType.TRANSFER_CREATED)
+        self._publish((created_event,))
+        return self._summary_locked(record)
 
     def run_transfer(self, transfer_id: TransferId) -> None:
         """Fast executor operation: schedule the copy loop on the worker pool."""
@@ -373,6 +411,24 @@ class TransferRuntime:
         if record is not None:
             self._fail(record, code, message)
 
+    def _admit_record_locked(self, record: _TransferRecord) -> None:
+        from sshpilot.core.transfers import TransferQueuePolicy
+
+        capacity = self._max_concurrent_transfers + self._max_queued_transfers
+        inflight = self._count_inflight_locked()
+        policy = TransferQueuePolicy(
+            max_queued=capacity,
+            max_concurrent=self._max_concurrent_transfers,
+        )
+        if policy.admit(inflight, 0) is not None:
+            raise SshPilotError(
+                ErrorCode.SERVER_BUSY,
+                "The transfer queue is full; try again when an in-flight transfer finishes",
+                retryable=True,
+            )
+        if record.transfer_id in self._records:
+            raise RuntimeError("transfer id factory reused an active identifier")
+
     # -- copy loop (dedicated thread) ------------------------------------
     def _transfer_worker(self, transfer_id: TransferId) -> None:
         record = self._records.get(transfer_id)
@@ -391,15 +447,19 @@ class TransferRuntime:
             elif record.state is not TransferState.RUNNING:
                 return
         self._publish(events)
+        client = None
+        if record.backend is TransferBackend.SFTP:
+            try:
+                client, _ = self._sftp_runtime.acquire_active_client(
+                    record.sftp_service_id, record.owner_client_id
+                )
+            except SshPilotError as error:
+                self._fail(record, error.code, error.message)
+                return
         try:
-            client, _ = self._sftp_runtime.acquire_active_client(
-                record.sftp_service_id, record.owner_client_id
-            )
-        except SshPilotError as error:
-            self._fail(record, error.code, error.message)
-            return
-        try:
-            if record.direction is TransferDirection.UPLOAD:
+            if record.backend is TransferBackend.NATIVE_SCP:
+                self._run_scp(record)
+            elif record.direction is TransferDirection.UPLOAD:
                 self._run_upload(record, client)
             else:
                 self._run_download(record, client)
@@ -408,7 +468,10 @@ class TransferRuntime:
         except _TransferCancelled:
             self._finish_cancelled(record)
         except SshPilotError as error:
-            self._fail(record, error.code, error.message)
+            if error.code is ErrorCode.OPERATION_CANCELLED:
+                self._finish_cancelled(record)
+            else:
+                self._fail(record, error.code, error.message)
         except Exception:
             logger.exception("Transfer %s failed", transfer_id)
             self._fail(record, ErrorCode.TRANSFER_IO_FAILED, "The transfer failed")
@@ -432,6 +495,22 @@ class TransferRuntime:
             self._publish(promote_events)
             if thread_to_start is not None:
                 thread_to_start.start()
+
+    def _run_scp(self, record: _TransferRecord) -> None:
+        if self._scp_backend is None or record.scp_request is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Native SCP transfers are unavailable",
+            )
+        target = self._scp_backend.target_for_connection(record.connection_id)
+        self._scp_backend.run(
+            record.scp_request,
+            connection_target=target,
+            connection_id=record.connection_id,
+            cancel_event=record.scp_cancel_event,
+        )
+        with self._lock:
+            record.bytes_completed = record.bytes_total or 0
 
     def _run_download(self, record: _TransferRecord, client) -> None:
         local_path = self._resolve_local_destination(record)
@@ -707,6 +786,8 @@ class TransferRuntime:
             if record.state in _TERMINAL_STATES or record.state is TransferState.CANCELLING:
                 return False
             record.cancel_requested = True
+            if record.scp_cancel_event is not None:
+                record.scp_cancel_event.set()
             events.append(self._transition_locked(record, TransferState.CANCELLING))
             # Queued-but-not-started transfers finish without a worker thread.
             if request.transfer_id in self._pending_run:
@@ -867,6 +948,7 @@ class TransferRuntime:
             id=record.transfer_id,
             connection_id=record.connection_id,
             sftp_service_id=record.sftp_service_id,
+            backend=record.backend,
             direction=record.direction,
             state=record.state,
             source_display=record.source_display,
