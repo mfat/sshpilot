@@ -4,7 +4,9 @@ import pytest
 
 from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.connection_store import (
+    AddTagToConnectionsRequest,
     ConnectionMetadataSummary,
+    ConnectionPlacementMode,
     ConnectionStoreSnapshot,
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
@@ -22,6 +24,8 @@ from sshpilot.api.transport.codec import (
     connection_metadata_summary_to_wire,
     connection_store_snapshot_from_wire,
     connection_store_snapshot_to_wire,
+    add_tag_to_connections_request_from_wire,
+    add_tag_to_connections_request_to_wire,
     copy_connection_to_group_request_from_wire,
     copy_connection_to_group_request_to_wire,
     move_connections_request_from_wire,
@@ -160,6 +164,40 @@ def test_move_connections_round_trip():
     assert move_connections_request_from_wire(
         move_connections_request_to_wire(request)
     ) == request
+
+
+def test_preserving_move_and_atomic_tag_round_trip():
+    move = MoveConnectionsRequest(
+        connection_ids=(ConnectionId("a"), ConnectionId("b")),
+        source_group_id=GroupId("web"),
+        target_group_id=GroupId("web"),
+        target_connection_id=ConnectionId("c"),
+        position="above",
+        expected_generation=4,
+        mode=ConnectionPlacementMode.PRESERVE,
+    )
+    assert move_connections_request_from_wire(move_connections_request_to_wire(move)) == move
+    tag = AddTagToConnectionsRequest(
+        connection_ids=(ConnectionId("a"), ConnectionId("b")),
+        tag="prod",
+        expected_generation=4,
+    )
+    assert add_tag_to_connections_request_from_wire(
+        add_tag_to_connections_request_to_wire(tag)
+    ) == tag
+
+
+def test_move_wire_includes_explicit_semantics():
+    encoded = move_connections_request_to_wire(
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId("a"),),
+            source_group_id=GroupId("web"),
+            target_group_id=GroupId("web"),
+            mode=ConnectionPlacementMode.PRESERVE,
+        )
+    )
+    assert encoded["mode"] == "preserve"
+    assert encoded["source_group_id"] == "web"
 
 
 def test_place_group_round_trip():

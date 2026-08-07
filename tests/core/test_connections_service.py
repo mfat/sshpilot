@@ -14,6 +14,11 @@ import conftest  # noqa: F401  (installs the GI stub)
 
 from sshpilot.core.connections import ConnectionService, MutationKind  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
+from sshpilot.api.models.common import ConnectionId  # noqa: E402
+from sshpilot.api.models.connection_store import (  # noqa: E402
+    ConnectionPlacementMode,
+    MoveConnectionsRequest,
+)
 
 
 @pytest.fixture
@@ -61,6 +66,82 @@ def test_move_connections_rejects_target_outside_destination(service):
     )
     with pytest.raises(CoreError):
         service.move_connections(request)
+
+
+def test_preserving_reorder_retains_secondary_membership(service):
+    web = service.create_group("Web")
+    prod = service.create_group("Prod")
+    a = _conn(service, "A")
+    b = _conn(service, "B")
+    service.copy_connection_to_group(a.id, prod.id)
+    service.copy_connection_to_group(a.id, web.id)
+    service.copy_connection_to_group(b.id, web.id)
+    service.move_connections(
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId(a.id),),
+            source_group_id=web.id,
+            target_group_id=web.id,
+            target_connection_id=ConnectionId(b.id),
+            position="below",
+            mode=ConnectionPlacementMode.PRESERVE,
+        )
+    )
+    groups = {group.id: group.connection_ids for group in service.list_groups()}
+    assert groups[web.id] == [b.id, a.id]
+    assert a.id in groups[prod.id]
+
+
+def test_preserving_root_reorder_does_not_ungroup(service):
+    web = service.create_group("Web")
+    a = _conn(service, "A")
+    b = _conn(service, "B")
+    c = _conn(service, "C")
+    service.copy_connection_to_group(a.id, web.id)
+    service.move_connections(
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId(c.id),),
+            target_connection_id=ConnectionId(b.id),
+            position="above",
+            mode=ConnectionPlacementMode.PRESERVE,
+        )
+    )
+    assert a.id in next(group for group in service.list_groups() if group.id == web.id).connection_ids
+    assert service.root_order() == [c.id, b.id]
+
+
+def test_additive_placement_preserves_existing_memberships(service):
+    web = service.create_group("Web")
+    prod = service.create_group("Prod")
+    a = _conn(service, "A")
+    service.copy_connection_to_group(a.id, web.id)
+    service.move_connections(
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId(a.id),),
+            target_group_id=prod.id,
+            mode=ConnectionPlacementMode.ADDITIVE,
+        )
+    )
+    groups = {group.id: group.connection_ids for group in service.list_groups()}
+    assert a.id in groups[web.id]
+    assert a.id in groups[prod.id]
+
+
+def test_explicit_exclusive_move_removes_secondary_membership(service):
+    web = service.create_group("Web")
+    prod = service.create_group("Prod")
+    a = _conn(service, "A")
+    service.copy_connection_to_group(a.id, web.id)
+    service.copy_connection_to_group(a.id, prod.id)
+    service.move_connections(
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId(a.id),),
+            target_group_id=web.id,
+            mode=ConnectionPlacementMode.EXCLUSIVE,
+        )
+    )
+    groups = {group.id: group.connection_ids for group in service.list_groups()}
+    assert a.id in groups[web.id]
+    assert a.id not in groups[prod.id]
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,8 @@ from sshpilot.core.connections.repository import (  # noqa: E402
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
+from sshpilot.api.models.common import ConnectionId  # noqa: E402
+from sshpilot.api.models.connection_store import MoveConnectionsRequest  # noqa: E402
 
 
 def _repo(tmp_path, ssh_text: str = ""):
@@ -295,6 +297,24 @@ def test_remove_last_membership_returns_to_root(tmp_path):
     web = next(c for c in snap.connections if c.id == "web")
     assert web.groups == ()
     assert "web" in snap.root_connection_ids
+
+
+def test_stale_move_connections_does_not_mutate(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    repo.create_connection({"nickname": "a", "hostname": "a.example", "protocol": "ssh"})
+    repo.create_connection({"nickname": "b", "hostname": "b.example", "protocol": "ssh"})
+    before = repo.snapshot()
+    with pytest.raises(CoreError) as exc:
+        repo.move_connections(
+            MoveConnectionsRequest(
+                connection_ids=(ConnectionId("a"),),
+                target_connection_id=ConnectionId("b"),
+                position="above",
+                expected_generation=before.generation - 1,
+            )
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert repo.snapshot() == before
 
 
 def test_multi_membership_survives_fresh_load(tmp_path):

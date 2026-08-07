@@ -4,7 +4,9 @@ import pytest
 
 from sshpilot.api.models.common import ConnectionId, require_identifier
 from sshpilot.api.models.connection_store import (
+    AddTagToConnectionsRequest,
     ConnectionMetadataSummary,
+    ConnectionPlacementMode,
     ConnectionStoreSnapshot,
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
@@ -417,6 +419,38 @@ def test_reorder_connection_rejects_self_target():
             connection_id=ConnectionId("a"),
             target_connection_id=ConnectionId("a"),
         )
+
+
+def test_preserving_move_and_atomic_tag_requests_construct():
+    move = MoveConnectionsRequest(
+        connection_ids=(ConnectionId("a"), ConnectionId("b")),
+        source_group_id=GroupId("web"),
+        target_group_id=GroupId("web"),
+        target_connection_id=ConnectionId("c"),
+        position="below",
+        expected_generation=4,
+        mode=ConnectionPlacementMode.PRESERVE,
+    )
+    assert move.mode is ConnectionPlacementMode.PRESERVE
+    tag = AddTagToConnectionsRequest(
+        connection_ids=(ConnectionId("a"), ConnectionId("b")),
+        tag=" prod ",
+        expected_generation=4,
+    )
+    assert tag.tag == " prod "
+
+
+def test_atomic_tag_request_rejects_invalid_values():
+    with pytest.raises(ValueError):
+        AddTagToConnectionsRequest(connection_ids=(), tag="prod")
+    with pytest.raises(ValueError):
+        AddTagToConnectionsRequest(
+            connection_ids=(ConnectionId("a"), ConnectionId("a")), tag="prod"
+        )
+    with pytest.raises(ValueError):
+        AddTagToConnectionsRequest(connection_ids=(ConnectionId("a"),), tag=" ")
+    with pytest.raises(ValueError):
+        AddTagToConnectionsRequest(connection_ids=(ConnectionId("a"),), tag="pro\x00d")
 
 
 def test_rename_tag_constructs():

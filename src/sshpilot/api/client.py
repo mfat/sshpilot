@@ -29,6 +29,7 @@ from .models.connections import (
     UpdateConnectionRequest,
 )
 from .models.connection_store import (
+    AddTagToConnectionsRequest,
     ConnectionStoreSnapshot,
     SetGroupColorRequest,
     PlaceGroupRequest,
@@ -244,6 +245,9 @@ class SshPilotClient(Protocol):
         ...
 
     def rename_tag(self, request: RenameTagRequest) -> int:
+        ...
+
+    def add_tag_to_connections(self, request: AddTagToConnectionsRequest) -> int:
         ...
 
     def assign_connection_to_group(

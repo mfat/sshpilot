@@ -1906,6 +1906,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         connections_payload: List[Dict[str, Optional[int | str]]] = []
         selection_order = 0
+        source_group_ids = set()
 
         if window and hasattr(window, "connection_list"):
             try:
@@ -1928,6 +1929,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                     continue
 
                 seen_nicknames.add(nickname)
+                display_group_id = getattr(row, "_group_id", None)
+                source_group_ids.add(display_group_id)
 
                 row_index = None
                 try:
@@ -1940,8 +1943,9 @@ class ConnectionRow(Gtk.ListBoxRow):
                 connections_payload.append(
                     {
                         "nickname": nickname,
+                        "display_group_id": display_group_id,
                         "index": row_index,
-                        "order": selection_order,
+                        "visual_order": selection_order,
                     }
                 )
                 selection_order += 1
@@ -1958,15 +1962,16 @@ class ConnectionRow(Gtk.ListBoxRow):
             connections_payload.append(
                 {
                     "nickname": self.connection.nickname,
+                    "display_group_id": getattr(self, "_group_id", None),
                     "index": row_index,
-                    "order": 0,
+                    "visual_order": 0,
                 }
             )
 
         connections_payload.sort(
             key=lambda item: (
                 item.get("index") is None,
-                item.get("index") if isinstance(item.get("index"), int) else item.get("order", 0),
+                item.get("index") if isinstance(item.get("index"), int) else item.get("visual_order", 0),
             )
         )
 
@@ -1975,13 +1980,19 @@ class ConnectionRow(Gtk.ListBoxRow):
             nickname = item.get("nickname")
             if isinstance(nickname, str) and nickname not in ordered_nicknames:
                 ordered_nicknames.append(nickname)
-            item.pop("order", None)
 
+        source_group_ids = {
+            item.get("display_group_id") for item in connections_payload
+        }
         data = {
             "type": "connection",
             "connection_nickname": ordered_nicknames[0] if ordered_nicknames else self.connection.nickname,
             "connection_nicknames": ordered_nicknames,
             "connections": connections_payload,
+            "source_group_id": (
+                next(iter(source_group_ids)) if len(source_group_ids) == 1 else None
+            ),
+            "source_group_coherent": len(source_group_ids) == 1,
         }
 
         if window:
@@ -3493,49 +3504,56 @@ def _submit_group_dnd_place(window, group_id, parent_id, index):
         return False
 
 
+def _submit_connection_dnd_tag(window, request):
+    operation = lambda: window.client.add_tag_to_connections(request)
+    controller = getattr(window.group_manager, "controller", None)
+    if controller is not None:
+        try:
+            controller.run(
+                operation,
+                on_success=lambda _result: None,
+                on_error=lambda error: _show_sidebar_dnd_error(window, error),
+            )
+            return True
+        except Exception as error:
+            _show_sidebar_dnd_error(window, error)
+            return False
+    try:
+        operation()
+        return True
+    except Exception as error:
+        _show_sidebar_dnd_error(window, error)
+        return False
+
+
 def _submit_connection_dnd_move(
     window,
     connection_nicknames,
     *,
+    source_group_id=None,
     target_group_id=None,
     target_connection_id=None,
     position=None,
+    mode="exclusive",
 ):
+    from sshpilot.api.models.connection_store import ConnectionPlacementMode, MoveConnectionsRequest
+
     nicknames = list(connection_nicknames)
     if not nicknames:
         return False
-    group_manager = window.group_manager
-    if (
-        len(nicknames) == 1
-        and target_connection_id is not None
-        and group_manager.get_connection_group(nicknames[0]) == target_group_id
-    ):
-        from sshpilot.api.models.connection_store import (
-            ConnectionId,
-            GroupId,
-            ReorderConnectionRequest,
-        )
-        request = ReorderConnectionRequest(
-            connection_id=ConnectionId(nicknames[0]),
-            target_connection_id=ConnectionId(target_connection_id),
-            group_id=GroupId(target_group_id) if target_group_id else None,
-            position=position or "below",
-        )
-        operation = lambda: window.client.reorder_connection(request)
-    else:
-        from sshpilot.api.models.connection_store import MoveConnectionsRequest
-
-        snapshot = getattr(window.connection_manager, "snapshot", lambda: None)()
-        generation = getattr(snapshot, "generation", None)
-        request = MoveConnectionsRequest(
-            connection_ids=tuple(nicknames),
-            target_group_id=target_group_id,
-            target_connection_id=target_connection_id,
-            position=position,
-            expected_generation=generation,
-        )
-        operation = lambda: window.client.move_connections(request)
-    controller = getattr(group_manager, "controller", None)
+    snapshot = getattr(window.connection_manager, "snapshot", lambda: None)()
+    generation = getattr(snapshot, "generation", None)
+    request = MoveConnectionsRequest(
+        connection_ids=tuple(nicknames),
+        source_group_id=source_group_id,
+        target_group_id=target_group_id,
+        target_connection_id=target_connection_id,
+        position=position,
+        expected_generation=generation,
+        mode=ConnectionPlacementMode(mode),
+    )
+    operation = lambda: window.client.move_connections(request)
+    controller = getattr(window.group_manager, "controller", None)
     if controller is not None:
         try:
             controller.run(
@@ -3589,6 +3607,13 @@ def _on_connection_list_drop(window, target, value, x, y):
 
         if drop_type == "connection":
             connection_nicknames: List[str] = []
+            source_group_id = value.get("source_group_id")
+            if value.get("source_group_coherent") is False:
+                _show_sidebar_dnd_error(
+                    window,
+                    ValueError("Selected connections must share one displayed group"),
+                )
+                return False
 
             payload = value.get("connections")
             if isinstance(payload, list):
@@ -3626,6 +3651,7 @@ def _on_connection_list_drop(window, target, value, x, y):
                     _submit_connection_dnd_move(
                         window,
                         connection_nicknames,
+                        source_group_id=source_group_id,
                         target_group_id=None,
                     )
                     return True
@@ -3633,6 +3659,7 @@ def _on_connection_list_drop(window, target, value, x, y):
                     _submit_connection_dnd_move(
                         window,
                         connection_nicknames,
+                        source_group_id=source_group_id,
                         target_group_id=None,
                     )
                     return True
@@ -3644,40 +3671,39 @@ def _on_connection_list_drop(window, target, value, x, y):
                         if target_row.group_info.get("untagged"):
                             # The Untagged section is not a tag to apply.
                             return False
-                        from .tag_groups import add_tag_to_list
-                        tag_name = str(target_row.group_info.get("name", ""))
+                        tag_name = str(target_row.group_info.get("name", "")).strip()
                         if not tag_name or getattr(window, "client", None) is None:
                             return False
-                        for nickname in connection_nicknames:
-                            tags, changed = add_tag_to_list(
-                                window.connection_manager.get_metadata(nickname).get("tags", []),
-                                tag_name,
-                            )
-                            if changed:
-                                window.client.update_connection_metadata(nickname, {"tags": tags})
-                                changes_made = True
-                        if changes_made:
-                            tag_drop = True
+                        from sshpilot.api.models.connection_store import AddTagToConnectionsRequest
+                        snapshot = getattr(window.connection_manager, "snapshot", lambda: None)()
+                        request = AddTagToConnectionsRequest(
+                            connection_ids=tuple(connection_nicknames),
+                            tag=tag_name,
+                            expected_generation=getattr(snapshot, "generation", None),
+                        )
+                        _submit_connection_dnd_tag(window, request)
+                        tag_drop = True
+                        return True
                     elif hasattr(target_row, "group_id"):
                         target_group_id = target_row.group_id
                         first_connection = None
                         if position == "above":
-                            child = window.connection_list.get_first_child()
-                            while child:
-                                if hasattr(child, "connection"):
-                                    connection_group = window.group_manager.get_connection_group(
-                                        child.connection.nickname
-                                    )
-                                    if connection_group == target_group_id:
-                                        first_connection = child.connection.nickname
-                                        break
-                                child = child.get_next_sibling()
+                            group_info = window.group_manager.groups.get(target_group_id, {})
+                            members = list(group_info.get("connections", []))
+                            if members:
+                                first_connection = members[0]
                         _submit_connection_dnd_move(
                             window,
                             connection_nicknames,
+                            source_group_id=source_group_id,
                             target_group_id=target_group_id,
                             target_connection_id=first_connection,
                             position="above" if first_connection else None,
+                            mode=(
+                                "preserve"
+                                if source_group_id == target_group_id
+                                else "exclusive"
+                            ),
                         )
                         return True
                     else:
@@ -3690,14 +3716,19 @@ def _on_connection_list_drop(window, target, value, x, y):
                         target_connection = getattr(target_row, "connection", None)
                         if target_connection:
                             reference_nickname = target_connection.nickname
-                            target_group_id = window.group_manager.get_connection_group(reference_nickname)
-
+                            target_group_id = getattr(target_row, "_group_id", None)
                             _submit_connection_dnd_move(
                                 window,
                                 connection_nicknames,
+                                source_group_id=source_group_id,
                                 target_group_id=target_group_id,
                                 target_connection_id=reference_nickname,
                                 position=position,
+                                mode=(
+                                    "preserve"
+                                    if source_group_id == target_group_id
+                                    else "exclusive"
+                                ),
                             )
                             return True
 

@@ -7,6 +7,32 @@ It is transport-neutral and is not an OpenAPI document. Runtime semantics live
 in [../models.md](../models.md). Synthetic examples never read live objects or
 stored connection data.
 
+<!-- api-model: AddTagToConnectionsRequest -->
+## `AddTagToConnectionsRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Add one tag to multiple connections in one atomic mutation.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
+| `tag` | `str` | Yes | — | No |
+| `expected_generation` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_ids": {},
+  "expected_generation": null,
+  "tag": {}
+}
+```
+
 <!-- api-model: AssignConnectionToGroupRequest -->
 ## `AssignConnectionToGroupRequest`
 
@@ -662,11 +688,15 @@ Synthetic representation:
 | `connection_id` | `str` | Yes | — | No |
 | `nickname` | `str` | Yes | — | No |
 | `generation` | `int` | Yes | — | No |
+| `changed` | `bool` | No | `true` | No |
+| `changed_fields` | `tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "changed": true,
+  "changed_fields": [],
   "connection_id": "production",
   "generation": 0,
   "nickname": "example"
@@ -2213,7 +2243,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** Move one or more connections atomically into a group or root order.
+**Purpose:** Place one or more connections with explicit membership semantics.
 
 **Related methods:** None
 **Related events:** None
@@ -2225,6 +2255,8 @@ Synthetic representation:
 | `target_connection_id` | `Optional[ConnectionId]` | No | `null` | No |
 | `position` | `Optional[str]` | No | `null` | No |
 | `expected_generation` | `Optional[int]` | No | `null` | No |
+| `source_group_id` | `Optional[GroupId]` | No | `null` | No |
+| `mode` | `ConnectionPlacementMode` | No | `exclusive` | No |
 
 Synthetic representation:
 
@@ -2232,7 +2264,9 @@ Synthetic representation:
 {
   "connection_ids": {},
   "expected_generation": null,
+  "mode": "exclusive",
   "position": null,
+  "source_group_id": null,
   "target_connection_id": null,
   "target_group_id": null
 }

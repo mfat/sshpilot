@@ -1039,18 +1039,18 @@ def test_connection_drop_skips_rebuild_when_inplace_succeeds(monkeypatch):
 
     target_row = types.SimpleNamespace()
     target_row.connection = _RefConn()
+    target_row._group_id = "g1"
     target_row._in_tag_section = False
     target_row.get_parent = lambda: object()
 
     class _Manager:
-        def get_connection_group(self, nickname):
-            return "g1"
+        controller = None
 
     class _Client:
         def __init__(self):
             self.requests = []
 
-        def reorder_connection(self, request):
+        def move_connections(self, request):
             self.requests.append(request)
             return True
 
@@ -1068,13 +1068,76 @@ def test_connection_drop_skips_rebuild_when_inplace_succeeds(monkeypatch):
     window.rebuilt = []
     window.rebuild_connection_list = lambda: window.rebuilt.append(True)
 
-    value = {"type": "connection", "connection_nickname": "host-a"}
+    value = {
+        "type": "connection",
+        "connection_nickname": "host-a",
+        "source_group_id": "g1",
+        "source_group_coherent": True,
+    }
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 50) is True
     assert applied == []
     assert len(window.client.requests) == 1
-    assert window.client.requests[0].connection_id == "host-a"
+    assert window.client.requests[0].connection_ids == ("host-a",)
     assert window.client.requests[0].target_connection_id == "host-b"
+    assert window.client.requests[0].source_group_id == "g1"
+    assert window.client.requests[0].target_group_id == "g1"
+    assert window.client.requests[0].mode.value == "preserve"
     assert window.rebuilt == []
+
+
+def test_connection_tag_drop_submits_one_atomic_mutation(monkeypatch):
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    class _Manager:
+        controller = None
+
+    class _Client:
+        def __init__(self):
+            self.tag_requests = []
+            self.metadata_calls = []
+
+        def add_tag_to_connections(self, request):
+            self.tag_requests.append(request)
+            return 3
+
+        def update_connection_metadata(self, *args):
+            self.metadata_calls.append(args)
+            raise AssertionError("tag DnD must not patch metadata per connection")
+
+    target_row = types.SimpleNamespace(
+        is_tag_group=True,
+        group_info={"name": "prod", "untagged": False},
+        get_parent=lambda: object(),
+    )
+    window = types.SimpleNamespace(
+        _drop_indicator_row=target_row,
+        _drop_indicator_position="on_group",
+        _drag_in_progress=True,
+        group_manager=_Manager(),
+        client=_Client(),
+        connection_manager=types.SimpleNamespace(
+            snapshot=lambda: types.SimpleNamespace(generation=9)
+        ),
+        connection_list=types.SimpleNamespace(
+            set_selection_mode=lambda mode: None,
+            get_row_at_y=lambda y: target_row,
+        ),
+    )
+    value = {
+        "type": "connection",
+        "connection_nicknames": ["a", "b", "c"],
+        "source_group_id": "web",
+        "source_group_coherent": True,
+    }
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 50) is True
+    assert len(window.client.tag_requests) == 1
+    request = window.client.tag_requests[0]
+    assert request.connection_ids == ("a", "b", "c")
+    assert request.tag == "prod"
+    assert request.expected_generation == 9
+    assert window.client.metadata_calls == []
 
 
 def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):

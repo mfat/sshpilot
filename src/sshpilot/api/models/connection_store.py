@@ -15,6 +15,7 @@ import copy
 import json
 import math
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Mapping, NewType, Optional, Tuple
 
 from .common import ConnectionId, require_identifier
@@ -342,15 +343,25 @@ class ReorderConnectionRequest:
             raise ValueError("reorder position must be 'above' or 'below'")
 
 
+class ConnectionPlacementMode(str, Enum):
+    """Membership semantics for an atomic connection placement."""
+
+    EXCLUSIVE = "exclusive"
+    PRESERVE = "preserve"
+    ADDITIVE = "additive"
+
+
 @dataclass(frozen=True)
 class MoveConnectionsRequest:
-    """Move one or more connections atomically into a group or root order."""
+    """Place one or more connections with explicit membership semantics."""
 
     connection_ids: Tuple[ConnectionId, ...]
     target_group_id: Optional[GroupId] = None
     target_connection_id: Optional[ConnectionId] = None
     position: Optional[str] = None
     expected_generation: Optional[int] = None
+    source_group_id: Optional[GroupId] = None
+    mode: ConnectionPlacementMode = ConnectionPlacementMode.EXCLUSIVE
 
     def __post_init__(self) -> None:
         if type(self.connection_ids) is not tuple or not self.connection_ids:
@@ -361,6 +372,13 @@ class MoveConnectionsRequest:
             raise ValueError("connection ids must be unique")
         if self.target_group_id is not None:
             require_identifier(self.target_group_id, "target group id")
+        if self.source_group_id is not None:
+            require_identifier(self.source_group_id, "source group id")
+        if not isinstance(self.mode, ConnectionPlacementMode):
+            try:
+                object.__setattr__(self, "mode", ConnectionPlacementMode(self.mode))
+            except (TypeError, ValueError) as error:
+                raise ValueError("invalid connection placement mode") from error
         if self.target_connection_id is not None:
             require_identifier(self.target_connection_id, "target connection id")
             if self.target_connection_id in self.connection_ids:
@@ -369,6 +387,33 @@ class MoveConnectionsRequest:
             raise ValueError("move position must be 'above', 'below', or None")
         if self.target_connection_id is None and self.position is not None:
             raise ValueError("move position requires a target connection")
+        if self.mode is ConnectionPlacementMode.ADDITIVE and self.target_group_id is None:
+            raise ValueError("additive placement requires a target group")
+        if self.expected_generation is not None and (
+            type(self.expected_generation) is not int or self.expected_generation < 0
+        ):
+            raise ValueError("expected generation must be a non-negative integer")
+
+
+@dataclass(frozen=True)
+class AddTagToConnectionsRequest:
+    """Add one tag to multiple connections in one atomic mutation."""
+
+    connection_ids: Tuple[ConnectionId, ...]
+    tag: str
+    expected_generation: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if type(self.connection_ids) is not tuple or not self.connection_ids:
+            raise ValueError("connection ids must be a non-empty tuple")
+        for connection_id in self.connection_ids:
+            require_identifier(connection_id, "connection id")
+        if len(set(self.connection_ids)) != len(self.connection_ids):
+            raise ValueError("connection ids must be unique")
+        if type(self.tag) is not str or not self.tag.strip():
+            raise ValueError("tag must be a non-empty string")
+        if "\x00" in self.tag:
+            raise ValueError("tag must not contain NUL")
         if self.expected_generation is not None and (
             type(self.expected_generation) is not int or self.expected_generation < 0
         ):

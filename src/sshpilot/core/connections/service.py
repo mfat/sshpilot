@@ -477,7 +477,7 @@ class ConnectionService:
         self._emit(MutationEvent(MutationKind.REORDERED, detail={"order": list(ordered)}))
 
     def move_connections(self, request) -> None:
-        """Move a contiguous connection block into one group or root order."""
+        """Place a connection block using explicit membership semantics."""
         connection_ids = tuple(str(item) for item in request.connection_ids)
         target_group_id = (
             str(request.target_group_id) if request.target_group_id is not None else None
@@ -488,12 +488,28 @@ class ConnectionService:
             else None
         )
         position = request.position
+        raw_mode = getattr(request, "mode", "exclusive")
+        mode = getattr(raw_mode, "value", raw_mode)
+        raw_source_group_id = getattr(request, "source_group_id", None)
+        source_group_id = (
+            str(raw_source_group_id) if raw_source_group_id is not None else None
+        )
         with self._lock:
             for connection_id in connection_ids:
                 if connection_id not in self._connections:
                     raise _validation_error(f"Unknown connection {connection_id!r}")
             if target_group_id is not None and target_group_id not in self._groups:
                 raise _validation_error(f"Unknown group {target_group_id!r}")
+            if source_group_id is not None and source_group_id not in self._groups:
+                raise _validation_error(f"Unknown group {source_group_id!r}")
+            if source_group_id is not None:
+                source_members = self._groups[source_group_id].connection_ids
+                if any(connection_id not in source_members for connection_id in connection_ids):
+                    raise _validation_error("source group does not contain every connection")
+            elif mode == "preserve" and any(
+                connection_id not in self._root_order for connection_id in connection_ids
+            ):
+                raise _validation_error("root source does not contain every connection")
             if target_id is not None and target_id not in self._connections:
                 raise _validation_error(f"Unknown connection {target_id!r}")
             container = (
@@ -503,31 +519,47 @@ class ConnectionService:
             )
             if target_id is not None and target_id not in container:
                 raise _validation_error("target connection is outside the destination")
-            for connection_id in connection_ids:
-                self._remove_from_all_groups(connection_id)
-                self._root_order = [
-                    item for item in self._root_order if item != connection_id
-                ]
-            container = (
-                self._groups[target_group_id].connection_ids
-                if target_group_id is not None
-                else self._root_order
-            )
-            insert_at = len(container)
-            if target_id is not None:
-                insert_at = container.index(target_id)
-                if position == "below":
-                    insert_at += 1
-            container[insert_at:insert_at] = list(connection_ids)
-            for connection_id in connection_ids:
-                self._sync_connection(connection_id)
+            if mode == "additive":
+                for connection_id in connection_ids:
+                    self._add_membership(connection_id, target_group_id)
+                    self._sync_connection(connection_id)
+            else:
+                if mode == "exclusive":
+                    for connection_id in connection_ids:
+                        self._remove_from_all_groups(connection_id)
+                        self._root_order = [
+                            item for item in self._root_order if item != connection_id
+                        ]
+                else:
+                    container[:] = [
+                        item for item in container if item not in connection_ids
+                    ]
+                container = (
+                    self._groups[target_group_id].connection_ids
+                    if target_group_id is not None
+                    else self._root_order
+                )
+                insert_at = len(container)
+                if target_id is not None:
+                    insert_at = container.index(target_id)
+                    if position == "below":
+                        insert_at += 1
+                container[insert_at:insert_at] = list(connection_ids)
+                for connection_id in connection_ids:
+                    if mode == "preserve" and target_group_id is not None:
+                        self._add_membership(connection_id, target_group_id)
+                    self._sync_connection(connection_id)
         self._persist()
         self._emit(
             MutationEvent(
                 MutationKind.REORDERED,
                 connection_id=connection_ids[0],
                 group_id=target_group_id,
-                detail={"connection_ids": list(connection_ids), "position": position},
+                detail={
+                    "connection_ids": list(connection_ids),
+                    "position": position,
+                    "mode": mode,
+                },
             )
         )
 

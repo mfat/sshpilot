@@ -5,6 +5,10 @@
       "capability": "identity.operate",
       "status": "daemon-only"
     },
+    "add_tag_to_connections": {
+      "capability": "connections.metadata.write",
+      "status": "implemented"
+    },
     "assign_connection_to_group": {
       "capability": "connections.groups",
       "status": "implemented"
@@ -574,6 +578,9 @@
     "connections.list": {
       "capability": "connections.read"
     },
+    "connections.metadata.add_tag": {
+      "capability": "connections.metadata.write"
+    },
     "connections.metadata.rename_tag": {
       "capability": "connections.metadata.write"
     },
@@ -1030,6 +1037,11 @@
       "reachable",
       "unreachable"
     ],
+    "ConnectionPlacementMode": [
+      "exclusive",
+      "preserve",
+      "additive"
+    ],
     "DaemonDisconnectReason": [
       "clean_shutdown",
       "restart",
@@ -1336,6 +1348,32 @@
     "TransferId"
   ],
   "models": {
+    "AddTagToConnectionsRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "tag",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "AssignConnectionToGroupRequest": {
       "fields": [
         {
@@ -2172,6 +2210,20 @@
           "required": true,
           "sensitive": false,
           "type": "int"
+        },
+        {
+          "default": true,
+          "name": "changed",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "changed_fields",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
         }
       ],
       "status": "Schema only"
@@ -4152,6 +4204,20 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "source_group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": "exclusive",
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionPlacementMode"
         }
       ],
       "status": "Schema only"

@@ -85,6 +85,10 @@
       "capability": "identity.operate",
       "status": "daemon-only"
     },
+    "add_tag_to_connections": {
+      "capability": "connections.metadata.write",
+      "status": "implemented"
+    },
     "assign_connection_to_group": {
       "capability": "connections.groups",
       "status": "implemented"
@@ -604,6 +608,7 @@
   },
   "client_methods": [
     "add_agent_key",
+    "add_tag_to_connections",
     "assign_connection_to_group",
     "attach_session",
     "attach_sftp",
@@ -756,6 +761,16 @@
         }
       ],
       "return": "AgentKeyList"
+    },
+    "add_tag_to_connections": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "AddTagToConnectionsRequest"
+        }
+      ],
+      "return": "int"
     },
     "assign_connection_to_group": {
       "parameters": [
@@ -2150,6 +2165,9 @@
     "connections.list": {
       "capability": "connections.read"
     },
+    "connections.metadata.add_tag": {
+      "capability": "connections.metadata.write"
+    },
     "connections.metadata.rename_tag": {
       "capability": "connections.metadata.write"
     },
@@ -2669,6 +2687,8 @@
     "TransferId"
   ],
   "model_exports": [
+    "AddTagToConnectionsRequest",
+    "AddTagToConnectionsRequest",
     "AgentKey",
     "AgentKeyList",
     "AgentKeyMutationRequest",
@@ -2701,6 +2721,7 @@
     "ConnectionId",
     "ConnectionMetadataSummary",
     "ConnectionMutationResult",
+    "ConnectionPlacementMode",
     "ConnectionStoreSnapshot",
     "ConnectionSummary",
     "ConnectionValidationError",
@@ -2876,6 +2897,11 @@
     "validate_config_patch"
   ],
   "models": {
+    "AddTagToConnectionsRequest": [
+      "connection_ids",
+      "tag",
+      "expected_generation"
+    ],
     "AssignConnectionToGroupRequest": [
       "connection_id",
       "group_id"
@@ -3021,7 +3047,9 @@
     "ConnectionMutationResult": [
       "connection_id",
       "nickname",
-      "generation"
+      "generation",
+      "changed",
+      "changed_fields"
     ],
     "ConnectionStoreSnapshot": [
       "generation",
@@ -3372,7 +3400,9 @@
       "target_group_id",
       "target_connection_id",
       "position",
-      "expected_generation"
+      "expected_generation",
+      "source_group_id",
+      "mode"
     ],
     "OpenForwardRequest": [
       "connection_id",
@@ -3820,6 +3850,11 @@
       "checking",
       "reachable",
       "unreachable"
+    ],
+    "ConnectionPlacementMode": [
+      "exclusive",
+      "preserve",
+      "additive"
     ],
     "DaemonDisconnectReason": [
       "clean_shutdown",

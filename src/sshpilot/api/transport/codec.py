@@ -58,7 +58,9 @@ from ..models.keys import (
     ReadPublicKeyRequest,
 )
 from ..models.connection_store import (
+    AddTagToConnectionsRequest,
     ConnectionMetadataSummary,
+    ConnectionPlacementMode,
     ConnectionStoreSnapshot,
     CopyConnectionToGroupRequest,
     MoveConnectionsRequest,
@@ -1279,6 +1281,7 @@ def move_connections_request_to_wire(
         raise TypeError("move connections request is required")
     payload: Dict[str, Any] = {
         "connection_ids": list(request.connection_ids),
+        "mode": request.mode.value,
     }
     if request.target_group_id is not None:
         payload["target_group_id"] = request.target_group_id
@@ -1288,6 +1291,8 @@ def move_connections_request_to_wire(
         payload["position"] = request.position
     if request.expected_generation is not None:
         payload["expected_generation"] = request.expected_generation
+    if request.source_group_id is not None:
+        payload["source_group_id"] = request.source_group_id
     return payload
 
 
@@ -1300,6 +1305,8 @@ def move_connections_request_from_wire(value: Any) -> MoveConnectionsRequest:
             "target_connection_id",
             "position",
             "expected_generation",
+            "source_group_id",
+            "mode",
         },
         context="move connections request",
     )
@@ -1308,10 +1315,16 @@ def move_connections_request_from_wire(value: Any) -> MoveConnectionsRequest:
         raise ValueError("connection ids must be an array")
     target_group_id = data.get("target_group_id")
     target_connection_id = data.get("target_connection_id")
+    source_group_id = data.get("source_group_id")
+    mode = data.get("mode", ConnectionPlacementMode.EXCLUSIVE.value)
     if target_group_id is not None and type(target_group_id) is not str:
         raise ValueError("target group id must be a string or null")
     if target_connection_id is not None and type(target_connection_id) is not str:
         raise ValueError("target connection id must be a string or null")
+    if source_group_id is not None and type(source_group_id) is not str:
+        raise ValueError("source group id must be a string or null")
+    if type(mode) is not str:
+        raise ValueError("move mode must be a string")
     position = data.get("position")
     if position is not None and type(position) is not str:
         raise ValueError("move position must be a string or null")
@@ -1333,6 +1346,50 @@ def move_connections_request_from_wire(value: Any) -> MoveConnectionsRequest:
             else None
         ),
         position=position,
+        expected_generation=generation,
+        source_group_id=(
+            GroupId(_identifier(source_group_id, "source group id"))
+            if source_group_id is not None
+            else None
+        ),
+        mode=ConnectionPlacementMode(mode),
+    )
+
+
+def add_tag_to_connections_request_to_wire(
+    request: AddTagToConnectionsRequest,
+) -> Dict[str, Any]:
+    if type(request) is not AddTagToConnectionsRequest:
+        raise TypeError("add tag to connections request is required")
+    payload = {
+        "connection_ids": list(request.connection_ids),
+        "tag": request.tag,
+    }
+    if request.expected_generation is not None:
+        payload["expected_generation"] = request.expected_generation
+    return payload
+
+
+def add_tag_to_connections_request_from_wire(
+    value: Any,
+) -> AddTagToConnectionsRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_ids", "tag"},
+        optional={"expected_generation"},
+        context="add tag to connections request",
+    )
+    ids = data["connection_ids"]
+    if type(ids) is not list:
+        raise ValueError("connection ids must be an array")
+    generation = data.get("expected_generation")
+    if generation is not None:
+        generation = _integer(generation, "expected generation")
+    return AddTagToConnectionsRequest(
+        connection_ids=tuple(
+            ConnectionId(_identifier(item, "connection id")) for item in ids
+        ),
+        tag=_text(data["tag"], "tag"),
         expected_generation=generation,
     )
 

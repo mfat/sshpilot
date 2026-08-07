@@ -156,6 +156,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
 <!-- api-method-contract: update_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: update_connection_metadata status=implemented capability=connections.metadata.write -->
+<!-- api-method-contract: add_tag_to_connections status=implemented capability=connections.metadata.write -->
 <!-- api-method-contract: assign_connection_to_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: move_connections status=daemon-only capability=connections.groups -->
 <!-- api-method-contract: create_group status=implemented capability=connections.groups -->
@@ -207,6 +208,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method: remove_connection_from_group -->
 <!-- api-method: reorder_connection -->
 <!-- api-method: rename_tag -->
+<!-- api-method: add_tag_to_connections -->
 <!-- api-method-contract: add_agent_key status=daemon-only capability=identity.operate -->
 <!-- api-method-contract: cancel_operation status=daemon-only capability=identity.operate -->
 <!-- api-method-contract: deploy_key status=daemon-only capability=identity.operate -->
@@ -252,8 +254,10 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.update_metadata` | `connections.metadata.write` | Implemented |
 | `connections.metadata.update` | `connections.metadata.write` | Implemented |
 | `connections.metadata.rename_tag` | `connections.metadata.write` | Implemented |
+| `connections.metadata.add_tag` | `connections.metadata.write` | Implemented |
 <!-- api-daemon-method: connections.metadata.update capability=connections.metadata.write -->
 <!-- api-daemon-method: connections.metadata.rename_tag capability=connections.metadata.write -->
+<!-- api-daemon-method: connections.metadata.add_tag capability=connections.metadata.write -->
 | `connections.assign_to_group` | `connections.groups` | Implemented |
 | `connections.move` | `connections.groups` | Implemented; atomic multi-connection placement |
 | `connections.create_group` | `connections.groups` | Implemented |

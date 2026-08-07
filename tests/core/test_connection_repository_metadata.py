@@ -17,6 +17,8 @@ from sshpilot.core.connections.repository import (  # noqa: E402
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
+from sshpilot.api.models.common import ConnectionId  # noqa: E402
+from sshpilot.api.models.connection_store import AddTagToConnectionsRequest  # noqa: E402
 
 
 def _repo(tmp_path, ssh_text: str = ""):
@@ -141,6 +143,78 @@ def test_rename_tag_case_insensitive_and_dedupes(tmp_path):
     assert db_values["tags"] == ("production", "db")
     stored = _state(state)
     assert stored["metadata"]["web"]["tags"] == ["production", "web"]
+
+
+def test_add_tag_to_connections_is_atomic_and_preserves_metadata(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    for name in ("a", "b", "c"):
+        repo.create_connection(
+            {"nickname": name, "hostname": f"{name}.example", "protocol": "ssh"}
+        )
+    repo.update_connection_metadata("a", {"tags": ["web"], "pinned": True})
+    repo.update_connection_metadata("b", {"tags": ["prod"], "keep": 7})
+    before = repo.snapshot()
+    events = []
+    repo.add_listener(events.append)
+    changed = repo.add_tag_to_connections(
+        AddTagToConnectionsRequest(
+            connection_ids=(ConnectionId("a"), ConnectionId("b"), ConnectionId("c")),
+            tag=" Web ",
+            expected_generation=before.generation,
+        )
+    )
+    assert changed == 2
+    assert len(events) == 1
+    values = {item.connection_id: item.values for item in repo.snapshot().metadata}
+    assert values["a"]["tags"] == ("web",)
+    assert values["a"]["pinned"] is True
+    assert values["b"]["tags"] == ("prod", "Web")
+    assert values["b"]["keep"] == 7
+    assert values["c"]["tags"] == ("Web",)
+
+
+def test_add_tag_to_connections_rejects_invalid_batch_without_partial_update(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    _seed_web(repo)
+    before = repo.snapshot()
+    with pytest.raises(CoreError) as exc:
+        repo.add_tag_to_connections(
+            AddTagToConnectionsRequest(
+                connection_ids=(ConnectionId("web"), ConnectionId("ghost")),
+                tag="prod",
+                expected_generation=before.generation,
+            )
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_NOT_FOUND
+    assert repo.snapshot() == before
+
+
+def test_add_tag_to_connections_is_idempotent_and_rejects_stale_generation(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    _seed_web(repo)
+    repo.update_connection_metadata("web", {"tags": ["prod"]})
+    before = repo.snapshot()
+    events = []
+    repo.add_listener(events.append)
+    assert repo.add_tag_to_connections(
+        AddTagToConnectionsRequest(
+            connection_ids=(ConnectionId("web"),),
+            tag="PROD",
+            expected_generation=before.generation,
+        )
+    ) == 0
+    assert repo.snapshot().generation == before.generation
+    assert events == []
+    with pytest.raises(CoreError) as exc:
+        repo.add_tag_to_connections(
+            AddTagToConnectionsRequest(
+                connection_ids=(ConnectionId("web"),),
+                tag="new",
+                expected_generation=before.generation - 1,
+            )
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert repo.snapshot().generation == before.generation
 
 
 def test_rename_tag_with_no_tags_is_noop(tmp_path):

@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
 from ...api.models.connection_store import (
     ConnectionMetadataSummary,
     ConnectionStoreSnapshot,
+    AddTagToConnectionsRequest,
     GroupSummary,
     MoveConnectionsRequest,
     thaw_safe_metadata,
@@ -178,6 +179,8 @@ class ConnectionRepositoryProtocol(Protocol):
     ) -> Mapping[str, Any]: ...
 
     def rename_tag(self, old_tag: str, new_tag: str) -> int: ...
+
+    def add_tag_to_connections(self, request: AddTagToConnectionsRequest) -> int: ...
 
 
 def _repository_error(message: str) -> CoreError:
@@ -1312,7 +1315,7 @@ class ConnectionRepository:
             expected = request.expected_generation
             if expected is not None and expected != before.generation:
                 raise CoreError(
-                    ErrorCode.STALE_EDITOR,
+                    ErrorCode.STALE_CONNECTION_STATE,
                     "The connection store changed during the drag operation",
                 )
             try:
@@ -1394,6 +1397,57 @@ class ConnectionRepository:
                 raise
             self._commit(before)
             return thaw_safe_metadata(self._metadata.get(connection_id, {}))
+
+    def add_tag_to_connections(self, request: AddTagToConnectionsRequest) -> int:
+        """Add one tag to all requested connections atomically."""
+        with self._mutation_scope():
+            before = self._begin()
+            if (
+                request.expected_generation is not None
+                and request.expected_generation != before.generation
+            ):
+                raise CoreError(
+                    ErrorCode.STALE_CONNECTION_STATE,
+                    "The connection store changed during the tag operation",
+                )
+            tag = request.tag.strip()
+            requested = tuple(str(connection_id) for connection_id in request.connection_ids)
+            current_values = {}
+            for connection_id in requested:
+                if self._service.get(connection_id) is None:
+                    raise CoreError(
+                        ErrorCode.CONNECTION_NOT_FOUND,
+                        "The connection does not exist",
+                        {"connection_id": connection_id},
+                    )
+                current_values[connection_id] = thaw_safe_metadata(
+                    self._metadata.get(connection_id, {})
+                )
+            updated_values = {}
+            changed_count = 0
+            for connection_id, values in current_values.items():
+                tags = values.get("tags")
+                normalized = [str(item).strip() for item in (tags or []) if str(item).strip()]
+                if not any(item.casefold() == tag.casefold() for item in normalized):
+                    normalized.append(tag)
+                    changed_count += 1
+                values["tags"] = normalized
+                updated_values[connection_id] = values
+            if changed_count == 0:
+                return 0
+            try:
+                self._metadata.update(
+                    {
+                        connection_id: validate_safe_metadata(values)
+                        for connection_id, values in updated_values.items()
+                    }
+                )
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return changed_count
 
     def rename_tag(self, old_tag: str, new_tag: str) -> int:
         """Rename a tag across every connection (case-insensitive, deduped)."""

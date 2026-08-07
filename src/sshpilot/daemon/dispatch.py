@@ -72,6 +72,7 @@ from sshpilot.api.transport.codec import (
     place_group_request_from_wire,
     copy_connection_to_group_request_from_wire,
     move_connections_request_from_wire,
+    add_tag_to_connections_request_from_wire,
     remove_connection_from_group_request_from_wire,
     reorder_connection_request_from_wire,
     rename_tag_request_from_wire,
@@ -162,6 +163,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.update_metadata": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.metadata.update": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.metadata.rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
+    "connections.metadata.add_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.assign_to_group": Capability.CONNECTIONS_GROUPS,
     "connections.move": Capability.CONNECTIONS_GROUPS,
     "connections.create_group": Capability.CONNECTIONS_GROUPS,
@@ -610,6 +612,7 @@ class RequestDispatcher:
             "connections.update_metadata": self._handle_update_connection_metadata,
             "connections.metadata.update": self._handle_update_connection_metadata,
             "connections.metadata.rename_tag": self._handle_rename_tag,
+            "connections.metadata.add_tag": self._handle_add_tag_to_connections,
             "connections.assign_to_group": self._handle_assign_to_group,
             "connections.move": self._handle_move_connections,
             "connections.create_group": self._handle_create_group,
@@ -1335,6 +1338,18 @@ class RequestDispatcher:
             operation=lambda: self._connections.rename_tag_rpc(
                 typed_request.old_tag, typed_request.new_tag
             ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_add_tag_to_connections(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = add_tag_to_connections_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.add_tag_to_connections_rpc(typed_request),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )

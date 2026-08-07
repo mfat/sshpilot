@@ -50,6 +50,7 @@ from .models.connections import (
     UpdateConnectionRequest,
 )
 from .models.connection_store import (
+    AddTagToConnectionsRequest,
     ConnectionStoreSnapshot,
     SetGroupColorRequest,
     PlaceGroupRequest,
@@ -212,6 +213,7 @@ from .transport.codec import (
     store_connection_password_request_to_wire,
     store_key_passphrase_request_to_wire,
     transfer_summary_from_wire,
+    add_tag_to_connections_request_to_wire,
     update_connection_metadata_request_to_wire,
     update_connection_request_to_wire,
     set_group_color_request_to_wire,
@@ -272,6 +274,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "reorder_connection": Capability.CONNECTIONS_GROUPS,
     "move_connections": Capability.CONNECTIONS_GROUPS,
     "rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
+    "add_tag_to_connections": Capability.CONNECTIONS_METADATA_WRITE,
     "get_session": Capability.SESSIONS_READ,
     "get_interaction": Capability.INTERACTIONS_READ,
     "claim_interaction": Capability.INTERACTIONS_RESPOND,
@@ -948,6 +951,18 @@ class DaemonClient:
         )
         if type(result) is not int:
             self._fail_protocol("The daemon returned an invalid tag rename result")
+        return result
+
+    def add_tag_to_connections(self, request: AddTagToConnectionsRequest) -> int:
+        self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
+        self._require_write_compatibility("tag add")
+        result = self._request(
+            "connections.metadata.add_tag",
+            add_tag_to_connections_request_to_wire(request),
+            mutation_description="tag add",
+        )
+        if type(result) is not int:
+            self._fail_protocol("The daemon returned an invalid tag add result")
         return result
 
     def assign_connection_to_group(
