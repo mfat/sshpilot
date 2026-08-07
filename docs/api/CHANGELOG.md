@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- Removed plaintext connection-password and key-passphrase lookup methods from
+  the public client RPC surface. Added metadata-only availability methods and
+  explicit reveal methods with separate capabilities. Reveal acknowledgments use
+  ordinary JSON, while returned values use a one-use binary secret frame; daemon
+  launch preparation and the interaction broker retain daemon-internal lookups.
+
+
 - Added the daemon-only native SCP slice through `start_scp_transfer` and the
   `transfers.scp` capability. SCP uses the shared `TransferRuntime` lifecycle,
   canonical OpenSSH launch/authentication and interaction-broker paths, bounded

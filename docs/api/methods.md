@@ -17,11 +17,13 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `delete_connection` | Implemented | `connections.write` |
 | `get_connection_editor` | Implemented | `connections.config.read` |
 | `store_connection_password` | Implemented | `connections.secrets.write` |
+| `has_connection_password` | Daemon only | `connections.secrets.status.read` |
+| `reveal_connection_password` | Daemon only | `connections.secrets.reveal` |
 | `delete_connection_password` | Implemented | `connections.secrets.write` |
-| `lookup_connection_password` | Implemented | `connections.secrets.write` |
 | `store_key_passphrase` | Implemented | `connections.secrets.write` |
+| `has_key_passphrase` | Daemon only | `connections.secrets.status.read` |
+| `reveal_key_passphrase` | Daemon only | `connections.secrets.reveal` |
 | `delete_key_passphrase` | Implemented | `connections.secrets.write` |
-| `lookup_key_passphrase` | Implemented | `connections.secrets.write` |
 | `list_known_hosts` | Daemon only | `known_hosts.read` |
 | `remove_known_host_entries` | Daemon only | `known_hosts.write` |
 | `list_keys` | Daemon only | `keys.read` |
@@ -116,8 +118,10 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: list_sessions status=daemon-only capability=sessions.read -->
 <!-- api-method-contract: list_sftp_services status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: list_transfers status=daemon-only capability=transfers.read -->
-<!-- api-method-contract: lookup_key_passphrase status=implemented capability=connections.secrets.write -->
-<!-- api-method-contract: lookup_connection_password status=implemented capability=connections.secrets.write -->
+<!-- api-method-contract: has_connection_password status=daemon-only capability=connections.secrets.status.read -->
+<!-- api-method-contract: has_key_passphrase status=daemon-only capability=connections.secrets.status.read -->
+<!-- api-method-contract: reveal_connection_password status=daemon-only capability=connections.secrets.reveal -->
+<!-- api-method-contract: reveal_key_passphrase status=daemon-only capability=connections.secrets.reveal -->
 <!-- api-method-contract: open_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_sftp status=daemon-only capability=sftp.write -->
@@ -236,8 +240,10 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.store_password` | `connections.secrets.write` | Implemented |
 | `connections.delete_password` | `connections.secrets.write` | Implemented |
 | `connections.store_passphrase` | `connections.secrets.write` | Implemented |
-| `connections.lookup_passphrase` | `connections.secrets.write` | Implemented |
-| `connections.lookup_password` | `connections.secrets.write` | Implemented |
+| `connections.has_password` | `connections.secrets.status.read` | Implemented |
+| `connections.has_passphrase` | `connections.secrets.status.read` | Implemented |
+| `connections.reveal_password` | `connections.secrets.reveal` | Implemented; binary secret response |
+| `connections.reveal_passphrase` | `connections.secrets.reveal` | Implemented; binary secret response |
 | `connections.store_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.get_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.delete_plugin_secret` | `connections.secrets.write` | Implemented |
@@ -353,8 +359,10 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.save_ssh_config_text capability=connections.config.write -->
 <!-- api-daemon-method: connections.get_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
-<!-- api-daemon-method: connections.lookup_passphrase capability=connections.secrets.write -->
-<!-- api-daemon-method: connections.lookup_password capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.has_password capability=connections.secrets.status.read -->
+<!-- api-daemon-method: connections.has_passphrase capability=connections.secrets.status.read -->
+<!-- api-daemon-method: connections.reveal_password capability=connections.secrets.reveal -->
+<!-- api-daemon-method: connections.reveal_passphrase capability=connections.secrets.reveal -->
 <!-- api-daemon-method: connections.store_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_plugin_secret capability=connections.secrets.write -->
@@ -831,16 +839,27 @@ client.store_connection_password(
 )
 ```
 
-<!-- api-method: lookup_connection_password -->
-## `lookup_connection_password`
+<!-- api-method: has_connection_password -->
+## `has_connection_password`
 
-- **Status / introduced:** Implemented / Protocol v1 additive extension
-- **Capability / purpose:** `connections.secrets.write`; retrieve the selected
-  secret backend's saved login password for an authorized connection workflow.
-- **Parameters / return:** `connection_id`; returns the password or `None`.
-- **Errors:** `connection_not_found` and daemon transport/protocol errors.
-- **Side effects / security:** Used by authentication preparation such as
-  ssh-copy-id. Implementations must not log the returned value.
+Daemon-only metadata query under `connections.secrets.status.read`. Returns a
+boolean indicating whether a saved login password is available; no secret
+value crosses the response envelope.
+
+```python
+saved = client.has_connection_password(connection_id)
+```
+
+<!-- api-method: reveal_connection_password -->
+## `reveal_connection_password`
+
+Daemon-only explicit reveal under `connections.secrets.reveal`. The JSON result
+is only an acknowledgment; the saved password is delivered in a one-use binary
+secret frame and returned to the caller as a mutable `bytearray`.
+
+```python
+password = client.reveal_connection_password(connection_id)
+```
 
 <!-- api-method: delete_connection_password -->
 ## `delete_connection_password`
@@ -895,18 +914,26 @@ client.delete_key_passphrase(
 )
 ```
 
-<!-- api-method: lookup_key_passphrase -->
-## `lookup_key_passphrase`
+<!-- api-method: has_key_passphrase -->
+## `has_key_passphrase`
 
-- **Status / introduced:** Implemented / Protocol v1
-- **Capability / purpose:** `connections.secrets.write`; look up a stored
-  key passphrase.
-- **Parameters / return:** `key_path: str`; returns `Optional[str]`.
-- **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Returns the stored passphrase or `None`.
+Daemon-only metadata query under `connections.secrets.status.read`. Returns a
+boolean indicating whether a saved key passphrase is available; no secret value
+crosses the response envelope.
 
 ```python
-passphrase = client.lookup_key_passphrase("/home/user/.ssh/id_rsa")
+saved = client.has_key_passphrase("/home/user/.ssh/id_rsa")
+```
+
+<!-- api-method: reveal_key_passphrase -->
+## `reveal_key_passphrase`
+
+Daemon-only explicit reveal under `connections.secrets.reveal`. The JSON result
+is only an acknowledgment; the saved passphrase is delivered in a one-use
+binary secret frame and returned as a mutable `bytearray`.
+
+```python
+passphrase = client.reveal_key_passphrase("/home/user/.ssh/id_rsa")
 ```
 
 <!-- api-method: list_interactions -->

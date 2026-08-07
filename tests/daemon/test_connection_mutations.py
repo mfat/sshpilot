@@ -160,17 +160,26 @@ def test_duplicate_connection_routes_through_daemon_owner(daemon_factory):
     client.close()
 
 
-def test_saved_connection_password_lookup_routes_through_daemon_owner(
+def test_saved_connection_password_status_and_reveal_route_through_daemon_owner(
     daemon_factory,
 ):
     server, manager = daemon_factory(start=False)
-    manager.get_connection_password = lambda connection: (
-        "stored-password" if connection.nickname == "demo" else None
+    manager.lookup_connection_password = lambda connection_id: (
+        "stored-password" if str(connection_id) == "demo" else None
+    )
+    manager.has_connection_password = lambda connection_id: (
+        str(connection_id) == "demo"
     )
     server.start_in_thread()
     client = DaemonClient(socket_path=server.socket_path)
 
-    assert client.lookup_connection_password("demo") == "stored-password"
+    assert client.has_connection_password("demo") is True
+    revealed = client.reveal_connection_password("demo")
+    try:
+        assert revealed == bytearray(b"stored-password")
+    finally:
+        revealed[:] = b"\\0" * len(revealed)
+        revealed.clear()
     client.close()
 
 

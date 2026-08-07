@@ -480,12 +480,16 @@ def test_secret_provider_delegation():
         def lookup_connection_password(self, connection_id):
             return "hunter2"
 
+        def has_connection_password(self, connection_id):
+            return True
+
     repo = FakeRepository([_record()])
     service = ConnectionApplicationService(
         repo, secret_provider=SecretProvider(), client_name="test"
     )
-    assert service.lookup_connection_password(ConnectionId("web")) == "hunter2"
     assert service.lookup_daemon_password(ConnectionId("web")) == "hunter2"
+    assert service.has_connection_password(ConnectionId("web")) is True
+    assert service.reveal_connection_password(ConnectionId("web")) == bytearray(b"hunter2")
 
 
 # ---------------------------------------------------------------------------

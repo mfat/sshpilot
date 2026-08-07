@@ -21,6 +21,8 @@
     "connections.groups",
     "connections.metadata.write",
     "connections.read",
+    "connections.secrets.reveal",
+    "connections.secrets.status.read",
     "connections.secrets.write",
     "connections.split",
     "connections.write",
@@ -291,6 +293,14 @@
       "capability": "transfers.read",
       "status": "daemon-only"
     },
+    "has_connection_password": {
+      "capability": "connections.secrets.status.read",
+      "status": "daemon-only"
+    },
+    "has_key_passphrase": {
+      "capability": "connections.secrets.status.read",
+      "status": "daemon-only"
+    },
     "import_bitwarden_backup": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
@@ -358,14 +368,6 @@
     "lock_secrets": {
       "capability": "secrets.operate",
       "status": "daemon-only"
-    },
-    "lookup_connection_password": {
-      "capability": "connections.secrets.write",
-      "status": "implemented"
-    },
-    "lookup_key_passphrase": {
-      "capability": "connections.secrets.write",
-      "status": "implemented"
     },
     "open_forward": {
       "capability": "forwards.write",
@@ -453,6 +455,14 @@
     },
     "restart_daemon": {
       "capability": "daemon.control",
+      "status": "daemon-only"
+    },
+    "reveal_connection_password": {
+      "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
+    "reveal_key_passphrase": {
+      "capability": "connections.secrets.reveal",
       "status": "daemon-only"
     },
     "save_ssh_config_text": {
@@ -641,6 +651,8 @@
     "get_sftp_service",
     "get_ssh_config_text",
     "get_transfer",
+    "has_connection_password",
+    "has_key_passphrase",
     "import_bitwarden_backup",
     "import_secret_backup",
     "import_ssh_backup",
@@ -660,8 +672,6 @@
     "list_ssh_backups",
     "list_transfers",
     "lock_secrets",
-    "lookup_connection_password",
-    "lookup_key_passphrase",
     "open_forward",
     "open_session",
     "open_sftp",
@@ -690,6 +700,8 @@
     "resize_terminal",
     "respond_to_interaction",
     "restart_daemon",
+    "reveal_connection_password",
+    "reveal_key_passphrase",
     "save_ssh_config_text",
     "send_interaction_secret",
     "send_terminal_input",
@@ -1218,6 +1230,26 @@
       ],
       "return": "TransferSummary"
     },
+    "has_connection_password": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "connection_id",
+          "type": "ConnectionId"
+        }
+      ],
+      "return": "bool"
+    },
+    "has_key_passphrase": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "key_path",
+          "type": "str"
+        }
+      ],
+      "return": "bool"
+    },
     "import_bitwarden_backup": {
       "parameters": [
         {
@@ -1370,26 +1402,6 @@
     "lock_secrets": {
       "parameters": [],
       "return": "SecretBackendState"
-    },
-    "lookup_connection_password": {
-      "parameters": [
-        {
-          "kind": "positional_or_keyword",
-          "name": "connection_id",
-          "type": "ConnectionId"
-        }
-      ],
-      "return": "str | None"
-    },
-    "lookup_key_passphrase": {
-      "parameters": [
-        {
-          "kind": "positional_or_keyword",
-          "name": "key_path",
-          "type": "str"
-        }
-      ],
-      "return": "str | None"
     },
     "open_forward": {
       "parameters": [
@@ -1660,6 +1672,26 @@
         }
       ],
       "return": "DaemonStopResult"
+    },
+    "reveal_connection_password": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "connection_id",
+          "type": "ConnectionId"
+        }
+      ],
+      "return": "bytearray"
+    },
+    "reveal_key_passphrase": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "key_path",
+          "type": "str"
+        }
+      ],
+      "return": "bytearray"
     },
     "save_ssh_config_text": {
       "parameters": [
@@ -2074,14 +2106,14 @@
     "connections.get_ssh_config_text": {
       "capability": "connections.config.read"
     },
+    "connections.has_passphrase": {
+      "capability": "connections.secrets.status.read"
+    },
+    "connections.has_password": {
+      "capability": "connections.secrets.status.read"
+    },
     "connections.list": {
       "capability": "connections.read"
-    },
-    "connections.lookup_passphrase": {
-      "capability": "connections.secrets.write"
-    },
-    "connections.lookup_password": {
-      "capability": "connections.secrets.write"
     },
     "connections.metadata.rename_tag": {
       "capability": "connections.metadata.write"
@@ -2091,6 +2123,12 @@
     },
     "connections.rename_group": {
       "capability": "connections.groups"
+    },
+    "connections.reveal_passphrase": {
+      "capability": "connections.secrets.reveal"
+    },
+    "connections.reveal_password": {
+      "capability": "connections.secrets.reveal"
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"
@@ -3672,6 +3710,8 @@
       "connections.config.read",
       "connections.config.write",
       "connections.secrets.write",
+      "connections.secrets.status.read",
+      "connections.secrets.reveal",
       "connections.metadata.write",
       "connections.groups",
       "connections.split",

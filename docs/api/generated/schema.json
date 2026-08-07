@@ -213,6 +213,14 @@
       "capability": "transfers.read",
       "status": "daemon-only"
     },
+    "has_connection_password": {
+      "capability": "connections.secrets.status.read",
+      "status": "daemon-only"
+    },
+    "has_key_passphrase": {
+      "capability": "connections.secrets.status.read",
+      "status": "daemon-only"
+    },
     "import_bitwarden_backup": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
@@ -280,14 +288,6 @@
     "lock_secrets": {
       "capability": "secrets.operate",
       "status": "daemon-only"
-    },
-    "lookup_connection_password": {
-      "capability": "connections.secrets.write",
-      "status": "implemented"
-    },
-    "lookup_key_passphrase": {
-      "capability": "connections.secrets.write",
-      "status": "implemented"
     },
     "open_forward": {
       "capability": "forwards.write",
@@ -375,6 +375,14 @@
     },
     "restart_daemon": {
       "capability": "daemon.control",
+      "status": "daemon-only"
+    },
+    "reveal_connection_password": {
+      "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
+    "reveal_key_passphrase": {
+      "capability": "connections.secrets.reveal",
       "status": "daemon-only"
     },
     "save_ssh_config_text": {
@@ -549,14 +557,14 @@
     "connections.get_ssh_config_text": {
       "capability": "connections.config.read"
     },
+    "connections.has_passphrase": {
+      "capability": "connections.secrets.status.read"
+    },
+    "connections.has_password": {
+      "capability": "connections.secrets.status.read"
+    },
     "connections.list": {
       "capability": "connections.read"
-    },
-    "connections.lookup_passphrase": {
-      "capability": "connections.secrets.write"
-    },
-    "connections.lookup_password": {
-      "capability": "connections.secrets.write"
     },
     "connections.metadata.rename_tag": {
       "capability": "connections.metadata.write"
@@ -566,6 +574,12 @@
     },
     "connections.rename_group": {
       "capability": "connections.groups"
+    },
+    "connections.reveal_passphrase": {
+      "capability": "connections.secrets.reveal"
+    },
+    "connections.reveal_password": {
+      "capability": "connections.secrets.reveal"
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"
@@ -940,6 +954,8 @@
       "connections.config.read",
       "connections.config.write",
       "connections.secrets.write",
+      "connections.secrets.status.read",
+      "connections.secrets.reveal",
       "connections.metadata.write",
       "connections.groups",
       "connections.split",

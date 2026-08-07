@@ -249,6 +249,7 @@ def receive_multiplexed_frame(
 ) -> Union[Dict[str, Any], object]:
     """Read one JSON envelope or negotiated binary terminal frame."""
 
+    from .secret_frames import decode_secret_payload, is_secret_payload
     from .terminal_frames import decode_terminal_payload, is_terminal_payload
 
     header = _receive_exact(sock, _HEADER_SIZE, allow_clean_close=True)
@@ -263,4 +264,6 @@ def receive_multiplexed_frame(
     payload = _receive_exact(sock, size, allow_clean_close=False)
     if is_terminal_payload(payload):
         return decode_terminal_payload(payload)
+    if is_secret_payload(payload):
+        return decode_secret_payload(payload)
     return _decode_payload(payload)

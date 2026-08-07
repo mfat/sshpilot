@@ -76,11 +76,9 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
-    "lookup_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
-    "lookup_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "update_connection_metadata": Capability.CONNECTIONS_METADATA_WRITE,
     "assign_connection_to_group": Capability.CONNECTIONS_GROUPS,
     "create_group": Capability.CONNECTIONS_GROUPS,
@@ -287,15 +285,19 @@ class ConnectionApplicationService:
             )
         return result
 
-    def lookup_connection_password(self, connection_id: ConnectionId) -> Optional[str]:
-        return self._provider_call(
-            self._secret_provider, "lookup_connection_password", connection_id
-        )
-
     def lookup_daemon_password(self, connection_id: ConnectionId) -> Optional[str]:
         return self._provider_call(
             self._secret_provider, "lookup_connection_password", connection_id
         )
+
+    def has_connection_password(self, connection_id: ConnectionId) -> bool:
+        return bool(self._provider_call(
+            self._secret_provider, "has_connection_password", connection_id
+        ))
+
+    def reveal_connection_password(self, connection_id: ConnectionId) -> bytearray:
+        value = self.lookup_daemon_password(connection_id)
+        return bytearray(value.encode("utf-8")) if value is not None else bytearray()
 
     def store_daemon_password(
         self,
@@ -365,6 +367,15 @@ class ConnectionApplicationService:
             self._secret_provider, "lookup_key_passphrase", key_path
         )
 
+    def has_key_passphrase(self, key_path: str) -> bool:
+        return bool(self._provider_call(
+            self._secret_provider, "has_key_passphrase", key_path
+        ))
+
+    def reveal_key_passphrase(self, key_path: str) -> bytearray:
+        value = self.lookup_daemon_passphrase(key_path)
+        return bytearray(value.encode("utf-8")) if value is not None else bytearray()
+
     def store_daemon_passphrase(self, key_path: str, passphrase: str) -> bool:
         return bool(
             self._provider_call(
@@ -391,11 +402,6 @@ class ConnectionApplicationService:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         return self.delete_daemon_passphrase(request.key_path)
-
-    def lookup_key_passphrase_rpc(self, request: Any) -> Optional[str]:
-        self._assert_command_thread()
-        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
-        return self.lookup_daemon_passphrase(request.key_path)
 
     def store_plugin_secret_rpc(self, request) -> bool:
         self._assert_command_thread()

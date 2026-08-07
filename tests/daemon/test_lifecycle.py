@@ -43,6 +43,8 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.CONNECTIONS_CONFIG_READ,
             Capability.CONNECTIONS_CONFIG_WRITE,
             Capability.CONNECTIONS_SECRETS_WRITE,
+            Capability.CONNECTIONS_SECRETS_STATUS_READ,
+            Capability.CONNECTIONS_SECRETS_REVEAL,
             Capability.CONNECTIONS_METADATA_WRITE,
             Capability.CONNECTIONS_GROUPS,
             Capability.CONNECTIONS_SPLIT,

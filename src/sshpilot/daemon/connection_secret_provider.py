@@ -84,6 +84,9 @@ class DaemonConnectionSecretProvider:
                 return value
         return None
 
+    def has_connection_password(self, connection_id: ConnectionId) -> bool:
+        return self.lookup_connection_password(connection_id) is not None
+
     def store_connection_password(
         self,
         connection_id: ConnectionId,
@@ -173,6 +176,9 @@ class DaemonConnectionSecretProvider:
             return None
         passphrase = lookup_passphrase(key_path)
         return passphrase if passphrase else None
+
+    def has_key_passphrase(self, key_path: str) -> bool:
+        return self.lookup_key_passphrase(key_path) is not None
 
     def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
         from ..askpass_utils import store_passphrase

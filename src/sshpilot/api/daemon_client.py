@@ -285,6 +285,10 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "release_interaction": Capability.INTERACTIONS_RESPOND,
     "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
     "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
+    "has_connection_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
+    "has_key_passphrase": Capability.CONNECTIONS_SECRETS_STATUS_READ,
+    "reveal_connection_password": Capability.CONNECTIONS_SECRETS_REVEAL,
+    "reveal_key_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
     "replay_terminal": Capability.TERMINAL_REPLAY,
     "list_sftp_services": Capability.SFTP_READ,
     "get_sftp_service": Capability.SFTP_READ,
@@ -383,6 +387,13 @@ class _PendingRequest:
     sent: bool = False
 
 
+@dataclass
+class _PendingSecretResponse:
+    completed: threading.Event
+    frame: Optional[SecretFrame] = None
+    error: Optional[SshPilotError] = None
+
+
 @dataclass(frozen=True)
 class _TransportFailureNotice:
     error: SshPilotError
@@ -443,6 +454,7 @@ class DaemonClient:
         self._state_lock = threading.RLock()
         self._publisher = EventPublisher()
         self._pending_requests: Dict[RequestId, _PendingRequest] = {}
+        self._pending_secret_responses: Dict[RequestId, _PendingSecretResponse] = {}
         self._event_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
         self._terminal_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
         self._terminal_subscribers: Dict[
@@ -754,16 +766,25 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid password store result")
         return result
 
-    def lookup_connection_password(
-        self, connection_id: ConnectionId
-    ) -> Optional[str]:
-        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+    def has_connection_password(self, connection_id: ConnectionId) -> bool:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_STATUS_READ)
         result = self._request(
-            "connections.lookup_password",
+            "connections.has_password",
             {"connection_id": connection_id},
         )
-        if result is not None and type(result) is not str:
-            self._fail_protocol("The daemon returned an invalid password lookup result")
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid password status")
+        return result
+
+    def reveal_connection_password(self, connection_id: ConnectionId) -> bytearray:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_REVEAL)
+        result = self._request(
+            "connections.reveal_password",
+            {"connection_id": connection_id},
+            secret_response=True,
+        )
+        if type(result) is not bytearray:
+            self._fail_protocol("The daemon returned an invalid password reveal")
         return result
 
     def delete_connection_password(self, request: DeleteConnectionPasswordRequest) -> bool:
@@ -802,14 +823,25 @@ class DaemonClient:
             )
         return result
 
-    def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
-        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+    def has_key_passphrase(self, key_path: str) -> bool:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_STATUS_READ)
         result = self._request(
-            "connections.lookup_passphrase",
+            "connections.has_passphrase",
             {"key_path": key_path},
         )
-        if result is not None and type(result) is not str:
-            self._fail_protocol("The daemon returned an invalid passphrase lookup result")
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid passphrase status")
+        return result
+
+    def reveal_key_passphrase(self, key_path: str) -> bytearray:
+        self._require_capability(Capability.CONNECTIONS_SECRETS_REVEAL)
+        result = self._request(
+            "connections.reveal_passphrase",
+            {"key_path": key_path},
+            secret_response=True,
+        )
+        if type(result) is not bytearray:
+            self._fail_protocol("The daemon returned an invalid passphrase reveal")
         return result
 
     def update_connection_metadata(
@@ -2293,8 +2325,19 @@ class DaemonClient:
             self._socket = None
             pending = tuple(self._pending_requests.items())
             self._pending_requests.clear()
+            secret_pending = tuple(self._pending_secret_responses.items())
+            self._pending_secret_responses.clear()
         self._close_transport(transport)
         for request_id, request in pending:
+            request.error = SshPilotError(
+                ErrorCode.TRANSPORT_CLOSED,
+                "The daemon client was closed",
+                request_id=request_id,
+            )
+            request.completed.set()
+        for request_id, request in secret_pending:
+            if request.frame is not None:
+                request.frame.clear()
             request.error = SshPilotError(
                 ErrorCode.TRANSPORT_CLOSED,
                 "The daemon client was closed",
@@ -2384,6 +2427,7 @@ class DaemonClient:
         params: dict,
         *,
         protocol_version: Optional[str] = None,
+        secret_response: bool = False,
         mutation_connection_id: Optional[ConnectionId] = None,
         mutation_session_id: Optional[SessionId] = None,
         session_mutation: bool = False,
@@ -2414,10 +2458,16 @@ class DaemonClient:
             )
             mutation_may_have_been_sent = False
             sent = False
+            secret_pending = None
             with self._state_lock:
                 if self._closed or self._socket is not transport:
                     raise self._closed_error()
                 self._pending_requests[request_id] = pending
+                if secret_response:
+                    secret_pending = _PendingSecretResponse(
+                        completed=threading.Event()
+                    )
+                    self._pending_secret_responses[request_id] = secret_pending
             try:
                 frame = encode_frame(encode_envelope(request))
                 with self._send_lock:
@@ -2516,7 +2566,51 @@ class DaemonClient:
                     request_id=request_id,
                 )
             if isinstance(response, ErrorResponseEnvelope):
+                if secret_pending is not None:
+                    with self._state_lock:
+                        stale = self._pending_secret_responses.pop(request_id, None)
+                    if stale is not None and stale.frame is not None:
+                        stale.frame.clear()
                 raise error_from_wire(response.error)
+            if secret_pending is not None:
+                if response.result is not True:
+                    with self._state_lock:
+                        stale = self._pending_secret_responses.pop(request_id, None)
+                    if stale is not None and stale.frame is not None:
+                        stale.frame.clear()
+                    return bytearray()
+                if not secret_pending.completed.wait(self._timeout):
+                    self._fail_transport(
+                        SshPilotError(
+                            ErrorCode.TRANSPORT_TIMEOUT,
+                            "The daemon reveal response timed out",
+                            retryable=True,
+                            request_id=request_id,
+                        )
+                    )
+                    raise self._closed_error()
+                if secret_pending.error is not None:
+                    with self._state_lock:
+                        self._pending_secret_responses.pop(request_id, None)
+                    raise secret_pending.error
+                frame = secret_pending.frame
+                secret_pending.frame = None
+                if frame is None or frame.kind is not SecretFrameKind.REVEAL_RESPONSE:
+                    if frame is not None:
+                        frame.clear()
+                    with self._state_lock:
+                        self._pending_secret_responses.pop(request_id, None)
+                    raise SshPilotError(
+                        ErrorCode.PROTOCOL_ERROR,
+                        "The daemon reveal response was missing",
+                        request_id=request_id,
+                    )
+                try:
+                    return bytearray(frame.secret)
+                finally:
+                    frame.clear()
+                    with self._state_lock:
+                        self._pending_secret_responses.pop(request_id, None)
             return response.result
 
     def _reader_main(self) -> None:
@@ -2574,6 +2668,10 @@ class DaemonClient:
                 if not self._receive_terminal(incoming):
                     return
                 continue
+            if isinstance(incoming, SecretFrame):
+                if not self._receive_secret(incoming):
+                    return
+                continue
             try:
                 envelope = decode_envelope(incoming)
             except (TypeError, ValueError):
@@ -2615,6 +2713,31 @@ class DaemonClient:
                 return
             pending.response = envelope
             pending.completed.set()
+
+    def _receive_secret(self, frame: SecretFrame) -> bool:
+        try:
+            if frame.kind is not SecretFrameKind.REVEAL_RESPONSE:
+                self._fail_protocol_from_reader(
+                    "The daemon sent an unexpected secret frame"
+                )
+                return False
+            request_id = RequestId(str(frame.interaction_id))
+            with self._state_lock:
+                pending = self._pending_secret_responses.get(request_id)
+                if pending is None or pending.frame is not None:
+                    self._fail_protocol_from_reader(
+                        "The daemon sent an unknown reveal response"
+                    )
+                    return False
+                pending.frame = frame
+                pending.completed.set()
+            return True
+        except Exception:
+            frame.clear()
+            self._fail_protocol_from_reader(
+                "The daemon sent an invalid reveal response"
+            )
+            return False
 
     def _receive_event(self, envelope: EventEnvelope) -> bool:
         expected_version = self._selected_protocol_version or PROTOCOL_VERSION
@@ -2912,6 +3035,8 @@ class DaemonClient:
             self._socket = None
             pending = tuple(self._pending_requests.items())
             self._pending_requests.clear()
+            secret_pending = tuple(self._pending_secret_responses.items())
+            self._pending_secret_responses.clear()
             lost_handler = self._on_transport_lost
             self._on_transport_lost = None
         if timeout_diagnostics is not None:
@@ -2921,6 +3046,17 @@ class DaemonClient:
             )
         self._close_transport(transport)
         for request_id, request in pending:
+            request.error = SshPilotError(
+                error.code,
+                error.message,
+                details=error.details,
+                retryable=error.retryable,
+                request_id=request_id,
+            )
+            request.completed.set()
+        for request_id, request in secret_pending:
+            if request.frame is not None:
+                request.frame.clear()
             request.error = SshPilotError(
                 error.code,
                 error.message,

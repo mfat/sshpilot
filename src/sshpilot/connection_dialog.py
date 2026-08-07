@@ -1141,6 +1141,13 @@ class FileListEditor(Adw.PreferencesGroup):
         # Second column: per-key passphrase entry, always visible next to the key.
         pass_entry = Gtk.PasswordEntry()
         pass_entry.set_show_peek_icon(True)
+        row._pass_saved = False
+        pass_entry.connect(
+            "notify::visibility",
+            lambda _entry, r=row, e=pass_entry, n=norm: self._on_passphrase_visibility_changed(
+                r, e, n
+            ),
+        )
         pass_entry.set_valign(Gtk.Align.CENTER)
         pass_entry.set_width_chars(18)
         try:
@@ -1175,45 +1182,92 @@ class FileListEditor(Adw.PreferencesGroup):
         return row
 
     def _load_passphrase_async(self, pass_entry, row, norm):
-        """Fetch a stored passphrase off the main thread and fill the entry when ready.
-
-        Skips the fill if the user has already typed into the entry, and syncs
-        ``_pass_initial`` to the loaded value so the save flow sees no spurious change.
-        Widget writes are guarded — the dialog may have closed while we waited.
-
-        In daemon mode the passphrase lives behind the daemon secret RPC: the local
-        ``connection_manager`` is a read-only presentation projection with no secret
-        access, so the lookup goes through ``client.lookup_key_passphrase`` on the same
-        normalized key path the save flow uses."""
-        def _apply(value):
-            try:
-                if not pass_entry.get_text():   # don't clobber what the user typed
-                    pass_entry.set_text(value)
-                    row._pass_initial = value
-            except Exception:
-                pass
-            return False  # one-shot idle
-
+        """Load the saved passphrase into the masked editor field."""
         parent = getattr(self, '_parent_window', None)
         client = getattr(parent, 'client', None)
-        bridge = getattr(parent, 'client_bridge', None)
         use_daemon = (
             getattr(parent, '_daemon_mode_active', lambda: False)()
-            and bridge is not None
             and client is not None
-            and hasattr(client, 'lookup_key_passphrase')
+            and hasattr(client, 'reveal_key_passphrase')
         )
+
+        def _apply(value):
+            try:
+                if type(value) is str:
+                    if not pass_entry.get_text():
+                        pass_entry.set_text(value)
+                        row._pass_initial = value
+                    row._pass_saved = bool(value)
+                else:
+                    row._pass_saved = bool(value)
+                if row._pass_saved and hasattr(pass_entry, 'set_show_peek_icon'):
+                    pass_entry.set_show_peek_icon(True)
+            except Exception:
+                pass
+            return False
 
         def worker():
             try:
                 if use_daemon:
-                    existing = client.lookup_key_passphrase(norm) or ''
+                    secret = client.reveal_key_passphrase(norm)
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
                 else:
-                    existing = self._connection_manager.get_key_passphrase(norm) or ''
+                    value = self._connection_manager.get_key_passphrase(norm) or ''
             except Exception:
-                existing = ''
-            if existing:
-                GLib.idle_add(_apply, existing)
+                value = False
+            GLib.idle_add(_apply, value)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_passphrase_visibility_changed(self, row, pass_entry, norm):
+        try:
+            visible = bool(pass_entry.get_visibility())
+        except Exception:
+            return
+        if not visible or pass_entry.get_text() or not getattr(row, '_pass_saved', False):
+            return
+        if getattr(row, '_pass_reveal_pending', False):
+            return
+        row._pass_reveal_pending = True
+        parent = getattr(self, '_parent_window', None)
+        client = getattr(parent, 'client', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and client is not None
+            and hasattr(client, 'reveal_key_passphrase')
+        )
+
+        def apply(value):
+            try:
+                if value and not pass_entry.get_text():
+                    pass_entry.set_text(value)
+                    row._pass_initial = value
+                if not value:
+                    pass_entry.set_visibility(False)
+            except Exception:
+                pass
+            row._pass_reveal_pending = False
+            return False
+
+        def worker():
+            value = ''
+            try:
+                if use_daemon:
+                    secret = client.reveal_key_passphrase(norm)
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                else:
+                    value = self._connection_manager.get_key_passphrase(norm) or ''
+            except Exception:
+                value = ''
+            GLib.idle_add(apply, value)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -2043,54 +2097,103 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
     def _load_password_async(self):
-        """Fetch the saved SSH password off the main thread and fill the row when ready.
-
-        rbw on a large vault is ≈1s per lookup; doing it inline froze dialog open. Skips
-        the fill if the user is already typing and syncs ``_orig_password`` so the loaded
-        value isn't mistaken for a user edit. Widget writes are guarded (dialog may close).
-
-        In daemon mode the password lives behind the daemon secret RPC: the local
-        ``connection_manager`` is a read-only presentation projection with no secret
-        access, so the lookup goes through ``client.lookup_connection_password`` using
-        the same durable connection id the save path resolves."""
+        """Load the saved password into the masked editor field."""
         if not hasattr(self.connection, 'username'):
             return
 
         parent = getattr(self, 'parent_window', None)
         mgr = getattr(parent, 'connection_manager', None)
         client = getattr(parent, 'client', None)
-        bridge = getattr(parent, 'client_bridge', None)
         use_daemon = (
             getattr(parent, '_daemon_mode_active', lambda: False)()
-            and bridge is not None
             and client is not None
-            and hasattr(client, 'lookup_connection_password')
+            and hasattr(client, 'reveal_connection_password')
         )
         if not use_daemon and not mgr:
             return
 
-        def _apply(pw):
+        def _apply(value):
             try:
-                if pw and not self.password_row.get_text():
-                    self.password_row.set_text(pw)
-                    self._orig_password = pw
+                if type(value) is str:
+                    if not self.password_row.get_text():
+                        self.password_row.set_text(value)
+                        self._orig_password = value
+                    self._password_saved = bool(value)
+                else:
+                    self._password_saved = bool(value)
             except Exception:
                 pass
-            return False  # one-shot idle
+            return False
 
         def worker():
             try:
                 if use_daemon:
                     from .api.connection_identity import connection_id_for
-                    pw = client.lookup_connection_password(
+                    secret = client.reveal_connection_password(
                         connection_id_for(self.connection)
                     )
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
                 else:
-                    pw = mgr.get_connection_password(self.connection)
+                    value = mgr.get_connection_password(self.connection) or ''
             except Exception:
-                pw = None
-            if pw:
-                GLib.idle_add(_apply, pw)
+                value = False
+            GLib.idle_add(_apply, value)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_password_visibility_changed(self, *_args):
+        try:
+            visible = bool(self.password_row.get_visibility())
+        except Exception:
+            return
+        if not visible or self.password_row.get_text() or not self._password_saved:
+            return
+        if getattr(self, '_password_reveal_pending', False):
+            return
+        self._password_reveal_pending = True
+        parent = getattr(self, 'parent_window', None)
+        mgr = getattr(parent, 'connection_manager', None)
+        client = getattr(parent, 'client', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and client is not None
+            and hasattr(client, 'reveal_connection_password')
+        )
+
+        def apply(value):
+            try:
+                if value and not self.password_row.get_text():
+                    self.password_row.set_text(value)
+                    self._orig_password = value
+                if not value:
+                    self.password_row.set_visibility(False)
+            except Exception:
+                pass
+            self._password_reveal_pending = False
+            return False
+
+        def worker():
+            value = ''
+            try:
+                if use_daemon:
+                    from .api.connection_identity import connection_id_for
+                    secret = client.reveal_connection_password(
+                        connection_id_for(self.connection)
+                    )
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                else:
+                    value = mgr.get_connection_password(self.connection) or ''
+            except Exception:
+                value = ''
+            GLib.idle_add(apply, value)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -2513,6 +2616,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         password_group = Adw.PreferencesGroup(title=_("Password"))
         self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
         self.password_row.set_show_apply_button(False)
+        try:
+            self.password_row.set_show_peek_icon(True)
+        except Exception:
+            pass
+        self._password_saved = False
+        try:
+            self.password_row.connect(
+                "notify::visibility",
+                self._on_password_visibility_changed,
+            )
+        except Exception:
+            pass
         password_group.add(self.password_row)
 
         self.pubkey_auth_row = Adw.SwitchRow()

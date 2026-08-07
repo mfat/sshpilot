@@ -16,6 +16,8 @@ class Capability(str, Enum):
     CONNECTIONS_CONFIG_READ = "connections.config.read"
     CONNECTIONS_CONFIG_WRITE = "connections.config.write"
     CONNECTIONS_SECRETS_WRITE = "connections.secrets.write"
+    CONNECTIONS_SECRETS_STATUS_READ = "connections.secrets.status.read"
+    CONNECTIONS_SECRETS_REVEAL = "connections.secrets.reveal"
     CONNECTIONS_METADATA_WRITE = "connections.metadata.write"
     CONNECTIONS_GROUPS = "connections.groups"
     CONNECTIONS_SPLIT = "connections.split"

@@ -6,6 +6,7 @@ import errno
 import logging
 import os
 import queue
+import secrets
 import selectors
 import socket
 import stat
@@ -25,7 +26,13 @@ from sshpilot.core.connection_application_service import ConnectionApplicationSe
 from sshpilot.core.ssh_overrides_service import SshOverridesService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, Subscription
-from sshpilot.api.models.common import ForwardId, RequestId, SessionId, SftpServiceId
+from sshpilot.api.models.common import (
+    ForwardId,
+    InteractionId,
+    RequestId,
+    SessionId,
+    SftpServiceId,
+)
 from sshpilot.api.models.daemon import (
     DaemonDiagnostics,
     DaemonLifecycleState,
@@ -60,7 +67,11 @@ from sshpilot.api.transport.terminal_frames import (
     TerminalFrameKind,
     encode_terminal_payload,
 )
-from sshpilot.api.transport.secret_frames import SecretFrame
+from sshpilot.api.transport.secret_frames import (
+    SecretFrame,
+    SecretFrameKind,
+    encode_secret_payload,
+)
 from sshpilot.api.version import PROTOCOL_VERSION
 
 from .command_executor import (
@@ -79,6 +90,7 @@ from .dispatch import (
     DeferredResult,
     ImmediateResult,
     RequestDispatcher,
+    SecretResponseResult,
 )
 from .forward_runtime import ForwardRuntime, SubprocessForwardProcessRunner
 from .interaction_broker import InteractionBroker
@@ -896,6 +908,11 @@ class DaemonServer:
         frame: SecretFrame,
     ) -> None:
         try:
+            if frame.kind is not SecretFrameKind.RESPONSE:
+                raise SshPilotError(
+                    ErrorCode.PROTOCOL_ERROR,
+                    "The daemon accepts client secret response frames only",
+                )
             protocol = state.protocol
             if (
                 not protocol.handshake_completed
@@ -1225,6 +1242,43 @@ class DaemonServer:
             error=error_to_wire(safe_error),
         )
 
+    def _queue_secret_response(
+        self,
+        state: _ClientConnection,
+        request_id: RequestId,
+        secret: Optional[bytearray],
+    ) -> None:
+        if secret is None:
+            return
+        frame = None
+        try:
+            frame = encode_binary_frame(
+                encode_secret_payload(
+                    SecretFrame(
+                        kind=SecretFrameKind.REVEAL_RESPONSE,
+                        interaction_id=InteractionId(str(request_id)),
+                        nonce=secrets.token_bytes(16),
+                        secret=secret,
+                    )
+                )
+            )
+            outbound = _OutboundFrame(frame)
+            with self._event_lock:
+                if state.closed or state.continuity_lost:
+                    return
+                overflow = not self._enqueue_frame_locked(
+                    state, outbound, priority=True
+                )
+            if overflow:
+                self._close_client(state)
+                return
+            self._refresh_client_interest(state)
+        except (FramingError, TypeError, ValueError):
+            self._close_client(state)
+        finally:
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
+
     def _queue_response(
         self,
         state: _ClientConnection,
@@ -1346,6 +1400,16 @@ class DaemonServer:
                 logger.debug("Discarded deferred completion for a closed peer")
                 continue
             state.pending_request_ids.discard(completion.request_id)
+            secret_result = (
+                completion.result
+                if isinstance(completion.result, SecretResponseResult)
+                else None
+            )
+            secret_value = (
+                secret_result.secret
+                if secret_result is not None and secret_result.secret
+                else None
+            )
             if completion.error is not None:
                 response = self._error_response(
                     completion.request_id,
@@ -1355,9 +1419,15 @@ class DaemonServer:
                 response = SuccessResponseEnvelope(
                     protocol_version=completion.protocol_version,
                     request_id=completion.request_id,
-                    result=completion.result,
+                    result=bool(secret_value) if secret_result is not None else completion.result,
                 )
             self._queue_response(state, response)
+            if secret_result is not None:
+                self._queue_secret_response(
+                    state,
+                    completion.request_id,
+                    secret_value,
+                )
 
     def _close_client(self, state: _ClientConnection) -> None:
         file_descriptor = state.sock.fileno()

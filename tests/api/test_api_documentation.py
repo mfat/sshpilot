@@ -89,6 +89,8 @@ def test_runtime_capability_markers_match_the_provider(
     if client_backend == "daemon":
         expected.update(
             {
+                Capability.CONNECTIONS_SECRETS_STATUS_READ.value,
+                Capability.CONNECTIONS_SECRETS_REVEAL.value,
                 Capability.SESSIONS_READ.value,
                 Capability.SESSIONS_WRITE.value,
                 Capability.SESSIONS_EVENTS.value,
@@ -207,6 +209,8 @@ def test_schema_only_capabilities_are_not_advertised(
     if client_backend == "daemon":
         runtime_capabilities.update(
             {
+                Capability.CONNECTIONS_SECRETS_STATUS_READ,
+                Capability.CONNECTIONS_SECRETS_REVEAL,
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,

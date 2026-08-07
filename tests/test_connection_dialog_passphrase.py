@@ -496,16 +496,16 @@ def test_rule_editor_remote_to_local_resets_host_to_localhost():
     assert remote_host_row.get_text() == "localhost"
 
 
-def test_daemon_editor_loads_password_from_client_lookup(monkeypatch):
+def test_daemon_editor_loads_password_from_protected_reveal(monkeypatch):
     import sshpilot.connection_dialog as dialog_module
 
     class DaemonClient:
         def __init__(self):
-            self.lookup_id = None
+            self.reveal_id = None
 
-        def lookup_connection_password(self, connection_id):
-            self.lookup_id = connection_id
-            return "hunter2"
+        def reveal_connection_password(self, connection_id):
+            self.reveal_id = connection_id
+            return bytearray(b"hunter2")
 
     class Bridge:
         pass
@@ -546,11 +546,12 @@ def test_daemon_editor_loads_password_from_client_lookup(monkeypatch):
 
     assert len(pending_threads) == 1
     pending_threads[0].target()
-    assert client.lookup_id == "web"
+    assert client.reveal_id == "web"
     assert idle_calls
-    callback, (pw,) = idle_calls[0]
-    callback(pw)
+    callback, (password,) = idle_calls[0]
+    callback(password)
     assert dialog.password_row.get_text() == "hunter2"
+    assert dialog._password_saved is True
     assert dialog._orig_password == "hunter2"
 
 
@@ -602,17 +603,17 @@ def test_local_editor_loads_password_from_manager(monkeypatch):
     assert dialog._orig_password == "local-secret"
 
 
-def test_daemon_editor_loads_passphrase_from_client_lookup(monkeypatch):
+def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
     import sshpilot.connection_dialog as dialog_module
     from sshpilot.connection_dialog import FileListEditor
 
     class DaemonClient:
         def __init__(self):
-            self.lookup_key = None
+            self.reveal_key = None
 
-        def lookup_key_passphrase(self, key_path):
-            self.lookup_key = key_path
-            return "key-secret"
+        def reveal_key_passphrase(self, key_path):
+            self.reveal_key = key_path
+            return bytearray(b"key-secret")
 
     class Bridge:
         pass
@@ -654,12 +655,13 @@ def test_daemon_editor_loads_passphrase_from_client_lookup(monkeypatch):
 
     assert len(pending_threads) == 1
     pending_threads[0].target()
-    assert client.lookup_key == norm
+    assert client.reveal_key == norm
     assert idle_calls
     callback, (value,) = idle_calls[0]
     callback(value)
     assert entry.get_text() == "key-secret"
     assert row._pass_initial == "key-secret"
+    assert row._pass_saved is True
 
 
 def test_local_editor_loads_passphrase_from_manager(monkeypatch):

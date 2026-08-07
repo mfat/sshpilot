@@ -20,6 +20,7 @@ _HEADER = struct.Struct(">4sBBH32s16s")
 
 class SecretFrameKind(IntEnum):
     RESPONSE = 1
+    REVEAL_RESPONSE = 2
 
 
 @dataclass
@@ -30,7 +31,10 @@ class SecretFrame:
     secret: bytearray = field(repr=False)
 
     def __post_init__(self) -> None:
-        if self.kind is not SecretFrameKind.RESPONSE:
+        if self.kind not in (
+            SecretFrameKind.RESPONSE,
+            SecretFrameKind.REVEAL_RESPONSE,
+        ):
             raise ValueError("secret frame kind is unsupported")
         require_identifier(self.interaction_id, "interaction id")
         if type(self.nonce) is not bytes or len(self.nonce) != 16:

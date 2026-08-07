@@ -193,9 +193,10 @@ class SshPilotClient(Protocol):
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
         ...
 
-    def lookup_connection_password(
-        self, connection_id: ConnectionId
-    ) -> Optional[str]:
+    def has_connection_password(self, connection_id: ConnectionId) -> bool:
+        ...
+
+    def reveal_connection_password(self, connection_id: ConnectionId) -> bytearray:
         ...
 
     def delete_connection_password(self, request: DeleteConnectionPasswordRequest) -> bool:
@@ -207,7 +208,10 @@ class SshPilotClient(Protocol):
     def delete_key_passphrase(self, request: DeleteKeyPassphraseRequest) -> bool:
         ...
 
-    def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
+    def has_key_passphrase(self, key_path: str) -> bool:
+        ...
+
+    def reveal_key_passphrase(self, key_path: str) -> bytearray:
         ...
 
     def update_connection_metadata(

@@ -149,13 +149,15 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
-    "connections.lookup_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.has_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
+    "connections.reveal_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "connections.store_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.get_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.delete_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.delete_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.store_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
-    "connections.lookup_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.has_passphrase": Capability.CONNECTIONS_SECRETS_STATUS_READ,
+    "connections.reveal_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
     "connections.update_metadata": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.metadata.update": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.metadata.rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
@@ -367,12 +369,15 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_ssh_config_text",
         "connections.save_ssh_config_text",
         "connections.store_password",
-        "connections.lookup_password",
+        "connections.has_password",
+        "connections.reveal_password",
         "connections.store_plugin_secret",
         "connections.get_plugin_secret",
         "connections.delete_plugin_secret",
         "connections.delete_password",
         "connections.store_passphrase",
+        "connections.has_passphrase",
+        "connections.reveal_passphrase",
         "connections.update_metadata",
         "connections.assign_to_group",
         "connections.create_group",
@@ -458,6 +463,13 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "secrets.transfer.preview_ssh",
     }
 )
+
+
+@dataclass(frozen=True)
+class SecretResponseResult:
+    """A deferred secret delivered outside the JSON response envelope."""
+
+    secret: Optional[bytearray]
 
 
 @dataclass(frozen=True)
@@ -582,14 +594,16 @@ class RequestDispatcher:
             "connections.get_ssh_config_text": self._handle_get_ssh_config_text,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
-            "connections.lookup_password": self._handle_lookup_connection_password,
+            "connections.has_password": self._handle_has_connection_password,
+            "connections.reveal_password": self._handle_reveal_connection_password,
             "connections.store_plugin_secret": self._handle_store_plugin_secret,
             "connections.get_plugin_secret": self._handle_get_plugin_secret,
             "connections.delete_plugin_secret": self._handle_delete_plugin_secret,
             "connections.delete_password": self._handle_delete_connection_password,
             "connections.store_passphrase": self._handle_store_key_passphrase,
             "connections.delete_passphrase": self._handle_delete_key_passphrase,
-            "connections.lookup_passphrase": self._handle_lookup_key_passphrase,
+            "connections.has_passphrase": self._handle_has_key_passphrase,
+            "connections.reveal_passphrase": self._handle_reveal_key_passphrase,
             "connections.update_metadata": self._handle_update_connection_metadata,
             "connections.metadata.update": self._handle_update_connection_metadata,
             "connections.metadata.rename_tag": self._handle_rename_tag,
@@ -1126,22 +1140,42 @@ class RequestDispatcher:
             connection_id=typed_request.connection_id,
         )
 
-    def _handle_lookup_connection_password(
+    def _connection_id_param(self, request: RequestEnvelope, method: str) -> ConnectionId:
+        if set(request.params) != {"connection_id"}:
+            raise ValueError(f"{method} requires connection_id")
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        return ConnectionId(connection_id)
+
+    def _handle_has_connection_password(
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
     ) -> DeferredResult:
-        if set(request.params) != {"connection_id"}:
-            raise ValueError("connections.lookup_password requires connection_id")
-        connection_id = request.params["connection_id"]
-        if type(connection_id) is not str or not connection_id.strip():
-            raise ValueError("connection_id must be a non-empty string")
-        typed_id = ConnectionId(connection_id)
+        connection_id = self._connection_id_param(request, "connections.has_password")
         return DeferredResult(
-            operation=lambda: self._connections.lookup_daemon_password(typed_id),
+            operation=lambda: self._connections.has_connection_password(connection_id),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
-            connection_id=typed_id,
+            connection_id=connection_id,
+        )
+
+    def _handle_reveal_connection_password(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        if state.client_info is None or "binary-secret-v1" not in state.client_info.supported_frame_types:
+            raise SshPilotError(ErrorCode.UNSUPPORTED_CAPABILITY, "Binary secret transport was not negotiated")
+        connection_id = self._connection_id_param(request, "connections.reveal_password")
+        return DeferredResult(
+            operation=lambda: SecretResponseResult(
+                self._connections.reveal_connection_password(connection_id)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=connection_id,
         )
 
     def _handle_store_plugin_secret(
@@ -1233,13 +1267,33 @@ class RequestDispatcher:
             on_rejected=lambda: None,
         )
 
-    def _handle_lookup_key_passphrase(
+    def _handle_has_key_passphrase(
         self,
         request: RequestEnvelope,
         _state: ClientProtocolState,
-    ) -> Optional[str]:
+    ) -> DeferredResult:
         typed_request = lookup_key_passphrase_request_from_wire(request.params)
-        return self._connections.lookup_daemon_passphrase(typed_request.key_path)
+        return DeferredResult(
+            operation=lambda: self._connections.has_key_passphrase(typed_request.key_path),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_reveal_key_passphrase(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        if state.client_info is None or "binary-secret-v1" not in state.client_info.supported_frame_types:
+            raise SshPilotError(ErrorCode.UNSUPPORTED_CAPABILITY, "Binary secret transport was not negotiated")
+        typed_request = lookup_key_passphrase_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: SecretResponseResult(
+                self._connections.reveal_key_passphrase(typed_request.key_path)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
 
     def _handle_update_connection_metadata(
         self,
@@ -2486,6 +2540,8 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_CONFIG_READ,
                 Capability.CONNECTIONS_CONFIG_WRITE,
                 Capability.CONNECTIONS_SECRETS_WRITE,
+                Capability.CONNECTIONS_SECRETS_STATUS_READ,
+                Capability.CONNECTIONS_SECRETS_REVEAL,
                 Capability.CONNECTIONS_METADATA_WRITE,
                 Capability.CONNECTIONS_GROUPS,
                 Capability.CONNECTIONS_SPLIT,
@@ -2493,6 +2549,8 @@ class RequestDispatcher:
         )
         daemon_capabilities = connection_capabilities | frozenset(
             {
+                Capability.CONNECTIONS_SECRETS_STATUS_READ,
+                Capability.CONNECTIONS_SECRETS_REVEAL,
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,

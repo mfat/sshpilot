@@ -62,8 +62,10 @@ payload bytes. Control payloads are UTF-8 JSON and remain limited to 1,048,576
 bytes. Negotiated terminal payloads begin with binary magic `SPTB`, use stream
 version 2, and are limited to a 68-byte header plus 65,536 raw bytes.
 Negotiated one-use secret responses begin with `SPSB`, use version 2, and carry
-a 32-byte interaction ID, a 16-byte responder nonce, and at most 16,384 raw
-secret bytes. Frames may be fragmented or coalesced by the socket. Empty,
+a 32-byte correlation ID, a 16-byte nonce, and at most 16,384 raw secret bytes.
+Interaction responses use the interaction ID and responder nonce; explicit
+connection-editor reveals use the request ID and `REVEAL_RESPONSE` frame kind.
+Frames may be fragmented or coalesced by the socket. Empty,
 oversized, incomplete, invalid JSON, malformed binary frames, unsupported flags,
 and non-canonical identifiers are rejected. Pickle, marshal, arbitrary class
 serialization, and object `repr` are never used.
