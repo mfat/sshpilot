@@ -28,6 +28,12 @@ notes remain separate.
   one refresh, never retries the mutation, and reports the original error. GTK
   retains gesture, indicator, and preview presentation only.
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.17`; `PROTOCOL_VERSION` stays `1.0`.
+  The additive `expected_generation` wire field on the existing `groups.place`
+  RPC must not be sent to strict `0.16` daemons, so clients now treat an old API
+  implementation as write-incompatible for group mutations and reject them with
+  the canonical restart error before any wire request.
+
 - Added the daemon-only native SCP slice through `start_scp_transfer` and the
   `transfers.scp` capability. SCP uses the shared `TransferRuntime` lifecycle,
   canonical OpenSSH launch/authentication and interaction-broker paths, bounded

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.16",
+  "api_implementation_version": "0.17",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",

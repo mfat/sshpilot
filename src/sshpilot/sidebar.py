@@ -3772,13 +3772,21 @@ def _on_connection_list_drop(window, target, value, x, y):
                                 if (source_group
                                         and source_group.get("parent_id") == target_group_id):
                                     pass
+                                elif drop_tree_target_set:
+                                    # The nest preview captured (parent, index,
+                                    # generation) at motion time. Submit exactly
+                                    # that tuple so the request describes the
+                                    # projection the user saw, even if the
+                                    # authoritative store advanced meanwhile.
+                                    if _submit_group_dnd_place(
+                                        window, group_id, drop_parent_id,
+                                        drop_index,
+                                        expected_generation=drop_generation,
+                                    ):
+                                        return True
                                 else:
                                     parent_id, index = _tree_target_nest_into(
                                         manager, target_group_id
-                                    )
-                                    old_parent = (
-                                        source_group.get("parent_id")
-                                        if source_group else None
                                     )
                                     if _submit_group_dnd_place(
                                         window, group_id, parent_id, index,

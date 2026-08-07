@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.16",
+  "api_implementation_version": "0.17",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",

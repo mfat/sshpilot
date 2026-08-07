@@ -45,9 +45,23 @@ def _one_shot_server(socket_path, response_factory):
     return thread
 
 
-def _connected_protocol_server(socket_path, action):
+def _connected_protocol_server(
+    socket_path,
+    action,
+    *,
+    api_implementation_version=API_IMPLEMENTATION_VERSION,
+    supported=None,
+    daemon_capabilities=None,
+):
     ready = threading.Event()
     release = threading.Event()
+
+    supported = supported or [
+        "connections.events",
+        "connections.read",
+        "connections.write",
+    ]
+    daemon_capabilities = daemon_capabilities or supported
 
     def _send(peer, response):
         peer.sendall(encode_frame(encode_envelope(response)))
@@ -69,13 +83,10 @@ def _connected_protocol_server(socket_path, action):
                         "daemon_version": "test",
                         "core_version": "test",
                         "selected_protocol_version": "1.0",
-                        "daemon_capabilities": [
-                            "connections.events",
-                            "connections.read",
-                            "connections.write",
-                        ],
+                        "daemon_capabilities": list(daemon_capabilities),
                         "compatibility_status": "compatible",
                         "server_instance_id": "server-1",
+                        "api_implementation_version": api_implementation_version,
                     },
                 ),
             )
@@ -87,7 +98,7 @@ def _connected_protocol_server(socket_path, action):
                     capabilities.request_id,
                     {
                         "protocol_version": "1.0",
-                        "api_implementation_version": API_IMPLEMENTATION_VERSION,
+                        "api_implementation_version": api_implementation_version,
                         "client": {
                             "name": "daemon-client",
                             "version": "test",
@@ -98,11 +109,7 @@ def _connected_protocol_server(socket_path, action):
                             "version": "test",
                             "implementation": "daemon",
                         },
-                        "supported": [
-                            "connections.events",
-                            "connections.read",
-                            "connections.write",
-                        ],
+                        "supported": list(supported),
                         "compatibility": {
                             "compatible": True,
                             "protocol_version": "1.0",
@@ -311,3 +318,57 @@ def test_duplicate_response_closes_transport_after_first_correlation(tmp_path):
     assert caught.value.code is ErrorCode.TRANSPORT_CLOSED
     client.close()
     thread.join(2)
+
+
+def test_group_place_rejected_when_daemon_api_implementation_is_older(tmp_path):
+    """A client using the new group-placement contract must not treat an old
+    API implementation as write-compatible.
+
+    The updated client sends ``expected_generation`` under the existing
+    ``groups.place`` RPC, which old strict daemons would not recognize, so the
+    write is rejected client-side with the canonical restart error before any
+    wire request is sent — no retry, no local fallback."""
+    from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
+
+    old_api = "0.16"
+    assert old_api != API_IMPLEMENTATION_VERSION
+
+    socket_path = tmp_path / "old-api.sock"
+    requests = []
+
+    def _action(peer):
+        peer.settimeout(0.5)
+        try:
+            requests.append(decode_envelope(receive_frame(peer)))
+        except TimeoutError:
+            pass
+
+    thread, release = _connected_protocol_server(
+        socket_path,
+        _action,
+        api_implementation_version=old_api,
+        supported=[
+            "connections.events",
+            "connections.read",
+            "connections.write",
+            "connections.groups",
+        ],
+    )
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    release.set()
+
+    with pytest.raises(SshPilotError) as caught:
+        client.place_group(
+            PlaceGroupRequest(
+                group_id=GroupId("g"),
+                parent_id=None,
+                index=0,
+                expected_generation=1,
+            )
+        )
+    assert caught.value.code is ErrorCode.API_VERSION_MISMATCH
+    assert caught.value.retryable is False
+
+    thread.join(2)
+    assert requests == []
+    client.close()

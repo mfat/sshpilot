@@ -103,10 +103,15 @@ def test_place_group_orders_siblings(tmp_path):
 def test_place_group_reorder_with_current_generation_succeeds(tmp_path):
     repo, root, state = _repo(tmp_path)
     parent = repo.create_group("Parent")
-    g2 = repo.create_group("G2")
+    g1 = repo.create_group("G1", parent_id=parent.id)
+    g2 = repo.create_group("G2", parent_id=parent.id)
     before = repo.snapshot()
     repo.place_group(g2.id, parent.id, 0, expected_generation=before.generation)
     snap = repo.snapshot()
+    g1s = next(g for g in snap.groups if g.id == g1.id)
+    g2s = next(g for g in snap.groups if g.id == g2.id)
+    assert g1s.parent_id == parent.id and g2s.parent_id == parent.id
+    assert (g2s.order, g2s.id) < (g1s.order, g1s.id)
     assert snap.generation == before.generation + 1
 
 
@@ -124,7 +129,8 @@ def test_place_group_reparent_with_current_generation_succeeds(tmp_path):
 def test_stale_place_group_reorder_does_not_mutate(tmp_path):
     repo, root, state = _repo(tmp_path)
     parent = repo.create_group("Parent")
-    g2 = repo.create_group("G2")
+    g1 = repo.create_group("G1", parent_id=parent.id)
+    g2 = repo.create_group("G2", parent_id=parent.id)
     before = repo.snapshot()
     with pytest.raises(CoreError) as exc:
         repo.place_group(
@@ -132,6 +138,12 @@ def test_stale_place_group_reorder_does_not_mutate(tmp_path):
         )
     assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
     assert repo.snapshot() == before
+    # Sibling order is provably unchanged.
+    after = repo.snapshot()
+    g1s = next(g for g in after.groups if g.id == g1.id)
+    g2s = next(g for g in after.groups if g.id == g2.id)
+    assert g1s.parent_id == parent.id and g2s.parent_id == parent.id
+    assert (g1s.order, g1s.id) < (g2s.order, g2s.id)
 
 
 def test_stale_place_group_reparent_does_not_mutate(tmp_path):

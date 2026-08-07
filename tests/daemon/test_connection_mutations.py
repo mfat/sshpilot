@@ -344,3 +344,60 @@ def test_daemon_update_stale_editor_rejected_when_generation_mismatches(
     assert caught.value.code is ErrorCode.STALE_EDITOR
     assert manager.find_connection_by_nickname("demo").data["remote_command"] == "echo hi"
     client.close()
+
+
+def test_daemon_groups_place_stale_generation_rejected(daemon_factory, tmp_path):
+    """A stale ``groups.place`` is rejected end-to-end as STALE_EDITOR and the
+    persisted group layout is unchanged.
+
+    Exercises client DTO -> codec -> dispatcher -> application service -> real
+    repository, which compares the requested generation before mutating."""
+    from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(tmp_path / "ssh_config"),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    server, _manager = daemon_factory(manager=repo)
+    client = DaemonClient(socket_path=server.socket_path)
+
+    parent_id = client.create_group("Parent")
+    child_id = client.create_group("Child")
+    assert parent_id and child_id
+
+    # First placement succeeds with the current generation.
+    snapshot = client.get_connection_store_snapshot()
+    client.place_group(
+        PlaceGroupRequest(
+            group_id=GroupId(child_id),
+            parent_id=GroupId(parent_id),
+            index=0,
+            expected_generation=snapshot.generation,
+        )
+    )
+    placed = client.get_connection_store_snapshot()
+    placed_child = next(g for g in placed.groups if g.id == child_id)
+    assert placed_child.parent_id == parent_id
+
+    # A stale generation is rejected before any mutation.
+    with pytest.raises(SshPilotError) as caught:
+        client.place_group(
+            PlaceGroupRequest(
+                group_id=GroupId(parent_id),
+                parent_id=None,
+                index=0,
+                expected_generation=snapshot.generation,
+            )
+        )
+    assert caught.value.code is ErrorCode.STALE_EDITOR
+
+    # Persisted group state is unchanged by the rejected placement.
+    current = client.get_connection_store_snapshot()
+    assert current.generation == placed.generation
+    current_child = next(g for g in current.groups if g.id == child_id)
+    assert current_child.parent_id == parent_id
+    client.close()

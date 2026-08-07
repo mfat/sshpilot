@@ -773,6 +773,62 @@ def test_group_drop_carries_projection_generation(monkeypatch):
     assert placed[-1].expected_generation == 9
 
 
+def test_group_on_group_drop_uses_captured_nest_target(monkeypatch):
+    """A nest drop submits the tuple captured with the preview, not a recompute.
+
+    The nest preview is calculated at motion time and its generation captured.
+    If the authoritative projection advances before the drop, the request must
+    still describe the projection the user saw (WYSIWYG)."""
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    placed = []
+
+    class _Client:
+        def place_group(self, request):
+            placed.append(request)
+            return True
+
+    class _Manager:
+        def __init__(self):
+            self.groups = {
+                "src": {"id": "src", "parent_id": None},
+                "dst": {"id": "dst", "parent_id": None},
+            }
+
+        def get_ordered_siblings(self, parent_id):
+            if parent_id == "dst":
+                return ["existing"]
+            return ["src", "dst"]
+
+    window = types.SimpleNamespace()
+    indicator_row = _AllocRow(0, 40, group_id="dst")
+    window._drop_indicator_row = indicator_row
+    window._drop_indicator_position = "on_group"
+    # Captured at motion time: nest "src" into "dst" before "existing" (index 0),
+    # when the projection was generation 7.
+    window._drop_group_parent_id = "dst"
+    window._drop_group_index = 0
+    window._drop_group_tree_target_set = True
+    window._drop_group_generation = 7
+    window.connection_list = object()
+    indicator_row.bind_listbox(window.connection_list)
+    window.group_manager = _Manager()
+    window.client = _Client()
+    # The authoritative projection has advanced to generation 8 by drop time.
+    window.connection_manager = types.SimpleNamespace(
+        snapshot=lambda: types.SimpleNamespace(generation=8)
+    )
+
+    value = {"type": "group", "group_id": "src"}
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
+    assert placed[-1].group_id == "src"
+    assert placed[-1].parent_id == "dst"
+    assert placed[-1].index == 0
+    assert placed[-1].expected_generation == 7
+
+
 def test_set_group_tree_drop_target_captures_projection_generation():
     """The captured drop target records the projection generation at motion time."""
 
