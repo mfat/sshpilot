@@ -870,6 +870,7 @@ class FileListEditor(Adw.PreferencesGroup):
 
     def __init__(self, *, title, add_actions=None,
                  with_passphrase=False, connection_manager=None,
+                 parent_window=None,
                  on_changed=None, verify=None, rows_group=None,
                  add_at_bottom=False, empty_placeholder=None,
                  reorderable=False):
@@ -880,6 +881,7 @@ class FileListEditor(Adw.PreferencesGroup):
         self._with_passphrase = with_passphrase
         self._reorderable = reorderable
         self._connection_manager = connection_manager
+        self._parent_window = parent_window
         self._on_changed = on_changed
         self._rows_group = rows_group or self
         self._rows_visible = True
@@ -1149,7 +1151,7 @@ class FileListEditor(Adw.PreferencesGroup):
         # A stored passphrase can come from a slow secret backend (rbw on a large vault
         # is ≈1s per lookup), so load it off the main thread: the dialog opens instantly
         # and the entry fills in when ready, unless the user is already typing.
-        if self._connection_manager is not None:
+        if self._connection_manager is not None or getattr(self, '_parent_window', None) is not None:
             self._load_passphrase_async(pass_entry, row, norm)
         # Clear the error state as soon as the user edits the value again.
         pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
@@ -1177,7 +1179,12 @@ class FileListEditor(Adw.PreferencesGroup):
 
         Skips the fill if the user has already typed into the entry, and syncs
         ``_pass_initial`` to the loaded value so the save flow sees no spurious change.
-        Widget writes are guarded — the dialog may have closed while we waited."""
+        Widget writes are guarded — the dialog may have closed while we waited.
+
+        In daemon mode the passphrase lives behind the daemon secret RPC: the local
+        ``connection_manager`` is a read-only presentation projection with no secret
+        access, so the lookup goes through ``client.lookup_key_passphrase`` on the same
+        normalized key path the save flow uses."""
         def _apply(value):
             try:
                 if not pass_entry.get_text():   # don't clobber what the user typed
@@ -1187,9 +1194,22 @@ class FileListEditor(Adw.PreferencesGroup):
                 pass
             return False  # one-shot idle
 
+        parent = getattr(self, '_parent_window', None)
+        client = getattr(parent, 'client', None)
+        bridge = getattr(parent, 'client_bridge', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and bridge is not None
+            and client is not None
+            and hasattr(client, 'lookup_key_passphrase')
+        )
+
         def worker():
             try:
-                existing = self._connection_manager.get_key_passphrase(norm) or ''
+                if use_daemon:
+                    existing = client.lookup_key_passphrase(norm) or ''
+                else:
+                    existing = self._connection_manager.get_key_passphrase(norm) or ''
             except Exception:
                 existing = ''
             if existing:
@@ -2027,9 +2047,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         rbw on a large vault is ≈1s per lookup; doing it inline froze dialog open. Skips
         the fill if the user is already typing and syncs ``_orig_password`` so the loaded
-        value isn't mistaken for a user edit. Widget writes are guarded (dialog may close)."""
-        mgr = getattr(self.parent_window, 'connection_manager', None)
-        if not mgr or not hasattr(self.connection, 'username'):
+        value isn't mistaken for a user edit. Widget writes are guarded (dialog may close).
+
+        In daemon mode the password lives behind the daemon secret RPC: the local
+        ``connection_manager`` is a read-only presentation projection with no secret
+        access, so the lookup goes through ``client.lookup_connection_password`` using
+        the same durable connection id the save path resolves."""
+        if not hasattr(self.connection, 'username'):
+            return
+
+        parent = getattr(self, 'parent_window', None)
+        mgr = getattr(parent, 'connection_manager', None)
+        client = getattr(parent, 'client', None)
+        bridge = getattr(parent, 'client_bridge', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and bridge is not None
+            and client is not None
+            and hasattr(client, 'lookup_connection_password')
+        )
+        if not use_daemon and not mgr:
             return
 
         def _apply(pw):
@@ -2043,7 +2080,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         def worker():
             try:
-                pw = mgr.get_connection_password(self.connection)
+                if use_daemon:
+                    from .api.connection_identity import connection_id_for
+                    pw = client.lookup_connection_password(
+                        connection_id_for(self.connection)
+                    )
+                else:
+                    pw = mgr.get_connection_password(self.connection)
             except Exception:
                 pw = None
             if pw:
@@ -2420,6 +2463,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Private Keys"),
             with_passphrase=True,
             connection_manager=cm,
+            parent_window=self.parent_window,
             add_actions=[{
                 'icon': 'plus-large-symbolic',
                 'label': _("Add"),
@@ -2442,6 +2486,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             add_at_bottom=True,
             with_passphrase=False,
             connection_manager=cm,
+            parent_window=self.parent_window,
         )
 
         # --- Key handling ---

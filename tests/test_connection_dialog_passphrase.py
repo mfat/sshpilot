@@ -494,3 +494,220 @@ def test_rule_editor_remote_to_local_resets_host_to_localhost():
     )
 
     assert remote_host_row.get_text() == "localhost"
+
+
+def test_daemon_editor_loads_password_from_client_lookup(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+
+    class DaemonClient:
+        def __init__(self):
+            self.lookup_id = None
+
+        def lookup_connection_password(self, connection_id):
+            self.lookup_id = connection_id
+            return "hunter2"
+
+    class Bridge:
+        pass
+
+    client = DaemonClient()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),  # read-only projection, no secret access
+        client=client,
+        client_bridge=Bridge(),
+        _daemon_mode_active=lambda: True,
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(
+        nickname="web", username="root",
+    )
+    dialog.password_row = DummyEntry("")
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    dialog._load_password_async()
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.lookup_id == "web"
+    assert idle_calls
+    callback, (pw,) = idle_calls[0]
+    callback(pw)
+    assert dialog.password_row.get_text() == "hunter2"
+    assert dialog._orig_password == "hunter2"
+
+
+def test_local_editor_loads_password_from_manager(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+
+    class Manager:
+        def get_connection_password(self, connection):
+            return "local-secret"
+
+    parent = types.SimpleNamespace(
+        connection_manager=Manager(),
+        client=None,
+        client_bridge=None,
+        _daemon_mode_active=lambda: False,
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(
+        nickname="web", username="root",
+    )
+    dialog.password_row = DummyEntry("")
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    dialog._load_password_async()
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (pw,) = idle_calls[0]
+    callback(pw)
+    assert dialog.password_row.get_text() == "local-secret"
+    assert dialog._orig_password == "local-secret"
+
+
+def test_daemon_editor_loads_passphrase_from_client_lookup(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class DaemonClient:
+        def __init__(self):
+            self.lookup_key = None
+
+        def lookup_key_passphrase(self, key_path):
+            self.lookup_key = key_path
+            return "key-secret"
+
+    class Bridge:
+        pass
+
+    client = DaemonClient()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),  # read-only projection, no secret access
+        client=client,
+        client_bridge=Bridge(),
+        _daemon_mode_active=lambda: True,
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyEntry("")
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    ed._load_passphrase_async(entry, row, norm)
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.lookup_key == norm
+    assert idle_calls
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "key-secret"
+    assert row._pass_initial == "key-secret"
+
+
+def test_local_editor_loads_passphrase_from_manager(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class Manager:
+        def get_key_passphrase(self, key_path):
+            return "local-key-secret"
+
+    parent = types.SimpleNamespace(
+        connection_manager=Manager(),
+        client=None,
+        client_bridge=None,
+        _daemon_mode_active=lambda: False,
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyEntry("")
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    ed._load_passphrase_async(entry, row, norm)
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "local-key-secret"
+    assert row._pass_initial == "local-key-secret"
+
