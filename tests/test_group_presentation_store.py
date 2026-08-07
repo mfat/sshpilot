@@ -50,6 +50,29 @@ class TestGroupPresentationStore:
 # GroupManager controller delegation
 # ---------------------------------------------------------------------------
 
+class TestGroupManagerProjection:
+    def test_group_hierarchy_materializes_nested_group_dicts(self):
+        gm = GroupManager.__new__(GroupManager)
+        gm.groups = {
+            "parent": {
+                "id": "parent",
+                "parent_id": None,
+                "children": ["child"],
+                "order": 0,
+            },
+            "child": {
+                "id": "child",
+                "parent_id": "parent",
+                "children": [],
+                "order": 0,
+            },
+        }
+        hierarchy = gm.get_group_hierarchy()
+        assert hierarchy[0]["id"] == "parent"
+        assert hierarchy[0]["children"][0]["id"] == "child"
+        assert gm.sibling_index("child") == ("parent", 0)
+
+
 class TestGroupManagerControllerDelegation:
     def _make(self, *, controller=None, client=None):
         gm = GroupManager.__new__(GroupManager)
