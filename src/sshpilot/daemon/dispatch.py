@@ -108,6 +108,7 @@ from sshpilot.api.transport.codec import (
     resize_terminal_request_from_wire,
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
+    sftp_copy_request_from_wire,
     sftp_path_request_from_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
@@ -212,6 +213,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.read_file": Capability.SFTP_READ,
     "sftp.replace_file": Capability.SFTP_MUTATE,
     "sftp.mkdir": Capability.SFTP_MUTATE,
+    "sftp.copy": Capability.SFTP_MUTATE,
     "sftp.rmdir": Capability.SFTP_MUTATE,
     "sftp.rename": Capability.SFTP_MUTATE,
     "sftp.remove": Capability.SFTP_MUTATE,
@@ -311,6 +313,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "sftp.open",
         "sftp.attach",
         "sftp.mkdir",
+        "sftp.copy",
         "sftp.rmdir",
         "sftp.rename",
         "sftp.remove",
@@ -410,6 +413,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.read_file",
         "sftp.replace_file",
         "sftp.mkdir",
+        "sftp.copy",
         "sftp.rmdir",
         "sftp.rename",
         "sftp.remove",
@@ -657,6 +661,7 @@ class RequestDispatcher:
             "sftp.read_file": self._handle_sftp_read_file,
             "sftp.replace_file": self._handle_sftp_replace_file,
             "sftp.mkdir": self._handle_sftp_mkdir,
+            "sftp.copy": self._handle_sftp_copy,
             "sftp.rmdir": self._handle_sftp_rmdir,
             "sftp.rename": self._handle_sftp_rename,
             "sftp.remove": self._handle_sftp_remove,
@@ -1999,6 +2004,20 @@ class RequestDispatcher:
         return DeferredResult(
             operation=lambda: runtime.mkdir(path_request, client_id=client_id),
             command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_copy(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        copy_request = sftp_copy_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: runtime.copy(copy_request, client_id=client_id),
+            command_key=copy_request.service_id,
             on_rejected=lambda: None,
         )
 

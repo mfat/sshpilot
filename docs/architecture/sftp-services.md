@@ -42,7 +42,8 @@ use protocol metadata, not scraped `ls` text.
 ## Operations
 
 Typed methods: list, stat, lstat, realpath, mkdir, rmdir, rename, remove,
-chmod, symlink, readlink. Listings are bounded (default **2000** entries)
+chmod, symlink, readlink, and daemon-owned remote copy/move. Listings are
+bounded (default **2000** entries)
 with truncation metadata; the GTK file manager must treat truncation as a
 hard UI bound (no unbounded frame).
 

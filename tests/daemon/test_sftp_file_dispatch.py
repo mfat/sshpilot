@@ -8,6 +8,7 @@ from sshpilot.api.capabilities import Capability
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ClientId, RequestId
 from sshpilot.api.models.operations import (
+    SftpCopyRequest,
     SftpFileTarget,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -59,6 +60,7 @@ class _FakeSftpRuntime:
     def __init__(self):
         self.read_calls = []
         self.replace_calls = []
+        self.copy_calls = []
 
     def read_file(self, request, client_id=None):
         self.read_calls.append(request)
@@ -82,6 +84,9 @@ class _FakeSftpRuntime:
             backup_path=request.path + ".bak",
         )
 
+    def copy(self, request, client_id=None):
+        self.copy_calls.append(request)
+
 
 def _dispatcher(with_runtime=True):
     connections = ConnectionApplicationService(mock.Mock(), client_name="test")
@@ -104,10 +109,17 @@ def test_replace_file_maps_to_mutate_capability():
     assert "sftp.replace_file" in DRAIN_REJECTED_METHODS
 
 
+def test_copy_maps_to_mutate_capability():
+    assert DAEMON_METHOD_CAPABILITIES["sftp.copy"] is Capability.SFTP_MUTATE
+    assert "sftp.copy" in DEFERRED_DAEMON_METHODS
+    assert "sftp.copy" in DRAIN_REJECTED_METHODS
+
+
 def test_file_handlers_are_registered():
     dispatcher, _runtime = _dispatcher()
     assert "sftp.read_file" in dispatcher.HANDLERS
     assert "sftp.replace_file" in dispatcher.HANDLERS
+    assert "sftp.copy" in dispatcher.HANDLERS
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +165,30 @@ def test_read_file_local_target_uses_local_command_key():
     wire = result.operation()
     assert wire["exists"] is True
     assert runtime.read_calls[0].service_id is None
+
+
+def test_copy_returns_deferred_execution():
+    dispatcher, runtime = _dispatcher()
+    result = dispatcher.dispatch(
+        _envelope(
+            "sftp.copy",
+            {
+                "service_id": "sftp-1",
+                "source_path": "/source",
+                "destination_path": "/destination",
+                "recursive": True,
+                "move": True,
+            },
+        ),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+    assert result.command_key == "sftp-1"
+    assert result.operation() is None
+    request = runtime.copy_calls[0]
+    assert isinstance(request, SftpCopyRequest)
+    assert request.recursive is True
+    assert request.move is True
 
 
 def test_replace_file_returns_deferred_execution():

@@ -5,8 +5,10 @@ Stability: **stable**.
 ## Methods
 
 `open_sftp`, `get_sftp_service`, `list_sftp_services`, `close_sftp`,
-`attach_sftp`, `sftp_list_directory`, `sftp_mkdir`, `sftp_rename`,
-`sftp_remove`, `sftp_rmdir`, `sftp_stat` — see [methods.md](methods.md).
+`attach_sftp`, `sftp_list_directory`, `sftp_mkdir`, `sftp_copy`,
+`sftp_rename`, `sftp_remove`, `sftp_rmdir`, `sftp_stat`, `sftp_readlink`,
+`sftp_read_file`, `sftp_replace_file`, `sftp_chmod`, `sftp_symlink` — see
+[methods.md](methods.md).
 
 ## State machine
 

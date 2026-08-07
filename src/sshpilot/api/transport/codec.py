@@ -154,6 +154,7 @@ from ..models.operations import (
     RemoteFileType,
     ServiceFailure,
     SftpChmodRequest,
+    SftpCopyRequest,
     SftpFileTarget,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -3959,6 +3960,36 @@ def sftp_rename_request_from_wire(value: Any) -> SftpRenameRequest:
             data["destination_path"], "SFTP rename destination path"
         ),
         overwrite=_boolean(overwrite, "SFTP rename overwrite"),
+    )
+
+
+def sftp_copy_request_to_wire(request: SftpCopyRequest) -> Dict[str, Any]:
+    if type(request) is not SftpCopyRequest:
+        raise TypeError("SFTP copy request is required")
+    return {
+        "service_id": request.service_id,
+        "source_path": request.source_path,
+        "destination_path": request.destination_path,
+        "recursive": request.recursive,
+        "move": request.move,
+    }
+
+
+def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "source_path", "destination_path"},
+        optional={"recursive", "move"},
+        context="SFTP copy request",
+    )
+    return SftpCopyRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        source_path=_text(data["source_path"], "SFTP copy source path"),
+        destination_path=_text(
+            data["destination_path"], "SFTP copy destination path"
+        ),
+        recursive=_boolean(data.get("recursive", False), "SFTP copy recursive"),
+        move=_boolean(data.get("move", False), "SFTP copy move"),
     )
 
 

@@ -551,6 +551,33 @@ class DaemonSftpManager(GObject.GObject):
         )
         return future
 
+    def copy_remote(
+        self,
+        source: str,
+        destination: str,
+        *,
+        recursive: bool = False,
+        move: bool = False,
+    ) -> Future:
+        future: Future = Future()
+        source = self._expand(source)
+        destination = self._expand(destination)
+        try:
+            self._require_ready_service_id()
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+
+        self._sftp_controller.copy(
+            source,
+            destination,
+            recursive=recursive,
+            move=move,
+            on_success=lambda _result: self._safe_set(future, result=None),
+            on_error=lambda exc: self._safe_set(future, exc=exc),
+        )
+        return future
+
     def remove(self, path: str) -> Future:
         future: Future = Future()
         target = self._expand(path)

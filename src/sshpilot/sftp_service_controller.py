@@ -24,10 +24,17 @@ from .api.models.operations import (
     ListDirectoryResult,
     OpenSftpRequest,
     RemoteFileEntry,
+    SftpChmodRequest,
+    SftpCopyRequest,
+    SftpFileTarget,
     SftpPathRequest,
+    SftpReadFileRequest,
+    SftpReadFileResult,
+    SftpReplaceFileRequest,
     SftpRenameRequest,
     SftpServiceState,
     SftpServiceSummary,
+    SftpSymlinkRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -315,6 +322,33 @@ class DaemonSftpServiceController:
     ) -> None:
         self._path_mutation("sftp_rmdir", path, on_success=on_success, on_error=on_error)
 
+    def copy(
+        self,
+        source_path: str,
+        destination_path: str,
+        *,
+        recursive: bool = False,
+        move: bool = False,
+        on_success: Callable[[object], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_copy(
+                SftpCopyRequest(
+                    service_id=service_id,
+                    source_path=source_path,
+                    destination_path=destination_path,
+                    recursive=recursive,
+                    move=move,
+                )
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
     def remove(
         self,
         path: str,
@@ -344,6 +378,116 @@ class DaemonSftpServiceController:
                     source_path=source_path,
                     destination_path=destination_path,
                     overwrite=overwrite,
+                )
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def readlink(
+        self,
+        path: str,
+        *,
+        on_success: Callable[[str], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_readlink(
+                SftpPathRequest(service_id=service_id, path=path)
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def read_file(
+        self,
+        path: str,
+        *,
+        on_success: Callable[[SftpReadFileResult], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_read_file(
+                SftpReadFileRequest(
+                    target=SftpFileTarget.REMOTE,
+                    path=path,
+                    service_id=service_id,
+                )
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def replace_file(
+        self,
+        path: str,
+        content: str,
+        expected_revision: str,
+        *,
+        backup: bool = True,
+        on_success: Callable[[object], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_replace_file(
+                SftpReplaceFileRequest(
+                    target=SftpFileTarget.REMOTE,
+                    path=path,
+                    content=content,
+                    expected_revision=expected_revision,
+                    backup=backup,
+                    service_id=service_id,
+                )
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def chmod(
+        self,
+        path: str,
+        mode: int,
+        *,
+        on_success: Callable[[object], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_chmod(
+                SftpChmodRequest(service_id=service_id, path=path, mode=mode)
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def symlink(
+        self,
+        target_path: str,
+        link_path: str,
+        *,
+        on_success: Callable[[object], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_symlink(
+                SftpSymlinkRequest(
+                    service_id=service_id,
+                    target_path=target_path,
+                    link_path=link_path,
                 )
             )
 

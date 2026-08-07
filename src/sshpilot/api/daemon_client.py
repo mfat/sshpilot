@@ -98,6 +98,7 @@ from .models.operations import (
     OpenSftpRequest,
     RemoteFileEntry,
     SftpChmodRequest,
+    SftpCopyRequest,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -199,6 +200,7 @@ from .transport.codec import (
     restart_daemon_request_to_wire,
     session_summary_from_wire,
     sftp_chmod_request_to_wire,
+    sftp_copy_request_to_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
     sftp_replace_file_request_to_wire,
@@ -312,6 +314,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_read_file": Capability.SFTP_READ,
     "sftp_replace_file": Capability.SFTP_MUTATE,
     "sftp_mkdir": Capability.SFTP_MUTATE,
+    "sftp_copy": Capability.SFTP_MUTATE,
     "sftp_rmdir": Capability.SFTP_MUTATE,
     "sftp_remove": Capability.SFTP_MUTATE,
     "sftp_rename": Capability.SFTP_MUTATE,
@@ -1256,6 +1259,12 @@ class DaemonClient:
         result = self._request("sftp.mkdir", sftp_path_request_to_wire(request))
         if result is not None:
             self._fail_protocol("The daemon returned an invalid mkdir result")
+
+    def sftp_copy(self, request: SftpCopyRequest) -> None:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.copy", sftp_copy_request_to_wire(request))
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid SFTP copy result")
 
     def sftp_rmdir(self, request: SftpPathRequest) -> None:
         self._require_capability(Capability.SFTP_MUTATE)

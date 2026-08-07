@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
 from .api.capabilities import Capability
-from .api.errors import SshPilotError
+from .api.errors import ErrorCode, SshPilotError
 from .api.events import EventType
 from .api.models.common import TransferId
 from .api.models.transfers import (
@@ -101,6 +101,21 @@ class TransferServiceController:
         if self._closed:
             if on_error:
                 on_error(RuntimeError("Transfer controller is closed"))
+            return
+        directional_capability = (
+            Capability.TRANSFERS_UPLOAD
+            if request.direction.value == "upload"
+            else Capability.TRANSFERS_DOWNLOAD
+        )
+        if directional_capability not in self._client.get_capabilities().supported:
+            if on_error:
+                on_error(
+                    SshPilotError(
+                        ErrorCode.UNSUPPORTED_CAPABILITY,
+                        f"The daemon does not support {request.direction.value} transfers",
+                        details={"capability": directional_capability.value},
+                    )
+                )
             return
 
         def _on_success(summary: TransferSummary) -> None:

@@ -64,6 +64,7 @@ from sshpilot.api.models.operations import (
     RemoteFileType,
     ServiceFailure,
     SftpChmodRequest,
+    SftpCopyRequest,
     SftpFileTarget,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -348,6 +349,14 @@ def _validate_path(value: Any, field_name: str = "remote path") -> str:
         return validate_remote_path(value, field_name=field_name)
     except RemotePathError as exc:
         raise SshPilotError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+
+
+def _remote_path_is_descendant(source: str, destination: str) -> bool:
+    source = posixpath.normpath(source)
+    destination = posixpath.normpath(destination)
+    if source in ("", ".", "/"):
+        return False
+    return destination == source or destination.startswith(source.rstrip("/") + "/")
 
 
 def _file_type(mode: int) -> RemoteFileType:
@@ -1129,6 +1138,92 @@ class SftpServiceRuntime:
             record.handle.client.rmdir(path)
         except Exception as exc:
             raise self._map_error(exc, record) from exc
+
+    def copy(self, request: SftpCopyRequest, *, client_id: ClientId) -> None:
+        if type(request) is not SftpCopyRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP copy request is required")
+        record = self._ready_record_for_mutation(request.service_id, client_id)
+        source = _validate_path(request.source_path)
+        destination = _validate_path(request.destination_path)
+        if request.recursive and _remote_path_is_descendant(source, destination):
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "A directory cannot be copied into itself",
+                details={"service_id": record.service_id},
+            )
+        client = record.handle.client
+
+        def _copy_file(source_path: str, destination_path: str) -> None:
+            with client.open(source_path, "rb") as source_file, client.open(
+                destination_path, "wb"
+            ) as destination_file:
+                while True:
+                    chunk = source_file.read(32768)
+                    if not chunk:
+                        break
+                    destination_file.write(chunk)
+
+        def _copy_directory(source_path: str, destination_path: str) -> None:
+            client.mkdir(destination_path)
+            for entry in client.listdir_attr(source_path):
+                child_source = posixpath.join(source_path, entry.filename)
+                child_destination = posixpath.join(destination_path, entry.filename)
+                if entry.is_dir():
+                    _copy_directory(child_source, child_destination)
+                else:
+                    _copy_file(child_source, child_destination)
+
+        try:
+            source_attr = client.stat(source)
+            try:
+                client.stat(destination)
+            except Exception as exc:
+                if not (
+                    isinstance(exc, sftp_proto.SFTPError)
+                    and getattr(exc, "errno", None) == errno.ENOENT
+                ):
+                    raise
+            else:
+                raise SshPilotError(
+                    ErrorCode.REMOTE_PATH_EXISTS,
+                    "The destination already exists",
+                    details={"service_id": record.service_id},
+                )
+            if source_attr.is_dir():
+                if not request.recursive:
+                    raise SshPilotError(
+                        ErrorCode.VALIDATION_FAILED,
+                        "Recursive copy is required for directories",
+                        details={"service_id": record.service_id},
+                    )
+                _copy_directory(source, destination)
+            else:
+                if request.recursive:
+                    raise SshPilotError(
+                        ErrorCode.VALIDATION_FAILED,
+                        "Recursive copy requires a directory source",
+                        details={"service_id": record.service_id},
+                    )
+                _copy_file(source, destination)
+            if request.move:
+                if source_attr.is_dir():
+                    self._remove_tree(client, source)
+                else:
+                    client.remove(source)
+        except SshPilotError:
+            raise
+        except Exception as exc:
+            raise self._map_error(exc, record) from exc
+
+    @staticmethod
+    def _remove_tree(client, path: str) -> None:
+        for entry in client.listdir_attr(path):
+            child = posixpath.join(path, entry.filename)
+            if entry.is_dir():
+                SftpServiceRuntime._remove_tree(client, child)
+            else:
+                client.remove(child)
+        client.rmdir(path)
 
     def remove(self, request: SftpPathRequest, *, client_id: ClientId) -> None:
         record = self._ready_record_for_mutation(request.service_id, client_id)

@@ -10,8 +10,27 @@ from sshpilot.api.models.operations import (
     PluginOperationRequest,
     PluginOperationResult,
     PortForwardSummary,
+    SftpCopyRequest,
     SftpEntry,
 )
+
+
+def test_sftp_copy_request_is_typed_and_rejects_self_copy():
+    request = SftpCopyRequest(
+        service_id="sftp-1",
+        source_path="/source",
+        destination_path="/destination",
+        recursive=True,
+        move=True,
+    )
+    assert request.recursive is True
+    assert request.move is True
+    with pytest.raises(ValueError):
+        SftpCopyRequest(
+            service_id="sftp-1",
+            source_path="/same",
+            destination_path="/same",
+        )
 
 
 def test_sftp_models_are_transport_neutral():

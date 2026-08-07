@@ -413,6 +413,10 @@
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
+    "sftp_copy": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
     "sftp_list_directory": {
       "capability": "sftp.read",
       "status": "daemon-only"
@@ -868,6 +872,9 @@
     },
     "sftp.close": {
       "capability": "sftp.write"
+    },
+    "sftp.copy": {
+      "capability": "sftp.mutate"
     },
     "sftp.detach": {
       "capability": "sftp.write"
@@ -5294,6 +5301,46 @@
         }
       ],
       "status": "Implemented"
+    },
+    "SftpCopyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "source_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "destination_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "move",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
     },
     "SftpEntry": {
       "fields": [

@@ -101,7 +101,9 @@ class Phase10Connection(TestConnection):
         self.id = nickname
         self.nickname = nickname
         self.hostname = hostname
+        self.host = hostname
         self.username = username
+        self.aliases = ()
         self.uuid = nickname
         self.protocol = "ssh"
         self.port = port
@@ -148,6 +150,12 @@ class Phase10ConnectionManager(TestConnectionManager):
         if connection is None:
             return None
         return self._passwords.get(str(getattr(connection, "id", getattr(connection, "uuid", ""))))
+
+    def lookup_connection_password(self, connection_id: str) -> Optional[str]:
+        return self._passwords.get(str(connection_id))
+
+    def lookup_key_passphrase(self, key_path: str) -> Optional[str]:
+        return self._passphrases.get(str(key_path))
 
     def store_connection_password(self, connection, password: str) -> bool:
         self._passwords[str(getattr(connection, "id", connection.uuid))] = password
@@ -453,13 +461,32 @@ def start_phase10_stack(
         else:
             manager.store_key_passphrase(str(env.key_path), env.key_passphrase)
 
+    from sshpilot.daemon.connection_launch_provider import DaemonConnectionLaunchProvider
+
+    launch_provider = DaemonConnectionLaunchProvider(
+        lambda connection_id: next(
+            (
+                connection
+                for connection in manager.connections
+                if connection.id == str(connection_id)
+            ),
+            None,
+        ),
+        secret_provider=manager,
+    )
+
     # AF_UNIX paths are ~108 bytes; pytest tmp paths can exceed that when nested.
     socket_root = Path(
         tempfile.mkdtemp(prefix=f"sshpilot-p10d-{secrets.token_hex(4)}-")
     )
     socket_path = socket_root / "sshpilotd.sock"
     server = DaemonServer(
-        lambda: ConnectionApplicationService(manager, client_name="sshpilotd"),
+        lambda: ConnectionApplicationService(
+            manager,
+            launch_provider=launch_provider,
+            secret_provider=manager,
+            client_name="sshpilotd",
+        ),
         socket_path=socket_path,
     )
     server.start_in_thread()

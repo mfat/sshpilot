@@ -349,6 +349,28 @@ class SftpRenameRequest:
 
 
 @dataclass(frozen=True)
+class SftpCopyRequest:
+    """Copy or move a remote SFTP path within one service."""
+
+    service_id: SftpServiceId
+    source_path: str
+    destination_path: str
+    recursive: bool = False
+    move: bool = False
+
+    def __post_init__(self) -> None:
+        require_identifier(self.service_id, "SFTP service id")
+        if not self.source_path or not self.destination_path:
+            raise ValueError("SFTP copy paths must not be empty")
+        if "\x00" in self.source_path or "\x00" in self.destination_path:
+            raise ValueError("SFTP copy paths must not contain NUL")
+        if self.source_path == self.destination_path:
+            raise ValueError("SFTP copy source and destination must differ")
+        if type(self.recursive) is not bool or type(self.move) is not bool:
+            raise TypeError("SFTP copy flags must be booleans")
+
+
+@dataclass(frozen=True)
 class SftpChmodRequest:
     service_id: SftpServiceId
     path: str

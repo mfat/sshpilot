@@ -3241,6 +3241,36 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpCopyRequest -->
+## `SftpCopyRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Copy or move a remote SFTP path within one service.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `source_path` | `str` | Yes | — | No |
+| `destination_path` | `str` | Yes | — | No |
+| `recursive` | `bool` | No | `false` | No |
+| `move` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "destination_path": {},
+  "move": false,
+  "recursive": false,
+  "service_id": {},
+  "source_path": {}
+}
+```
+
 <!-- api-model: SftpEntry -->
 ## `SftpEntry`
 

@@ -106,10 +106,7 @@ def create_file_manager_backend(
     if route is ExtendedServiceRoute.DAEMON:
         raise RuntimeError(daemon_sftp_unavailable_message())
 
-    from .openssh_backend import OpenSSHSFTPManager
-
-    logger.info("File manager backend: openssh (legacy/in-process)")
-    return OpenSSHSFTPManager(*args, **kwargs)
+    raise RuntimeError(daemon_sftp_unavailable_message())
 
 
 __all__ = [

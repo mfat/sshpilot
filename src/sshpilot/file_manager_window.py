@@ -57,8 +57,6 @@ from .file_manager import (
     _HAS_ALERT_DIALOG,
     _load_first_doc_path,
     _load_grant_for_host,
-    _sftp_path_exists,
-    stat_isdir,
 )
 
 import logging
@@ -2536,22 +2534,12 @@ class FileManagerWindow(Adw.Window):
         total_files = len(work_items)
 
         for source_path, destination_path, entry, is_dir in work_items:
-
-            def _impl(
-                src=source_path,
-                dest=destination_path,
-                copy_is_dir=is_dir,
-            ):
-                sftp = getattr(manager, "_sftp", None)
-                if sftp is None:
-                    raise RuntimeError("SFTP session is not connected")
-                self._ensure_remote_directory(sftp, posixpath.dirname(dest))
-                if copy_is_dir:
-                    self._copy_remote_directory(sftp, src, dest)
-                else:
-                    self._copy_remote_file(sftp, src, dest)
-
-            future = manager._submit(_impl)
+            future = manager.copy_remote(
+                source_path,
+                destination_path,
+                recursive=is_dir,
+                move=move,
+            )
             self._show_progress_dialog(
                 operation,
                 entry.name,
@@ -2565,8 +2553,6 @@ class FileManagerWindow(Adw.Window):
                 refresh_remote=self._right_pane,
                 highlight_name=entry.name,
             )
-            if move:
-                self._schedule_remote_move_cleanup(future, source_path, self._right_pane)
 
         if skipped:
             self._right_pane.show_toast(skipped[0])
@@ -2688,71 +2674,6 @@ class FileManagerWindow(Adw.Window):
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
         future.add_done_callback(_cleanup)
-
-    @staticmethod
-    def _ensure_remote_directory(sftp: Any, path: str) -> None:
-        if not path:
-            return
-        components = []
-        while path and path not in {"/", ""}:
-            components.append(path)
-            path = posixpath.dirname(path)
-        for component in reversed(components):
-            try:
-                sftp.mkdir(component)
-            except OSError:
-                continue
-
-    @staticmethod
-    def _remote_path_exists(sftp: Any, path: str) -> bool:
-        return _sftp_path_exists(sftp, path)
-
-    @staticmethod
-    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
-        source_norm = posixpath.normpath(source_path)
-        dest_norm = posixpath.normpath(destination_path)
-        if source_norm in {"", ".", "/"}:
-            return False
-        if dest_norm == source_norm:
-            return True
-        source_prefix = source_norm.rstrip("/")
-        if not source_prefix:
-            return False
-        return dest_norm.startswith(f"{source_prefix}/")
-
-    def _copy_remote_file(
-        self, sftp: Any, source_path: str, destination_path: str
-    ) -> None:
-        if self._remote_path_exists(sftp, destination_path):
-            raise FileExistsError(f"{posixpath.basename(destination_path)} already exists")
-
-        with sftp.open(source_path, "rb") as src_file, sftp.open(destination_path, "wb") as dst_file:
-            while True:
-                chunk = src_file.read(32768)
-                if not chunk:
-                    break
-                dst_file.write(chunk)
-
-    def _copy_remote_directory(
-        self, sftp: Any, source_path: str, destination_path: str
-    ) -> None:
-        if self._is_remote_descendant(source_path, destination_path):
-            raise ValueError(
-                f"Cannot paste '{posixpath.basename(posixpath.normpath(source_path))}' into itself"
-            )
-        if self._remote_path_exists(sftp, destination_path):
-            raise FileExistsError(
-                f"{posixpath.basename(posixpath.normpath(destination_path))} already exists"
-            )
-        sftp.mkdir(destination_path)
-
-        for entry in sftp.listdir_attr(source_path):
-            child_source = posixpath.join(source_path, entry.filename)
-            child_destination = posixpath.join(destination_path, entry.filename)
-            if stat_isdir(entry):
-                self._copy_remote_directory(sftp, child_source, child_destination)
-            else:
-                self._copy_remote_file(sftp, child_source, child_destination)
 
     def _on_progress_dialog_closed(self, dialog) -> None:
         """Drop our reference when the user dismisses the progress dialog."""
