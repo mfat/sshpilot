@@ -293,6 +293,10 @@
       "capability": "secrets.operate",
       "status": "daemon-only"
     },
+    "move_connections": {
+      "capability": "connections.groups",
+      "status": "daemon-only"
+    },
     "open_forward": {
       "capability": "forwards.write",
       "status": "daemon-only"
@@ -575,6 +579,9 @@
     },
     "connections.metadata.update": {
       "capability": "connections.metadata.write"
+    },
+    "connections.move": {
+      "capability": "connections.groups"
     },
     "connections.rename_group": {
       "capability": "connections.groups"
@@ -4108,6 +4115,46 @@
         }
       ],
       "status": "Implemented"
+    },
+    "MoveConnectionsRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "target_group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": null,
+          "name": "target_connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ConnectionId]"
+        },
+        {
+          "default": null,
+          "name": "position",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Schema only"
     },
     "OpenForwardRequest": {
       "fields": [

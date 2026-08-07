@@ -2208,6 +2208,36 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: MoveConnectionsRequest -->
+## `MoveConnectionsRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Move one or more connections atomically into a group or root order.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_ids` | `Tuple[ConnectionId, ...]` | Yes | — | No |
+| `target_group_id` | `Optional[GroupId]` | No | `null` | No |
+| `target_connection_id` | `Optional[ConnectionId]` | No | `null` | No |
+| `position` | `Optional[str]` | No | `null` | No |
+| `expected_generation` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_ids": {},
+  "expected_generation": null,
+  "position": null,
+  "target_connection_id": null,
+  "target_group_id": null
+}
+```
+
 <!-- api-model: OpenForwardRequest -->
 ## `OpenForwardRequest`
 

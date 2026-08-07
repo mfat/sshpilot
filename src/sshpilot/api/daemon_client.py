@@ -54,6 +54,7 @@ from .models.connection_store import (
     SetGroupColorRequest,
     PlaceGroupRequest,
     CopyConnectionToGroupRequest,
+    MoveConnectionsRequest,
     RemoveConnectionFromGroupRequest,
     ReorderConnectionRequest,
     RenameTagRequest,
@@ -216,6 +217,7 @@ from .transport.codec import (
     set_group_color_request_to_wire,
     place_group_request_to_wire,
     copy_connection_to_group_request_to_wire,
+    move_connections_request_to_wire,
     remove_connection_from_group_request_to_wire,
     reorder_connection_request_to_wire,
     rename_tag_request_to_wire,
@@ -268,6 +270,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "copy_connection_to_group": Capability.CONNECTIONS_GROUPS,
     "remove_connection_from_group": Capability.CONNECTIONS_GROUPS,
     "reorder_connection": Capability.CONNECTIONS_GROUPS,
+    "move_connections": Capability.CONNECTIONS_GROUPS,
     "rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "get_session": Capability.SESSIONS_READ,
     "get_interaction": Capability.INTERACTIONS_READ,
@@ -917,6 +920,18 @@ class DaemonClient:
         result = self._request(
             "groups.reorder_connection",
             reorder_connection_request_to_wire(request),
+            mutation_description="group change",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid group change result")
+        return result
+
+    def move_connections(self, request: MoveConnectionsRequest) -> bool:
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        self._require_write_compatibility("group change")
+        result = self._request(
+            "connections.move",
+            move_connections_request_to_wire(request),
             mutation_description="group change",
         )
         if type(result) is not bool:

@@ -13,6 +13,11 @@ notes remain separate.
   Plugin-secret retrieval uses the same binary response path, and the reveal
   capability is advertised only after binary-secret negotiation.
 
+- Added daemon-owned atomic `connections.move` for sidebar drag-and-drop
+  placement. It moves one or more connections as a contiguous ordered block,
+  supports group/root destinations and optional above/below targets, rejects
+  stale snapshot generations, and publishes one refreshed authoritative store
+  snapshot. GTK retains gesture, indicator, and preview presentation only.
 
 - Added the daemon-only native SCP slice through `start_scp_transfer` and the
   `transfers.scp` capability. SCP uses the shared `TransferRuntime` lifecycle,

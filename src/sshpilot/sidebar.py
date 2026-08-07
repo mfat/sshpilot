@@ -3456,6 +3456,105 @@ def _apply_group_dnd_in_place(
     return _apply_root_group_order(window)
 
 
+def _show_sidebar_dnd_error(window, error):
+    show_error = getattr(window, "show_error", None)
+    if callable(show_error):
+        show_error(str(error))
+    else:
+        logger.error("Sidebar DnD failed: %s", error)
+
+
+def _submit_group_dnd_place(window, group_id, parent_id, index):
+    from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
+
+    request = PlaceGroupRequest(
+        group_id=GroupId(group_id),
+        parent_id=GroupId(parent_id) if parent_id else None,
+        index=index,
+    )
+    operation = lambda: window.client.place_group(request)
+    controller = getattr(window.group_manager, "controller", None)
+    if controller is not None:
+        try:
+            controller.run(
+                operation,
+                on_success=lambda _result: None,
+                on_error=lambda error: _show_sidebar_dnd_error(window, error),
+            )
+            return True
+        except Exception as error:
+            _show_sidebar_dnd_error(window, error)
+            return False
+    try:
+        operation()
+        return True
+    except Exception as error:
+        _show_sidebar_dnd_error(window, error)
+        return False
+
+
+def _submit_connection_dnd_move(
+    window,
+    connection_nicknames,
+    *,
+    target_group_id=None,
+    target_connection_id=None,
+    position=None,
+):
+    nicknames = list(connection_nicknames)
+    if not nicknames:
+        return False
+    group_manager = window.group_manager
+    if (
+        len(nicknames) == 1
+        and target_connection_id is not None
+        and group_manager.get_connection_group(nicknames[0]) == target_group_id
+    ):
+        from sshpilot.api.models.connection_store import (
+            ConnectionId,
+            GroupId,
+            ReorderConnectionRequest,
+        )
+        request = ReorderConnectionRequest(
+            connection_id=ConnectionId(nicknames[0]),
+            target_connection_id=ConnectionId(target_connection_id),
+            group_id=GroupId(target_group_id) if target_group_id else None,
+            position=position or "below",
+        )
+        operation = lambda: window.client.reorder_connection(request)
+    else:
+        from sshpilot.api.models.connection_store import MoveConnectionsRequest
+
+        snapshot = getattr(window.connection_manager, "snapshot", lambda: None)()
+        generation = getattr(snapshot, "generation", None)
+        request = MoveConnectionsRequest(
+            connection_ids=tuple(nicknames),
+            target_group_id=target_group_id,
+            target_connection_id=target_connection_id,
+            position=position,
+            expected_generation=generation,
+        )
+        operation = lambda: window.client.move_connections(request)
+    controller = getattr(group_manager, "controller", None)
+    if controller is not None:
+        try:
+            controller.run(
+                operation,
+                on_success=lambda _result: None,
+                on_error=lambda error: _show_sidebar_dnd_error(window, error),
+            )
+            return True
+        except Exception as error:
+            _show_sidebar_dnd_error(window, error)
+            return False
+    try:
+        operation()
+        return True
+    except Exception as error:
+        _show_sidebar_dnd_error(window, error)
+        return False
+
+
 def _on_connection_list_drop(window, target, value, x, y):
     try:
         # Capture what motion last highlighted before clearing it, so the drop
@@ -3524,15 +3623,19 @@ def _on_connection_list_drop(window, target, value, x, y):
                 position = indicator_pos if indicator_pos in ("above", "below") else "below"
 
                 if not target_row:
-                    for nickname in connection_nicknames:
-                        window.group_manager.move_connection(nickname, None)
-                        changes_made = True
-                    connection_nicknames_applied = list(connection_nicknames)
+                    _submit_connection_dnd_move(
+                        window,
+                        connection_nicknames,
+                        target_group_id=None,
+                    )
+                    return True
                 elif getattr(target_row, "ungrouped_area", False) or indicator_pos == "ungrouped":
-                    for nickname in connection_nicknames:
-                        window.group_manager.move_connection(nickname, None)
-                        changes_made = True
-                    connection_nicknames_applied = list(connection_nicknames)
+                    _submit_connection_dnd_move(
+                        window,
+                        connection_nicknames,
+                        target_group_id=None,
+                    )
+                    return True
                 else:
                     if getattr(target_row, "is_tag_group", False):
                         # Dropping onto a tag group adds the tag to the dragged
@@ -3557,41 +3660,26 @@ def _on_connection_list_drop(window, target, value, x, y):
                             tag_drop = True
                     elif hasattr(target_row, "group_id"):
                         target_group_id = target_row.group_id
-
+                        first_connection = None
                         if position == "above":
-                            first_connection = None
                             child = window.connection_list.get_first_child()
                             while child:
-                                if hasattr(child, 'connection'):
-                                    connection_group = window.group_manager.get_connection_group(child.connection.nickname)
+                                if hasattr(child, "connection"):
+                                    connection_group = window.group_manager.get_connection_group(
+                                        child.connection.nickname
+                                    )
                                     if connection_group == target_group_id:
                                         first_connection = child.connection.nickname
                                         break
                                 child = child.get_next_sibling()
-
-                            if first_connection:
-                                for nickname in connection_nicknames:
-                                    current_group_id = window.group_manager.get_connection_group(nickname)
-                                    if current_group_id != target_group_id:
-                                        window.group_manager.move_connection(nickname, target_group_id)
-                                        changes_made = True
-                                    window.group_manager.reorder_connection_in_group(
-                                        nickname, first_connection, "above"
-                                    )
-                                    first_connection = nickname
-                                    changes_made = True
-                            else:
-                                for nickname in connection_nicknames:
-                                    if window.group_manager.get_connection_group(nickname) != target_group_id:
-                                        window.group_manager.move_connection(nickname, target_group_id)
-                                        changes_made = True
-                        else:
-                            for nickname in connection_nicknames:
-                                if window.group_manager.get_connection_group(nickname) != target_group_id:
-                                    window.group_manager.move_connection(nickname, target_group_id)
-                                    changes_made = True
-                        if changes_made:
-                            connection_nicknames_applied = list(connection_nicknames)
+                        _submit_connection_dnd_move(
+                            window,
+                            connection_nicknames,
+                            target_group_id=target_group_id,
+                            target_connection_id=first_connection,
+                            position="above" if first_connection else None,
+                        )
+                        return True
                     else:
                         # Member rows under virtual tag groups are not drop
                         # targets (a drop here would move the connection into
@@ -3604,34 +3692,14 @@ def _on_connection_list_drop(window, target, value, x, y):
                             reference_nickname = target_connection.nickname
                             target_group_id = window.group_manager.get_connection_group(reference_nickname)
 
-                            for nickname in connection_nicknames:
-                                current_group_id = window.group_manager.get_connection_group(nickname)
-                                if current_group_id != target_group_id:
-                                    window.group_manager.move_connection(nickname, target_group_id)
-                                    changes_made = True
-
-                            if position == "above":
-                                reference = reference_nickname
-                                for nickname in reversed(connection_nicknames):
-                                    if nickname == reference:
-                                        continue
-                                    window.group_manager.reorder_connection_in_group(
-                                        nickname, reference, "above"
-                                    )
-                                    reference = nickname
-                                    changes_made = True
-                            else:
-                                reference = reference_nickname
-                                for nickname in connection_nicknames:
-                                    if nickname == reference:
-                                        continue
-                                    window.group_manager.reorder_connection_in_group(
-                                        nickname, reference, "below"
-                                    )
-                                    reference = nickname
-                                    changes_made = True
-                            if changes_made:
-                                connection_nicknames_applied = list(connection_nicknames)
+                            _submit_connection_dnd_move(
+                                window,
+                                connection_nicknames,
+                                target_group_id=target_group_id,
+                                target_connection_id=reference_nickname,
+                                position=position,
+                            )
+                            return True
 
         elif drop_type == "group":
             group_id = value.get("group_id")
@@ -3667,23 +3735,17 @@ def _on_connection_list_drop(window, target, value, x, y):
                                         source_group.get("parent_id")
                                         if source_group else None
                                     )
-                                    if manager.place_group(group_id, parent_id, index):
-                                        changes_made = True
-                                        group_nested = True
-                                        group_reparented = old_parent != parent_id
+                                    if _submit_group_dnd_place(window, group_id, parent_id, index):
+                                        return True
                             elif drop_tree_target_set:
                                 old_parent = (
                                     source_group.get("parent_id")
                                     if source_group else None
                                 )
-                                if manager.place_group(
-                                    group_id, drop_parent_id, drop_index
+                                if _submit_group_dnd_place(
+                                    window, group_id, drop_parent_id, drop_index
                                 ):
-                                    changes_made = True
-                                    if old_parent != drop_parent_id:
-                                        group_reparented = True
-                                    else:
-                                        group_id_applied = group_id
+                                    return True
                             elif indicator_pos in ("above", "below"):
                                 if indicator_pos == "above":
                                     parent_id, index = _tree_target_insert_before(
@@ -3697,12 +3759,10 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     source_group.get("parent_id")
                                     if source_group else None
                                 )
-                                if manager.place_group(group_id, parent_id, index):
-                                    changes_made = True
-                                    if old_parent != parent_id:
-                                        group_reparented = True
-                                    else:
-                                        group_id_applied = group_id
+                                if _submit_group_dnd_place(
+                                    window, group_id, parent_id, index
+                                ):
+                                    return True
                         else:
                             logger.warning(f"Target group '{target_group_id}' does not exist")
 

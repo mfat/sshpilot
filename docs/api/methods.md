@@ -157,6 +157,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: update_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: update_connection_metadata status=implemented capability=connections.metadata.write -->
 <!-- api-method-contract: assign_connection_to_group status=implemented capability=connections.groups -->
+<!-- api-method-contract: move_connections status=daemon-only capability=connections.groups -->
 <!-- api-method-contract: create_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: delete_group status=implemented capability=connections.groups -->
 <!-- api-method-contract: rename_group status=implemented capability=connections.groups -->
@@ -254,6 +255,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.metadata.update capability=connections.metadata.write -->
 <!-- api-daemon-method: connections.metadata.rename_tag capability=connections.metadata.write -->
 | `connections.assign_to_group` | `connections.groups` | Implemented |
+| `connections.move` | `connections.groups` | Implemented; atomic multi-connection placement |
 | `connections.create_group` | `connections.groups` | Implemented |
 | `connections.delete_group` | `connections.groups` | Implemented |
 | `connections.rename_group` | `connections.groups` | Implemented |
@@ -370,6 +372,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: connections.update_metadata capability=connections.metadata.write -->
 <!-- api-daemon-method: connections.assign_to_group capability=connections.groups -->
+<!-- api-daemon-method: connections.move capability=connections.groups -->
 <!-- api-daemon-method: connections.create_group capability=connections.groups -->
 <!-- api-daemon-method: connections.delete_group capability=connections.groups -->
 <!-- api-daemon-method: connections.rename_group capability=connections.groups -->
@@ -715,6 +718,19 @@ client.update_connection_metadata(
     connection_id,
     {"tags": ["production", "us-east"], "wol_mac": "AA:BB:CC:DD:EE:FF"},
 )
+```
+
+<!-- api-method: move_connections -->
+## `move_connections`
+
+Daemon-only atomic placement for one or more connections. It exclusively moves
+sources to a group or root, optionally inserts the selected block above/below a
+target, preserves request order, and refreshes the authoritative snapshot once.
+An optional snapshot generation rejects stale drag targets without applying the
+mutation.
+
+```python
+client.move_connections(request)
 ```
 
 <!-- api-method: assign_connection_to_group -->

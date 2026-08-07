@@ -7,6 +7,7 @@ from sshpilot.api.models.connection_store import (
     ConnectionMetadataSummary,
     ConnectionStoreSnapshot,
     CopyConnectionToGroupRequest,
+    MoveConnectionsRequest,
     GroupId,
     GroupSummary,
     PlaceGroupRequest,
@@ -333,6 +334,32 @@ def test_set_group_color_rejects_empty_group_id():
 def test_set_group_color_rejects_nul():
     with pytest.raises(ValueError):
         SetGroupColorRequest(group_id=GroupId("prod"), color="#ff\x0000")
+
+
+def test_move_connections_constructs_and_rejects_invalid_targets():
+    request = MoveConnectionsRequest(
+        connection_ids=(ConnectionId("a"), ConnectionId("b")),
+        target_group_id=GroupId("prod"),
+        target_connection_id=ConnectionId("c"),
+        position="below",
+        expected_generation=3,
+    )
+    assert request.connection_ids == (ConnectionId("a"), ConnectionId("b"))
+    with pytest.raises(ValueError):
+        MoveConnectionsRequest(connection_ids=())
+    with pytest.raises(ValueError):
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId("a"), ConnectionId("a"))
+        )
+    with pytest.raises(ValueError):
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId("a"),),
+            target_connection_id=ConnectionId("a"),
+        )
+    with pytest.raises(ValueError):
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId("a"),), position="above"
+        )
 
 
 def test_place_group_constructs():

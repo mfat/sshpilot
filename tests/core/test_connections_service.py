@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,42 @@ def _conn(service, name, **extra):
     data = {"nickname": name, "hostname": f"{name}.test", "username": "u"}
     data.update(extra)
     return service.create(data)
+
+
+def test_move_connections_preserves_block_order_and_exclusive_membership(service):
+    group = service.create_group("G1")
+    other = service.create_group("G2")
+    a = _conn(service, "A")
+    b = _conn(service, "B")
+    c = _conn(service, "C")
+    service.copy_connection_to_group(a.id, other.id)
+    service.copy_connection_to_group(b.id, other.id)
+    request = types.SimpleNamespace(
+        connection_ids=(a.id, b.id),
+        target_group_id=group.id,
+        target_connection_id=c.id,
+        position="above",
+        expected_generation=None,
+    )
+    service.copy_connection_to_group(c.id, group.id)
+    service.move_connections(request)
+    assert service.list_groups()[0].connection_ids == [a.id, b.id, c.id]
+    assert all(a.id not in g.connection_ids for g in service.list_groups() if g.id == other.id)
+
+
+def test_move_connections_rejects_target_outside_destination(service):
+    group = service.create_group("G1")
+    a = _conn(service, "A")
+    b = _conn(service, "B")
+    request = types.SimpleNamespace(
+        connection_ids=(a.id,),
+        target_group_id=group.id,
+        target_connection_id=b.id,
+        position="below",
+        expected_generation=None,
+    )
+    with pytest.raises(CoreError):
+        service.move_connections(request)
 
 
 # ---------------------------------------------------------------------------

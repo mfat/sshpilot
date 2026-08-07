@@ -476,6 +476,61 @@ class ConnectionService:
         self._persist()
         self._emit(MutationEvent(MutationKind.REORDERED, detail={"order": list(ordered)}))
 
+    def move_connections(self, request) -> None:
+        """Move a contiguous connection block into one group or root order."""
+        connection_ids = tuple(str(item) for item in request.connection_ids)
+        target_group_id = (
+            str(request.target_group_id) if request.target_group_id is not None else None
+        )
+        target_id = (
+            str(request.target_connection_id)
+            if request.target_connection_id is not None
+            else None
+        )
+        position = request.position
+        with self._lock:
+            for connection_id in connection_ids:
+                if connection_id not in self._connections:
+                    raise _validation_error(f"Unknown connection {connection_id!r}")
+            if target_group_id is not None and target_group_id not in self._groups:
+                raise _validation_error(f"Unknown group {target_group_id!r}")
+            if target_id is not None and target_id not in self._connections:
+                raise _validation_error(f"Unknown connection {target_id!r}")
+            container = (
+                self._groups[target_group_id].connection_ids
+                if target_group_id is not None
+                else self._root_order
+            )
+            if target_id is not None and target_id not in container:
+                raise _validation_error("target connection is outside the destination")
+            for connection_id in connection_ids:
+                self._remove_from_all_groups(connection_id)
+                self._root_order = [
+                    item for item in self._root_order if item != connection_id
+                ]
+            container = (
+                self._groups[target_group_id].connection_ids
+                if target_group_id is not None
+                else self._root_order
+            )
+            insert_at = len(container)
+            if target_id is not None:
+                insert_at = container.index(target_id)
+                if position == "below":
+                    insert_at += 1
+            container[insert_at:insert_at] = list(connection_ids)
+            for connection_id in connection_ids:
+                self._sync_connection(connection_id)
+        self._persist()
+        self._emit(
+            MutationEvent(
+                MutationKind.REORDERED,
+                connection_id=connection_ids[0],
+                group_id=target_group_id,
+                detail={"connection_ids": list(connection_ids), "position": position},
+            )
+        )
+
     def reorder_connection(
         self,
         connection_id: str,

@@ -373,6 +373,10 @@
       "capability": "secrets.operate",
       "status": "daemon-only"
     },
+    "move_connections": {
+      "capability": "connections.groups",
+      "status": "daemon-only"
+    },
     "open_forward": {
       "capability": "forwards.write",
       "status": "daemon-only"
@@ -677,6 +681,7 @@
     "list_ssh_backups",
     "list_transfers",
     "lock_secrets",
+    "move_connections",
     "open_forward",
     "open_session",
     "open_sftp",
@@ -1423,6 +1428,16 @@
       "parameters": [],
       "return": "SecretBackendState"
     },
+    "move_connections": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "MoveConnectionsRequest"
+        }
+      ],
+      "return": "bool"
+    },
     "open_forward": {
       "parameters": [
         {
@@ -2141,6 +2156,9 @@
     "connections.metadata.update": {
       "capability": "connections.metadata.write"
     },
+    "connections.move": {
+      "capability": "connections.groups"
+    },
     "connections.rename_group": {
       "capability": "connections.groups"
     },
@@ -2757,6 +2775,7 @@
     "ListDirectoryResult",
     "ListKeysRequest",
     "LookupKeyPassphraseRequest",
+    "MoveConnectionsRequest",
     "OpenForwardRequest",
     "OpenSessionRequest",
     "OpenSftpRequest",
@@ -3347,6 +3366,13 @@
     ],
     "LookupKeyPassphraseRequest": [
       "key_path"
+    ],
+    "MoveConnectionsRequest": [
+      "connection_ids",
+      "target_group_id",
+      "target_connection_id",
+      "position",
+      "expected_generation"
     ],
     "OpenForwardRequest": [
       "connection_id",

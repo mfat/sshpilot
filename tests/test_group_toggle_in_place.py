@@ -639,6 +639,11 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
 
     placed = []
 
+    class _Client:
+        def place_group(self, request):
+            placed.append((request.group_id, request.parent_id, request.index))
+            return True
+
     class _Manager:
         def __init__(self):
             self.groups = {
@@ -666,6 +671,8 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
         window.connection_list = object()
         indicator_row.bind_listbox(window.connection_list)
         window.group_manager = _Manager()
+        window.client = _Client()
+        window.connection_manager = types.SimpleNamespace(snapshot=lambda: None)
         window.rebuilt = []
         window.rebuild_connection_list = lambda: window.rebuilt.append(True)
         return window
@@ -860,14 +867,6 @@ def test_group_drop_ignores_connection_target(monkeypatch):
     conn_row = _ConnRow()
     monkeypatch.setattr(sidebar_module, "_row_at_y_or_nearest", lambda w, y: conn_row)
 
-    class _Manager:
-        def __init__(self):
-            self.groups = {"src": {"id": "src", "parent_id": None}}
-            self.reordered = []
-
-        def reorder_group(self, *args):
-            self.reordered.append(args)
-
     window = types.SimpleNamespace()
     window._drop_indicator_row = conn_row
     window._drop_indicator_position = None
@@ -1047,17 +1046,21 @@ def test_connection_drop_skips_rebuild_when_inplace_succeeds(monkeypatch):
         def get_connection_group(self, nickname):
             return "g1"
 
-        def move_connection(self, nickname, group_id):
-            pass
+    class _Client:
+        def __init__(self):
+            self.requests = []
 
-        def reorder_connection_in_group(self, nickname, reference, position):
-            pass
+        def reorder_connection(self, request):
+            self.requests.append(request)
+            return True
 
     window = types.SimpleNamespace()
     window._drop_indicator_row = target_row
     window._drop_indicator_position = "below"
     window._drag_in_progress = True
     window.group_manager = _Manager()
+    window.client = _Client()
+    window.connection_manager = types.SimpleNamespace(snapshot=lambda: None)
     window.connection_list = types.SimpleNamespace(
         set_selection_mode=lambda mode: None,
         get_row_at_y=lambda y: target_row,
@@ -1067,7 +1070,10 @@ def test_connection_drop_skips_rebuild_when_inplace_succeeds(monkeypatch):
 
     value = {"type": "connection", "connection_nickname": "host-a"}
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 50) is True
-    assert applied == [["host-a"]]
+    assert applied == []
+    assert len(window.client.requests) == 1
+    assert window.client.requests[0].connection_id == "host-a"
+    assert window.client.requests[0].target_connection_id == "host-b"
     assert window.rebuilt == []
 
 
@@ -1090,7 +1096,12 @@ def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
                 "dst": {"id": "dst", "parent_id": None},
             }
 
-        def place_group(self, group_id, parent_id, index):
+    class _Client:
+        def __init__(self):
+            self.requests = []
+
+        def place_group(self, request):
+            self.requests.append(request)
             return True
 
     window = types.SimpleNamespace()
@@ -1100,12 +1111,17 @@ def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
     window._drop_group_index = 1
     window._drop_group_tree_target_set = True
     window.group_manager = _Manager()
+    window.client = _Client()
+    window.connection_manager = types.SimpleNamespace(snapshot=lambda: None)
     window.rebuilt = []
     window.rebuild_connection_list = lambda: window.rebuilt.append(True)
 
     value = {"type": "group", "group_id": "src"}
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
-    assert applied == [("src", {"nested": False, "reparented": False})]
+    assert applied == []
+    assert len(window.client.requests) == 1
+    assert window.client.requests[0].group_id == "src"
+    assert window.client.requests[0].index == 1
     assert window.rebuilt == []
 
 

@@ -14,7 +14,7 @@ def test_connection_service_only_declares_connection_operations():
         "delete_connection", "store_connection_password",
         "delete_connection_password",
         "store_key_passphrase", "delete_key_passphrase",
-        "update_connection_metadata", "assign_connection_to_group", "create_group",
+        "update_connection_metadata", "assign_connection_to_group", "move_connections", "create_group",
         "delete_group", "rename_group", "split_connection", "subscribe_events",
         "update_connection", "get_global_ssh_overrides",
         "update_global_ssh_overrides", "reset_global_ssh_overrides",

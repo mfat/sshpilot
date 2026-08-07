@@ -136,6 +136,31 @@ class GroupManager:
         self._refresh()
         return result
 
+    def move_connections(self, connection_ids, target_group_id=None,
+                         target_connection_id=None, position=None,
+                         expected_generation=None, *,
+                         on_success=None, on_error=None):
+        from sshpilot.api.models.connection_store import MoveConnectionsRequest
+
+        request = MoveConnectionsRequest(
+            connection_ids=tuple(self.connection_key(item) for item in connection_ids),
+            target_group_id=target_group_id,
+            target_connection_id=target_connection_id,
+            position=position,
+            expected_generation=expected_generation,
+        )
+        if self.controller is not None:
+            return self.controller.run(
+                lambda: self._require_client().move_connections(request),
+                on_success=on_success or (lambda _result: None),
+                on_error=on_error or (lambda _error: None),
+            )
+        result = self._require_client().move_connections(request)
+        self._refresh()
+        if on_success is not None:
+            on_success(result)
+        return result
+
     def move_connection(self, connection, target_group_id: Optional[str] = None):
         if self.controller is not None:
             return self.controller.move_connection(

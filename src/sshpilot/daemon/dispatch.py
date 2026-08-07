@@ -71,6 +71,7 @@ from sshpilot.api.transport.codec import (
     set_group_color_request_from_wire,
     place_group_request_from_wire,
     copy_connection_to_group_request_from_wire,
+    move_connections_request_from_wire,
     remove_connection_from_group_request_from_wire,
     reorder_connection_request_from_wire,
     rename_tag_request_from_wire,
@@ -162,6 +163,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.metadata.update": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.metadata.rename_tag": Capability.CONNECTIONS_METADATA_WRITE,
     "connections.assign_to_group": Capability.CONNECTIONS_GROUPS,
+    "connections.move": Capability.CONNECTIONS_GROUPS,
     "connections.create_group": Capability.CONNECTIONS_GROUPS,
     "connections.delete_group": Capability.CONNECTIONS_GROUPS,
     "connections.rename_group": Capability.CONNECTIONS_GROUPS,
@@ -371,6 +373,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.store_password",
         "connections.has_password",
         "connections.reveal_password",
+        "connections.move",
         "connections.store_plugin_secret",
         "connections.get_plugin_secret",
         "connections.delete_plugin_secret",
@@ -608,6 +611,7 @@ class RequestDispatcher:
             "connections.metadata.update": self._handle_update_connection_metadata,
             "connections.metadata.rename_tag": self._handle_rename_tag,
             "connections.assign_to_group": self._handle_assign_to_group,
+            "connections.move": self._handle_move_connections,
             "connections.create_group": self._handle_create_group,
             "connections.delete_group": self._handle_delete_group,
             "connections.rename_group": self._handle_rename_group,
@@ -1349,6 +1353,18 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_request.connection_id,
+        )
+
+    def _handle_move_connections(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = move_connections_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.move_connections_rpc(typed_request),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
         )
 
     def _handle_create_group(

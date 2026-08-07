@@ -7,6 +7,7 @@ from sshpilot.api.models.connection_store import (
     ConnectionMetadataSummary,
     ConnectionStoreSnapshot,
     CopyConnectionToGroupRequest,
+    MoveConnectionsRequest,
     GroupId,
     GroupSummary,
     PlaceGroupRequest,
@@ -23,6 +24,8 @@ from sshpilot.api.transport.codec import (
     connection_store_snapshot_to_wire,
     copy_connection_to_group_request_from_wire,
     copy_connection_to_group_request_to_wire,
+    move_connections_request_from_wire,
+    move_connections_request_to_wire,
     group_summary_from_wire,
     group_summary_to_wire,
     place_group_request_from_wire,
@@ -144,6 +147,19 @@ def test_set_group_color_round_trip():
         )
         == request
     )
+
+
+def test_move_connections_round_trip():
+    request = MoveConnectionsRequest(
+        connection_ids=(ConnectionId("a"), ConnectionId("b")),
+        target_group_id=GroupId("prod"),
+        target_connection_id=ConnectionId("c"),
+        position="above",
+        expected_generation=4,
+    )
+    assert move_connections_request_from_wire(
+        move_connections_request_to_wire(request)
+    ) == request
 
 
 def test_place_group_round_trip():

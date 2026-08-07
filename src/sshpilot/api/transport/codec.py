@@ -61,6 +61,7 @@ from ..models.connection_store import (
     ConnectionMetadataSummary,
     ConnectionStoreSnapshot,
     CopyConnectionToGroupRequest,
+    MoveConnectionsRequest,
     GroupId,
     GroupSummary,
     PlaceGroupRequest,
@@ -1268,6 +1269,71 @@ def reorder_connection_request_from_wire(
             else None
         ),
         position=_identifier(data["position"], "reorder position"),
+    )
+
+
+def move_connections_request_to_wire(
+    request: MoveConnectionsRequest,
+) -> Dict[str, Any]:
+    if type(request) is not MoveConnectionsRequest:
+        raise TypeError("move connections request is required")
+    payload: Dict[str, Any] = {
+        "connection_ids": list(request.connection_ids),
+    }
+    if request.target_group_id is not None:
+        payload["target_group_id"] = request.target_group_id
+    if request.target_connection_id is not None:
+        payload["target_connection_id"] = request.target_connection_id
+    if request.position is not None:
+        payload["position"] = request.position
+    if request.expected_generation is not None:
+        payload["expected_generation"] = request.expected_generation
+    return payload
+
+
+def move_connections_request_from_wire(value: Any) -> MoveConnectionsRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_ids"},
+        optional={
+            "target_group_id",
+            "target_connection_id",
+            "position",
+            "expected_generation",
+        },
+        context="move connections request",
+    )
+    ids = data["connection_ids"]
+    if type(ids) is not list:
+        raise ValueError("connection ids must be an array")
+    target_group_id = data.get("target_group_id")
+    target_connection_id = data.get("target_connection_id")
+    if target_group_id is not None and type(target_group_id) is not str:
+        raise ValueError("target group id must be a string or null")
+    if target_connection_id is not None and type(target_connection_id) is not str:
+        raise ValueError("target connection id must be a string or null")
+    position = data.get("position")
+    if position is not None and type(position) is not str:
+        raise ValueError("move position must be a string or null")
+    generation = data.get("expected_generation")
+    if generation is not None:
+        generation = _integer(generation, "expected generation")
+    return MoveConnectionsRequest(
+        connection_ids=tuple(
+            ConnectionId(_identifier(item, "connection id")) for item in ids
+        ),
+        target_group_id=(
+            GroupId(_identifier(target_group_id, "target group id"))
+            if target_group_id is not None
+            else None
+        ),
+        target_connection_id=(
+            ConnectionId(_identifier(target_connection_id, "target connection id"))
+            if target_connection_id is not None
+            else None
+        ),
+        position=position,
+        expected_generation=generation,
     )
 
 

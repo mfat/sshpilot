@@ -81,6 +81,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "update_connection_metadata": Capability.CONNECTIONS_METADATA_WRITE,
     "assign_connection_to_group": Capability.CONNECTIONS_GROUPS,
+    "move_connections": Capability.CONNECTIONS_GROUPS,
     "create_group": Capability.CONNECTIONS_GROUPS,
     "delete_group": Capability.CONNECTIONS_GROUPS,
     "rename_group": Capability.CONNECTIONS_GROUPS,
@@ -454,6 +455,18 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Failed to update connection metadata via daemon RPC")
             raise self._persistence_error(connection_id) from error
+
+    def move_connections_rpc(self, request: Any) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_GROUPS)
+        try:
+            self._repository.move_connections(request)
+            return True
+        except CoreError as error:
+            raise _map_core_error(error)
+        except Exception as error:
+            logger.exception("Failed to move connections via daemon RPC")
+            raise self._persistence_error() from error
 
     def assign_connection_to_group(
         self, connection_id: ConnectionId, group_id: str

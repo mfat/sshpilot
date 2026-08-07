@@ -343,6 +343,39 @@ class ReorderConnectionRequest:
 
 
 @dataclass(frozen=True)
+class MoveConnectionsRequest:
+    """Move one or more connections atomically into a group or root order."""
+
+    connection_ids: Tuple[ConnectionId, ...]
+    target_group_id: Optional[GroupId] = None
+    target_connection_id: Optional[ConnectionId] = None
+    position: Optional[str] = None
+    expected_generation: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if type(self.connection_ids) is not tuple or not self.connection_ids:
+            raise ValueError("connection ids must be a non-empty tuple")
+        for connection_id in self.connection_ids:
+            require_identifier(connection_id, "connection id")
+        if len(set(self.connection_ids)) != len(self.connection_ids):
+            raise ValueError("connection ids must be unique")
+        if self.target_group_id is not None:
+            require_identifier(self.target_group_id, "target group id")
+        if self.target_connection_id is not None:
+            require_identifier(self.target_connection_id, "target connection id")
+            if self.target_connection_id in self.connection_ids:
+                raise ValueError("target connection must not be moved")
+        if self.position not in (None, "above", "below"):
+            raise ValueError("move position must be 'above', 'below', or None")
+        if self.target_connection_id is None and self.position is not None:
+            raise ValueError("move position requires a target connection")
+        if self.expected_generation is not None and (
+            type(self.expected_generation) is not int or self.expected_generation < 0
+        ):
+            raise ValueError("expected generation must be a non-negative integer")
+
+
+@dataclass(frozen=True)
 class RenameTagRequest:
     """Rename a tag across all connections (case-insensitive, deduplicated)."""
 

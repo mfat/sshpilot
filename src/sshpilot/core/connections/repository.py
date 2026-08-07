@@ -33,6 +33,7 @@ from ...api.models.connection_store import (
     ConnectionMetadataSummary,
     ConnectionStoreSnapshot,
     GroupSummary,
+    MoveConnectionsRequest,
     thaw_safe_metadata,
     validate_safe_metadata,
 )
@@ -149,6 +150,8 @@ class ConnectionRepositoryProtocol(Protocol):
         parent_id: Optional[str],
         index: int,
     ) -> "GroupRecord": ...
+
+    def move_connections(self, request: MoveConnectionsRequest) -> None: ...
 
     def assign_connection_to_group(
         self, connection_id: str, group_id: Optional[str]
@@ -1302,6 +1305,24 @@ class ConnectionRepository:
         return self._group_mutation(
             lambda: self._service.place_group(group_id, parent_id, index)
         )
+
+    def move_connections(self, request: MoveConnectionsRequest) -> None:
+        with self._mutation_scope():
+            before = self._begin()
+            expected = request.expected_generation
+            if expected is not None and expected != before.generation:
+                raise CoreError(
+                    ErrorCode.STALE_EDITOR,
+                    "The connection store changed during the drag operation",
+                )
+            try:
+                result = self._service.move_connections(request)
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return result
 
     def assign_connection_to_group(
         self, connection_id: str, group_id: Optional[str]

@@ -33,6 +33,7 @@ from .models.connection_store import (
     SetGroupColorRequest,
     PlaceGroupRequest,
     CopyConnectionToGroupRequest,
+    MoveConnectionsRequest,
     RemoveConnectionFromGroupRequest,
     ReorderConnectionRequest,
     RenameTagRequest,
@@ -237,6 +238,9 @@ class SshPilotClient(Protocol):
         ...
 
     def reorder_connection(self, request: ReorderConnectionRequest) -> bool:
+        ...
+
+    def move_connections(self, request: MoveConnectionsRequest) -> bool:
         ...
 
     def rename_tag(self, request: RenameTagRequest) -> int:
