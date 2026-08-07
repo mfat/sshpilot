@@ -6818,11 +6818,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not connection_id or not nickname:
             return
         for active_connection, terminal in tuple(self.active_terminals.items()):
-            if (
-                active_connection is None
-                or terminal is None
-                or getattr(terminal, 'is_connected', False) is False
-            ):
+            if active_connection is None or terminal is None:
                 continue
             active_ids = {
                 str(value)
