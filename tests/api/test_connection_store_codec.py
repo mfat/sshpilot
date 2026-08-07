@@ -15,7 +15,7 @@ from sshpilot.api.models.connection_store import (
     ReorderConnectionRequest,
     SetGroupColorRequest,
 )
-from sshpilot.api.models.connections import ConnectionSummary
+from sshpilot.api.models.connections import ConnectionSummary, UpdateConnectionMetadataRequest
 from sshpilot.api.transport.codec import (
     connection_metadata_summary_from_wire,
     connection_metadata_summary_to_wire,
@@ -35,6 +35,8 @@ from sshpilot.api.transport.codec import (
     reorder_connection_request_to_wire,
     set_group_color_request_from_wire,
     set_group_color_request_to_wire,
+    update_connection_metadata_request_from_wire,
+    update_connection_metadata_request_to_wire,
 )
 
 
@@ -98,6 +100,30 @@ def test_metadata_summary_round_trip():
         )
         == meta
     )
+
+
+def test_update_connection_metadata_request_round_trip():
+    request = UpdateConnectionMetadataRequest(
+        connection_id=ConnectionId("conn-1"),
+        meta={"tags": ["web", "prod"], "pinned": True, "wol": {"mac": "aa:bb"}},
+    )
+    assert (
+        update_connection_metadata_request_from_wire(
+            update_connection_metadata_request_to_wire(request)
+        )
+        == request
+    )
+
+
+def test_update_connection_metadata_request_wire_is_transport_safe():
+    request = UpdateConnectionMetadataRequest(
+        connection_id=ConnectionId("conn-1"),
+        meta={"tags": ["web", "prod"], "wol": {"mac": "aa:bb"}},
+    )
+    encoded = update_connection_metadata_request_to_wire(request)
+    assert type(encoded["meta"]) is dict
+    assert type(encoded["meta"]["tags"]) is list
+    assert type(encoded["meta"]["wol"]) is dict
 
 
 def test_snapshot_round_trip():
@@ -287,6 +313,10 @@ def test_place_group_wire_omits_null_parent():
         (reorder_connection_request_from_wire, {"connection_id": "a", "target_connection_id": "b", "position": "left"}),
         (rename_tag_request_from_wire, {"old_tag": ""}),
         (rename_tag_request_from_wire, {"old_tag": "a", "new_tag": " "}),
+        (update_connection_metadata_request_from_wire, {}),
+        (update_connection_metadata_request_from_wire, {"connection_id": "c"}),
+        (update_connection_metadata_request_from_wire, {"connection_id": "c", "meta": []}),
+        (update_connection_metadata_request_from_wire, {"connection_id": "c", "meta": {"tags": []}, "extra": 1}),
     ],
 )
 def test_connection_store_codecs_reject_malformed_wire(decoder, payload):

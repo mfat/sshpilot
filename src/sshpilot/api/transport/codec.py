@@ -68,6 +68,7 @@ from ..models.connection_store import (
     RenameTagRequest,
     ReorderConnectionRequest,
     SetGroupColorRequest,
+    thaw_safe_metadata,
     validate_safe_metadata,
 )
 from ..models.connections import (
@@ -2290,7 +2291,7 @@ def update_connection_metadata_request_to_wire(
         raise TypeError("update connection metadata request is required")
     return {
         "connection_id": request.connection_id,
-        "meta": dict(request.meta),
+        "meta": thaw_safe_metadata(request.meta),
     }
 
 
