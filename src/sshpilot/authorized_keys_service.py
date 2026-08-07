@@ -13,12 +13,15 @@ import posixpath
 import shutil
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import List
+from typing import List, Optional
 
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.operations import (
     SftpFileTarget,
     SftpReadFileRequest,
     SftpReplaceFileRequest,
+    SftpServiceState,
+    SftpServiceSummary,
 )
 
 from .authorized_keys_parser import Item, parse_file, serialize
@@ -28,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 REMOTE_BASENAME = "authorized_keys"
 SSH_DIR_BASENAME = ".ssh"
+
+# ``open_sftp`` returns a STARTING summary before the daemon has launched the
+# OpenSSH SFTP child; this bounds how long we wait for READY before loading.
+DEFAULT_SFTP_READY_TIMEOUT_SECONDS = 45.0
 
 
 class DaemonAuthorizedKeysService:
@@ -58,6 +65,59 @@ class DaemonAuthorizedKeysService:
             result = self._client.sftp_read_file(self._request())
             self._revision = result.revision
             return parse_file(result.content) if result.exists else []
+
+        return self._executor.submit(_do)
+
+    def await_ready(
+        self,
+        *,
+        timeout: float = DEFAULT_SFTP_READY_TIMEOUT_SECONDS,
+    ) -> Future:
+        """Wait until the daemon SFTP service is READY before file operations.
+
+        ``open_sftp`` returns a STARTING summary before the OpenSSH SFTP child
+        has connected. The daemon serializes every later file command behind
+        that startup on the same service lane, so issuing ``sftp_read_file``
+        immediately can exceed the client request timeout. Poll the live
+        service summary until READY or a terminal state.
+        """
+
+        if self._local:
+            raise ValueError(
+                "local authorized_keys has no daemon SFTP service to wait for"
+            )
+
+        def _do() -> SftpServiceSummary:
+            deadline = time.monotonic() + max(0.0, float(timeout))
+            last_error: Optional[BaseException] = None
+            while True:
+                try:
+                    summary = self._client.get_sftp_service(self._service_id)
+                except Exception as exc:
+                    last_error = exc
+                else:
+                    if summary.state is SftpServiceState.READY:
+                        return summary
+                    if summary.state in (
+                        SftpServiceState.FAILED,
+                        SftpServiceState.CLOSED,
+                    ):
+                        failure = getattr(summary, "failure", None)
+                        detail = (
+                            getattr(failure, "message", None)
+                            or "The SFTP session could not be established"
+                        )
+                        raise SshPilotError(
+                            ErrorCode.SFTP_SERVICE_NOT_READY,
+                            detail,
+                        )
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+            raise last_error or SshPilotError(
+                ErrorCode.SFTP_SERVICE_NOT_READY,
+                "The SFTP service did not become ready in time",
+            )
 
         return self._executor.submit(_do)
 

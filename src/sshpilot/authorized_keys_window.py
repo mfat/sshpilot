@@ -106,6 +106,8 @@ class AuthorizedKeysWindow(Adw.Window):
         self._service = DaemonAuthorizedKeysService(
             client, service_id=service_id, local=local
         )
+        self._local = local
+        self._ready = local
         if local:
             title = _("Authorized keys — this computer")
         else:
@@ -208,6 +210,8 @@ class AuthorizedKeysWindow(Adw.Window):
     # ------------------------------------------------------------------
 
     def _reload(self) -> bool:
+        if not self._local and not self._ready:
+            return self._wait_for_service_ready()
         self._set_status(_("Loading…"))
         future = self._service.load()
 
@@ -220,6 +224,29 @@ class AuthorizedKeysWindow(Adw.Window):
                 GLib.idle_add(self._set_status, _("Error loading authorized_keys"))
                 return
             GLib.idle_add(self._apply_loaded, items)
+
+        future.add_done_callback(_done)
+        return False
+
+    def _wait_for_service_ready(self) -> bool:
+        self._set_status(_("Connecting…"))
+        future = self._service.await_ready()
+
+        def _done(fut):
+            if self._closing:
+                return
+            try:
+                fut.result()
+            except Exception as exc:
+                logger.error("Failed to connect authorized_keys editor: %s", exc)
+                GLib.idle_add(
+                    self._toast,
+                    _("Failed to connect: {error}").format(error=exc),
+                )
+                GLib.idle_add(self._set_status, _("Connection failed"))
+                return
+            self._ready = True
+            GLib.idle_add(self._reload)
 
         future.add_done_callback(_done)
         return False

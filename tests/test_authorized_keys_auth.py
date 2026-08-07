@@ -16,10 +16,12 @@ import pytest
 pytest.importorskip("gi")
 
 from sshpilot import authorized_keys_window as win_mod
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.operations import (
     SftpFileTarget,
     SftpReadFileRequest,
     SftpReplaceFileRequest,
+    SftpServiceState,
 )
 
 
@@ -103,3 +105,77 @@ def test_remote_save_uses_typed_revision_check():
     assert request.service_id == "sftp:1"
     assert request.expected_revision == "akf-1"
     assert request.backup is True
+
+
+def _summary(state, *, failure=None):
+    return SimpleNamespace(state=state, failure=failure, connection_id="conn-1")
+
+
+# ---------------------------------------------------------------------------
+# Remote readiness gate
+# ---------------------------------------------------------------------------
+def test_remote_await_ready_returns_when_ready():
+    client = MagicMock()
+    client.get_sftp_service.return_value = _summary(SftpServiceState.READY)
+    service = win_mod.DaemonAuthorizedKeysService(
+        client, service_id="sftp:1", local=False
+    )
+
+    result = service.await_ready().result(timeout=2)
+
+    assert result.state is SftpServiceState.READY
+    client.get_sftp_service.assert_called_once_with("sftp:1")
+
+
+def test_remote_await_ready_polls_until_ready():
+    client = MagicMock()
+    client.get_sftp_service.side_effect = [
+        _summary(SftpServiceState.CREATED),
+        _summary(SftpServiceState.STARTING),
+        _summary(SftpServiceState.READY),
+    ]
+    service = win_mod.DaemonAuthorizedKeysService(
+        client, service_id="sftp:1", local=False
+    )
+
+    result = service.await_ready().result(timeout=2)
+
+    assert result.state is SftpServiceState.READY
+    assert client.get_sftp_service.call_count == 3
+
+
+def test_remote_await_ready_raises_on_failed():
+    client = MagicMock()
+    client.get_sftp_service.return_value = _summary(
+        SftpServiceState.FAILED, failure=SimpleNamespace(message="host unreachable")
+    )
+    service = win_mod.DaemonAuthorizedKeysService(
+        client, service_id="sftp:1", local=False
+    )
+
+    with pytest.raises(SshPilotError) as excinfo:
+        service.await_ready().result(timeout=2)
+
+    assert excinfo.value.code is ErrorCode.SFTP_SERVICE_NOT_READY
+    assert "host unreachable" in excinfo.value.message
+
+
+def test_remote_await_ready_times_out():
+    client = MagicMock()
+    client.get_sftp_service.return_value = _summary(SftpServiceState.STARTING)
+    service = win_mod.DaemonAuthorizedKeysService(
+        client, service_id="sftp:1", local=False
+    )
+
+    with pytest.raises(SshPilotError) as excinfo:
+        service.await_ready(timeout=0.05).result(timeout=2)
+
+    assert excinfo.value.code is ErrorCode.SFTP_SERVICE_NOT_READY
+
+
+def test_local_service_forbids_await_ready():
+    client = MagicMock()
+    service = win_mod.DaemonAuthorizedKeysService(client, local=True)
+
+    with pytest.raises(ValueError):
+        service.await_ready()
