@@ -432,8 +432,8 @@ no secret value crosses the response envelope. Gated by
 <!-- api-capability: connections.secrets.reveal -->
 ## `connections.secrets.reveal`
 
-Explicitly reveals one saved password or key passphrase only after a client
-requests it. The JSON response is an acknowledgment; the value is delivered
+Explicitly reveals one saved password, key passphrase, or plugin secret only
+after a client requests it. The JSON response is an acknowledgment; the value is delivered
 through a one-use binary secret frame and never appears in ordinary JSON,
 events, or replay. Gated by `CONNECTIONS_SECRETS_REVEAL`.
 

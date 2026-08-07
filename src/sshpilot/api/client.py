@@ -214,6 +214,9 @@ class SshPilotClient(Protocol):
     def reveal_key_passphrase(self, key_path: str) -> bytearray:
         ...
 
+    def get_plugin_secret(self, plugin_id: str, key: str) -> Optional[str]:
+        ...
+
     def update_connection_metadata(
         self, connection_id: ConnectionId, meta: 'Dict[str, Any]'
     ) -> bool:

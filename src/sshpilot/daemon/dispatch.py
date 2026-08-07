@@ -152,7 +152,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.has_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "connections.reveal_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "connections.store_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
-    "connections.get_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.get_plugin_secret": Capability.CONNECTIONS_SECRETS_REVEAL,
     "connections.delete_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.delete_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.store_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -1195,11 +1195,21 @@ class RequestDispatcher:
     def _handle_get_plugin_secret(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
+        if (
+            state.client_info is None
+            or "binary-secret-v1" not in state.client_info.supported_frame_types
+        ):
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Binary secret transport was not negotiated",
+            )
         typed_request = get_plugin_secret_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._connections.get_plugin_secret_rpc(typed_request),
+            operation=lambda: SecretResponseResult(
+                self._connections.get_plugin_secret_rpc(typed_request)
+            ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
@@ -2541,7 +2551,6 @@ class RequestDispatcher:
                 Capability.CONNECTIONS_CONFIG_WRITE,
                 Capability.CONNECTIONS_SECRETS_WRITE,
                 Capability.CONNECTIONS_SECRETS_STATUS_READ,
-                Capability.CONNECTIONS_SECRETS_REVEAL,
                 Capability.CONNECTIONS_METADATA_WRITE,
                 Capability.CONNECTIONS_GROUPS,
                 Capability.CONNECTIONS_SPLIT,
@@ -2550,7 +2559,6 @@ class RequestDispatcher:
         daemon_capabilities = connection_capabilities | frozenset(
             {
                 Capability.CONNECTIONS_SECRETS_STATUS_READ,
-                Capability.CONNECTIONS_SECRETS_REVEAL,
                 Capability.SESSIONS_READ,
                 Capability.SESSIONS_WRITE,
                 Capability.SESSIONS_EVENTS,
@@ -2571,6 +2579,7 @@ class RequestDispatcher:
         if secret_frames:
             daemon_capabilities |= frozenset(
                 {
+                    Capability.CONNECTIONS_SECRETS_REVEAL,
                     Capability.INTERACTIONS_READ,
                     Capability.INTERACTIONS_RESPOND,
                     Capability.INTERACTIONS_EVENTS,

@@ -10,6 +10,8 @@ notes remain separate.
   explicit reveal methods with separate capabilities. Reveal acknowledgments use
   ordinary JSON, while returned values use a one-use binary secret frame; daemon
   launch preparation and the interaction broker retain daemon-internal lookups.
+  Plugin-secret retrieval uses the same binary response path, and the reveal
+  capability is advertised only after binary-secret negotiation.
 
 
 - Added the daemon-only native SCP slice through `start_scp_transfer` and the

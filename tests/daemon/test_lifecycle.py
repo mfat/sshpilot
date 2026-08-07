@@ -97,6 +97,8 @@ def test_plugin_secret_rpc_round_trip_uses_daemon_command_thread(
     client = DaemonClient(socket_path=server.socket_path)
     secret = "plugin-secret-must-not-be-logged"
 
+    assert client.get_capabilities().supports(Capability.CONNECTIONS_SECRETS_REVEAL)
+
     with caplog.at_level(logging.DEBUG):
         assert client.store_plugin_secret("example.plugin", "token", secret) is True
         assert client.get_plugin_secret("example.plugin", "token") == secret

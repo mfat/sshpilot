@@ -79,7 +79,6 @@ def test_successful_protocol_v1_handshake(raw_peer):
             Capability.CONNECTIONS_CONFIG_WRITE.value,
             Capability.CONNECTIONS_SECRETS_WRITE.value,
             Capability.CONNECTIONS_SECRETS_STATUS_READ.value,
-            Capability.CONNECTIONS_SECRETS_REVEAL.value,
             Capability.CONNECTIONS_METADATA_WRITE.value,
             Capability.CONNECTIONS_GROUPS.value,
             Capability.CONNECTIONS_SPLIT.value,
@@ -108,6 +107,17 @@ def test_successful_protocol_v1_handshake(raw_peer):
         )
     )
     assert response.result["server_instance_id"]
+
+
+def test_reveal_capability_requires_binary_secret_negotiation(raw_peer):
+    peer, _server = raw_peer
+
+    response = _send(peer, _request("system.handshake", _handshake_params()))
+
+    assert isinstance(response, SuccessResponseEnvelope)
+    capabilities = set(response.result["daemon_capabilities"])
+    assert Capability.CONNECTIONS_SECRETS_STATUS_READ.value in capabilities
+    assert Capability.CONNECTIONS_SECRETS_REVEAL.value not in capabilities
 
 
 def test_ordinary_method_before_handshake_is_rejected(raw_peer):

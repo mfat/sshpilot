@@ -289,6 +289,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "has_key_passphrase": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "reveal_connection_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "reveal_key_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
+    "get_plugin_secret": Capability.CONNECTIONS_SECRETS_REVEAL,
     "replay_terminal": Capability.TERMINAL_REPLAY,
     "list_sftp_services": Capability.SFTP_READ,
     "get_sftp_service": Capability.SFTP_READ,
@@ -3178,13 +3179,25 @@ class DaemonClient:
         return bool(result)
 
     def get_plugin_secret(self, plugin_id: str, key: str):
-        from .models.connections import get_plugin_secret_request_to_wire, GetPluginSecretRequest
+        from .models.connections import (
+            GetPluginSecretRequest,
+            get_plugin_secret_request_to_wire,
+        )
+
+        self._require_capability(Capability.CONNECTIONS_SECRETS_REVEAL)
         req = GetPluginSecretRequest(plugin_id=plugin_id, key=key)
-        result = self._request(
+        secret = self._request(
             "connections.get_plugin_secret",
             get_plugin_secret_request_to_wire(req),
+            secret_response=True,
         )
-        return result
+        if type(secret) is not bytearray:
+            self._fail_protocol("The daemon returned an invalid plugin secret")
+        try:
+            return secret.decode("utf-8") if secret else None
+        finally:
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
 
     def delete_plugin_secret(self, plugin_id: str, key: str) -> bool:
         from .models.connections import delete_plugin_secret_request_to_wire, DeletePluginSecretRequest

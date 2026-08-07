@@ -418,9 +418,10 @@ class ConnectionApplicationService:
 
     def get_plugin_secret_rpc(self, request):
         self._assert_command_thread()
-        return self._provider_call(
+        value = self._provider_call(
             self._secret_provider, "get_plugin_secret", request.plugin_id, request.key
         )
+        return bytearray(value.encode("utf-8")) if value is not None else bytearray()
 
     def delete_plugin_secret_rpc(self, request) -> bool:
         self._assert_command_thread()

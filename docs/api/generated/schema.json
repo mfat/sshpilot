@@ -185,6 +185,10 @@
       "capability": "identity.read",
       "status": "daemon-only"
     },
+    "get_plugin_secret": {
+      "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
     "get_secret_backends": {
       "capability": "secrets.read",
       "status": "daemon-only"
@@ -552,7 +556,7 @@
       "capability": "connections.config.read"
     },
     "connections.get_plugin_secret": {
-      "capability": "connections.secrets.write"
+      "capability": "connections.secrets.reveal"
     },
     "connections.get_ssh_config_text": {
       "capability": "connections.config.read"

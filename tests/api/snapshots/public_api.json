@@ -265,6 +265,10 @@
       "capability": "identity.read",
       "status": "daemon-only"
     },
+    "get_plugin_secret": {
+      "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
     "get_secret_backends": {
       "capability": "secrets.read",
       "status": "daemon-only"
@@ -644,6 +648,7 @@
     "get_identity_state",
     "get_interaction",
     "get_operation",
+    "get_plugin_secret",
     "get_secret_backends",
     "get_secret_configuration",
     "get_secret_state",
@@ -1183,6 +1188,21 @@
         }
       ],
       "return": "OperationSummary"
+    },
+    "get_plugin_secret": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "plugin_id",
+          "type": "str"
+        },
+        {
+          "kind": "positional_or_keyword",
+          "name": "key",
+          "type": "str"
+        }
+      ],
+      "return": "str | None"
     },
     "get_secret_backends": {
       "parameters": [],
@@ -2101,7 +2121,7 @@
       "capability": "connections.config.read"
     },
     "connections.get_plugin_secret": {
-      "capability": "connections.secrets.write"
+      "capability": "connections.secrets.reveal"
     },
     "connections.get_ssh_config_text": {
       "capability": "connections.config.read"

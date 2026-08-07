@@ -26,6 +26,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "has_key_passphrase": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "reveal_connection_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "reveal_key_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
+    "get_plugin_secret": Capability.CONNECTIONS_SECRETS_REVEAL,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "stop_daemon": Capability.DAEMON_CONTROL,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,

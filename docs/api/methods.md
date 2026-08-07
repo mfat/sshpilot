@@ -105,6 +105,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: get_capabilities status=implemented capability=none -->
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
 <!-- api-method-contract: get_connection_editor status=implemented capability=connections.config.read -->
+<!-- api-method-contract: get_plugin_secret status=daemon-only capability=connections.secrets.reveal -->
 <!-- api-method-contract: get_ssh_config_text status=implemented capability=connections.config.read -->
 <!-- api-method-contract: save_ssh_config_text status=implemented capability=connections.config.write -->
 <!-- api-method-contract: get_forward status=daemon-only capability=forwards.read -->
@@ -245,7 +246,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.reveal_password` | `connections.secrets.reveal` | Implemented; binary secret response |
 | `connections.reveal_passphrase` | `connections.secrets.reveal` | Implemented; binary secret response |
 | `connections.store_plugin_secret` | `connections.secrets.write` | Implemented |
-| `connections.get_plugin_secret` | `connections.secrets.write` | Implemented |
+| `connections.get_plugin_secret` | `connections.secrets.reveal` | Implemented; binary secret response |
 | `connections.delete_plugin_secret` | `connections.secrets.write` | Implemented |
 | `connections.update_metadata` | `connections.metadata.write` | Implemented |
 | `connections.metadata.update` | `connections.metadata.write` | Implemented |
@@ -357,7 +358,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
 <!-- api-daemon-method: connections.get_ssh_config_text capability=connections.config.read -->
 <!-- api-daemon-method: connections.save_ssh_config_text capability=connections.config.write -->
-<!-- api-daemon-method: connections.get_plugin_secret capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.get_plugin_secret capability=connections.secrets.reveal -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
 <!-- api-daemon-method: connections.has_password capability=connections.secrets.status.read -->
 <!-- api-daemon-method: connections.has_passphrase capability=connections.secrets.status.read -->
@@ -934,6 +935,17 @@ binary secret frame and returned as a mutable `bytearray`.
 
 ```python
 passphrase = client.reveal_key_passphrase("/home/user/.ssh/id_rsa")
+```
+
+<!-- api-method: get_plugin_secret -->
+## `get_plugin_secret`
+
+Daemon-only explicit plugin-secret retrieval under `connections.secrets.reveal`.
+The JSON response is only an acknowledgment; the value is delivered through a
+one-use binary secret frame and returned as a string to the plugin surface.
+
+```python
+secret = client.get_plugin_secret("example.plugin", "token")
 ```
 
 <!-- api-method: list_interactions -->
