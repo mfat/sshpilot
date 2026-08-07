@@ -205,6 +205,7 @@ def test_place_group_round_trip():
         group_id=GroupId("group-1"),
         parent_id=GroupId("group-0"),
         index=2,
+        expected_generation=4,
     )
     assert place_group_request_from_wire(place_group_request_to_wire(request)) == request
 
@@ -212,6 +213,25 @@ def test_place_group_round_trip():
 def test_place_group_round_trip_root():
     request = PlaceGroupRequest(group_id=GroupId("group-1"), parent_id=None, index=0)
     assert place_group_request_from_wire(place_group_request_to_wire(request)) == request
+
+
+def test_place_group_wire_includes_generation():
+    encoded = place_group_request_to_wire(
+        PlaceGroupRequest(
+            group_id=GroupId("g"),
+            parent_id=GroupId("p"),
+            index=1,
+            expected_generation=9,
+        )
+    )
+    assert encoded["expected_generation"] == 9
+
+
+def test_place_group_wire_omits_null_generation():
+    encoded = place_group_request_to_wire(
+        PlaceGroupRequest(group_id=GroupId("g"), parent_id=None, index=0)
+    )
+    assert "expected_generation" not in encoded
 
 
 def test_copy_connection_round_trip():
@@ -361,6 +381,9 @@ def test_place_group_wire_omits_null_parent():
         (place_group_request_from_wire, {}),
         (place_group_request_from_wire, {"group_id": "g", "index": -1}),
         (place_group_request_from_wire, {"group_id": "g", "index": "1"}),
+        (place_group_request_from_wire, {"group_id": "g", "index": 0, "expected_generation": "4"}),
+        (place_group_request_from_wire, {"group_id": "g", "index": 0, "expected_generation": -1}),
+        (place_group_request_from_wire, {"group_id": "g", "index": 0, "expected_generation": True}),
         (copy_connection_to_group_request_from_wire, {"connection_id": "c"}),
         (remove_connection_from_group_request_from_wire, {"group_id": "g"}),
         (reorder_connection_request_from_wire, {"connection_id": "a", "target_connection_id": "b"}),

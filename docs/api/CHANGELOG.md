@@ -19,6 +19,15 @@ notes remain separate.
   stale snapshot generations, and publishes one refreshed authoritative store
   snapshot. GTK retains gesture, indicator, and preview presentation only.
 
+- Made `groups.place` (sidebar group reorder, reparent, and nest) revision-safe.
+  `PlaceGroupRequest` now carries an optional `expected_generation`; the daemon
+  repository rejects a stale generation with `STALE_CONNECTION_STATE` before any
+  mutation and publishes no changed snapshot. The sidebar captures the
+  authoritative projection generation with the drop target and sends it with the
+  request; `GroupMutationController` reconciles a stale rejection with exactly
+  one refresh, never retries the mutation, and reports the original error. GTK
+  retains gesture, indicator, and preview presentation only.
+
 - Added the daemon-only native SCP slice through `start_scp_transfer` and the
   `transfers.scp` capability. SCP uses the shared `TransferRuntime` lifecycle,
   canonical OpenSSH launch/authentication and interaction-broker paths, bounded

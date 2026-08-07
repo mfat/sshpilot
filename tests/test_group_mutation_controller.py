@@ -607,6 +607,97 @@ class TestMutationAmbiguity:
 
 
 # ---------------------------------------------------------------------------
+# Stale rejection (STALE_CONNECTION_STATE surfaced as STALE_EDITOR)
+# ---------------------------------------------------------------------------
+
+class TestStaleRejection:
+    def _stale_error(self):
+        return SshPilotError(ErrorCode.STALE_EDITOR, "stale group placement")
+
+    def test_stale_rejection_refreshes_once_and_reports_original_error(self):
+        """A stale group mutation refreshes exactly once and reports the stale error."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        errors = []
+
+        def _raise_stale():
+            raise self._stale_error()
+
+        ctrl.run(
+            _raise_stale,
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.STALE_EDITOR
+        assert refresh.call_count == 1
+
+    def test_stale_rejection_never_retries_mutation(self):
+        """The stale group mutation is attempted exactly once, never retried."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        attempts = []
+        errors = []
+
+        def _raise_stale():
+            attempts.append(1)
+            raise self._stale_error()
+
+        ctrl.run(
+            _raise_stale,
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(attempts) == 1
+        assert len(errors) == 1
+
+    def test_stale_refresh_failure_is_terminal_without_second_refresh(self):
+        """If the refresh after a stale rejection fails, the original stale error
+        is reported and no further refresh is attempted."""
+        attempts = []
+
+        def _raising_refresh():
+            attempts.append(1)
+            raise RuntimeError("refresh boom")
+
+        ctrl = _make_controller(refresh=_raising_refresh)
+        errors = []
+
+        def _raise_stale():
+            raise self._stale_error()
+
+        ctrl.run(
+            _raise_stale,
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.STALE_EDITOR
+        assert len(attempts) == 1
+
+    def test_run_sequence_stale_rejection_refreshes_once(self):
+        """A stale rejection inside a sequence refreshes once and reports the error."""
+        refresh = MagicMock()
+        ctrl = _make_controller(refresh=refresh)
+        errors = []
+
+        def _fail():
+            raise self._stale_error()
+
+        ctrl.run_sequence(
+            [
+                lambda _prev: ctrl.client.rename_group("g1", "New"),
+                lambda prev: _fail(),
+            ],
+            on_success=lambda r: pytest.fail("unexpected success"),
+            on_error=lambda e: errors.append(e),
+        )
+        assert len(errors) == 1
+        assert errors[0].code is ErrorCode.STALE_EDITOR
+        assert refresh.call_count == 1
+
+
+# ---------------------------------------------------------------------------
 # Close during / before sequence
 # ---------------------------------------------------------------------------
 

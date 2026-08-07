@@ -269,7 +269,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `groups.delete` | `connections.groups` | Implemented |
 | `groups.rename` | `connections.groups` | Implemented |
 | `groups.set_color` | `connections.groups` | Implemented |
-| `groups.place` | `connections.groups` | Implemented |
+| `groups.place` | `connections.groups` | Implemented; revision-safe group placement |
 | `groups.copy_connection` | `connections.groups` | Implemented |
 | `groups.remove_connection` | `connections.groups` | Implemented |
 | `groups.reorder_connection` | `connections.groups` | Implemented |

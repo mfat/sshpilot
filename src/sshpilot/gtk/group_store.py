@@ -175,16 +175,20 @@ class GroupMutationController:
 
         Never retries the mutation.  For ``run_sequence`` partial failures the
         repository is refreshed once regardless of error code.  For ``run`` the
-        refresh is reserved for ``MUTATION_AMBIGUOUS``.  A refresh submission
-        failure is itself terminal: no recursive refresh is attempted and the
-        original mutation error is reported.
+        refresh is reserved for ``MUTATION_AMBIGUOUS`` (the outcome is unknown)
+        and ``STALE_EDITOR`` (a stale ``STALE_CONNECTION_STATE`` rejection
+        means the mutation definitely did not happen and the frontend
+        projection is known stale).  A refresh submission failure is itself
+        terminal: no recursive refresh is attempted and the original mutation
+        error is reported.
         """
         if self._closed:
             self._release()
             return
         should_refresh = self.refresh is not None and (
             refresh_on_any_failure
-            or getattr(error, "code", None) is ErrorCode.MUTATION_AMBIGUOUS
+            or getattr(error, "code", None)
+            in (ErrorCode.MUTATION_AMBIGUOUS, ErrorCode.STALE_EDITOR)
         )
         if should_refresh:
             def _after_refresh(_result):

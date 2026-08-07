@@ -290,6 +290,7 @@ class PlaceGroupRequest:
     group_id: GroupId
     parent_id: Optional[GroupId]
     index: int
+    expected_generation: Optional[int] = None
 
     def __post_init__(self) -> None:
         require_identifier(self.group_id, "group id")
@@ -297,6 +298,11 @@ class PlaceGroupRequest:
             raise ValueError("group parent id must not be empty")
         if type(self.index) is not int or self.index < 0:
             raise ValueError("group placement index must be a non-negative integer")
+        if self.expected_generation is not None and (
+            type(self.expected_generation) is not int
+            or self.expected_generation < 0
+        ):
+            raise ValueError("expected generation must be a non-negative integer")
 
 
 @dataclass(frozen=True)

@@ -3469,7 +3469,8 @@
     "PlaceGroupRequest": [
       "group_id",
       "parent_id",
-      "index"
+      "index",
+      "expected_generation"
     ],
     "PluginArgument": [
       "name",

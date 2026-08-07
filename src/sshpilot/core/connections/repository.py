@@ -150,6 +150,8 @@ class ConnectionRepositoryProtocol(Protocol):
         group_id: str,
         parent_id: Optional[str],
         index: int,
+        *,
+        expected_generation: Optional[int] = None,
     ) -> "GroupRecord": ...
 
     def move_connections(self, request: MoveConnectionsRequest) -> None: ...
@@ -1304,10 +1306,27 @@ class ConnectionRepository:
         group_id: str,
         parent_id: Optional[str],
         index: int,
+        *,
+        expected_generation: Optional[int] = None,
     ) -> "GroupRecord":
-        return self._group_mutation(
-            lambda: self._service.place_group(group_id, parent_id, index)
-        )
+        with self._mutation_scope():
+            before = self._begin()
+            if (
+                expected_generation is not None
+                and expected_generation != before.generation
+            ):
+                raise CoreError(
+                    ErrorCode.STALE_CONNECTION_STATE,
+                    "The connection store changed during the group placement",
+                )
+            try:
+                result = self._service.place_group(group_id, parent_id, index)
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+            return result
 
     def move_connections(self, request: MoveConnectionsRequest) -> None:
         with self._mutation_scope():

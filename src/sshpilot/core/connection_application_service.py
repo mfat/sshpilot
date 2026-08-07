@@ -556,12 +556,22 @@ class ConnectionApplicationService:
             raise self._persistence_error() from error
 
     def place_group_rpc(
-        self, group_id: str, parent_id: Optional[str], index: int
+        self,
+        group_id: str,
+        parent_id: Optional[str],
+        index: int,
+        *,
+        expected_generation: Optional[int] = None,
     ) -> bool:
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_GROUPS)
         try:
-            self._repository.place_group(group_id, parent_id, index)
+            self._repository.place_group(
+                group_id,
+                parent_id,
+                index,
+                expected_generation=expected_generation,
+            )
             return True
         except CoreError as error:
             raise _map_core_error(error)

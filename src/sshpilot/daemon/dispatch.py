@@ -1447,7 +1447,10 @@ class RequestDispatcher:
         typed_request = place_group_request_from_wire(request.params)
         return DeferredResult(
             operation=lambda: self._connections.place_group_rpc(
-                typed_request.group_id, typed_request.parent_id, typed_request.index
+                typed_request.group_id,
+                typed_request.parent_id,
+                typed_request.index,
+                expected_generation=typed_request.expected_generation,
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,

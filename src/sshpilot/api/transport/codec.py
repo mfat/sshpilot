@@ -1154,6 +1154,8 @@ def place_group_request_to_wire(request: PlaceGroupRequest) -> Dict[str, Any]:
     }
     if request.parent_id is not None:
         payload["parent_id"] = request.parent_id
+    if request.expected_generation is not None:
+        payload["expected_generation"] = request.expected_generation
     return payload
 
 
@@ -1161,12 +1163,15 @@ def place_group_request_from_wire(value: Any) -> PlaceGroupRequest:
     data = _strict_fields(
         value,
         required={"group_id", "index"},
-        optional={"parent_id"},
+        optional={"parent_id", "expected_generation"},
         context="place group request",
     )
     parent_id = data.get("parent_id")
     if parent_id is not None and type(parent_id) is not str:
         raise ValueError("group parent id must be a string or null")
+    generation = data.get("expected_generation")
+    if generation is not None:
+        generation = _integer(generation, "expected generation")
     return PlaceGroupRequest(
         group_id=GroupId(_identifier(data["group_id"], "group id")),
         parent_id=(
@@ -1175,6 +1180,7 @@ def place_group_request_from_wire(value: Any) -> PlaceGroupRequest:
             else None
         ),
         index=_integer(data["index"], "group placement index"),
+        expected_generation=generation,
     )
 
 

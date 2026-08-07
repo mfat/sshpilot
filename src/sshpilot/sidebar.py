@@ -2428,6 +2428,7 @@ def setup_connection_list_dnd(window):
     window._drop_group_parent_id = None
     window._drop_group_index = None
     window._drop_group_tree_target_set = False
+    window._drop_group_generation = None
     window._drop_placeholder_row = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
@@ -2711,10 +2712,18 @@ def _group_reorder_position_from_y(row, y, listbox=None) -> str:
         return "above"
 
 
+def _sidebar_projection_generation(window) -> Optional[int]:
+    """Generation of the authoritative projection backing the group sidebar."""
+    connection_manager = getattr(window, "connection_manager", None)
+    snapshot = getattr(connection_manager, "snapshot", lambda: None)()
+    return getattr(snapshot, "generation", None)
+
+
 def _set_group_tree_drop_target(window, parent_id, index: int) -> None:
     window._drop_group_parent_id = parent_id
     window._drop_group_index = index
     window._drop_group_tree_target_set = True
+    window._drop_group_generation = _sidebar_projection_generation(window)
 
 
 def _tree_target_insert_before(manager, group_id: str) -> tuple:
@@ -3151,6 +3160,7 @@ def _clear_drop_indicator(window):
         window._drop_group_parent_id = None
         window._drop_group_index = None
         window._drop_group_tree_target_set = False
+        window._drop_group_generation = None
     except Exception as e:
         logger.error(f"Error clearing drop indicator: {e}")
         _remove_drop_placeholder(window)
@@ -3159,6 +3169,7 @@ def _clear_drop_indicator(window):
         window._drop_group_parent_id = None
         window._drop_group_index = None
         window._drop_group_tree_target_set = False
+        window._drop_group_generation = None
 
 
 def _sidebar_allows_inplace_dnd(window) -> bool:
@@ -3475,13 +3486,15 @@ def _show_sidebar_dnd_error(window, error):
         logger.error("Sidebar DnD failed: %s", error)
 
 
-def _submit_group_dnd_place(window, group_id, parent_id, index):
+def _submit_group_dnd_place(window, group_id, parent_id, index,
+                            expected_generation=None):
     from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
 
     request = PlaceGroupRequest(
         group_id=GroupId(group_id),
         parent_id=GroupId(parent_id) if parent_id else None,
         index=index,
+        expected_generation=expected_generation,
     )
     operation = lambda: window.client.place_group(request)
     controller = getattr(window.group_manager, "controller", None)
@@ -3584,6 +3597,7 @@ def _on_connection_list_drop(window, target, value, x, y):
         drop_parent_id = getattr(window, "_drop_group_parent_id", None)
         drop_index = getattr(window, "_drop_group_index", None)
         drop_tree_target_set = getattr(window, "_drop_group_tree_target_set", False)
+        drop_generation = getattr(window, "_drop_group_generation", None)
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
@@ -3766,7 +3780,10 @@ def _on_connection_list_drop(window, target, value, x, y):
                                         source_group.get("parent_id")
                                         if source_group else None
                                     )
-                                    if _submit_group_dnd_place(window, group_id, parent_id, index):
+                                    if _submit_group_dnd_place(
+                                        window, group_id, parent_id, index,
+                                        expected_generation=_sidebar_projection_generation(window),
+                                    ):
                                         return True
                             elif drop_tree_target_set:
                                 old_parent = (
@@ -3774,7 +3791,8 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     if source_group else None
                                 )
                                 if _submit_group_dnd_place(
-                                    window, group_id, drop_parent_id, drop_index
+                                    window, group_id, drop_parent_id, drop_index,
+                                    expected_generation=drop_generation,
                                 ):
                                     return True
                             elif indicator_pos in ("above", "below"):
@@ -3791,7 +3809,8 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     if source_group else None
                                 )
                                 if _submit_group_dnd_place(
-                                    window, group_id, parent_id, index
+                                    window, group_id, parent_id, index,
+                                    expected_generation=_sidebar_projection_generation(window),
                                 ):
                                     return True
                         else:

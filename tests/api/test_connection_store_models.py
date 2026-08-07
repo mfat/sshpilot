@@ -365,8 +365,19 @@ def test_move_connections_constructs_and_rejects_invalid_targets():
 
 
 def test_place_group_constructs():
-    request = PlaceGroupRequest(group_id=GroupId("a"), parent_id=GroupId("b"), index=0)
+    request = PlaceGroupRequest(
+        group_id=GroupId("a"),
+        parent_id=GroupId("b"),
+        index=0,
+        expected_generation=7,
+    )
     assert request.index == 0
+    assert request.expected_generation == 7
+
+
+def test_place_group_constructs_without_generation():
+    request = PlaceGroupRequest(group_id=GroupId("a"), parent_id=None, index=0)
+    assert request.expected_generation is None
 
 
 def test_place_group_rejects_negative_index():
@@ -377,6 +388,20 @@ def test_place_group_rejects_negative_index():
 def test_place_group_rejects_bool_index():
     with pytest.raises(ValueError):
         PlaceGroupRequest(group_id=GroupId("a"), parent_id=None, index=True)
+
+
+def test_place_group_rejects_negative_generation():
+    with pytest.raises(ValueError):
+        PlaceGroupRequest(
+            group_id=GroupId("a"), parent_id=None, index=0, expected_generation=-1
+        )
+
+
+def test_place_group_rejects_bool_generation():
+    with pytest.raises(ValueError):
+        PlaceGroupRequest(
+            group_id=GroupId("a"), parent_id=None, index=0, expected_generation=True
+        )
 
 
 def test_copy_connection_to_group_constructs():

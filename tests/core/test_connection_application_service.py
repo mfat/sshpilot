@@ -258,7 +258,12 @@ class FakeRepository(ConnectionRepositoryProtocol):
         return self._groups[group_id]
 
     def place_group(
-        self, group_id: str, parent_id: Optional[str], index: int
+        self,
+        group_id: str,
+        parent_id: Optional[str],
+        index: int,
+        *,
+        expected_generation: Optional[int] = None,
     ) -> GroupRecord:
         self.calls.append("place_group")
         self._groups[group_id].parent_id = parent_id

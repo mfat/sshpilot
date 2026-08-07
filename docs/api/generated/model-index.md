@@ -2469,11 +2469,13 @@ Synthetic representation:
 | `group_id` | `GroupId` | Yes | — | No |
 | `parent_id` | `Optional[GroupId]` | Yes | — | No |
 | `index` | `int` | Yes | — | No |
+| `expected_generation` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "expected_generation": null,
   "group_id": {},
   "index": {},
   "parent_id": {}

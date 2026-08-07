@@ -100,6 +100,53 @@ def test_place_group_orders_siblings(tmp_path):
     assert (g2s.order, g2s.id) < (g1s.order, g1s.id)
 
 
+def test_place_group_reorder_with_current_generation_succeeds(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    parent = repo.create_group("Parent")
+    g2 = repo.create_group("G2")
+    before = repo.snapshot()
+    repo.place_group(g2.id, parent.id, 0, expected_generation=before.generation)
+    snap = repo.snapshot()
+    assert snap.generation == before.generation + 1
+
+
+def test_place_group_reparent_with_current_generation_succeeds(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    parent = repo.create_group("Parent")
+    child = repo.create_group("Child")
+    before = repo.snapshot()
+    repo.place_group(child.id, parent.id, 0, expected_generation=before.generation)
+    snap = repo.snapshot()
+    placed = next(g for g in snap.groups if g.id == child.id)
+    assert placed.parent_id == parent.id
+
+
+def test_stale_place_group_reorder_does_not_mutate(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    parent = repo.create_group("Parent")
+    g2 = repo.create_group("G2")
+    before = repo.snapshot()
+    with pytest.raises(CoreError) as exc:
+        repo.place_group(
+            g2.id, parent.id, 0, expected_generation=before.generation - 1
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert repo.snapshot() == before
+
+
+def test_stale_place_group_reparent_does_not_mutate(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    parent = repo.create_group("Parent")
+    child = repo.create_group("Child")
+    before = repo.snapshot()
+    with pytest.raises(CoreError) as exc:
+        repo.place_group(
+            child.id, parent.id, 0, expected_generation=before.generation - 1
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert repo.snapshot() == before
+
+
 def test_place_group_rejects_cycle(tmp_path):
     repo, root, state = _repo(tmp_path)
     parent = repo.create_group("Parent")
