@@ -6711,13 +6711,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         dialog._daemon_generation = int(new_generation)
                 except Exception:
                     pass
-                try:
-                    self._prompt_reconnect_after_daemon_save(
-                        new_conn_id,
-                        connection_data.get('nickname'),
-                    )
-                except Exception:
-                    pass
+                if getattr(_details, 'changed', True):
+                    try:
+                        self._prompt_reconnect_after_daemon_save(
+                            new_conn_id,
+                            connection_data.get('nickname'),
+                        )
+                    except Exception:
+                        pass
                 
                 try:
                     conf = getattr(self.connection_manager, 'config', None)
@@ -6823,9 +6824,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 or getattr(terminal, 'is_connected', False) is False
             ):
                 continue
-            active_id = getattr(active_connection, 'id', None)
+            active_ids = {
+                str(value)
+                for value in (
+                    getattr(active_connection, 'id', None),
+                    getattr(active_connection, 'connection_id', None),
+                    getattr(active_connection, 'uuid', None),
+                )
+                if value is not None
+            }
             active_nickname = getattr(active_connection, 'nickname', '')
-            if str(active_id) != connection_id and active_nickname != nickname:
+            if str(connection_id) not in active_ids and active_nickname != nickname:
                 continue
             try:
                 active_connection._terminal_instance = terminal
@@ -6895,6 +6904,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if dialog.is_editing:
                 # Update existing connection
                 old_connection = dialog.connection
+                before_config_fingerprint = self._normalise_daemon_editor_value(
+                    getattr(old_connection, 'data', {}) or {}
+                )
                 is_connected = old_connection in self.active_terminals
 
                 # Store the current terminal instance if connected
@@ -6955,9 +6967,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 logger.info(f"Updated connection: {old_connection.nickname}")
 
-                # If the connection is active, ask if user wants to reconnect
-                if is_connected and terminal is not None:
-                    # Store the terminal in the connection for later use
+                after_config_fingerprint = self._normalise_daemon_editor_value(
+                    connection_data
+                )
+                if (
+                    before_config_fingerprint != after_config_fingerprint
+                    and is_connected
+                    and terminal is not None
+                ):
                     old_connection._terminal_instance = terminal
                     self.terminal_manager.prompt_reconnect(old_connection)
                 _complete_save(True)

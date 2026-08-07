@@ -81,6 +81,7 @@ class _ProjectionWindow:
 
 class _MutationWindow:
     _daemon_mode_active = MainWindow._daemon_mode_active
+    _prompt_reconnect_after_daemon_save = MainWindow._prompt_reconnect_after_daemon_save
     _normalise_daemon_editor_value = staticmethod(
         MainWindow._normalise_daemon_editor_value
     )
@@ -122,6 +123,39 @@ class _MutationWindow:
 
     def _error_dialog(self, title, message):
         self.errors.append((title, message))
+
+
+def test_noop_daemon_mutation_result_does_not_prompt_reconnect():
+    window = _MutationWindow()
+    prompts = []
+    window.active_terminals = {}
+    window.terminal_manager = SimpleNamespace(prompt_reconnect=lambda connection: prompts.append(connection))
+    window._prompt_reconnect_after_daemon_save("demo", "demo")
+    assert prompts == []
+
+
+def test_daemon_reconnect_matches_authoritative_connection_id():
+    window = _MutationWindow()
+    class _ActiveConnection:
+        connection_id = "demo"
+        nickname = "renamed"
+
+    active = _ActiveConnection()
+    terminal = SimpleNamespace(is_connected=True)
+    prompts = []
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = SimpleNamespace(prompt_reconnect=lambda connection: prompts.append(connection))
+    window._prompt_reconnect_after_daemon_save("demo", "new-name")
+    assert prompts == [active]
+
+
+def test_daemon_mutation_result_changed_field_controls_prompt():
+    from sshpilot.api.models.connections import ConnectionMutationResult
+
+    changed = ConnectionMutationResult("demo", "demo", 2, changed=True, changed_fields=("hostname",))
+    unchanged = ConnectionMutationResult("demo", "demo", 2, changed=False)
+    assert changed.changed is True
+    assert unchanged.changed is False
 
 
 def test_daemon_mode_detection_matches_current_mode_less_selection():

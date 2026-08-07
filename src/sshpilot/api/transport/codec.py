@@ -1584,15 +1584,29 @@ def connection_mutation_result_to_wire(result: Any) -> Dict[str, Any]:
         "connection_id": result.connection_id,
         "nickname": result.nickname,
         "generation": result.generation,
+        "changed": result.changed,
+        "changed_fields": list(result.changed_fields),
     }
+
 
 def connection_mutation_result_from_wire(value: Any) -> Any:
     from ..models.connections import ConnectionMutationResult
-    data = _strict_fields(value, context="ConnectionMutationResult", required={"connection_id", "nickname", "generation"})
+    data = _strict_fields(
+        value,
+        context="ConnectionMutationResult",
+        required={"connection_id", "nickname", "generation"},
+        optional={"changed", "changed_fields"},
+    )
+    changed = data.get("changed", True)
+    fields = data.get("changed_fields", [])
+    if type(changed) is not bool or type(fields) is not list:
+        raise ValueError("invalid connection mutation change metadata")
     return ConnectionMutationResult(
         connection_id=_text(data["connection_id"], "connection_id"),
         nickname=_text(data["nickname"], "nickname"),
         generation=_integer(data["generation"], "generation"),
+        changed=changed,
+        changed_fields=tuple(_text(item, "changed field") for item in fields),
     )
 
 def connection_details_from_wire(value: Any) -> ConnectionDetails:

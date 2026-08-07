@@ -281,6 +281,8 @@ class ConnectionMutationResult:
     connection_id: str
     nickname: str
     generation: int
+    changed: bool = True
+    changed_fields: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
@@ -288,6 +290,14 @@ class ConnectionMutationResult:
             raise ValueError("connection nickname must not be empty")
         if self.generation < 0:
             raise ValueError("generation must not be negative")
+        if type(self.changed) is not bool:
+            raise TypeError("changed must be a boolean")
+        if type(self.changed_fields) is not tuple:
+            raise TypeError("changed fields must be a tuple")
+        if any(type(field) is not str or not field.strip() for field in self.changed_fields):
+            raise ValueError("changed fields must contain non-empty strings")
+        if not self.changed and self.changed_fields:
+            raise ValueError("unchanged result must not contain changed fields")
 
 
 @dataclass(frozen=True)

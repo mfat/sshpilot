@@ -55,6 +55,20 @@ def test_create_update_delete_have_shared_behaviour(fake_repo, client_factory):
 
     assert updated.connection_id == "renamed"
     assert updated.nickname == "renamed"
+    assert updated.changed is True
+    assert "nickname" in updated.changed_fields
+    assert "hostname" in updated.changed_fields
+
+    noop = client.update_connection(
+        updated.connection_id,
+        UpdateConnectionRequest(
+            nickname="renamed",
+            hostname="renamed.example",
+        ),
+    )
+    assert noop.changed is False
+    assert noop.changed_fields == ()
+    assert noop.generation == updated.generation
 
     deleted = client.delete_connection(
         DeleteConnectionRequest(connection_id=updated.connection_id)

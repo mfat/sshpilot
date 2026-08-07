@@ -888,7 +888,14 @@ class ConnectionApplicationService:
                 "Plugin connections cannot contain SSH configuration",
                 connection_id=connection_id,
             )
+        before_data = dict(record.data or {})
         data = dict(record.data or {})
+        compared_fields = set(request.config_patch or {})
+        compared_fields.update(
+            name for name in ("nickname", "hostname", "username", "port")
+            if getattr(request, name) is not None and getattr(request, name) is not UNSET
+        )
+        compared_fields.update(request.plugin_data or {})
         for name in ("nickname", "hostname", "username", "port"):
             value = getattr(request, name)
             if value is not None and value is not UNSET:
@@ -917,10 +924,18 @@ class ConnectionApplicationService:
         except Exception:
             logger.exception("Repository update failed")
             raise self._persistence_error(connection_id)
+        after_data = dict(updated.data or {})
+        changed_fields = tuple(sorted(
+            field for field in compared_fields
+            if field not in {"id", "source", "generation"}
+            and before_data.get(field) != after_data.get(field)
+        ))
         return ConnectionMutationResult(
             connection_id=updated.id,
             nickname=updated.nickname,
             generation=updated.generation,
+            changed=bool(changed_fields),
+            changed_fields=changed_fields,
         )
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
