@@ -72,11 +72,14 @@ class _Process:
 class _Popen:
     def __init__(self, processes):
         self.processes = list(processes)
+        self.started = []
         self.calls = []
 
     def __call__(self, argv, **kwargs):
         self.calls.append((tuple(argv), kwargs))
-        return self.processes.pop(0)
+        process = self.processes.pop(0)
+        self.started.append(process)
+        return process
 
 
 def _request(**overrides):
@@ -117,6 +120,48 @@ def test_native_backend_builds_literal_multi_source_argv_without_shell():
     assert "secret-token" in kwargs["env"]["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
     assert broker.cancelled
     assert "secret-token" not in repr(_request())
+
+
+def test_native_backend_drains_large_stderr_without_deadlock():
+    provider = _Provider()
+    broker = _Broker()
+    large = b"x" * (128 * 1024)
+    popen = _Popen([_Process(returncode=0, stderr=large)])
+    backend = NativeScpBackend(provider, broker, popen=popen)
+
+    result = backend.run(
+        _request(sources=("/tmp/source",)),
+        connection_target="alice@example.test",
+        connection_id=ConnectionId("demo"),
+        cancel_event=threading.Event(),
+    )
+
+    assert result.returncode == 0
+    assert len(result.stderr) <= 64 * 1024
+    import subprocess
+    assert popen.calls[0][1]["stdout"] is subprocess.DEVNULL
+
+
+def test_native_backend_marks_modern_and_legacy_process_groups():
+    provider = _Provider()
+    broker = _Broker()
+    popen = _Popen([
+        _Process(returncode=1, stderr=b"subsystem request failed"),
+        _Process(returncode=0),
+    ])
+    backend = NativeScpBackend(provider, broker, popen=popen)
+
+    backend.run(
+        _request(sources=("/tmp/source",)),
+        connection_target="alice@example.test",
+        connection_id=ConnectionId("demo"),
+        cancel_event=threading.Event(),
+    )
+
+    assert all(getattr(process, "_sshpilot_process_group", False)
+               for process in popen.started)
+    assert popen.calls[0][1]["start_new_session"] is True
+    assert popen.calls[1][1]["start_new_session"] is True
 
 
 def test_native_backend_retries_once_with_legacy_protocol_for_sftp_failure():

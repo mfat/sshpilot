@@ -20,6 +20,29 @@ from sshpilot.api.transport.codec import (
 )
 
 
+def test_scp_default_policy_is_overwrite_and_other_policies_are_rejected():
+    default = StartScpTransferRequest(
+        connection_id=ConnectionId("demo"),
+        direction=TransferDirection.UPLOAD,
+        sources=("/tmp/source",),
+        destination="/remote/drop",
+    )
+    assert default.conflict_policy is TransferConflictPolicy.OVERWRITE
+    for policy in (
+        TransferConflictPolicy.FAIL,
+        TransferConflictPolicy.SKIP,
+        TransferConflictPolicy.RENAME,
+    ):
+        with pytest.raises(ValueError, match="overwrite only"):
+            StartScpTransferRequest(
+                connection_id=ConnectionId("demo"),
+                direction=TransferDirection.UPLOAD,
+                sources=("/tmp/source",),
+                destination="/remote/drop",
+                conflict_policy=policy,
+            )
+
+
 def test_scp_request_round_trips_multiple_sources_and_recursive():
     request = StartScpTransferRequest(
         connection_id=ConnectionId("demo"),

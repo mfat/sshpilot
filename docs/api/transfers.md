@@ -13,10 +13,16 @@ see [methods.md](methods.md).
 
 ## Behavior
 
-* Uses an existing READY SFTP service.
-* Progress is monotonic; conflict policy via `core.transfers.decide_conflict`.
-* Cancel reaches `CANCELLED`; atomic temp files (`_TEMP_PREFIX`) cleaned.
-* Final rename only after success.
+* `start_transfer` uses an existing READY SFTP service; its generic conflict
+  policies and atomic temporary-file behavior apply only to SFTP transfers.
+* Native `start_scp_transfer` uses daemon-owned system `scp`, reports indeterminate
+  progress when byte totals are unavailable, and is overwrite-only. `fail`,
+  `skip`, and `rename` conflict policies are rejected for native SCP.
+* Cancellation supervises the native process group and reports `CANCELLED` only
+  after the child is reaped. Modern SCP retries once with `-O` only for strong
+  SFTP-subsystem negotiation failures.
+* SFTP final rename and temporary-file cleanup semantics do not imply portable
+  atomicity for native SCP.
 
 ## Ownership / retention / concurrency
 

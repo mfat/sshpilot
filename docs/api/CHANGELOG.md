@@ -13,8 +13,9 @@ notes remain separate.
   cancellation presentation only; it no longer owns SCP subprocesses, VTE
   execution, authentication environments, argv construction, or remote listing.
   SFTP transfer ownership and general remote operations remain separate and
-  pending.
-
+  pending. Native SCP conflict behavior is overwrite-only; non-overwrite
+  policies are rejected, and process cancellation/terminal observation are
+  daemon-owned.
 
 - Restored the raw SSH config editor with daemon-owned file resolution and
   writing. Added `connections.get_ssh_config_text` and

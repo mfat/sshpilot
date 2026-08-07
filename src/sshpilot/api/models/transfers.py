@@ -151,7 +151,7 @@ class StartScpTransferRequest:
     direction: TransferDirection
     sources: Tuple[str, ...]
     destination: str
-    conflict_policy: TransferConflictPolicy = TransferConflictPolicy.FAIL
+    conflict_policy: TransferConflictPolicy = TransferConflictPolicy.OVERWRITE
     recursive: bool = False
 
     MAX_SOURCES = 64
@@ -174,6 +174,8 @@ class StartScpTransferRequest:
             raise ValueError("SCP paths exceed the encoded size limit")
         if not isinstance(self.conflict_policy, TransferConflictPolicy):
             raise TypeError("conflict_policy must be a TransferConflictPolicy")
+        if self.conflict_policy is not TransferConflictPolicy.OVERWRITE:
+            raise ValueError("native SCP supports overwrite only")
         if type(self.recursive) is not bool:
             raise TypeError("recursive must be a boolean")
 

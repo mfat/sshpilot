@@ -275,9 +275,10 @@ class ScpWindowController:
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
 
-    def _prompt_scp_download(self, connection):
+    def _prompt_scp_download(self, connection, _sftp_service_id=None):
         """Show a typed daemon-backed remote browser for SCP downloads."""
         from .api import Capability
+        from .api.models import ConnectionId
         from .remote_path_utils import (
             _normalize_remote_path, _remote_parent, _remote_join,
         )
@@ -292,21 +293,26 @@ class ScpWindowController:
                 self._show_transfer_error("Remote browsing requires the daemon SFTP service.")
                 return
             display_name = getattr(connection, "nickname", "") or getattr(connection, "host", "")
-            sftp_services = client.list_sftp_services()
-            ready_service = next(
-                (
-                    service for service in sftp_services
-                    if str(service.connection_id) == str(getattr(connection, "id", ""))
-                    and getattr(service.state, "value", service.state) == "ready"
-                ),
-                None,
-            )
-            if ready_service is None:
-                self._show_transfer_error("Open an SFTP service before browsing remote files.")
+            if _sftp_service_id is None:
+                from .sftp_service_controller import DaemonSftpServiceController
+                self._sftp_browser_controller = DaemonSftpServiceController(
+                    client,
+                    bridge,
+                    ConnectionId(str(getattr(connection, "id", ""))),
+                    on_ready=lambda summary: self._prompt_scp_download(
+                        connection, summary.id
+                    ),
+                    on_error=lambda error: self._show_transfer_error(str(error)),
+                )
+                self._sftp_browser_controller.open()
                 return
-            sftp_service_id = ready_service.id
+            sftp_service_id = _sftp_service_id
             default_download_dir = self._scp_download_default_dir()
             dialog = ScpDownloadWindow(self.window, subtitle=display_name)
+            dialog.connect(
+                "close-request",
+                lambda *_args: self._close_sftp_browser_controller(),
+            )
             # Register with the app so routed askpass prompts can find this
             # modal window as their parent (a bare Adw.Window is absent from
             # Gtk.Application.get_windows() and get_active_window()).
@@ -837,7 +843,13 @@ class ScpWindowController:
     def start_scp_transfer(self, connection, sources, destination, *, direction: str):
         """Start native SCP through the daemon transfer API."""
         from .api import Capability
-        from .api.models import StartScpTransferRequest, TransferDirection
+        from .api.models import (
+            CancelTransferRequest,
+            StartScpTransferRequest,
+            TransferConflictPolicy,
+            TransferDirection,
+            TransferState,
+        )
 
         client = getattr(self.window, "client", None)
         bridge = getattr(self.window, "client_bridge", None)
@@ -855,6 +867,7 @@ class ScpWindowController:
                 direction=TransferDirection(direction),
                 sources=tuple(str(source) for source in sources),
                 destination=str(destination),
+                conflict_policy=TransferConflictPolicy.OVERWRITE,
                 recursive=direction == "download" or any(
                     os.path.isdir(str(source)) for source in sources
                 ),
@@ -873,34 +886,89 @@ class ScpWindowController:
         content_box.append(status)
         transfer_id = {"value": None}
         closed = {"value": False}
+        cancel_requested = {"value": False}
+        event_subscription = {"value": None}
+
+        def stop_observing():
+            subscription = event_subscription["value"]
+            event_subscription["value"] = None
+            if subscription is not None:
+                try:
+                    subscription.unsubscribe()
+                except Exception:
+                    pass
+
+        def on_transfer_summary(summary):
+            if summary.id != transfer_id["value"]:
+                return
+            state = summary.state
+            if state in {TransferState.COMPLETED, TransferState.FAILED, TransferState.CANCELLED}:
+                stop_observing()
+                if state is TransferState.COMPLETED:
+                    status.set_text("Completed")
+                elif state is TransferState.CANCELLED:
+                    status.set_text("Cancelled")
+                else:
+                    failure = getattr(summary.failure, "message", "The transfer failed")
+                    status.set_text(f"Failed: {failure}")
+            elif state is TransferState.STARTING:
+                status.set_text("Starting…")
+            elif state is TransferState.CANCELLING:
+                status.set_text("Cancelling…")
+            else:
+                status.set_text("Uploading…" if direction == "upload" else "Downloading…")
+
+        def ensure_observing():
+            if event_subscription["value"] is not None:
+                return
+            subscribe = getattr(client, "subscribe_events", None)
+            if not callable(subscribe):
+                return
+            try:
+                event_subscription["value"] = subscribe(
+                    lambda event: GLib.idle_add(
+                        lambda: (on_transfer_summary(event.payload), False)[1]
+                        if getattr(event.payload, "id", None) == transfer_id["value"]
+                        else False
+                    )
+                )
+            except Exception:
+                logger.debug("SCP transfer event subscription failed", exc_info=True)
+
+        def cancel_active_transfer():
+            current = transfer_id["value"]
+            if not current or cancel_requested["value"]:
+                return
+            cancel_requested["value"] = True
+            try:
+                bridge.submit(
+                    lambda: client.cancel_transfer(
+                        CancelTransferRequest(transfer_id=current)
+                    ),
+                    on_success=lambda _result: None,
+                    on_error=lambda error: logger.debug(
+                        "SCP cancellation failed type=%s", type(error).__name__
+                    ),
+                )
+            except RuntimeError:
+                pass
 
         def finish_close(*_args):
             closed["value"] = True
-            current = transfer_id["value"]
-            if current:
-                try:
-                    bridge.submit(
-                        lambda: client.cancel_transfer(
-                            __import__("sshpilot.api.models", fromlist=["CancelTransferRequest"])
-                            .CancelTransferRequest(transfer_id=current)
-                        ),
-                        on_success=lambda _result: None,
-                        on_error=lambda error: logger.debug(
-                            "SCP cancellation failed type=%s", type(error).__name__
-                        ),
-                    )
-                except RuntimeError:
-                    pass
+            stop_observing()
+            cancel_active_transfer()
 
         dlg.connect("closed", finish_close)
         dlg.present(self.window)
         status.set_text("Starting SCP transfer…")
 
         def on_started(summary):
-            if closed["value"]:
-                return
             transfer_id["value"] = summary.id
-            status.set_text("Uploading…" if direction == "upload" else "Downloading…")
+            ensure_observing()
+            if closed["value"]:
+                cancel_active_transfer()
+                return
+            on_transfer_summary(summary)
 
         def on_failed(error):
             if not closed["value"]:
@@ -915,6 +983,15 @@ class ScpWindowController:
             )
         except RuntimeError as error:
             on_failed(error)
+
+    def _close_sftp_browser_controller(self) -> None:
+        controller = getattr(self, "_sftp_browser_controller", None)
+        self._sftp_browser_controller = None
+        if controller is not None:
+            try:
+                controller.close()
+            except Exception:
+                logger.debug("SCP browser SFTP controller close failed", exc_info=True)
 
     def _show_transfer_error(self, message: str) -> None:
         logger.error("SCP transfer unavailable: %s", message)

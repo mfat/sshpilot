@@ -724,10 +724,14 @@ class TransferRuntime:
 
     def _finish_completed(self, record: _TransferRecord) -> None:
         with self._lock:
-            if record.state not in {TransferState.RUNNING, TransferState.STARTING}:
+            if record.state is TransferState.CANCELLING:
+                record.completed_at = self._clock()
+                event = self._transition_locked(record, TransferState.CANCELLED)
+            elif record.state in {TransferState.RUNNING, TransferState.STARTING}:
+                record.completed_at = self._clock()
+                event = self._transition_locked(record, TransferState.COMPLETED)
+            else:
                 return
-            record.completed_at = self._clock()
-            event = self._transition_locked(record, TransferState.COMPLETED)
         self._publish((event,))
 
     def _finish_cancelled(self, record: _TransferRecord) -> None:
@@ -807,6 +811,8 @@ class TransferRuntime:
             for record in self._records.values():
                 if record.state not in _TERMINAL_STATES:
                     record.cancel_requested = True
+                    if record.scp_cancel_event is not None:
+                        record.scp_cancel_event.set()
             threads = tuple(self._worker_threads.values())
         deadline = self._monotonic() + self._shutdown_timeout_seconds
         for thread in threads:

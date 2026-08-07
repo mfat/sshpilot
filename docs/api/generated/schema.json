@@ -5640,7 +5640,7 @@
           "type": "str"
         },
         {
-          "default": "fail",
+          "default": "overwrite",
           "name": "conflict_policy",
           "required": false,
           "sensitive": false,

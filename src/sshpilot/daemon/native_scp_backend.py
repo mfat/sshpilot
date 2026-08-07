@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import threading
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
@@ -19,12 +20,48 @@ from sshpilot.transfer_scp import (
 )
 
 _MAX_STDERR_BYTES = 64 * 1024
+_DRAIN_CHUNK_BYTES = 8192
 
 
 @dataclass(frozen=True)
 class ScpProcessResult:
     returncode: int
     stderr: str
+
+
+class _BoundedStderr:
+    def __init__(self, stream) -> None:
+        self._stream = stream
+        self._lock = threading.Lock()
+        self._tail = bytearray()
+        self._done = threading.Event()
+        self._thread = threading.Thread(
+            target=self._drain,
+            name="sshpilot-scp-stderr",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _drain(self) -> None:
+        try:
+            while True:
+                chunk = self._stream.read(_DRAIN_CHUNK_BYTES)
+                if not chunk:
+                    return
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8", "replace")
+                with self._lock:
+                    self._tail.extend(chunk)
+                    if len(self._tail) > _MAX_STDERR_BYTES:
+                        del self._tail[:-_MAX_STDERR_BYTES]
+        finally:
+            self._done.set()
+
+    def finish(self, timeout: float) -> str:
+        self._done.wait(max(0.0, timeout))
+        self._thread.join(timeout=max(0.0, timeout))
+        with self._lock:
+            return bytes(self._tail).decode("utf-8", "replace")
 
 
 class NativeScpBackend:
@@ -80,6 +117,11 @@ class NativeScpBackend:
         connection_id,
         cancel_event,
     ) -> ScpProcessResult:
+        if request.conflict_policy.value != "overwrite":
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "native SCP supports overwrite only",
+            )
         sources, destination = self.build_operands(request, connection_target)
         extra_args = list(sources)
         if request.recursive:
@@ -90,74 +132,89 @@ class NativeScpBackend:
             interaction_policy="broker",
             target_override=destination,
         )
-        argv = tuple(base_argv)
         scope_id = SessionId(f"scp-{connection_id}-{id(cancel_event)}")
-        env = dict(base_env)
         argv, env = self._interaction_broker.prepare_operation_launch(
-            argv,
-            env,
+            tuple(base_argv),
+            dict(base_env),
             scope_id=scope_id,
             connection_id=connection_id,
             hostname=connection_target,
         )
         try:
-            return self._run_once(
+            result = self._run_attempt(
                 argv,
                 env,
-                scope_id=scope_id,
                 cancel_event=cancel_event,
             )
+            if result.returncode == 0:
+                return result
+            if cancel_event.is_set():
+                raise SshPilotError(
+                    ErrorCode.OPERATION_CANCELLED,
+                    "The SCP transfer was cancelled",
+                )
+            if classify_sftp_error(result.stderr):
+                legacy_argv = insert_legacy_scp_flag(list(argv))
+                legacy = self._run_attempt(
+                    legacy_argv,
+                    env,
+                    cancel_event=cancel_event,
+                )
+                if legacy.returncode == 0:
+                    return legacy
+                if cancel_event.is_set():
+                    raise SshPilotError(
+                        ErrorCode.OPERATION_CANCELLED,
+                        "The SCP transfer was cancelled",
+                    )
+                if legacy_scp_flag_unsupported(legacy.stderr):
+                    raise self._failure(result.stderr)
+                raise self._failure(legacy.stderr)
+            raise self._failure(result.stderr)
         finally:
             self._interaction_broker.cancel_session(scope_id)
 
-    def _run_once(
+    def _run_attempt(
         self,
         argv: Sequence[str],
         env: Mapping[str, str],
         *,
-        scope_id: str,
         cancel_event,
     ) -> ScpProcessResult:
         process = None
+        stderr_reader = None
         try:
             process = self._popen(
                 list(argv),
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 env=dict(env),
                 start_new_session=(os.name != "nt"),
                 shell=False,
             )
             setattr(process, "_sshpilot_process_group", os.name != "nt")
+            stderr_reader = _BoundedStderr(process.stderr)
             while True:
+                returncode = process.poll()
+                if returncode is not None:
+                    break
                 if cancel_event.is_set():
-                    self._terminate(process)
+                    if process.poll() is None:
+                        self._terminate(process)
+                    returncode = self._reap(process)
+                    stderr = stderr_reader.finish(self._wait_timeout)
                     raise SshPilotError(
                         ErrorCode.OPERATION_CANCELLED,
                         "The SCP transfer was cancelled",
                     )
-                returncode = process.poll()
-                if returncode is not None:
-                    break
-                if hasattr(process, "wait"):
-                    try:
-                        returncode = process.wait(timeout=0.05)
-                        break
-                    except subprocess.TimeoutExpired:
-                        continue
-            stderr = self._read_stderr(process)
-            if returncode != 0:
-                friendly = classify_sftp_error(stderr)
-                if friendly and not legacy_scp_flag_unsupported(stderr):
-                    legacy_argv = insert_legacy_scp_flag(list(argv))
-                    return self._run_legacy(
-                        legacy_argv,
-                        env,
-                        cancel_event=cancel_event,
-                    )
-                raise self._failure(stderr)
-            return ScpProcessResult(returncode=0, stderr=stderr)
+                try:
+                    process.wait(timeout=0.05)
+                except subprocess.TimeoutExpired:
+                    continue
+            returncode = self._reap(process)
+            stderr = stderr_reader.finish(self._wait_timeout)
+            return ScpProcessResult(returncode=returncode, stderr=stderr)
         except SshPilotError:
             raise
         except OSError as exc:
@@ -165,56 +222,31 @@ class NativeScpBackend:
                 ErrorCode.TRANSFER_IO_FAILED,
                 "The SCP process could not be started",
             ) from exc
-
-    def _run_legacy(self, argv, env, *, cancel_event):
-        process = self._popen(
-            list(argv),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=dict(env),
-            start_new_session=(os.name != "nt"),
-            shell=False,
-        )
-        try:
-            while True:
-                if cancel_event.is_set():
-                    self._terminate(process)
-                    raise SshPilotError(
-                        ErrorCode.OPERATION_CANCELLED,
-                        "The SCP transfer was cancelled",
-                    )
-                try:
-                    returncode = process.wait(timeout=0.05)
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-            stderr = self._read_stderr(process)
-            if returncode != 0:
-                raise self._failure(stderr)
-            return ScpProcessResult(returncode=0, stderr=stderr)
         finally:
-            if process.poll() is None and cancel_event.is_set():
-                self._terminate(process)
+            if stderr_reader is not None:
+                stderr_reader.finish(self._wait_timeout)
 
-    @staticmethod
-    def _read_stderr(process) -> str:
-        stream = getattr(process, "stderr", None)
-        if stream is None:
-            return ""
-        data = stream.read(_MAX_STDERR_BYTES)
-        if isinstance(data, bytes):
-            data = data.decode("utf-8", "replace")
-        return str(data or "")[-_MAX_STDERR_BYTES:]
+    def _reap(self, process) -> int:
+        result = process.poll()
+        if result is not None:
+            return int(result)
+        try:
+            return int(process.wait(timeout=self._wait_timeout))
+        except Exception:
+            self._terminate(process)
+            try:
+                return int(process.wait(timeout=0.5))
+            except Exception:
+                return int(process.poll() or -9)
 
     @staticmethod
     def _failure(stderr: str) -> SshPilotError:
-        message = "The SCP transfer failed"
-        if classify_sftp_error(stderr):
-            message = classify_sftp_error(stderr)
+        message = classify_sftp_error(stderr) or "The SCP transfer failed"
         return SshPilotError(ErrorCode.TRANSFER_IO_FAILED, message)
 
     def _terminate(self, process) -> None:
+        if process.poll() is not None:
+            return
         if getattr(process, "_sshpilot_process_group", False):
             try:
                 os.killpg(int(process.pid), signal.SIGTERM)
@@ -226,13 +258,19 @@ class NativeScpBackend:
             pass
         try:
             process.wait(timeout=self._wait_timeout)
+            return
         except Exception:
-            if getattr(process, "_sshpilot_process_group", False):
-                try:
-                    os.killpg(int(process.pid), signal.SIGKILL)
-                except Exception:
-                    pass
+            pass
+        if getattr(process, "_sshpilot_process_group", False):
             try:
-                process.kill()
+                os.killpg(int(process.pid), signal.SIGKILL)
             except Exception:
                 pass
+        try:
+            process.kill()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=0.5)
+        except Exception:
+            pass

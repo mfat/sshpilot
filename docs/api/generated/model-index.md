@@ -3526,7 +3526,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** StartScpTransferRequest(connection_id: 'ConnectionId', direction: 'TransferDirection', sources: 'Tuple[str, ...]', destination: 'str', conflict_policy: 'TransferConflictPolicy' = <TransferConflictPolicy.FAIL: 'fail'>, recursive: 'bool' = False)
+**Purpose:** StartScpTransferRequest(connection_id: 'ConnectionId', direction: 'TransferDirection', sources: 'Tuple[str, ...]', destination: 'str', conflict_policy: 'TransferConflictPolicy' = <TransferConflictPolicy.OVERWRITE: 'overwrite'>, recursive: 'bool' = False)
 
 **Related methods:** `start_scp_transfer`
 **Related events:** None
@@ -3537,14 +3537,14 @@ Synthetic representation:
 | `direction` | `TransferDirection` | Yes | — | No |
 | `sources` | `Tuple[str, ...]` | Yes | — | No |
 | `destination` | `str` | Yes | — | No |
-| `conflict_policy` | `TransferConflictPolicy` | No | `fail` | No |
+| `conflict_policy` | `TransferConflictPolicy` | No | `overwrite` | No |
 | `recursive` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
-  "conflict_policy": "fail",
+  "conflict_policy": "overwrite",
   "connection_id": "production",
   "destination": {},
   "direction": {},

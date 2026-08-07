@@ -4055,7 +4055,7 @@ def scp_transfer_request_from_wire(value: Any) -> StartScpTransferRequest:
         raise ValueError("SCP transfer request contains an unknown direction") from None
     try:
         conflict_policy = TransferConflictPolicy(
-            data.get("conflict_policy", TransferConflictPolicy.FAIL.value)
+            data.get("conflict_policy", TransferConflictPolicy.OVERWRITE.value)
         )
     except (TypeError, ValueError):
         raise ValueError("SCP transfer request contains an unknown conflict policy") from None

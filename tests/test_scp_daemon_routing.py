@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from sshpilot.api import Capability
+from sshpilot.api.models import TransferState
 from sshpilot.scp_window import ScpWindowController
 
 
@@ -18,16 +19,21 @@ class _Client:
         self.capabilities = capabilities
         self.started = []
         self.cancelled = []
+        self.events = []
 
     def get_capabilities(self):
         return self.capabilities
 
     def start_scp_transfer(self, request):
         self.started.append(request)
-        return SimpleNamespace(id="transfer-1")
+        return SimpleNamespace(id="transfer-1", state=TransferState.QUEUED)
 
     def cancel_transfer(self, request):
         self.cancelled.append(request)
+
+    def subscribe_events(self, callback):
+        self.events.append(callback)
+        return SimpleNamespace(unsubscribe=lambda: None)
 
 
 def _controller(client):
@@ -77,6 +83,42 @@ def test_scp_start_uses_typed_client_and_never_local_process(monkeypatch):
     assert client.started[0].sources == ("/tmp/a file",)
     assert client.started[0].destination == "/remote/drop"
     assert not hasattr(controller, "_show_scp_terminal_window")
+
+
+def test_scp_dialog_observes_terminal_transfer_state(monkeypatch):
+    class Label:
+        def set_wrap(self, _value):
+            return None
+
+        def set_halign(self, _value):
+            return None
+
+        def set_text(self, value):
+            self.value = value
+
+    class Dialog:
+        def __init__(self, _title):
+            self.content_box = SimpleNamespace(append=lambda _item: None)
+
+        def connect(self, *_args):
+            return None
+
+        def present(self, *_args):
+            return None
+
+    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", Dialog)
+    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", Label)
+    client = _Client(SimpleNamespace(supports=lambda capability: capability is Capability.TRANSFERS_SCP))
+    controller = _controller(client)
+    controller.start_scp_transfer(
+        SimpleNamespace(id="demo", nickname="demo"),
+        ["/tmp/file"],
+        "/remote/drop",
+        direction="upload",
+    )
+    _operation, on_started, _on_error = controller.window.client_bridge.calls[0]
+    on_started(SimpleNamespace(id="transfer-1", state=TransferState.QUEUED))
+    assert client.events
 
 
 def test_scp_start_rejects_missing_capability_without_fallback():

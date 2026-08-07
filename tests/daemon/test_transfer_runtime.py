@@ -183,6 +183,21 @@ class _FakeScpBackend:
         return SimpleNamespace(returncode=0, stderr="")
 
 
+class _BlockingScpBackend(_FakeScpBackend):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.stopped = threading.Event()
+
+    def run(self, request, *, connection_target, connection_id, cancel_event):
+        self.runs.append((request, connection_target, connection_id, cancel_event))
+        self.started.set()
+        while not cancel_event.is_set():
+            self.stopped.wait(0.01)
+        self.stopped.set()
+        raise SshPilotError(ErrorCode.OPERATION_CANCELLED, "cancelled")
+
+
 def _scp_request():
     return StartScpTransferRequest(
         connection_id=ConnectionId("demo"),
@@ -190,6 +205,45 @@ def _scp_request():
         sources=("/tmp/source file",),
         destination="/var/tmp/drop",
     )
+
+
+def test_shutdown_signals_running_scp_and_reaps_worker():
+    owner = ClientId("client:owner")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    backend = _BlockingScpBackend()
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        scp_backend=backend,
+        shutdown_timeout_seconds=1.0,
+    )
+    prepared = transfer_runtime.prepare_start_scp_transfer(
+        _scp_request(), client_id=owner
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    assert backend.started.wait(2)
+
+    transfer_runtime.shutdown()
+
+    assert backend.runs[0][3].is_set()
+    assert backend.stopped.is_set()
+    assert prepared.id not in transfer_runtime._worker_threads
+    assert transfer_runtime._records[prepared.id].state in _TERMINAL_STATES
+    transfer_runtime.shutdown()
+
+
+def test_finish_completed_resolves_cancelling_as_cancelled():
+    owner = ClientId("client:owner")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    backend = _FakeScpBackend()
+    transfer_runtime = TransferRuntime(sftp_runtime, scp_backend=backend)
+    prepared = transfer_runtime.prepare_start_scp_transfer(
+        _scp_request(), client_id=owner
+    )
+    record = transfer_runtime._records[prepared.id]
+    with transfer_runtime._lock:
+        record.state = TransferState.CANCELLING
+    transfer_runtime._finish_completed(record)
+    assert transfer_runtime.get_transfer(prepared.id).state is TransferState.CANCELLED
 
 
 def test_prepare_and_run_scp_transfer_uses_shared_lifecycle_without_sftp():

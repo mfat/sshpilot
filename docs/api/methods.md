@@ -1072,6 +1072,7 @@ Daemon-only lookup by opaque `transfer-<n>` identifier.
 - **Capability / purpose:** `transfers.scp`; start one daemon-owned native OpenSSH SCP upload or download.
 - **Parameters / return:** `StartScpTransferRequest`; returns the shared `TransferSummary` lifecycle DTO.
 - **Errors:** `unsupported_capability`, `invalid_request`, `server_busy`, typed transfer failure, or transport errors.
+- **Behavior:** native SCP is overwrite-only; `fail`, `skip`, and `rename` conflict policies are rejected. GTK observes daemon transfer state through terminal completion.
 - **Security:** sources and destination are bounded typed paths; argv, environment, passwords, passphrases, askpass data, and process handles never cross the API.
 
 ```python

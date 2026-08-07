@@ -16,8 +16,6 @@ _SFTP_UNAVAILABLE_MARKERS = (
     "subsystem sftp",
     "received message too long",
     "eof during negotiation",
-    "channel closed",
-    "connection closed",
 )
 _LEGACY_FLAG_UNSUPPORTED_MARKERS = (
     "unknown option",
