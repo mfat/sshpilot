@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- Added daemon-owned recursive directory transfers. `transfers.start` with
+  `recursive=true` now walks and copies an entire local/remote directory tree
+  inside `TransferRuntime` — per-file atomic temp+rename, cumulative byte
+  progress, the per-file conflict policy (`FAIL` / `OVERWRITE` / `SKIP` /
+  `RENAME`), and mid-tree cancellation. `DaemonSftpManager.upload_directory` /
+  `download_directory` issue a single recursive transfer instead of a
+  frontend-owned walk-and-manifest loop, and the frontend no longer carries a
+  one-shot `ssh <host> <command>` escape hatch for the SFTP manager.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.18`; `PROTOCOL_VERSION` stays `1.0`.
 
 - Added the semantic `sftp.privileged_file` capability. `sftp_read_file` and

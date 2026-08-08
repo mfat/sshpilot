@@ -2622,12 +2622,22 @@ class FileManagerWindow(Adw.Window):
         the file already exists on disk/remote regardless of whether this opens."""
         try:
             is_local = pane is self._left_pane
+            daemon_file_service = None
+            if not is_local:
+                manager = getattr(self, "_manager", None)
+                make_service = getattr(manager, "make_file_editor_service", None) if manager else None
+                if make_service is not None:
+                    try:
+                        daemon_file_service = make_service(path)
+                    except Exception:
+                        logger.debug("Could not build daemon file editor service", exc_info=True)
             editor = RemoteFileEditorWindow(
                 parent=self,
                 file_path=path,
                 file_name=name,
                 is_local=is_local,
                 sftp_manager=None if is_local else getattr(self, "_manager", None),
+                daemon_file_service=daemon_file_service,
                 file_manager_window=self,
             )
             editor.present()

@@ -1873,6 +1873,17 @@ class FilePane(Gtk.Box):
             # Build remote path
             file_path = posixpath.join(self._current_path or "/", entry.name)
             
+            # Prefer the typed daemon read/replace provider (revision-safe) when
+            # the daemon SFTP service is ready; otherwise the editor's existing
+            # download/upload path keeps its current behavior.
+            daemon_file_service = None
+            make_service = getattr(sftp_manager, "make_file_editor_service", None)
+            if make_service is not None:
+                try:
+                    daemon_file_service = make_service(file_path)
+                except Exception:
+                    logger.debug("Could not build daemon file editor service", exc_info=True)
+            
             # Create editor window for remote file
             try:
                 editor = RemoteFileEditorWindow(
@@ -1881,6 +1892,7 @@ class FilePane(Gtk.Box):
                     file_name=entry.name,
                     is_local=False,
                     sftp_manager=sftp_manager,
+                    daemon_file_service=daemon_file_service,
                     file_manager_window=window,
                 )
                 editor.present()

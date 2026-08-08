@@ -1,8 +1,7 @@
 """Transfer policy models (GTK-free).
 
 Daemon runtime executes transfers; GTK renders progress. Both consume these
-shared request/policy models. Recursive transfers are explicitly unsupported
-until implemented end-to-end.
+shared request/policy models.
 """
 from __future__ import annotations
 
@@ -77,11 +76,6 @@ class TransferRequest:
     def validate(self, *, check_local_filesystem: bool = True) -> None:
         from ..errors import CoreError, ErrorCode
 
-        if self.recursive:
-            raise CoreError(
-                ErrorCode.UNSUPPORTED_OPERATION,
-                "Recursive transfers are not implemented",
-            )
         src = self.source.normalized()
         dst = self.destination.normalized()
         if not src.path or _INVALID_REMOTE.search(src.path):
@@ -97,10 +91,16 @@ class TransferRequest:
             if check_local_filesystem:
                 if not os.path.exists(src.path):
                     raise CoreError(ErrorCode.VALIDATION_ERROR, f"Local path does not exist: {src.path}")
-                if not os.path.isfile(src.path):
+                if self.recursive:
+                    if not os.path.isdir(src.path):
+                        raise CoreError(
+                            ErrorCode.VALIDATION_ERROR,
+                            "Upload source must be a directory when recursive",
+                        )
+                elif not os.path.isfile(src.path):
                     raise CoreError(
                         ErrorCode.VALIDATION_ERROR,
-                        "Upload source must be a regular file (recursive not supported)",
+                        "Upload source must be a regular file",
                     )
         elif self.direction == TransferDirection.DOWNLOAD:
             if not src.is_remote or dst.is_remote:

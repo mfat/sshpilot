@@ -185,7 +185,6 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("askpass_utils.py", "subprocess"): "M7",
     ("askpass_utils.py", "ssh_binary"): "M7",
     ("autocomplete.py", "subprocess"): "M7",
-    ("daemon_sftp_backend.py", "subprocess"): "M7",
     ("file_manager/openssh_backend.py", "subprocess"): "M7",
     ("providers/system_agent.py", "subprocess"): "M7",
     ("providers/system_agent.py", "ssh_binary"): "M7",
@@ -494,7 +493,7 @@ def test_backend_ops_debt_matches_exact_baseline():
     from collections import Counter
 
     debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
-    expected = {"M5": 3, "M7": 17, "M8": 1}
+    expected = {"M5": 3, "M7": 16, "M8": 1}
     assert dict(debt) == expected, (
         f"BACKEND_OPS debt changed; expected {expected}, got {dict(debt)}. "
         "Only remove rows as the owning migration lands."

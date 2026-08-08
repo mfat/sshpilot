@@ -138,6 +138,7 @@ class _TransferRecord:
     remote_temp_path: Optional[str] = None
     last_progress_monotonic: float = 0.0
     last_progress_bytes: int = 0
+    recursive: bool = False
     backend: TransferBackend = TransferBackend.SFTP
     scp_request: Optional[StartScpTransferRequest] = None
     scp_cancel_event: Optional[threading.Event] = None
@@ -273,17 +274,10 @@ class TransferRuntime:
 
             if isinstance(exc, CoreError):
                 raise SshPilotError(
-                    ErrorCode.REMOTE_UNSUPPORTED_OPERATION
-                    if "Recursive" in str(exc)
-                    else ErrorCode.INVALID_REQUEST,
+                    ErrorCode.INVALID_REQUEST,
                     str(exc),
                 ) from exc
             raise
-        if request.recursive:
-            raise SshPilotError(
-                ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
-                "Recursive (directory) transfers are not implemented",
-            )
         _client, connection_id = self._sftp_runtime.acquire_active_client(
             request.sftp_service_id, client_id
         )
@@ -307,6 +301,7 @@ class TransferRuntime:
             state=TransferState.QUEUED,
             created_at=now,
             owner_client_id=client_id,
+            recursive=bool(request.recursive),
         )
         with self._lock:
             self._require_accepting_commands_locked()
@@ -459,6 +454,11 @@ class TransferRuntime:
         try:
             if record.backend is TransferBackend.NATIVE_SCP:
                 self._run_scp(record)
+            elif record.recursive:
+                if record.direction is TransferDirection.UPLOAD:
+                    self._run_recursive_upload(record, client)
+                else:
+                    self._run_recursive_download(record, client)
             elif record.direction is TransferDirection.UPLOAD:
                 self._run_upload(record, client)
             else:
@@ -513,42 +513,10 @@ class TransferRuntime:
             record.bytes_completed = record.bytes_total or 0
 
     def _run_download(self, record: _TransferRecord, client) -> None:
-        local_path = self._resolve_local_destination(record)
-        parent = os.path.dirname(local_path) or "."
-        os.makedirs(parent, exist_ok=True)
-        try:
-            attr = client.stat(record.remote_path)
-            with self._lock:
-                record.bytes_total = int(attr.st_size) if attr.st_size is not None else None
-        except Exception:
-            pass
-        fd, temp_path = self._mkstemp(parent)
+        local_path = self._resolve_local_destination(record, record.local_path)
+        copied = self._copy_remote_to_local(record, client, record.remote_path, local_path)
         with self._lock:
-            record.local_temp_path = temp_path
-        offset = 0
-        try:
-            with os.fdopen(fd, "wb") as tmp_file:
-                handle = client.open_handle(record.remote_path, sftp_proto.FXF_READ)
-                try:
-                    while True:
-                        self._check_cancel(record)
-                        chunk = client.read(handle, offset, self._chunk_size)
-                        if not chunk:
-                            break
-                        tmp_file.write(chunk)
-                        offset += len(chunk)
-                        self._report_progress(record, offset)
-                finally:
-                    client.close_handle(handle)
-                tmp_file.flush()
-                os.fsync(tmp_file.fileno())
-            os.replace(temp_path, local_path)
-        except BaseException:
-            self._cleanup_local_temp(record)
-            raise
-        with self._lock:
-            record.local_temp_path = None
-            record.bytes_completed = offset
+            record.bytes_completed = copied
 
     def _run_upload(self, record: _TransferRecord, client) -> None:
         local_path = record.local_path
@@ -559,8 +527,203 @@ class TransferRuntime:
             )
         with self._lock:
             record.bytes_total = os.path.getsize(local_path)
-        destination = self._resolve_remote_destination(record, client)
-        remote_dir = remote_path_dirname(destination)
+        destination = self._resolve_remote_destination(record, client, record.remote_path)
+        copied = self._copy_local_to_remote(record, client, local_path, destination)
+        with self._lock:
+            record.bytes_completed = copied
+
+    # -- recursive transfers ------------------------------------------------
+
+    def _run_recursive_upload(self, record: _TransferRecord, client) -> None:
+        """Copy a local directory tree to a remote destination directory."""
+        local_root = record.local_path
+        if not os.path.isdir(local_root):
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                "The local source directory was not found",
+            )
+        remote_root = record.remote_path
+        self._check_cancel(record)
+
+        directories: List[tuple] = []
+        files: List[tuple] = []
+        total = 0
+        for root, dirs, names in os.walk(local_root):
+            rel_dir = os.path.relpath(root, local_root)
+            remote_dir = remote_root if rel_dir == "." else self._join_remote(remote_root, rel_dir)
+            directories.append(remote_dir)
+            for name in names:
+                local_abs = os.path.join(root, name)
+                remote_path = self._join_remote(remote_dir, name)
+                files.append((local_abs, remote_path))
+                try:
+                    total += os.path.getsize(local_abs)
+                except OSError:
+                    pass
+        with self._lock:
+            record.bytes_total = total
+
+        for remote_dir in directories:
+            self._check_cancel(record)
+            self._ensure_remote_dir(record, client, remote_dir)
+
+        completed = 0
+        for local_abs, remote_path in files:
+            self._check_cancel(record)
+            try:
+                destination = self._resolve_remote_destination(record, client, remote_path)
+            except _TransferSkipped:
+                continue
+            copied = self._copy_local_to_remote(record, client, local_abs, destination, base=completed)
+            completed += copied
+            self._report_progress(record, completed)
+        with self._lock:
+            record.bytes_completed = completed
+
+    def _run_recursive_download(self, record: _TransferRecord, client) -> None:
+        """Copy a remote directory tree to a local destination directory."""
+        remote_root = record.remote_path
+        local_root = record.local_path
+        try:
+            source_attr = client.stat(remote_root)
+        except Exception as exc:
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                "The remote source directory could not be read",
+            ) from exc
+        if not source_attr.is_dir():
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                "The remote source is not a directory",
+            )
+        self._check_cancel(record)
+        try:
+            os.makedirs(local_root, exist_ok=True)
+        except OSError as exc:
+            raise SshPilotError(
+                ErrorCode.TRANSFER_CONFLICT,
+                "The local destination could not be created as a directory",
+            ) from exc
+
+        files: List[tuple] = []
+        total = 0
+        pending: List[tuple] = [(remote_root, local_root)]
+
+        def _walk(remote_dir: str, local_dir: str) -> None:
+            nonlocal total
+            for entry in client.listdir_attr(remote_dir):
+                self._check_cancel(record)
+                child_remote = self._join_remote(remote_dir, entry.filename)
+                child_local = os.path.join(local_dir, entry.filename)
+                if entry.is_dir():
+                    os.makedirs(child_local, exist_ok=True)
+                    pending.append((child_remote, child_local))
+                else:
+                    files.append((child_remote, child_local))
+                    total += entry.st_size or 0
+
+        while pending:
+            self._check_cancel(record)
+            remote_dir, local_dir = pending.pop(0)
+            _walk(remote_dir, local_dir)
+        with self._lock:
+            record.bytes_total = total
+
+        completed = 0
+        for remote_abs, local_abs in files:
+            self._check_cancel(record)
+            parent = os.path.dirname(local_abs) or "."
+            os.makedirs(parent, exist_ok=True)
+            try:
+                destination = self._resolve_local_destination(record, local_abs)
+            except _TransferSkipped:
+                continue
+            copied = self._copy_remote_to_local(record, client, remote_abs, destination, base=completed)
+            completed += copied
+            self._report_progress(record, completed)
+        with self._lock:
+            record.bytes_completed = completed
+
+    @staticmethod
+    def _join_remote(base: str, *parts: str) -> str:
+        result = base.rstrip("/") or "/"
+        for part in parts:
+            cleaned = part.strip("/")
+            if cleaned:
+                result = result.rstrip("/") + "/" + cleaned
+        return result
+
+    def _ensure_remote_dir(self, record: _TransferRecord, client, remote_dir: str) -> None:
+        """Create a remote directory tree for uploads, reusing existing dirs."""
+        try:
+            attr = client.stat(remote_dir)
+            if not attr.is_dir():
+                raise SshPilotError(
+                    ErrorCode.TRANSFER_CONFLICT,
+                    f"A remote file is in the way of a directory: {remote_dir}",
+                )
+            return
+        except sftp_proto.SFTPError as exc:
+            if exc.code not in (sftp_proto.FX_NO_SUCH_FILE, sftp_proto.FX_NOT_A_DIRECTORY):
+                raise
+        except SshPilotError:
+            raise
+        except Exception:
+            pass
+        try:
+            client.mkdir(remote_dir)
+        except Exception as exc:
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                f"The remote directory could not be created: {remote_dir}",
+            ) from exc
+
+    # -- per-file copy (atomic temp + rename) -------------------------------
+
+    def _copy_remote_to_local(
+        self, record: _TransferRecord, client, remote_src: str, local_dst: str, base: int = 0
+    ) -> int:
+        parent = os.path.dirname(local_dst) or "."
+        os.makedirs(parent, exist_ok=True)
+        try:
+            attr = client.stat(remote_src)
+            with self._lock:
+                if record.bytes_total is None:
+                    record.bytes_total = int(attr.st_size) if attr.st_size is not None else None
+        except Exception:
+            pass
+        fd, temp_path = self._mkstemp(parent)
+        with self._lock:
+            record.local_temp_path = temp_path
+        offset = 0
+        try:
+            with os.fdopen(fd, "wb") as tmp_file:
+                handle = client.open_handle(remote_src, sftp_proto.FXF_READ)
+                try:
+                    while True:
+                        self._check_cancel(record)
+                        chunk = client.read(handle, offset, self._chunk_size)
+                        if not chunk:
+                            break
+                        tmp_file.write(chunk)
+                        offset += len(chunk)
+                        self._report_progress(record, base + offset)
+                finally:
+                    client.close_handle(handle)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+            os.replace(temp_path, local_dst)
+        except BaseException:
+            self._cleanup_local_temp(record)
+            raise
+        with self._lock:
+            record.local_temp_path = None
+        return offset
+
+    def _copy_local_to_remote(
+        self, record: _TransferRecord, client, local_src: str, remote_dst: str, base: int = 0
+    ) -> int:
+        remote_dir = remote_path_dirname(remote_dst)
         temp_name = f"{_TEMP_PREFIX}{new_transfer_id()}"
         remote_temp = (
             temp_name if remote_dir in (".", "") else remote_path_join(remote_dir, temp_name)
@@ -573,7 +736,7 @@ class TransferRuntime:
             sftp_proto.FXF_WRITE | sftp_proto.FXF_CREAT | sftp_proto.FXF_TRUNC,
         )
         try:
-            with open(local_path, "rb") as source:
+            with open(local_src, "rb") as source:
                 while True:
                     self._check_cancel(record)
                     chunk = source.read(self._chunk_size)
@@ -581,25 +744,24 @@ class TransferRuntime:
                         break
                     client.write(handle, offset, chunk)
                     offset += len(chunk)
-                    self._report_progress(record, offset)
+                    self._report_progress(record, base + offset)
         except BaseException:
             client.close_handle(handle)
             self._cleanup_remote_temp(record)
             raise
         client.close_handle(handle)
         try:
-            client.posix_rename(remote_temp, destination)
+            client.posix_rename(remote_temp, remote_dst)
         except Exception:
             self._cleanup_remote_temp(record)
             raise
         with self._lock:
             record.remote_temp_path = None
-            record.bytes_completed = offset
+        return offset
 
-    def _resolve_local_destination(self, record: _TransferRecord) -> str:
+    def _resolve_local_destination(self, record: _TransferRecord, path: str) -> str:
         from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
 
-        path = record.local_path
         exists = os.path.exists(path)
         overwrite = {
             TransferConflictPolicy.FAIL: OverwritePolicy.FAIL,
@@ -613,7 +775,7 @@ class TransferRuntime:
         if decision is ConflictDecision.FAIL:
             raise SshPilotError(
                 ErrorCode.TRANSFER_CONFLICT,
-                "The local destination already exists",
+                f"The local destination already exists: {path}",
             )
         if decision is ConflictDecision.SKIP:
             raise _TransferSkipped()
@@ -629,10 +791,9 @@ class TransferRuntime:
             )
         raise AssertionError("unhandled transfer conflict policy")
 
-    def _resolve_remote_destination(self, record: _TransferRecord, client) -> str:
+    def _resolve_remote_destination(self, record: _TransferRecord, client, path: str) -> str:
         from sshpilot.core.transfers import ConflictDecision, OverwritePolicy, decide_conflict
 
-        path = record.remote_path
         try:
             client.stat(path)
             exists = True
@@ -652,7 +813,7 @@ class TransferRuntime:
         if decision is ConflictDecision.FAIL:
             raise SshPilotError(
                 ErrorCode.TRANSFER_CONFLICT,
-                "The remote destination already exists",
+                f"The remote destination already exists: {path}",
             )
         if decision is ConflictDecision.SKIP:
             raise _TransferSkipped()

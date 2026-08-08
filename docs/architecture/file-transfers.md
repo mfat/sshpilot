@@ -60,10 +60,11 @@ Real OpenSSH (Alpine container) + ephemeral `DaemonServer` coverage includes:
 - zero / small / binary / multi-MiB upload and download with SHA-256 match
 - overwrite reject and accept
 - mid-transfer cancel cleans remote and local temporary files
+- recursive directory upload and download (empty dirs, nesting, per-file
+  conflict policy, cumulative byte progress)
 - queue + `SERVER_BUSY` when over the concurrency limit
 - SFTP close while a transfer is active fails or cancels the transfer
 - cancel-vs-complete races (5×)
 
-Not yet claimed as production-validated: recursive directory transfers, resume,
-binary client streaming, headed GTK transfer-queue rediscovery UI, or 100 MiB
-throughput benchmarks.
+Not yet claimed as production-validated: resume, binary client streaming,
+headed GTK transfer-queue rediscovery UI, or 100 MiB throughput benchmarks.

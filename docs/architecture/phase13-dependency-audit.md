@@ -32,7 +32,7 @@ Baseline: ``801eef44a8cc0418d94e3bd46f29c7b03fdc3e73`` on ``dev``.
 
 * Rewriting SSH-config file I/O itself into core (persistence adapter stays in CM).
 * `.spbk` crypto/archive format remains in `backup_archive` (not domain policy).
-* Recursive transfers remain unsupported (explicit, tested).
+* Recursive transfers are now daemon-owned in `TransferRuntime` (tested).
 * Full Preferences/sidebar presentation chrome stays GTK (already calls core validators/services).
 
 Phase 13.1 acceptance artifacts:

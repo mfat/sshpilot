@@ -13,12 +13,9 @@ Host-key / password / passphrase prompts during connect reuse the same
 ``DaemonInteractionDialogs`` GTK surface already wired for daemon terminal
 sessions -- no new askpass/interaction mechanism is introduced.
 
-The daemon has no one-shot remote-exec RPC (Phase 10 scope is SFTP/transfers/
-forwards only), so ``run_command``/``run_command_async`` -- used only for the
-authorized_keys editor, SSH backup export, and the text editor's sudo-write
-path, never for the interactive SFTP session itself -- fall back to the same
-native connect/auth builder the legacy backend uses
-(``build_ssh_connection`` + ``apply_headless_askpass_env``).
+There is intentionally no one-shot ``ssh <host> <command>`` escape hatch here:
+every remote action (including the text editor's privileged sudo read/write
+and directory transfers) is owned by the daemon through the typed API.
 """
 
 from __future__ import annotations
@@ -26,14 +23,14 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-import subprocess
 import tempfile
-from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from concurrent.futures import Future
+from typing import Any, Callable, Dict, List, Optional
 
 from gi.repository import GObject
 
 from .api.errors import ErrorCode, SshPilotError
+from .api.capabilities import Capability
 from .api.models.common import SessionId, SftpServiceId
 from .api.models.operations import RemoteFileType
 from .api.models.transfers import (
@@ -148,7 +145,6 @@ class DaemonSftpManager(GObject.GObject):
         self._operation_seq = 0
         self._lock = _NoOpLock()  # compatibility alias, see class docstring
         self._interaction_dialogs = None
-        self._command_executor = ThreadPoolExecutor(max_workers=1)
 
         self._sftp_controller = DaemonSftpServiceController(
             daemon_client,
@@ -262,10 +258,6 @@ class DaemonSftpManager(GObject.GObject):
             self._interaction_dialogs = None
         self._sftp_controller.detach()
         self._transfers.close()
-        try:
-            self._command_executor.shutdown(wait=False)
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.debug("Error shutting down command executor: %s", exc)
 
     def disconnect_service(self) -> None:
         """Explicitly terminate the daemon-owned SFTP service (``sftp.close``)."""
@@ -275,10 +267,6 @@ class DaemonSftpManager(GObject.GObject):
         self._sftp_controller.close()
         self._transfers.close()
         self._closed = True
-        try:
-            self._command_executor.shutdown(wait=False)
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.debug("Error shutting down command executor: %s", exc)
 
     # -- path helpers -------------------------------------------------
     def _expand(self, path: str) -> str:
@@ -306,6 +294,29 @@ class DaemonSftpManager(GObject.GObject):
             raise OSError("SFTP connection is not available")
         return service_id
 
+    def make_file_editor_service(self, path: str) -> Any:
+        """Build a daemon-backed file editor service for a remote ``path``.
+
+        The returned adapter performs the read/replace (and their sudo
+        variants) through the daemon SFTP file RPCs; the editor never falls
+        back to a frontend-owned SSH command."""
+        from .remote_file_editor_service import DaemonRemoteFileService
+
+        service_id = self._require_ready_service_id()
+        capabilities = getattr(self._client, "get_capabilities", None)
+        privileged = False
+        if capabilities is not None:
+            try:
+                privileged = capabilities().supports(Capability.SFTP_PRIVILEGED_FILE)
+            except Exception:  # noqa: BLE001 - capability inspection must not block editing
+                logger.debug("Failed to inspect privileged-file capability", exc_info=True)
+        return DaemonRemoteFileService(
+            self._client,
+            service_id,
+            path,
+            privileged_supported=privileged,
+        )
+
     @staticmethod
     def _format_size(num_bytes: float) -> str:
         size = float(num_bytes)
@@ -319,12 +330,6 @@ class DaemonSftpManager(GObject.GObject):
     def _next_operation_id(self, kind: str) -> str:
         self._operation_seq += 1
         return f"{kind}_{id(self)}_{self._operation_seq}"
-
-    def _is_cancelled(self, operation_id: str) -> bool:
-        return operation_id in self._cancelled_operations
-
-    def _discard_cancellation_flag(self, operation_id: str) -> None:
-        self._cancelled_operations.discard(operation_id)
 
     @staticmethod
     def _safe_set(future: Future, *, result: Any = None, exc: Optional[BaseException] = None) -> None:
@@ -742,263 +747,82 @@ class DaemonSftpManager(GObject.GObject):
         except Exception as exc:  # pragma: no cover - best effort
             logger.debug("Partial download cleanup failed: %s", exc)
 
-    def _transfer_manifest(
-        self,
-        future: Future,
-        manifest: List[Tuple[str, pathlib.Path, int]],
-        direction: TransferDirection,
-        operation_id: str,
-        state: Dict[str, Any],
-        grand_total: int,
-    ) -> None:
-        """Sequentially transfer a (remote_path, local_path, size) manifest,
-        tracking cumulative bytes for one overall progress signal."""
-        if future.done():
-            return
-        remaining = list(manifest)
-        transferred_base = 0
-
-        def _next_file() -> None:
-            nonlocal transferred_base
-            if future.done():
-                return
-            if self._is_cancelled(operation_id):
-                self._safe_set(future, exc=TransferCancelledException("Transfer was cancelled"))
-                return
-            if not remaining:
-                self._discard_cancellation_flag(operation_id)
-                self.emit("progress", 1.0, "Transfer complete")
-                self._safe_set(future, result=transferred_base)
-                return
-            remote_path, local_path, _size = remaining.pop(0)
-            base = transferred_base
-
-            def _on_progress(summary: TransferSummary) -> None:
-                state["transfer_id"] = summary.id
-                self._emit_transfer_progress(base, summary, grand_total)
-
-            def _on_done(summary: TransferSummary) -> None:
-                nonlocal transferred_base
-                if summary.state is TransferState.COMPLETED:
-                    transferred_base = base + summary.bytes_completed
-                    _next_file()
-                elif summary.state is TransferState.CANCELLED:
-                    self._safe_set(future, exc=TransferCancelledException("Transfer was cancelled"))
-                else:
-                    failure = summary.failure
-                    message = failure.message if failure is not None else f"Transfer failed: {remote_path}"
-                    self._safe_set(future, exc=OSError(message))
-
-            def _on_error(exc) -> None:
-                self._safe_set(future, exc=exc)
-
-            try:
-                service_id = self._require_ready_service_id()
-            except OSError as exc:
-                self._safe_set(future, exc=exc)
-                return
-
-            if direction is TransferDirection.DOWNLOAD:
-                try:
-                    local_path.parent.mkdir(parents=True, exist_ok=True)
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.debug("Download directory: prepare parent failed: %s", exc)
-
-            self._transfers.start_transfer(
-                StartTransferRequest(
-                    connection_id=self._connection_id,
-                    sftp_service_id=service_id,
-                    direction=direction,
-                    remote_path=remote_path,
-                    local_path=str(local_path),
-                    conflict_policy=TransferConflictPolicy.OVERWRITE,
-                ),
-                on_progress=_on_progress,
-                on_done=_on_done,
-                on_error=_on_error,
-            )
-
-        _next_file()
-
     def download_directory(self, source: str, destination: pathlib.Path) -> Future:
+        """Download a remote directory tree through a single daemon transfer."""
         future: Future = Future()
-        remote_root = self._expand(source)
+        target = self._expand(source)
         try:
-            self._require_ready_service_id()
+            service_id = self._require_ready_service_id()
         except OSError as exc:
             future.set_exception(exc)
             return future
 
-        self.emit("progress", 0.0, "Scanning…")
-        manifest: List[Tuple[str, pathlib.Path, int]] = []
-        operation_id = self._next_operation_id("download_dir")
         state: Dict[str, Any] = {"transfer_id": None}
 
-        def _list_dir(remote_dir: str, local_dir: pathlib.Path, on_done: Callable[[], None]) -> None:
-            if future.done() or self._is_cancelled(operation_id):
-                on_done()
-                return
-            try:
-                local_dir.mkdir(parents=True, exist_ok=True)
-            except Exception as exc:
-                self._safe_set(future, exc=exc)
-                return
+        def _on_progress(summary: TransferSummary) -> None:
+            state["transfer_id"] = summary.id
+            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
 
-            def _on_success(result) -> None:
-                entries = list(result.entries)
+        def _on_done(summary: TransferSummary) -> None:
+            self._finish_transfer(future, summary)
 
-                def _process(index: int) -> None:
-                    if index >= len(entries):
-                        on_done()
-                        return
-                    entry = entries[index]
-                    child_remote = remote_dir.rstrip("/") + "/" + entry.name
-                    child_local = local_dir / entry.name
-                    if entry.file_type is RemoteFileType.DIRECTORY:
-                        _list_dir(child_remote, child_local, lambda: _process(index + 1))
-                    else:
-                        manifest.append((child_remote, child_local, int(entry.size or 0)))
-                        _process(index + 1)
+        def _on_error(exc) -> None:
+            self._safe_set(future, exc=exc)
 
-                _process(0)
-
-            def _on_error(exc) -> None:
-                self._safe_set(future, exc=exc)
-
-            self._sftp_controller.list_directory(remote_dir, on_success=_on_success, on_error=_on_error)
-
-        def _after_scan() -> None:
-            if future.done():
-                return
-            grand_total = sum(size for _r, _l, size in manifest)
-            self._transfer_manifest(
-                future, manifest, TransferDirection.DOWNLOAD, operation_id, state, grand_total
-            )
-
-        _list_dir(remote_root, destination, _after_scan)
+        self.emit("progress", 0.0, "Starting download…")
+        self._transfers.start_transfer(
+            StartTransferRequest(
+                connection_id=self._connection_id,
+                sftp_service_id=service_id,
+                direction=TransferDirection.DOWNLOAD,
+                remote_path=target,
+                local_path=str(destination),
+                conflict_policy=TransferConflictPolicy.OVERWRITE,
+                recursive=True,
+            ),
+            on_progress=_on_progress,
+            on_done=_on_done,
+            on_error=_on_error,
+        )
+        operation_id = self._next_operation_id("download_dir")
         return self._cancellable(future, operation_id, lambda: state["transfer_id"])
 
     def upload_directory(self, source: pathlib.Path, destination: str) -> Future:
+        """Upload a local directory tree through a single daemon transfer."""
         future: Future = Future()
         remote_root = self._expand(destination)
         try:
-            self._require_ready_service_id()
+            service_id = self._require_ready_service_id()
         except OSError as exc:
             future.set_exception(exc)
             return future
 
-        self.emit("progress", 0.0, "Scanning…")
-        manifest: List[Tuple[str, pathlib.Path, int]] = []
-        directories: List[str] = []
-        try:
-            for root, _dirs, names in os.walk(source):
-                rel = os.path.relpath(root, source)
-                remote_dir = (
-                    remote_root.rstrip("/")
-                    if rel == "."
-                    else remote_root.rstrip("/") + "/" + rel.replace(os.sep, "/")
-                )
-                directories.append(remote_dir)
-                for name in names:
-                    local_path = pathlib.Path(root) / name
-                    remote_path = remote_dir.rstrip("/") + "/" + name
-                    try:
-                        size = local_path.stat().st_size
-                    except OSError:
-                        size = 0
-                    manifest.append((remote_path, local_path, size))
-        except Exception as exc:
-            future.set_exception(exc)
-            return future
-
-        grand_total = sum(size for _r, _l, size in manifest)
-        operation_id = self._next_operation_id("upload_dir")
         state: Dict[str, Any] = {"transfer_id": None}
 
-        def _mkdirs_then_transfer(index: int = 0) -> None:
-            if future.done() or self._is_cancelled(operation_id):
-                self._safe_set(future, exc=TransferCancelledException("Transfer was cancelled"))
-                return
-            if index >= len(directories):
-                self._transfer_manifest(
-                    future, manifest, TransferDirection.UPLOAD, operation_id, state, grand_total
-                )
-                return
-            remote_dir = directories[index]
-            self._sftp_controller.mkdir(
-                remote_dir,
-                on_success=lambda _r: _mkdirs_then_transfer(index + 1),
-                # Already-exists / permission — let the file write surface it,
-                # mirroring OpenSSHSFTPManager._mkdirs.
-                on_error=lambda _e: _mkdirs_then_transfer(index + 1),
-            )
+        def _on_progress(summary: TransferSummary) -> None:
+            state["transfer_id"] = summary.id
+            self._emit_transfer_progress(0, summary, summary.bytes_total or 0)
 
-        _mkdirs_then_transfer()
+        def _on_done(summary: TransferSummary) -> None:
+            self._finish_transfer(future, summary)
+
+        def _on_error(exc) -> None:
+            self._safe_set(future, exc=exc)
+
+        self.emit("progress", 0.0, "Starting upload…")
+        self._transfers.start_transfer(
+            StartTransferRequest(
+                connection_id=self._connection_id,
+                sftp_service_id=service_id,
+                direction=TransferDirection.UPLOAD,
+                remote_path=remote_root,
+                local_path=str(source),
+                conflict_policy=TransferConflictPolicy.OVERWRITE,
+                recursive=True,
+            ),
+            on_progress=_on_progress,
+            on_done=_on_done,
+            on_error=_on_error,
+        )
+        operation_id = self._next_operation_id("upload_dir")
         return self._cancellable(future, operation_id, lambda: state["transfer_id"])
-
-    # -- one-shot remote command execution ---------------------------------
-    def _build_run_command_argv(self, command: str) -> Tuple[List[str], Dict[str, str]]:
-        """Build a one-shot ``ssh <host> <command>`` argv via the shared
-        native connect/auth path -- see module docstring for why this one
-        ancillary path (no interactive SFTP session) still needs it."""
-        from .ssh_connection_builder import (
-            ConnectionContext,
-            apply_headless_askpass_env,
-            build_ssh_connection,
-        )
-
-        app_config = None
-        try:
-            from .config import Config
-
-            app_config = Config()
-        except Exception:  # pragma: no cover - defensive
-            app_config = None
-
-        if self._password and self._connection is not None:
-            try:
-                self._connection.password = self._password
-            except Exception:  # pragma: no cover - defensive
-                pass
-
-        ctx = ConnectionContext(
-            connection=self._connection,
-            connection_manager=self._connection_manager,
-            config=app_config,
-            command_type="sftp",
-            native_mode=True,
-            extra_args=[],
-            remote_command=command,
-        )
-        prepared = build_ssh_connection(ctx)
-        argv = list(prepared.command)
-        env = apply_headless_askpass_env(
-            prepared.env,
-            self._connection,
-            session_password=getattr(prepared, "password", None) or self._password,
-        )
-        return argv, env
-
-    def run_command(
-        self, command: str, *, input: Optional[bytes] = None, timeout: float = 30
-    ) -> Tuple[int, bytes, str]:
-        """Run a one-shot command on this host, blocking. See module
-        docstring: this is not the daemon-owned interactive SFTP session."""
-        argv, env = self._build_run_command_argv(command)
-        try:
-            proc = subprocess.run(
-                argv, env=env, input=input, capture_output=True, timeout=timeout
-            )
-            stderr = (proc.stderr or b"").decode("utf-8", "replace")
-            return proc.returncode, (proc.stdout or b""), stderr
-        except subprocess.TimeoutExpired:
-            return -1, b"", "Command timed out"
-        except Exception as exc:  # noqa: BLE001 - surface as a failed result
-            return -1, b"", str(exc)
-
-    def run_command_async(
-        self, command: str, *, input: Optional[bytes] = None, timeout: float = 30
-    ) -> Future:
-        return self._command_executor.submit(
-            self.run_command, command, input=input, timeout=timeout
-        )
