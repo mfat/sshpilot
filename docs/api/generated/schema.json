@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.18",
+  "api_implementation_version": "0.19",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -419,6 +419,10 @@
     },
     "sftp_create_file": {
       "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_directory_size": {
+      "capability": "sftp.read",
       "status": "daemon-only"
     },
     "sftp_list_directory": {
@@ -885,6 +889,9 @@
     },
     "sftp.detach": {
       "capability": "sftp.write"
+    },
+    "sftp.directory_size": {
+      "capability": "sftp.read"
     },
     "sftp.get_service": {
       "capability": "sftp.read"
@@ -5393,6 +5400,58 @@
           "default": 420,
           "name": "mode",
           "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpDirectorySizeRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpDirectorySizeResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "size_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "file_count",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "directory_count",
+          "required": true,
           "sensitive": false,
           "type": "int"
         }

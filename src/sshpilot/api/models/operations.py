@@ -380,6 +380,37 @@ class SftpCreateFileResult:
 
 
 @dataclass(frozen=True)
+class SftpDirectorySizeRequest:
+    """Summarise a remote directory tree within one SFTP service."""
+
+    service_id: SftpServiceId
+    path: str
+
+    def __post_init__(self) -> None:
+        require_identifier(self.service_id, "SFTP service id")
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP size path must be a non-empty safe string")
+
+
+@dataclass(frozen=True)
+class SftpDirectorySizeResult:
+    path: str
+    size_bytes: int
+    file_count: int
+    directory_count: int
+
+    def __post_init__(self) -> None:
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP size result path must be safe")
+        if type(self.size_bytes) is not int or self.size_bytes < 0:
+            raise ValueError("SFTP size result size must be a non-negative integer")
+        if type(self.file_count) is not int or self.file_count < 0:
+            raise ValueError("SFTP size result file count must be non-negative")
+        if type(self.directory_count) is not int or self.directory_count < 0:
+            raise ValueError("SFTP size result directory count must be non-negative")
+
+
+@dataclass(frozen=True)
 class SftpRenameRequest:
     service_id: SftpServiceId
     source_path: str

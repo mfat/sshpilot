@@ -372,3 +372,100 @@ def test_group_place_rejected_when_daemon_api_implementation_is_older(tmp_path):
     thread.join(2)
     assert requests == []
     client.close()
+
+
+def test_recursive_remove_rejected_when_daemon_api_implementation_is_older(tmp_path):
+    """A client using the recursive ``sftp.remove`` contract must not treat an
+    old API implementation as write-compatible.
+
+    The updated client sends ``recursive`` under the existing ``sftp.remove``
+    RPC, which old strict daemons would not recognize, so the recursive write
+    is rejected client-side with the canonical restart error before any wire
+    request is sent."""
+    from sshpilot.api.models.operations import SftpPathRequest
+
+    old_api = "0.18"
+    assert old_api != API_IMPLEMENTATION_VERSION
+
+    socket_path = tmp_path / "old-sftp-api.sock"
+    requests = []
+
+    def _action(peer):
+        peer.settimeout(0.5)
+        try:
+            requests.append(decode_envelope(receive_frame(peer)))
+        except TimeoutError:
+            pass
+
+    thread, release = _connected_protocol_server(
+        socket_path,
+        _action,
+        api_implementation_version=old_api,
+        supported=[
+            "connections.events",
+            "connections.read",
+            "connections.write",
+            "sftp.mutate",
+        ],
+    )
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    release.set()
+
+    with pytest.raises(SshPilotError) as caught:
+        client.sftp_remove(
+            SftpPathRequest(service_id="sftp-1", path="/tree", recursive=True)
+        )
+    assert caught.value.code is ErrorCode.API_VERSION_MISMATCH
+    assert caught.value.retryable is False
+
+    thread.join(2)
+    assert requests == []
+    client.close()
+
+
+def test_non_recursive_remove_allowed_when_daemon_api_implementation_is_older(tmp_path):
+    """A plain ``sftp.remove`` (no ``recursive`` field) stays compatible with an
+    old API implementation: only the recursive write introduces a new wire
+    field, so only that write is gated."""
+    from sshpilot.api.models.operations import SftpPathRequest
+    from sshpilot.api.transport import decode_envelope
+
+    old_api = "0.18"
+    requests = []
+
+    def _action(peer):
+        peer.settimeout(0.5)
+        try:
+            requests.append(decode_envelope(receive_frame(peer)))
+            peer.sendall(
+                encode_frame(
+                    encode_envelope(
+                        SuccessResponseEnvelope("1.0", requests[-1].request_id, None)
+                    )
+                )
+            )
+        except TimeoutError:
+            pass
+
+    socket_path = tmp_path / "old-sftp-simple.sock"
+    thread, release = _connected_protocol_server(
+        socket_path,
+        _action,
+        api_implementation_version=old_api,
+        supported=[
+            "connections.events",
+            "connections.read",
+            "connections.write",
+            "sftp.mutate",
+        ],
+    )
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    release.set()
+
+    client.sftp_remove(SftpPathRequest(service_id="sftp-1", path="/file"))
+
+    thread.join(2)
+    assert len(requests) == 1
+    assert requests[0].method == "sftp.remove"
+    assert "recursive" not in requests[0].params
+    client.close()

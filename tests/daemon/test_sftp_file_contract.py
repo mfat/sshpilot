@@ -12,12 +12,14 @@ from sshpilot.api.models.common import ClientId, ConnectionId
 from sshpilot.api.models.operations import (
     OpenSftpRequest,
     SftpCreateFileRequest,
+    SftpDirectorySizeRequest,
     SftpFileAccess,
     SftpFileTarget,
     SftpReadFileRequest,
     SftpReplaceFileRequest,
 )
 from sshpilot.daemon.sftp_runtime import SftpServiceRuntime, _file_revision
+from sshpilot.sftp import protocol as _sftp_proto
 
 
 def test_local_authorized_keys_read_is_bounded_and_revisioned(tmp_path, monkeypatch):
@@ -247,6 +249,24 @@ class _RemoteSftpClient:
         finally:
             self._exit_op()
 
+    def open_handle(self, path, pflags):
+        self._enter_op()
+        try:
+            if pflags & 0x20 and path in self.files:  # FXF_EXCL + exists
+                raise FileNotFoundError(path)
+            self.files.setdefault(path, b"")
+            self.modes.setdefault(path, 0o644)
+            return _RemoteHandle(path)
+        finally:
+            self._exit_op()
+
+    def close_handle(self, handle):
+        self._enter_op()
+        try:
+            del handle
+        finally:
+            self._exit_op()
+
     def chmod(self, path, mode):
         self._enter_op()
         try:
@@ -286,6 +306,11 @@ class _RemoteSftpClient:
         self.closed = True
 
 
+class _RemoteHandle:
+    def __init__(self, path):
+        self._path = path
+
+
 class _RemoteFileHandle:
     def __init__(self, client, path, *, write):
         self._client = client
@@ -293,7 +318,6 @@ class _RemoteFileHandle:
         self._write = write
         self._data = b"" if write else bytes(client.files.get(path, b""))
         self._offset = 0
-
     def read(self, _size=None):
         data = self._data
         return data
@@ -766,6 +790,36 @@ def test_create_file_already_exists_raises_structured_error():
             client_id=ClientId("client:owner"),
         )
     assert raised.value.code is ErrorCode.REMOTE_PATH_EXISTS
+    assert client.files["/remote/taken"] == b"existing"
+
+
+def test_create_file_exclusive_open_never_truncates_racing_file():
+    """The daemon must create remotely with an exclusive-open: a path that
+    appears after any pre-probe but before the open is refused atomically, so
+    the pre-existing content is never truncated."""
+
+    class _RacingSftpClient(_RemoteSftpClient):
+        def __init__(self):
+            super().__init__()
+            self.appeared = False
+
+        def open_handle(self, path, pflags):
+            if self.appeared:
+                raise FileNotFoundError(path)
+            return super().open_handle(path, pflags)
+
+    client = _RacingSftpClient()
+    client.files["/remote/racing"] = b"pre-existing"
+    runtime, _, summary = _privileged_runtime(client)
+
+    client.appeared = True
+    with pytest.raises(SshPilotError) as raised:
+        runtime.create_file(
+            SftpCreateFileRequest(summary.id, "/remote/racing"),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.REMOTE_PATH_EXISTS
+    assert client.files["/remote/racing"] == b"pre-existing"
 
 
 def test_create_file_rejects_invalid_request():
@@ -776,3 +830,107 @@ def test_create_file_rejects_invalid_request():
             client_id=ClientId("client:owner"),
         )
     assert raised.value.code is ErrorCode.INVALID_REQUEST
+
+
+class _TreeSftpClient(_RemoteSftpClient):
+    """Adds a ``listdir_attr`` view over a small in-memory directory tree.
+
+    ``entries`` maps a directory path to ``(name, st_mode, is_symlink)``
+    tuples; files live in ``self.files`` as elsewhere in this module. Paths
+    in ``raise_on_list`` fail ``listdir_attr`` with ``PermissionError``.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.entries = {}
+        self.raise_on_list = {}
+
+    def listdir_attr(self, path):
+        self._enter_op()
+        try:
+            if path in self.raise_on_list:
+                raise PermissionError(path)
+            if path not in self.entries:
+                raise _sftp_proto.SFTPError(_sftp_proto.FX_NO_SUCH_FILE)
+            result = []
+            for name, st_mode, is_link in self.entries.get(path, []):
+                mode = 0o120777 if is_link else st_mode
+                result.append(
+                    SimpleNamespace(
+                        filename=name,
+                        st_size=0 if is_link else len(self.files.get(name, b"")),
+                        st_mode=mode,
+                        st_uid=0,
+                        st_gid=0,
+                        st_mtime=0,
+                        is_dir=lambda m=mode: (m & 0o170000) == 0o040000,
+                        is_symlink=lambda m=mode: (m & 0o170000) == 0o120000,
+                    )
+                )
+            return result
+        finally:
+            self._exit_op()
+
+
+def _directory_size_fixture():
+    """A tree: a.txt=5, sub/b.txt=6, and a directory symlink ``link``."""
+    client = _TreeSftpClient()
+    client.files["a.txt"] = b"hello"
+    client.files["b.txt"] = b"world!"
+    client.entries["/tree"] = [
+        ("a.txt", 0o100644, False),
+        ("sub", 0o040755, False),
+        ("link", 0o120777, True),
+    ]
+    client.entries["/tree/sub"] = [("b.txt", 0o100644, False)]
+    return client
+
+
+def test_directory_size_walks_tree_without_following_symlinks():
+    client = _directory_size_fixture()
+    runtime, _, summary = _privileged_runtime(client)
+    result = runtime.directory_size(
+        SftpDirectorySizeRequest(summary.id, "/tree"),
+        client_id=ClientId("client:owner"),
+    )
+    # a.txt (5) + b.txt (6); the symlink is counted as an entry but its
+    # target tree is never descended into, so no extra bytes are summed.
+    assert result.size_bytes == 11
+    assert result.file_count == 3
+    assert result.directory_count == 1
+
+
+def test_directory_size_rejects_invalid_request():
+    runtime, _, summary = _privileged_runtime()
+    with pytest.raises(SshPilotError) as raised:
+        runtime.directory_size(
+            SimpleNamespace(path="/x"),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.INVALID_REQUEST
+
+
+def test_directory_size_skips_unreadable_subdirectories():
+    client = _directory_size_fixture()
+    client.raise_on_list["/tree/sub"] = None
+    runtime, _, summary = _privileged_runtime(client)
+    result = runtime.directory_size(
+        SftpDirectorySizeRequest(summary.id, "/tree"),
+        client_id=ClientId("client:owner"),
+    )
+    # ``sub`` is counted as a directory but its unreadable contents are
+    # skipped (legacy walk parity): only a.txt bytes remain.
+    assert result.size_bytes == 5
+    assert result.file_count == 2  # a.txt + link
+    assert result.directory_count == 1
+
+
+def test_directory_size_missing_root_raises_structured_error():
+    client = _directory_size_fixture()
+    runtime, _, summary = _privileged_runtime(client)
+    with pytest.raises(SshPilotError) as raised:
+        runtime.directory_size(
+            SftpDirectorySizeRequest(summary.id, "/nope"),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.REMOTE_PATH_NOT_FOUND

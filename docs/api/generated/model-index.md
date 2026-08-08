@@ -3325,6 +3325,58 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpDirectorySizeRequest -->
+## `SftpDirectorySizeRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Summarise a remote directory tree within one SFTP service.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "path": "/remote/example",
+  "service_id": {}
+}
+```
+
+<!-- api-model: SftpDirectorySizeResult -->
+## `SftpDirectorySizeResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** SftpDirectorySizeResult(path: 'str', size_bytes: 'int', file_count: 'int', directory_count: 'int')
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `path` | `str` | Yes | — | No |
+| `size_bytes` | `int` | Yes | — | No |
+| `file_count` | `int` | Yes | — | No |
+| `directory_count` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "directory_count": {},
+  "file_count": {},
+  "path": "/remote/example",
+  "size_bytes": {}
+}
+```
+
 <!-- api-model: SftpEntry -->
 ## `SftpEntry`
 

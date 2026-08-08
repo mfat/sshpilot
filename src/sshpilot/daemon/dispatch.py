@@ -112,6 +112,8 @@ from sshpilot.api.transport.codec import (
     sftp_copy_request_from_wire,
     sftp_create_file_request_from_wire,
     sftp_create_file_result_to_wire,
+    sftp_directory_size_request_from_wire,
+    sftp_directory_size_result_to_wire,
     sftp_path_request_from_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
@@ -210,6 +212,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.close": Capability.SFTP_WRITE,
     "sftp.list": Capability.SFTP_READ,
     "sftp.stat": Capability.SFTP_METADATA,
+    "sftp.directory_size": Capability.SFTP_READ,
     "sftp.lstat": Capability.SFTP_METADATA,
     "sftp.realpath": Capability.SFTP_METADATA,
     "sftp.readlink": Capability.SFTP_METADATA,
@@ -412,6 +415,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.close",
         "sftp.list",
         "sftp.stat",
+        "sftp.directory_size",
         "sftp.lstat",
         "sftp.realpath",
         "sftp.readlink",
@@ -661,6 +665,7 @@ class RequestDispatcher:
             "sftp.close": self._handle_close_sftp_service,
             "sftp.list": self._handle_sftp_list_directory,
             "sftp.stat": self._handle_sftp_stat,
+            "sftp.directory_size": self._handle_sftp_directory_size,
             "sftp.lstat": self._handle_sftp_lstat,
             "sftp.realpath": self._handle_sftp_realpath,
             "sftp.readlink": self._handle_sftp_readlink,
@@ -1922,6 +1927,22 @@ class RequestDispatcher:
                 runtime.stat_path(path_request, client_id=client_id)
             ),
             command_key=path_request.service_id,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_directory_size(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        size_request = sftp_directory_size_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: sftp_directory_size_result_to_wire(
+                runtime.directory_size(size_request, client_id=client_id)
+            ),
+            command_key=size_request.service_id,
             on_rejected=lambda: None,
         )
 

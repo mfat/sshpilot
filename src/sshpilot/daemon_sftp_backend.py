@@ -419,6 +419,12 @@ class DaemonSftpManager(GObject.GObject):
         _count_next(0)
 
     def directory_size(self, path: str) -> Future:
+        """Future resolving to the recursive byte size of a remote directory.
+
+        The whole tree walk happens daemon-side via the typed
+        ``sftp.directory_size`` RPC (single request); the frontend never
+        recurses through per-directory listings.
+        """
         future: Future = Future()
         target = self._expand(path)
         try:
@@ -427,29 +433,17 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
-        total_holder = {"total": 0}
+        def _on_success(result) -> None:
+            self._safe_set(future, result=result.size_bytes)
 
-        def _sum_dir(current: str, on_done: Callable[[], None], on_error: Callable[[BaseException], None]) -> None:
-            def _on_list(result) -> None:
-                entries = list(result.entries)
+        def _on_error(exc) -> None:
+            self._safe_set(future, exc=exc)
 
-                def _process(index: int) -> None:
-                    if index >= len(entries):
-                        on_done()
-                        return
-                    entry = entries[index]
-                    if entry.file_type is RemoteFileType.DIRECTORY:
-                        child = current.rstrip("/") + "/" + entry.name
-                        _sum_dir(child, lambda: _process(index + 1), lambda _e: _process(index + 1))
-                    else:
-                        total_holder["total"] += int(entry.size or 0)
-                        _process(index + 1)
-
-                _process(0)
-
-            self._sftp_controller.list_directory(current, on_success=_on_list, on_error=on_error)
-
-        _sum_dir(target, lambda: self._safe_set(future, result=total_holder["total"]), lambda exc: self._safe_set(future, exc=exc))
+        self._sftp_controller.directory_size(
+            target,
+            on_success=_on_success,
+            on_error=_on_error,
+        )
         return future
 
     # -- simple operations ------------------------------------------------
@@ -487,6 +481,34 @@ class DaemonSftpManager(GObject.GObject):
                 self._safe_set(future, exc=exc)
 
         self._sftp_controller.stat(target, on_success=_on_success, on_error=_on_error)
+        return future
+
+    def stat(self, path: str, *, follow_symlinks: bool = True) -> Future:
+        """Fetch typed daemon metadata for a remote ``path``.
+
+        Resolves to a :class:`~sshpilot.api.models.operations.RemoteFileEntry`
+        with mode, uid, gid, and modification time owned by the daemon.
+        """
+        future: Future = Future()
+        target = self._expand(path)
+        try:
+            self._require_ready_service_id()
+        except OSError as exc:
+            future.set_exception(exc)
+            return future
+
+        def _on_success(entry) -> None:
+            self._safe_set(future, result=entry)
+
+        def _on_error(exc) -> None:
+            self._safe_set(future, exc=exc)
+
+        self._sftp_controller.stat(
+            target,
+            follow_symlinks=follow_symlinks,
+            on_success=_on_success,
+            on_error=_on_error,
+        )
         return future
 
     def rename(self, source: str, target: str) -> Future:

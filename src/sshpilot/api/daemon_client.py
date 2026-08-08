@@ -101,6 +101,8 @@ from .models.operations import (
     SftpCopyRequest,
     SftpCreateFileRequest,
     SftpCreateFileResult,
+    SftpDirectorySizeRequest,
+    SftpDirectorySizeResult,
     SftpFileAccess,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -206,6 +208,8 @@ from .transport.codec import (
     sftp_copy_request_to_wire,
     sftp_create_file_request_to_wire,
     sftp_create_file_result_from_wire,
+    sftp_directory_size_request_to_wire,
+    sftp_directory_size_result_from_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
     sftp_replace_file_request_to_wire,
@@ -313,6 +317,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "close_sftp": Capability.SFTP_WRITE,
     "sftp_list_directory": Capability.SFTP_READ,
     "sftp_stat": Capability.SFTP_METADATA,
+    "sftp_directory_size": Capability.SFTP_READ,
     "sftp_lstat": Capability.SFTP_METADATA,
     "sftp_realpath": Capability.SFTP_METADATA,
     "sftp_readlink": Capability.SFTP_METADATA,
@@ -1219,6 +1224,20 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid file entry")
 
+    def sftp_directory_size(
+        self,
+        request: SftpDirectorySizeRequest,
+    ) -> SftpDirectorySizeResult:
+        self._require_capability(Capability.SFTP_READ)
+        result = self._request(
+            "sftp.directory_size",
+            sftp_directory_size_request_to_wire(request),
+        )
+        try:
+            return sftp_directory_size_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid directory size result")
+
     def sftp_lstat(self, request: SftpPathRequest) -> RemoteFileEntry:
         self._require_capability(Capability.SFTP_METADATA)
         result = self._request("sftp.lstat", sftp_path_request_to_wire(request))
@@ -1292,6 +1311,8 @@ class DaemonClient:
 
     def sftp_remove(self, request: SftpPathRequest) -> None:
         self._require_capability(Capability.SFTP_MUTATE)
+        if request.recursive:
+            self._require_write_compatibility("recursive removal")
         result = self._request("sftp.remove", sftp_path_request_to_wire(request))
         if result is not None:
             self._fail_protocol("The daemon returned an invalid remove result")

@@ -157,6 +157,8 @@ from ..models.operations import (
     SftpCopyRequest,
     SftpCreateFileRequest,
     SftpCreateFileResult,
+    SftpDirectorySizeRequest,
+    SftpDirectorySizeResult,
     SftpFileAccess,
     SftpFileTarget,
     SftpPathRequest,
@@ -3957,7 +3959,11 @@ def sftp_path_request_from_wire(value: Any) -> SftpPathRequest:
     return SftpPathRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         path=_text(data["path"], "SFTP path"),
-        recursive=bool(data.get("recursive")),
+        recursive=(
+            _boolean(data["recursive"], "SFTP recursive flag")
+            if "recursive" in data
+            else False
+        ),
     )
 
 
@@ -3994,6 +4000,51 @@ def sftp_create_file_result_from_wire(value: Any) -> SftpCreateFileResult:
     return SftpCreateFileResult(
         path=_text(data["path"], "SFTP create result path"),
         mode=_integer(data["mode"], "SFTP create result mode"),
+    )
+
+
+def sftp_directory_size_request_to_wire(request: SftpDirectorySizeRequest) -> Dict[str, Any]:
+    if type(request) is not SftpDirectorySizeRequest:
+        raise TypeError("SFTP directory size request is required")
+    return {"service_id": request.service_id, "path": request.path}
+
+
+def sftp_directory_size_request_from_wire(value: Any) -> SftpDirectorySizeRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "path"},
+        context="SFTP directory size request",
+    )
+    return SftpDirectorySizeRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        path=_text(data["path"], "SFTP size path"),
+    )
+
+
+def sftp_directory_size_result_to_wire(result: SftpDirectorySizeResult) -> Dict[str, Any]:
+    if type(result) is not SftpDirectorySizeResult:
+        raise TypeError("SFTP directory size result is required")
+    return {
+        "path": result.path,
+        "size_bytes": result.size_bytes,
+        "file_count": result.file_count,
+        "directory_count": result.directory_count,
+    }
+
+
+def sftp_directory_size_result_from_wire(value: Any) -> SftpDirectorySizeResult:
+    data = _strict_fields(
+        value,
+        required={"path", "size_bytes", "file_count", "directory_count"},
+        context="SFTP directory size result",
+    )
+    return SftpDirectorySizeResult(
+        path=_text(data["path"], "SFTP size result path"),
+        size_bytes=_integer(data["size_bytes"], "SFTP size result size bytes"),
+        file_count=_integer(data["file_count"], "SFTP size result file count"),
+        directory_count=_integer(
+            data["directory_count"], "SFTP size result directory count"
+        ),
     )
 
 

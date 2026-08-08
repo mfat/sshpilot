@@ -28,6 +28,8 @@ from .api.models.operations import (
     SftpCopyRequest,
     SftpCreateFileRequest,
     SftpCreateFileResult,
+    SftpDirectorySizeRequest,
+    SftpDirectorySizeResult,
     SftpFileTarget,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -303,6 +305,25 @@ class DaemonSftpServiceController:
 
         def _op():
             return method(SftpPathRequest(service_id=service_id, path=path))
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def directory_size(
+        self,
+        path: str,
+        *,
+        on_success: Callable[[SftpDirectorySizeResult], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        """Summarise a remote directory tree with a single daemon RPC."""
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_directory_size(
+                SftpDirectorySizeRequest(service_id=service_id, path=path)
+            )
 
         self._submit(_op, on_success=on_success, on_error=on_error)
 

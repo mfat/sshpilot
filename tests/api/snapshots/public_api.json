@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.18",
+  "api_implementation_version": "0.19",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -502,6 +502,10 @@
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
+    "sftp_directory_size": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
     "sftp_list_directory": {
       "capability": "sftp.read",
       "status": "daemon-only"
@@ -732,6 +736,7 @@
     "set_group_color",
     "sftp_chmod",
     "sftp_copy",
+    "sftp_directory_size",
     "sftp_list_directory",
     "sftp_lstat",
     "sftp_mkdir",
@@ -1823,6 +1828,16 @@
       ],
       "return": "None"
     },
+    "sftp_directory_size": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SftpDirectorySizeRequest"
+        }
+      ],
+      "return": "SftpDirectorySizeResult"
+    },
     "sftp_list_directory": {
       "parameters": [
         {
@@ -2485,6 +2500,9 @@
     "sftp.detach": {
       "capability": "sftp.write"
     },
+    "sftp.directory_size": {
+      "capability": "sftp.read"
+    },
     "sftp.get_service": {
       "capability": "sftp.read"
     },
@@ -2879,6 +2897,8 @@
     "SftpCopyRequest",
     "SftpCreateFileRequest",
     "SftpCreateFileResult",
+    "SftpDirectorySizeRequest",
+    "SftpDirectorySizeResult",
     "SftpEntry",
     "SftpFileAccess",
     "SftpFileTarget",
@@ -3647,6 +3667,16 @@
     "SftpCreateFileResult": [
       "path",
       "mode"
+    ],
+    "SftpDirectorySizeRequest": [
+      "service_id",
+      "path"
+    ],
+    "SftpDirectorySizeResult": [
+      "path",
+      "size_bytes",
+      "file_count",
+      "directory_count"
     ],
     "SftpEntry": [
       "name",

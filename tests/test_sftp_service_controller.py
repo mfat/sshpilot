@@ -7,6 +7,7 @@ import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ConnectionId, SftpServiceId
+from sshpilot.api.models.operations import SftpDirectorySizeResult
 from sshpilot.daemon_sftp_backend import DaemonSftpManager
 from sshpilot.file_manager.common import FileEntry
 from sshpilot.sftp_service_controller import (
@@ -73,6 +74,79 @@ def test_detach_marks_not_ready_immediately(controller, mock_bridge):
         on_error=errors.append,
     )
     assert errors and errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
+
+
+def test_directory_size_issues_single_daemon_rpc(controller, mock_client, mock_bridge):
+    _mark_ready(controller)
+    result = SftpDirectorySizeResult(
+        path="/tree", size_bytes=123, file_count=3, directory_count=1
+    )
+    mock_client.sftp_directory_size.return_value = result
+    mock_bridge.submit.side_effect = (
+        lambda factory, on_success=None, on_error=None: on_success(factory())
+    )
+
+    seen = []
+    controller.directory_size(
+        "/tree",
+        on_success=seen.append,
+        on_error=lambda e: pytest.fail(f"unexpected error: {e}"),
+    )
+    request = mock_client.sftp_directory_size.call_args[0][0]
+    assert request.service_id == SftpServiceId("svc-1")
+    assert request.path == "/tree"
+    assert seen == [result]
+
+
+def test_directory_size_not_ready_calls_on_error(controller, mock_bridge):
+    errors = []
+    controller.directory_size(
+        "/tree",
+        on_success=lambda _r: pytest.fail("should not succeed"),
+        on_error=errors.append,
+    )
+    assert len(errors) == 1
+    assert isinstance(errors[0], SshPilotError)
+    assert errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
+    mock_bridge.submit.assert_not_called()
+
+
+def test_daemon_manager_directory_size_delegates_to_daemon():
+    """DaemonSftpManager.directory_size issues one controller call and resolves
+    with the daemon-computed size — the frontend never walks the tree.
+
+    Uses a SimpleNamespace self (same pattern as the other manager tests): the
+    stubbed gi environment instantiates ``GObject.GObject`` subclasses as bare
+    ``object()``, so the real manager cannot be constructed here.
+    """
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = types.SimpleNamespace(
+        _sftp_controller=controller,
+        _home="/home/alice",
+        _closed=False,
+    )
+    manager._expand = DaemonSftpManager._expand.__get__(manager)
+    manager._require_ready_service_id = (
+        DaemonSftpManager._require_ready_service_id.__get__(manager)
+    )
+    manager._safe_set = DaemonSftpManager._safe_set
+    result = SftpDirectorySizeResult(
+        path="/home/alice/tree", size_bytes=777, file_count=2, directory_count=1
+    )
+    controller.directory_size.side_effect = (
+        lambda path, on_success=None, on_error=None: on_success(result)
+    )
+
+    total = DaemonSftpManager.directory_size(manager, "/tree").result(timeout=5)
+    assert total == 777
+    # Only ``~``/``~/`` prefixes are expanded; absolute paths pass through.
+    assert controller.directory_size.call_args[0][0] == "/tree"
+    assert DaemonSftpManager.directory_size(
+        manager, "~/tree"
+    ).result(timeout=5) == 777
+    assert controller.directory_size.call_args[0][0] == "/home/alice/tree"
 
 
 def test_count_pass_skips_when_closed():

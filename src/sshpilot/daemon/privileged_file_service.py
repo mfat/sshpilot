@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import selectors
 import shlex
 import subprocess
 import time
@@ -61,6 +62,10 @@ _SUDO_WRITE_HEAD = "tee"
 _PASSWORD_REQUIRED_MARKERS = (
     "a password is required",
     "password required",
+)
+_WRONG_PASSWORD_MARKERS = (
+    "sorry, try again",
+    "incorrect password",
 )
 _NOT_FOUND_MARKERS = (
     "no such file",
@@ -132,6 +137,11 @@ def _file_revision(content: bytes, exists: bool) -> str:
 def _is_password_required(stderr: bytes) -> bool:
     text = (stderr or b"").decode("utf-8", errors="replace").lower()
     return any(marker in text for marker in _PASSWORD_REQUIRED_MARKERS)
+
+
+def _is_wrong_password(stderr: bytes) -> bool:
+    text = (stderr or b"").decode("utf-8", errors="replace").lower()
+    return any(marker in text for marker in _WRONG_PASSWORD_MARKERS)
 
 
 def _is_missing(stderr: bytes) -> bool:
@@ -343,6 +353,12 @@ class PrivilegedFileService:
                 "The SSH connection could not run the remote command",
                 connection_id=connection_id,
             )
+        if not _is_password_required(result.stderr):
+            raise SshPilotError(
+                ErrorCode.REMOTE_COMMAND_FAILED,
+                "The remote command failed",
+                connection_id=connection_id,
+            )
 
         password = self._secret_lookup(hostname, username)
         from_stored = bool(password)
@@ -382,6 +398,23 @@ class PrivilegedFileService:
                 return result
             if is_sudo_denied_error(result.stderr.decode("utf-8", errors="replace")):
                 raise _denied_error(connection_id)
+            if allow_missing and _is_missing(result.stderr):
+                result.exists = False
+                return result
+            if result.returncode == SSH_ERROR_EXIT:
+                raise SshPilotError(
+                    ErrorCode.REMOTE_COMMAND_FAILED,
+                    "The SSH connection could not run the remote command",
+                    connection_id=connection_id,
+                )
+            if not _is_password_required(result.stderr) and not _is_wrong_password(
+                result.stderr
+            ):
+                raise SshPilotError(
+                    ErrorCode.REMOTE_COMMAND_FAILED,
+                    "The remote command failed",
+                    connection_id=connection_id,
+                )
             if from_stored:
                 try:
                     self._secret_clear(hostname, username)
@@ -538,6 +571,9 @@ class PrivilegedFileService:
         A bounded reader (instead of ``communicate``) means a remote file that
         exceeds the contract fails with a typed ``FILE_CONTENT_TOO_LARGE``
         error and the child is killed instead of buffering unbounded output.
+        Real pipe FDs are drained through a selector so the deadline is always
+        enforced and stdout/stderr are drained concurrently, so a child that
+        fills stderr while the parent reads stdout cannot deadlock.
         """
         if stdin_data is not None:
             try:
@@ -546,13 +582,81 @@ class PrivilegedFileService:
                 process.stdin.close()
             except (OSError, ValueError):
                 pass
-        out = bytearray()
         deadline = time.monotonic() + self._command_timeout
+        out = bytearray()
+        err = bytearray()
+
+        streams = {}
+        for label, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+            try:
+                streams[label] = stream.fileno()
+            except (AttributeError, OSError, ValueError):
+                streams = {}
+                break
+
+        if not streams:
+            return self._read_bounded_in_memory(
+                process, read_limit, connection_id, deadline
+            )
+
+        selector = selectors.DefaultSelector()
+        try:
+            for stream in streams.values():
+                selector.register(stream, selectors.EVENT_READ)
+            while streams:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._terminate_process(process)
+                    raise subprocess.TimeoutExpired("ssh", self._command_timeout)
+                try:
+                    events = selector.select(timeout=max(0.0, remaining))
+                except OSError:
+                    break
+                if not events:
+                    self._terminate_process(process)
+                    raise subprocess.TimeoutExpired("ssh", self._command_timeout)
+                for key, _mask in events:
+                    label = _stream_label(streams, key.fd)
+                    if label is None:
+                        continue
+                    try:
+                        chunk = os.read(key.fd, _READ_CHUNK_BYTES)
+                    except (BlockingIOError, InterruptedError):
+                        continue
+                    except OSError:
+                        selector.unregister(key.fd)
+                        del streams[label]
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fd)
+                        del streams[label]
+                        continue
+                    if label == "stdout":
+                        out.extend(chunk)
+                        if len(out) > read_limit:
+                            self._terminate_process(process)
+                            raise SshPilotError(
+                                ErrorCode.FILE_CONTENT_TOO_LARGE,
+                                "The remote file is too large",
+                                connection_id=connection_id,
+                            )
+                    else:
+                        err.extend(chunk)
+        finally:
+            selector.close()
+        self._wait_reap(process, deadline)
+        return bytes(out), bytes(err)
+
+    def _read_bounded_in_memory(
+        self,
+        process: "subprocess.Popen",
+        read_limit: int,
+        connection_id: ConnectionId,
+        deadline: float,
+    ) -> tuple[bytes, bytes]:
+        """Fallback for non-pipe streams (test doubles) that cannot deadlock."""
+        out = bytearray()
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                self._terminate_process(process)
-                raise subprocess.TimeoutExpired("ssh", self._command_timeout)
             try:
                 chunk = process.stdout.read(_READ_CHUNK_BYTES)
             except (OSError, ValueError):
@@ -571,8 +675,20 @@ class PrivilegedFileService:
             stderr = process.stderr.read()
         except (OSError, ValueError):
             stderr = b""
-        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        self._wait_reap(process, deadline)
         return bytes(out), stderr or b""
+
+    def _wait_reap(self, process: "subprocess.Popen", deadline: float) -> None:
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                self._terminate_process(process)
+                raise
+        else:
+            self._terminate_process(process)
+            raise subprocess.TimeoutExpired("ssh", self._command_timeout)
 
     @staticmethod
     def _terminate_process(process: "subprocess.Popen") -> None:
@@ -584,6 +700,13 @@ class PrivilegedFileService:
             process.wait()
         except Exception:
             pass
+
+
+def _stream_label(streams: dict, fd: int) -> Optional[str]:
+    for label, registered_fd in streams.items():
+        if registered_fd == fd:
+            return label
+    return None
 
 
 def _stdin_for_password(password: Optional[str]) -> Optional[bytes]:

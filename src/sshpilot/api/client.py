@@ -119,6 +119,8 @@ from .models.operations import (
     RemoteFileEntry,
     SftpChmodRequest,
     SftpCopyRequest,
+    SftpDirectorySizeRequest,
+    SftpDirectorySizeResult,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -381,6 +383,12 @@ class SshPilotClient(Protocol):
         ...
 
     def sftp_stat(self, request: SftpPathRequest) -> RemoteFileEntry:
+        ...
+
+    def sftp_directory_size(
+        self,
+        request: SftpDirectorySizeRequest,
+    ) -> SftpDirectorySizeResult:
         ...
 
     def sftp_lstat(self, request: SftpPathRequest) -> RemoteFileEntry:

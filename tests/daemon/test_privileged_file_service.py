@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import io
+import subprocess
+import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -427,6 +430,52 @@ def test_backup_failure_is_not_swallowed_and_save_does_not_proceed():
     assert tee_argv == []
 
 
+def test_backup_command_failure_is_not_classified_as_password_problem():
+    """A genuine remote command failure (e.g. disk full) must not enter the
+    sudo password flow: the password is not the problem."""
+    def script(argv, data):
+        joined = " ".join(argv)
+        if "sudo -n -- cat" in joined:
+            return 0, b"old\n", b""
+        if "sudo -n -- sh" in joined:
+            return 1, b"", b"cp: error writing '/etc/something.bak-1': No space left on device"
+        raise AssertionError(f"unexpected command: {joined}")
+
+    broker = _Broker([_BrokerResult(secret=b"pw")])
+    service, _, broker_used = _service(script, broker=broker)
+    with pytest.raises(SshPilotError) as raised:
+        _replace(service, payload=b"new\n")
+    assert raised.value.code is ErrorCode.REMOTE_COMMAND_FAILED
+    assert broker_used.created == []
+
+
+def test_password_auth_command_failure_is_not_retried_as_wrong_password():
+    """When a password-authenticated sudo command itself fails (disk full),
+    the failure must be reported once and not retried as a wrong password."""
+    def script(argv, data):
+        joined = " ".join(argv)
+        if "sudo -n -- cat" in joined:
+            return 0, b"old\n", b""
+        if "sudo -n -- sh" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- sh" in joined:
+            assert data == b"pw\n"
+            return 0, b"", b""
+        if "sudo -n -- tee" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "-- tee" in joined:
+            assert data == b"pw\nnew\n"
+            return 1, b"", b"tee: /etc/something: No space left on device"
+        raise AssertionError(f"unexpected command: {joined}")
+
+    broker = _Broker([_BrokerResult(secret=b"pw"), _BrokerResult(secret=b"pw")])
+    service, _, broker_used = _service(script, broker=broker)
+    with pytest.raises(SshPilotError) as raised:
+        _replace(service, payload=b"new\n")
+    assert raised.value.code is ErrorCode.REMOTE_COMMAND_FAILED
+    assert len(broker_used.created) == 2
+
+
 def test_oversized_privileged_read_raises_typed_error_and_kills_process():
     killed = []
 
@@ -570,3 +619,58 @@ def test_username_and_hostname_reach_prompt_and_launch():
     assert created["prompt"].username == "bob"
     assert created["prompt"].port == 2222
     assert broker_used.created[0]["attempt"] == 1
+
+
+def test_real_subprocess_with_idle_open_stdout_times_out():
+    """A child that holds stdout open without producing output must be
+    terminated at the deadline instead of blocking the read forever."""
+    service = PrivilegedFileService(
+        _Provider(),
+        _Broker(),
+        command_timeout=0.5,
+        secret_lookup=lambda _h, _u: "",
+        secret_store=lambda _h, _u, _p: True,
+        secret_clear=lambda _h, _u: True,
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        service._read_bounded(process, None, MAX_READ_BYTES, CONNECTION_ID)
+    assert time.monotonic() - started < 10.0
+    assert process.poll() is not None
+
+
+def test_real_subprocess_filling_stderr_does_not_deadlock():
+    """A child that floods stderr while leaving stdout open must not deadlock
+    the parent: stdout and stderr are drained concurrently."""
+    service = PrivilegedFileService(
+        _Provider(),
+        _Broker(),
+        command_timeout=0.5,
+        secret_lookup=lambda _h, _u: "",
+        secret_store=lambda _h, _u, _p: True,
+        secret_clear=lambda _h, _u: True,
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys,time; sys.stderr.write('x'*131072); sys.stderr.flush(); "
+            "time.sleep(60)",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        service._read_bounded(process, None, MAX_READ_BYTES, CONNECTION_ID)
+    assert time.monotonic() - started < 10.0
+    assert process.poll() is not None

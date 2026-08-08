@@ -9,6 +9,8 @@ from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ClientId, RequestId
 from sshpilot.api.models.operations import (
     SftpCopyRequest,
+    SftpDirectorySizeRequest,
+    SftpDirectorySizeResult,
     SftpFileTarget,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -67,6 +69,16 @@ class _FakeSftpRuntime:
         self.replace_calls = []
         self.copy_calls = []
         self.remove_calls = []
+        self.directory_size_calls = []
+
+    def directory_size(self, request, client_id=None):
+        self.directory_size_calls.append(request)
+        return SftpDirectorySizeResult(
+            path=request.path,
+            size_bytes=42,
+            file_count=2,
+            directory_count=1,
+        )
 
     def read_file(self, request, client_id=None):
         self.read_calls.append(request)
@@ -122,6 +134,31 @@ def test_copy_maps_to_mutate_capability():
     assert DAEMON_METHOD_CAPABILITIES["sftp.copy"] is Capability.SFTP_MUTATE
     assert "sftp.copy" in DEFERRED_DAEMON_METHODS
     assert "sftp.copy" in DRAIN_REJECTED_METHODS
+
+
+def test_directory_size_maps_to_read_capability():
+    assert DAEMON_METHOD_CAPABILITIES["sftp.directory_size"] is Capability.SFTP_READ
+    assert "sftp.directory_size" in DEFERRED_DAEMON_METHODS
+    assert "sftp.directory_size" not in DRAIN_REJECTED_METHODS
+
+
+def test_directory_size_returns_deferred_execution():
+    dispatcher, runtime = _dispatcher()
+    result = dispatcher.dispatch(
+        _envelope(
+            "sftp.directory_size",
+            {"service_id": "sftp-1", "path": "/tree"},
+        ),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+    assert result.command_key == "sftp-1"
+    wire = result.operation()
+    assert wire["size_bytes"] == 42
+    assert wire["file_count"] == 2
+    assert wire["directory_count"] == 1
+    assert isinstance(runtime.directory_size_calls[0], SftpDirectorySizeRequest)
+    assert runtime.directory_size_calls[0].path == "/tree"
 
 
 def test_file_handlers_are_registered():
@@ -210,6 +247,48 @@ def test_path_request_recursive_round_trips_through_wire():
     assert sftp_path_request_from_wire(
         {"service_id": "sftp-1", "path": "/tree"}
     ).recursive is False
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        "false",
+        "true",
+        "0",
+        "1",
+        0,
+        1,
+        None,
+        [],
+        {},
+    ],
+)
+def test_path_request_recursive_rejects_non_boolean_wire_values(bad_value):
+    with pytest.raises(ValueError):
+        sftp_path_request_from_wire(
+            {
+                "service_id": "sftp-1",
+                "path": "/tree",
+                "recursive": bad_value,
+            }
+        )
+
+
+def test_remove_rejects_non_boolean_recursive_wire_value():
+    dispatcher, _runtime = _dispatcher()
+    with pytest.raises(SshPilotError) as excinfo:
+        dispatcher.dispatch(
+            _envelope(
+                "sftp.remove",
+                {
+                    "service_id": "sftp-1",
+                    "path": "/tree",
+                    "recursive": "false",
+                },
+            ),
+            _state(),
+        )
+    assert excinfo.value.code is ErrorCode.INVALID_REQUEST
 
 
 def test_remove_recursive_passes_flag_through_wire():

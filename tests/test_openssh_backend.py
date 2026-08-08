@@ -549,6 +549,20 @@ def test_manager_directory_size(backend_modules, monkeypatch):
     manager.close()
 
 
+def test_manager_stat_returns_typed_remote_entry(backend_modules, monkeypatch):
+    """The legacy backend mirrors DaemonSftpManager.stat so the properties
+    dialog works with either manager (typed entry, no raw SFTP reads)."""
+    _, ob, proto = backend_modules
+    manager, server, emitted = _make_manager(ob, proto, monkeypatch)
+    entry = manager.stat("/home/alice/notes.txt").result(timeout=5)
+    assert entry.name == "notes.txt"
+    assert entry.path == "/home/alice/notes.txt"
+    assert entry.size == len(b"hello world")
+    assert entry.mode == 0o644
+    assert entry.uid is None  # the fixture server does not send uid/gid
+    manager.close()
+
+
 def test_manager_mkdir_future(backend_modules, monkeypatch):
     _, ob, proto = backend_modules
     manager, server, emitted = _make_manager(ob, proto, monkeypatch)

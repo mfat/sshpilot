@@ -67,6 +67,8 @@ from sshpilot.api.models.operations import (
     SftpCopyRequest,
     SftpCreateFileRequest,
     SftpCreateFileResult,
+    SftpDirectorySizeRequest,
+    SftpDirectorySizeResult,
     SftpFileAccess,
     SftpFileTarget,
     SftpPathRequest,
@@ -954,26 +956,43 @@ class SftpServiceRuntime:
         path = _validate_path(request.path)
         client = record.handle.client
         try:
+            handle = client.open_handle(
+                path,
+                sftp_proto.FXF_WRITE | sftp_proto.FXF_CREAT | sftp_proto.FXF_EXCL,
+            )
             try:
-                client.stat(path)
-            except FileNotFoundError:
+                client.close_handle(handle)
+            except Exception:
                 pass
-            except Exception as exc:
-                if getattr(exc, "errno", None) != errno.ENOENT:
-                    raise
-            else:
+        except (sftp_proto.SFTPError, FileNotFoundError) as exc:
+            # An exclusive-create open atomically fails when the path already
+            # exists (or the parent cannot be written); report the canonical
+            # structured error instead of truncating a racing file.
+            exists = False
+            try:
+                attr = client.stat(path)
+                exists = True
+            except Exception:
+                exists = False
+            if exists:
                 raise SshPilotError(
                     ErrorCode.REMOTE_PATH_EXISTS,
                     "The remote file already exists",
                     connection_id=record.connection_id,
                     details={"path": path},
-                )
-            client.file(path, "wb").close()
+                ) from exc
+            raise
         except SshPilotError:
             raise
         except Exception as exc:
             raise self._map_error(exc, record) from exc
-        return SftpCreateFileResult(path=path, mode=0o644)
+        mode = 0o644
+        try:
+            attr = client.stat(path)
+            mode = stat_module.S_IMODE(attr.st_mode)
+        except Exception:
+            pass
+        return SftpCreateFileResult(path=path, mode=mode)
 
     def _require_privileged_runner(self, record: _SftpRecord):
         runner = self._privileged_file_runner
@@ -1219,6 +1238,55 @@ class SftpServiceRuntime:
 
     def lstat_path(self, request: SftpPathRequest, *, client_id: ClientId) -> RemoteFileEntry:
         return self.stat_path(request, client_id=client_id, follow_symlinks=False)
+
+    def directory_size(
+        self,
+        request: SftpDirectorySizeRequest,
+        *,
+        client_id: ClientId,
+    ) -> SftpDirectorySizeResult:
+        """Recursively summarise a remote directory tree owned by the daemon.
+
+        Symlinked entries are never descended into (matching the transfer
+        runtime's no-follow policy), so the walk cannot loop on cycles or
+        escape the requested tree.
+        """
+        if type(request) is not SftpDirectorySizeRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST, "A SFTP directory size request is required"
+            )
+        record = self._ready_record_for_read(request.service_id, client_id)
+        path = _validate_path(request.path)
+        client = record.handle.client
+        total = 0
+        file_count = 0
+        directory_count = 0
+        pending = [path]
+
+        while pending:
+            current = pending.pop()
+            try:
+                attrs = client.listdir_attr(current)
+            except Exception as exc:
+                if current == path:
+                    raise self._map_error(exc, record) from exc
+                # Unreadable subdirectory: skip it (same best-effort semantics
+                # as the legacy frontend walk) rather than failing the whole
+                # summary over one permission-denied folder.
+                continue
+            for attr in attrs:
+                if attr.is_dir() and not attr.is_symlink():
+                    directory_count += 1
+                    pending.append(remote_path_join(current, attr.filename or ""))
+                else:
+                    file_count += 1
+                    total += int(attr.st_size or 0)
+        return SftpDirectorySizeResult(
+            path=path,
+            size_bytes=total,
+            file_count=file_count,
+            directory_count=directory_count,
+        )
 
     def realpath(self, request: SftpPathRequest, *, client_id: ClientId) -> str:
         if type(request) is not SftpPathRequest:

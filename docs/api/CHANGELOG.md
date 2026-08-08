@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.19`; `PROTOCOL_VERSION` stays `1.0`.
+  The additive `recursive` field on the existing `sftp.remove` RPC is sent to
+  strict daemons only at API `0.19` and newer, so the client now refuses a
+  recursive remove against an older API implementation with the canonical
+  `api_version_mismatch` restart error before any wire request is sent.
+
 - Added an optional `recursive` field to `SftpPathRequest`. `sftp_remove` with
   `recursive=true` deletes an entire remote directory tree inside the daemon
   (`SftpServiceRuntime`) using lstat-based traversal that never follows
@@ -12,6 +18,16 @@ notes remain separate.
   when true and defaults to `false` when absent, so Protocol v1 strict daemons
   remain compatible. The frontend no longer issues a per-entry remove loop for
   recursive deletion.
+
+- Added the daemon-owned `sftp.directory_size` RPC (`SftpDirectorySizeRequest` /
+  `SftpDirectorySizeResult`). The daemon recursively summarises a remote
+  directory tree (total bytes plus file/directory counts) with the same
+  no-follow symlink policy as recursive transfers, and the GTK file-manager
+  backend now issues a single request instead of walking the tree through
+  repeated frontend listings. The remote properties dialog reads owner/group
+  numerically and fetches mode/uid/gid/mtime through typed daemon metadata
+  (`sftp.stat`/`sftp.lstat`) instead of raw frontend SFTP access to
+  `/etc/passwd` and `/etc/group`.
 
 - Added daemon-owned recursive directory transfers. `transfers.start` with
   `recursive=true` now walks and copies an entire local/remote directory tree

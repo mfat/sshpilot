@@ -40,6 +40,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "close_sftp": Capability.SFTP_WRITE,
     "sftp_list_directory": Capability.SFTP_READ,
     "sftp_stat": Capability.SFTP_METADATA,
+    "sftp_directory_size": Capability.SFTP_READ,
     "sftp_lstat": Capability.SFTP_METADATA,
     "sftp_realpath": Capability.SFTP_METADATA,
     "sftp_readlink": Capability.SFTP_METADATA,

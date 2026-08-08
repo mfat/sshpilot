@@ -56,6 +56,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `close_sftp` | Daemon only | `sftp.write` |
 | `sftp_list_directory` | Daemon only | `sftp.read` |
 | `sftp_stat` | Daemon only | `sftp.metadata` |
+| `sftp_directory_size` | Daemon only | `sftp.read` |
 | `sftp_lstat` | Daemon only | `sftp.metadata` |
 | `sftp_realpath` | Daemon only | `sftp.metadata` |
 | `sftp_readlink` | Daemon only | `sftp.metadata` |
@@ -147,6 +148,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: sftp_replace_file status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_rmdir status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_stat status=daemon-only capability=sftp.metadata -->
+<!-- api-method-contract: sftp_directory_size status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: sftp_symlink status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: start_scp_transfer status=daemon-only capability=transfers.scp -->
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
@@ -313,6 +315,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sftp.close` | `sftp.write` | Implemented |
 | `sftp.list` | `sftp.read` | Implemented |
 | `sftp.stat` | `sftp.metadata` | Implemented |
+| `sftp.directory_size` | `sftp.read` | Implemented |
 | `sftp.lstat` | `sftp.metadata` | Implemented |
 | `sftp.realpath` | `sftp.metadata` | Implemented |
 | `sftp.readlink` | `sftp.metadata` | Implemented |
@@ -424,6 +427,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sftp.mkdir capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.create_file capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.copy capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.directory_size capability=sftp.read -->
 <!-- api-daemon-method: sftp.open capability=sftp.write -->
 <!-- api-daemon-method: sftp.read_file capability=sftp.read -->
 <!-- api-daemon-method: sftp.readlink capability=sftp.metadata -->
@@ -1062,6 +1066,13 @@ Lists a remote directory through a ready SFTP service. Returns
 ## `sftp_stat`
 
 Follows symlinks and returns a `RemoteFileEntry` for one remote path.
+
+<!-- api-method: sftp_directory_size -->
+## `sftp_directory_size`
+
+Daemon-only `sftp.read`. Recursively summarises a remote directory tree within
+one ready SFTP service, returning `SftpDirectorySizeResult` with total bytes
+plus file/directory counts. Symlinked entries are never descended into.
 
 <!-- api-method: sftp_lstat -->
 ## `sftp_lstat`

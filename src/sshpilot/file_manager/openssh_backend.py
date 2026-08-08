@@ -16,12 +16,15 @@ import errno
 import logging
 import os
 import pathlib
+import posixpath
 import signal
+import stat as stat_module
 import subprocess
 import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from gi.repository import GObject
@@ -29,9 +32,47 @@ from gi.repository import GObject
 from . import sftp_protocol as proto
 from .common import FileEntry, _MainThreadDispatcher
 from .exceptions import TransferCancelledException
+from ..api.models.operations import RemoteFileEntry, RemoteFileType
 from ..sftp.client import OpenSSHSFTPClient, _is_dir
 
 logger = logging.getLogger(__name__)
+
+
+def _entry_from_attr(path: str, attr: proto.SFTPAttributes) -> RemoteFileEntry:
+    """Map a decoded SFTP attribute to the typed daemon-compatible entry."""
+    mode = attr.st_mode or 0
+    # Same mapping as ``sftp_runtime._file_type`` so both backends report the
+    # same ``RemoteFileType`` for the same mode.
+    if stat_module.S_ISDIR(mode):
+        file_type = RemoteFileType.DIRECTORY
+    elif stat_module.S_ISLNK(mode):
+        file_type = RemoteFileType.SYMLINK
+    elif stat_module.S_ISSOCK(mode):
+        file_type = RemoteFileType.SOCKET
+    elif stat_module.S_ISFIFO(mode):
+        file_type = RemoteFileType.FIFO
+    elif stat_module.S_ISBLK(mode):
+        file_type = RemoteFileType.BLOCK
+    elif stat_module.S_ISCHR(mode):
+        file_type = RemoteFileType.CHARACTER
+    elif stat_module.S_ISREG(mode):
+        file_type = RemoteFileType.REGULAR
+    else:
+        file_type = RemoteFileType.UNKNOWN
+    return RemoteFileEntry(
+        name=posixpath.basename(path.rstrip("/")) or path,
+        path=path,
+        file_type=file_type,
+        size=int(attr.st_size) if attr.st_size is not None else None,
+        mode=(attr.st_mode & 0o7777) if attr.st_mode else None,
+        uid=attr.st_uid,
+        gid=attr.st_gid,
+        modified_at=(
+            datetime.fromtimestamp(attr.st_mtime, tz=timezone.utc)
+            if attr.st_mtime
+            else None
+        ),
+    )
 
 _CHUNK = 32768  # 32 KiB — within the SFTP max packet for reads/writes.
 
@@ -743,6 +784,23 @@ class OpenSSHSFTPManager(GObject.GObject):
                 self._submit(lambda: _count_chunk(index + 1))
 
         self._submit(lambda: _count_chunk(0))
+
+    def stat(self, path: str, *, follow_symlinks: bool = True) -> Future:
+        """Future resolving to typed metadata for a remote ``path``.
+
+        Mirrors :meth:`DaemonSftpManager.stat` so the properties dialog works
+        with either backend: resolves to a ``RemoteFileEntry`` with mode,
+        uid/gid, and modification time.
+        """
+
+        def _impl() -> RemoteFileEntry:
+            with self._lock:
+                client = self._client_or_raise()
+                target = self._expand(path)
+                attr = client.stat(target) if follow_symlinks else client.lstat(target)
+                return _entry_from_attr(target, attr)
+
+        return self._submit(_impl)
 
     def directory_size(self, path: str) -> Future:
         """Future resolving to the recursive byte size of a remote directory."""
