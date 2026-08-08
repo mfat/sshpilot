@@ -45,6 +45,10 @@ class DaemonInteractionDialogs:
     def set_session(self, session_id: SessionId) -> None:
         self._session_id = session_id
 
+    def set_parent(self, parent: Gtk.Widget) -> None:
+        """Reparent future dialogs (e.g. once the real window exists)."""
+        self._parent = parent
+
     def _on_transport_event(self, event) -> None:
         if event.type not in {
             EventType.INTERACTION_CREATED,
@@ -95,14 +99,19 @@ class DaemonInteractionDialogs:
     def _present(self, summary: InteractionSummary) -> None:
         if self._closed or summary.id in self._dialogs:
             return
-        from .window_dialogs import resolve_app_modal_parent
+        from .window_dialogs import present_for_modal_dialog, resolve_app_modal_parent
 
-        try:
-            parent = resolve_app_modal_parent(self._parent)
-        except RuntimeError:
-            parent = self._parent.get_root()
-            if not isinstance(parent, Gtk.Window):
-                parent = self._parent
+        parent = self._parent
+        if not isinstance(parent, Gtk.Window):
+            try:
+                parent = resolve_app_modal_parent(self._parent)
+            except RuntimeError:
+                parent = self._parent.get_root()
+                if not isinstance(parent, Gtk.Window):
+                    parent = self._parent
+        if isinstance(parent, Gtk.Window):
+            # Raise the parent so the modal child stacks above it (Wayland).
+            present_for_modal_dialog(parent)
         if summary.type is InteractionType.HOST_KEY_CONFIRMATION:
             self._present_host_key(summary, parent)
         elif summary.type in {
@@ -409,7 +418,8 @@ class DaemonInteractionDialogs:
         secrets = tuple(self._pending_secrets.values())
         self._pending_secrets.clear()
         for dialog in dialogs:
-            dialog.close()
+            if dialog is not None:
+                dialog.close()
         for secret in secrets:
             self._clear_secret(secret)
         for interaction_id in claimed:

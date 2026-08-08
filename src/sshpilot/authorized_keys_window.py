@@ -91,11 +91,13 @@ class AuthorizedKeysWindow(Adw.Window):
         connection=None,
         local: bool = False,
         key_manager=None,
+        interaction_dialogs=None,
     ) -> None:
         super().__init__()
         self._parent = parent
         self._connection = connection
         self._key_manager = key_manager
+        self._interaction_dialogs = interaction_dialogs
         self._items: List[Item] = []
         self._dirty = False
         self._loaded = False
@@ -638,6 +640,9 @@ class AuthorizedKeysWindow(Adw.Window):
 
     def _teardown(self) -> None:
         self._closing = True
+        if self._interaction_dialogs is not None:
+            self._interaction_dialogs.close()
+            self._interaction_dialogs = None
         close = getattr(self._service, "close", None)
         if callable(close):
             close()

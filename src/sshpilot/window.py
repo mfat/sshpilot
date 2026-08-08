@@ -5924,20 +5924,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
             return
+        dialogs = None
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
+            from .api.models import SessionId
             from .api.models.operations import OpenSftpRequest
             from .api.connection_identity import connection_id_for
+            bridge = getattr(self, "client_bridge", None)
+            if bridge is not None:
+                # Attach the interaction presenter before opening the service
+                # so a password/host-key prompt during the handshake is never
+                # missed (same ordering as the daemon SFTP backend).
+                from .daemon_interaction_dialogs import DaemonInteractionDialogs
+                dialogs = DaemonInteractionDialogs(self.client, bridge, self)
             service = self.client.open_sftp(OpenSftpRequest(connection_id=connection_id_for(connection)))
+            if dialogs is not None:
+                dialogs.set_session(SessionId(str(service.id)))
             window = AuthorizedKeysWindow(
                 parent=self,
                 client=self.client,
                 service_id=service.id,
                 connection=connection,
                 key_manager=getattr(self, "key_manager", None),
+                interaction_dialogs=dialogs,
             )
+            if dialogs is not None:
+                # Prompts must stack above the editor window, not the main one.
+                dialogs.set_parent(window)
             window.present()
         except Exception as exc:
+            if dialogs is not None:
+                dialogs.close()
             logger.error("Failed to open authorized_keys editor: %s", type(exc).__name__)
 
     def on_edit_connection_action(self, action, param=None):
