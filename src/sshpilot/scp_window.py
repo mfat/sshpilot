@@ -295,6 +295,54 @@ class ScpWindowController:
             display_name = getattr(connection, "nickname", "") or getattr(connection, "host", "")
             if _sftp_service_id is None:
                 from .sftp_service_controller import DaemonSftpServiceController
+
+                # Attach the interaction presenter before opening the SFTP
+                # service so a password/passphrase/host-key/FIDO prompt during
+                # the handshake is never missed (same wiring as
+                # DaemonSftpManager). It starts unbound; on_state_changed binds
+                # it to the public SFTP service id, and set_session()
+                # reconciles any prompt already created by then.
+                dialogs_holder = {"value": None}
+                try:
+                    from .daemon_interaction_dialogs import DaemonInteractionDialogs
+
+                    dialogs_holder["value"] = DaemonInteractionDialogs(
+                        client, bridge, self.window
+                    )
+                except Exception:
+                    logger.debug(
+                        "SCP browser interaction presenter unavailable", exc_info=True
+                    )
+                self._sftp_browser_dialogs_holder = dialogs_holder
+
+                def _on_browser_state_changed(summary):
+                    dialogs = dialogs_holder["value"]
+                    if dialogs is None:
+                        return
+                    try:
+                        from .api.models.common import SessionId
+
+                        dialogs.set_session(SessionId(str(summary.id)))
+                    except Exception:
+                        logger.debug(
+                            "SCP browser interaction presenter bind failed",
+                            exc_info=True,
+                        )
+
+                def _on_browser_error(error):
+                    dialogs = dialogs_holder["value"]
+                    dialogs_holder["value"] = None
+                    if dialogs is not None:
+                        try:
+                            dialogs.close()
+                        except Exception:
+                            logger.debug(
+                                "SCP browser interaction presenter close failed",
+                                exc_info=True,
+                            )
+                    self._sftp_browser_dialogs_holder = None
+                    self._show_transfer_error(str(error))
+
                 self._sftp_browser_controller = DaemonSftpServiceController(
                     client,
                     bridge,
@@ -302,7 +350,8 @@ class ScpWindowController:
                     on_ready=lambda summary: self._prompt_scp_download(
                         connection, summary.id
                     ),
-                    on_error=lambda error: self._show_transfer_error(str(error)),
+                    on_state_changed=_on_browser_state_changed,
+                    on_error=_on_browser_error,
                 )
                 self._sftp_browser_controller.open()
                 return
@@ -313,6 +362,20 @@ class ScpWindowController:
                 "close-request",
                 lambda *_args: self._close_sftp_browser_controller(),
             )
+            # Prompts raised after the browser appears (e.g. a later
+            # re-verification on the same SFTP service) must stack above the
+            # browser dialog, not the main window.
+            dialogs_holder = getattr(self, "_sftp_browser_dialogs_holder", None)
+            if dialogs_holder is not None:
+                dialogs = dialogs_holder["value"]
+                if dialogs is not None:
+                    try:
+                        dialogs.set_parent(dialog)
+                    except Exception:
+                        logger.debug(
+                            "SCP browser interaction presenter re-parent failed",
+                            exc_info=True,
+                        )
             # Register with the app so routed askpass prompts can find this
             # modal window as their parent (a bare Adw.Window is absent from
             # Gtk.Application.get_windows() and get_active_window()).
@@ -1032,6 +1095,19 @@ class ScpWindowController:
     def _close_sftp_browser_controller(self) -> None:
         controller = getattr(self, "_sftp_browser_controller", None)
         self._sftp_browser_controller = None
+        dialogs_holder = getattr(self, "_sftp_browser_dialogs_holder", None)
+        self._sftp_browser_dialogs_holder = None
+        if dialogs_holder is not None:
+            dialogs = dialogs_holder["value"]
+            dialogs_holder["value"] = None
+            if dialogs is not None:
+                try:
+                    dialogs.close()
+                except Exception:
+                    logger.debug(
+                        "SCP browser interaction presenter close failed",
+                        exc_info=True,
+                    )
         if controller is not None:
             try:
                 controller.close()

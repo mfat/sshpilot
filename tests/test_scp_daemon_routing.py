@@ -1,7 +1,23 @@
 from types import SimpleNamespace
 
+import pytest
+
+pytest.importorskip("gi")
+
+from sshpilot import daemon_interaction_dialogs as dialogs_mod
 from sshpilot.api import Capability
-from sshpilot.api.models import TransferState
+from sshpilot.api.events import EventType
+from sshpilot.api.interaction_identity import new_interaction_id
+from sshpilot.api.models import (
+    InteractionState,
+    InteractionSummary,
+    InteractionType,
+    PasswordPrompt,
+    SessionId,
+    TransferState,
+)
+from sshpilot.api.models.common import ConnectionId
+from sshpilot.api.models.operations import SftpServiceState
 from sshpilot.scp_window import ScpWindowController
 
 
@@ -147,3 +163,269 @@ def test_scp_controller_has_no_subprocess_or_vte_ownership():
         "_build_scp_argv",
     ):
         assert forbidden not in source
+
+
+# ---------------------------------------------------------------------------
+# SCP download browser: SFTP handshake presenter wiring
+# ---------------------------------------------------------------------------
+
+
+class _SftpSubscription:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class _SftpBrowserClient:
+    """Minimal daemon-client surface for the download-browser presenter."""
+
+    def __init__(self, capabilities):
+        self.capabilities = capabilities
+        self.events = []
+        self.pending = []
+        self.claims = []
+        self._claimed_by = {}
+        self._subscribers = []
+
+    def get_capabilities(self):
+        return self.capabilities
+
+    def subscribe_events(self, callback):
+        sub = _SftpSubscription()
+        self._subscribers.append((callback, sub))
+        return sub
+
+    def list_interactions(self):
+        return list(self.pending)
+
+    def open_sftp(self, request):
+        self.open_request = request
+        return SimpleNamespace(
+            id="sftp-7",
+            state=SftpServiceState.STARTING,
+            connection_id=request.connection_id,
+        )
+
+    def claim_interaction(self, interaction_id):
+        self._claimed_by[interaction_id] = True
+        self.claims.append(interaction_id)
+        return SimpleNamespace(nonce="ab" * 16)
+
+    def release_interaction(self, interaction_id):
+        self._claimed_by.pop(interaction_id, None)
+
+    def emit(self, summary):
+        event = SimpleNamespace(
+            type=EventType.INTERACTION_CREATED, payload=summary
+        )
+        for callback, _sub in list(self._subscribers):
+            callback(event)
+
+
+class _SftpSyncBridge:
+    """Runs both RPC and interaction operations synchronously."""
+
+    def __init__(self):
+        self.submitted = []
+        self.interactions = []
+
+    def submit(self, operation, *, on_success, on_error, **_kwargs):
+        self.submitted.append((operation, on_success, on_error))
+        return SimpleNamespace(cancel=lambda: None)
+
+    def submit_interaction(self, operation, *, on_success, on_error, on_discard=None):
+        self.interactions.append(operation)
+        try:
+            result = operation()
+        except BaseException as exc:
+            on_error(exc)
+        else:
+            on_success(result)
+        return None
+
+
+def _recording_dialogs(monkeypatch):
+    """Patch the presenter to record presentations instead of GTK dialogs."""
+    presented = []
+    monkeypatch.setattr(
+        dialogs_mod.DaemonInteractionDialogs,
+        "_present",
+        lambda self, summary: presented.append(summary) or None,
+    )
+    return presented
+
+
+def _sftp_capabilities():
+    supported = frozenset(
+        {
+            Capability.SFTP_READ,
+            Capability.SFTP_WRITE,
+            Capability.SFTP_EVENTS,
+            Capability.SFTP_METADATA,
+            Capability.SFTP_MUTATE,
+        }
+    )
+    return SimpleNamespace(
+        supported=supported,
+        supports=lambda capability: capability in supported,
+    )
+
+
+def _handshake_password(session_id, *, interaction_id=None):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    return InteractionSummary(
+        id=interaction_id or new_interaction_id(),
+        session_id=SessionId(session_id),
+        connection_id=ConnectionId("conn-1"),
+        type=InteractionType.PASSWORD,
+        state=InteractionState.PENDING,
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+        attempt=1,
+        prompt=PasswordPrompt(
+            username="root",
+            hostname="192.168.8.1",
+            port=22,
+            attempt=1,
+            can_remember=True,
+            stored_secret_available=False,
+        ),
+    )
+
+
+def test_scp_download_browser_presents_sftp_handshake_password(monkeypatch):
+    """The download browser's SFTP handshake prompt is presented.
+
+    The SCP download browser opens the remote-path picker through a bare
+    ``DaemonSftpServiceController`` (unlike the file manager's
+    ``DaemonSftpManager``, which already wires a presenter). Previously the
+    password interaction — scoped to the SFTP service id, e.g.
+    ``session=sftp-1`` in the daemon log — was created daemon-side but no
+    GTK presenter was attached, so the operation stalled with no prompt.
+    """
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    presented = _recording_dialogs(monkeypatch)
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    # The handshake password prompt is created before the frontend learns the
+    # service id (prompt-before-bind race, exactly like the operation case).
+    summary = _handshake_password("sftp-7")
+    client.pending.append(summary)
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1")
+    )
+
+    # A presenter is attached to the browser's SFTP controller and starts
+    # unbound — it must not claim anything yet.
+    dialogs = controller._sftp_browser_dialogs_holder["value"]
+    assert dialogs is not None
+    assert dialogs._session_id is None
+
+    # The open_sftp RPC lands; the controller's state change binds the
+    # presenter to the SFTP service id and reconciles the pending prompt.
+    operation, on_success, _on_error = bridge.submitted[0]
+    assert operation() is not None  # constructs OpenSftpRequest without error
+    on_success(
+        SimpleNamespace(
+            id="sftp-7",
+            state=SftpServiceState.STARTING,
+            connection_id=ConnectionId("conn-1"),
+        )
+    )
+
+    assert dialogs._session_id == SessionId("sftp-7")
+    assert presented == [summary]
+    assert client.claims == [summary.id]
+
+    # Closing the browser disposes the presenter: no dangling subscriptions.
+    controller._close_sftp_browser_controller()
+    assert controller._sftp_browser_dialogs_holder is None
+    assert dialogs._closed
+
+
+def test_scp_download_browser_handshake_prompt_event_path(monkeypatch):
+    """Interactions created after the bind still route through the event path."""
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    presented = _recording_dialogs(monkeypatch)
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1")
+    )
+    dialogs = controller._sftp_browser_dialogs_holder["value"]
+    _operation, on_success, _on_error = bridge.submitted[0]
+    # STARTING (not READY) keeps the test hermetic: READY would trigger
+    # _on_ready, which re-enters _prompt_scp_download and builds the real
+    # ScpDownloadWindow GTK UI. The bind + event path is identical either way.
+    on_success(
+        SimpleNamespace(
+            id="sftp-7",
+            state=SftpServiceState.STARTING,
+            connection_id=ConnectionId("conn-1"),
+        )
+    )
+
+    summary = _handshake_password("sftp-7")
+    client.emit(summary)
+
+    assert presented == [summary]
+    assert client.claims == [summary.id]
+    controller._close_sftp_browser_controller()
+    assert dialogs._closed
+
+
+def test_scp_download_browser_presenter_never_steals_other_scopes(monkeypatch):
+    """The browser presenter only claims its own SFTP service interactions."""
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    presented = _recording_dialogs(monkeypatch)
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1")
+    )
+    dialogs = controller._sftp_browser_dialogs_holder["value"]
+    _operation, on_success, _on_error = bridge.submitted[0]
+    on_success(
+        SimpleNamespace(
+            id="sftp-7",
+            state=SftpServiceState.STARTING,
+            connection_id=ConnectionId("conn-1"),
+        )
+    )
+
+    # A sibling terminal/session prompt must not be claimed or displayed.
+    other = _handshake_password("session-other", interaction_id="inter-other")
+    client.emit(other)
+    assert presented == []
+    assert client.claims == []
+    controller._close_sftp_browser_controller()
+    assert dialogs._closed
