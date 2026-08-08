@@ -93,6 +93,16 @@ class ScpWindowController:
         self._scp_strip_askpass = False
         self._scp_askpass_helpers = []
 
+    def _scp_download_default_dir(self) -> str:
+        """Default local destination for SCP downloads (~/Downloads, else home)."""
+        try:
+            downloads = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+            if downloads:
+                return downloads
+        except Exception:
+            pass
+        return str(Path.home())
+
     def on_scp_button_clicked(self, button):
         """Prompt the user to choose between uploading or downloading with scp."""
         selected_row = self.window.connection_list.get_selected_row()
