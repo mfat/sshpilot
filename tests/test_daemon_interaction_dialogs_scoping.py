@@ -30,7 +30,6 @@ from sshpilot.api.models import (
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
-    InteractionDecisionRequest,
     InteractionState,
     InteractionSummary,
     InteractionType,
@@ -340,6 +339,42 @@ def test_concurrent_presenters_never_steal(immediate_idle):
     assert set(client.claims) == {fm_summary.id, ak_summary.id, deploy_summary.id}
     for dialogs in (fm, authorized, deploy):
         dialogs.close()
+
+
+def test_transfer_scope_routes_only_to_its_presenter(immediate_idle):
+    """SCP transfer prompts (scope = public TransferId) route correctly.
+
+    Mirrors the ssh-copy-id operation presenter: an unbound presenter ignores
+    the prompt, and after ``set_session(transfer id)`` only the matching
+    presenter claims it — an SFTP presenter never steals it.
+    """
+    client = _FakeClient()
+    transfer = _RecordingDialogs(client, _SyncBridge())
+    sftp = _RecordingDialogs(client, _SyncBridge())
+    sftp.set_session(SessionId("sftp-1"))
+
+    transfer_summary = _summary(InteractionType.PASSWORD, "transfer-3")
+
+    # Unbound presenter must not claim the transfer prompt.
+    client.pending.append(transfer_summary)
+    client.emit(transfer_summary)
+    assert transfer.presented == []
+    assert sftp.presented == []
+
+    # Binding to the transfer id picks it up (and reconciles the pending one).
+    transfer.set_session(SessionId("transfer-3"))
+    assert transfer.presented == [transfer_summary]
+    assert set(client.claims) == {transfer_summary.id}
+    assert sftp.presented == []
+
+    # A second prompt for the same transfer routes only to the transfer
+    # presenter, never to the SFTP one.
+    second = _summary(InteractionType.PASSWORD, "transfer-3")
+    client.emit(second)
+    assert transfer.presented == [transfer_summary, second]
+    assert sftp.presented == []
+    transfer.close()
+    sftp.close()
 
 
 # ---------------------------------------------------------------------------

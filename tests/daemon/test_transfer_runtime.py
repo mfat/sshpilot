@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.api.models.common import ClientId, ConnectionId
+from sshpilot.api.models.common import ClientId, ConnectionId, TransferId
 from sshpilot.api.models.operations import OpenSftpRequest
 from sshpilot.api.models.transfers import (
     CancelTransferRequest,
@@ -279,8 +279,8 @@ class _FakeScpBackend:
         assert connection_id == "demo"
         return "alice@example.test"
 
-    def run(self, request, *, connection_target, connection_id, cancel_event):
-        self.runs.append((request, connection_target, connection_id, cancel_event))
+    def run(self, request, *, connection_target, connection_id, transfer_id, cancel_event):
+        self.runs.append((request, connection_target, connection_id, transfer_id, cancel_event))
         return SimpleNamespace(returncode=0, stderr="")
 
 
@@ -290,8 +290,8 @@ class _BlockingScpBackend(_FakeScpBackend):
         self.started = threading.Event()
         self.stopped = threading.Event()
 
-    def run(self, request, *, connection_target, connection_id, cancel_event):
-        self.runs.append((request, connection_target, connection_id, cancel_event))
+    def run(self, request, *, connection_target, connection_id, transfer_id, cancel_event):
+        self.runs.append((request, connection_target, connection_id, transfer_id, cancel_event))
         self.started.set()
         while not cancel_event.is_set():
             self.stopped.wait(0.01)
@@ -325,7 +325,7 @@ def test_shutdown_signals_running_scp_and_reaps_worker():
 
     transfer_runtime.shutdown()
 
-    assert backend.runs[0][3].is_set()
+    assert backend.runs[0][4].is_set()
     assert backend.stopped.is_set()
     assert prepared.id not in transfer_runtime._worker_threads
     assert transfer_runtime._records[prepared.id].state in _TERMINAL_STATES
@@ -963,3 +963,46 @@ def test_finish_completed_reconciles_single_file_skip():
     assert summary.state is TransferState.COMPLETED
     assert summary.bytes_total == 11
     assert summary.bytes_completed == summary.bytes_total
+
+
+def test_transfer_runtime_client_can_interact_owner_only():
+    owner = ClientId("client:owner")
+    other = ClientId("client:other")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    backend = _FakeScpBackend()
+    transfer_runtime = TransferRuntime(sftp_runtime, scp_backend=backend)
+    try:
+        prepared = transfer_runtime.prepare_start_scp_transfer(
+            _scp_request(), client_id=owner
+        )
+        assert transfer_runtime.client_can_interact(prepared.id, owner)
+        assert not transfer_runtime.client_can_interact(prepared.id, other)
+        assert not transfer_runtime.client_can_interact(
+            TransferId("transfer-999999"), owner
+        )
+    finally:
+        transfer_runtime.shutdown()
+
+
+def test_transfer_runtime_client_can_interact_denies_sftp_backed_transfers():
+    """SFTP-backed transfers scope to the SFTP service id, never ``transfer-``."""
+    owner = ClientId("client:owner")
+    sftp_runtime, service_id, _client = _make_ready_sftp_service(owner)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    try:
+        prepared = transfer_runtime.prepare_start_transfer(
+            StartTransferRequest(
+                connection_id=ConnectionId("demo"),
+                sftp_service_id=service_id,
+                direction=TransferDirection.UPLOAD,
+                remote_path="/remote/a.txt",
+                local_path=_temp_source(b"data"),
+                conflict_policy=TransferConflictPolicy.OVERWRITE,
+            ),
+            client_id=owner,
+        )
+        # A ``transfer-`` scope was never created for this transfer; the owner
+        # must not be able to claim interactions under it.
+        assert not transfer_runtime.client_can_interact(prepared.id, owner)
+    finally:
+        transfer_runtime.shutdown()

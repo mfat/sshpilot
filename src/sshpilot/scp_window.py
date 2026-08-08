@@ -856,11 +856,38 @@ class ScpWindowController:
         if client is None or bridge is None:
             self._show_transfer_error("The daemon transfer service is unavailable.")
             return
+        # Attach the interaction presenter before starting the transfer so a
+        # password/passphrase/host-key/FIDO prompt during the handshake is never
+        # missed. It starts unbound (ignoring every interaction); once the
+        # daemon returns the TransferSummary it binds to the transfer ID — the
+        # one public scope the SCP backend scopes its interactions to — and
+        # set_session() reconciles any prompt already created.
+        dialogs_holder = {"value": None}
+        try:
+            if bridge is not None:
+                from .daemon_interaction_dialogs import DaemonInteractionDialogs
+
+                dialogs_holder["value"] = DaemonInteractionDialogs(
+                    client, bridge, self.window
+                )
+        except Exception:
+            logger.debug("SCP interaction presenter unavailable", exc_info=True)
+
+        def dispose_dialogs():
+            dialogs = dialogs_holder["value"]
+            dialogs_holder["value"] = None
+            if dialogs is not None:
+                try:
+                    dialogs.close()
+                except Exception:
+                    logger.debug("SCP interaction presenter close failed", exc_info=True)
+
         try:
             if not client.get_capabilities().supports(Capability.TRANSFERS_SCP):
                 self._show_transfer_error(
                     "Native SCP transfers are unavailable on the daemon."
                 )
+                dispose_dialogs()
                 return
             request = StartScpTransferRequest(
                 connection_id=str(getattr(connection, "id", "") or getattr(connection, "nickname", "")),
@@ -873,6 +900,7 @@ class ScpWindowController:
                 ),
             )
         except (TypeError, ValueError) as error:
+            dispose_dialogs()
             self._show_transfer_error(str(error))
             return
 
@@ -904,6 +932,9 @@ class ScpWindowController:
             state = summary.state
             if state in {TransferState.COMPLETED, TransferState.FAILED, TransferState.CANCELLED}:
                 stop_observing()
+                # The transfer's interaction scope is done: release the
+                # presenter so it never claims unrelated interactions again.
+                dispose_dialogs()
                 if state is TransferState.COMPLETED:
                     status.set_text("Completed")
                 elif state is TransferState.CANCELLED:
@@ -956,6 +987,7 @@ class ScpWindowController:
         def finish_close(*_args):
             closed["value"] = True
             stop_observing()
+            dispose_dialogs()
             cancel_active_transfer()
 
         dlg.connect("closed", finish_close)
@@ -964,6 +996,18 @@ class ScpWindowController:
 
         def on_started(summary):
             transfer_id["value"] = summary.id
+            dialogs = dialogs_holder["value"]
+            if dialogs is not None:
+                # Bind the presenter to the transfer's public ID (the one
+                # scope the daemon scopes SCP interactions to) and reconcile
+                # any prompt created before the summary arrived.
+                from .api.models.common import SessionId
+
+                try:
+                    dialogs.set_session(SessionId(str(summary.id)))
+                    dialogs.set_parent(dlg)
+                except Exception:
+                    logger.debug("SCP interaction presenter bind failed", exc_info=True)
             ensure_observing()
             if closed["value"]:
                 cancel_active_transfer()
@@ -971,6 +1015,7 @@ class ScpWindowController:
             on_transfer_summary(summary)
 
         def on_failed(error):
+            dispose_dialogs()
             if not closed["value"]:
                 self._show_transfer_error(str(error))
                 status.set_text(f"Transfer failed: {error}")

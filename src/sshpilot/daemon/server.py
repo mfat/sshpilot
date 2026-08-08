@@ -32,6 +32,7 @@ from sshpilot.api.models.common import (
     RequestId,
     SessionId,
     SftpServiceId,
+    TransferId,
 )
 from sshpilot.api.models.daemon import (
     DaemonDiagnostics,
@@ -882,6 +883,12 @@ class DaemonServer:
             # owning client must be able to see and answer them.
             return self._operation_runtime.client_can_interact(
                 OperationId(text), client_id
+            )
+        if text.startswith("transfer-") and self._transfer_runtime is not None:
+            # Native SCP transfers scope their interactions to the public
+            # TransferId; the owning client must be able to see and answer them.
+            return self._transfer_runtime.client_can_interact(
+                TransferId(text), client_id
             )
         return False
 

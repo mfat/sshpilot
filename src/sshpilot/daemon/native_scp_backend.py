@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.api.models.common import SessionId
+from sshpilot.api.models.common import SessionId, TransferId
 from sshpilot.api.models.transfers import StartScpTransferRequest
 from sshpilot.transfer_scp import (
     assemble_scp_transfer_args,
@@ -115,6 +115,7 @@ class NativeScpBackend:
         *,
         connection_target: str,
         connection_id,
+        transfer_id: TransferId,
         cancel_event,
     ) -> ScpProcessResult:
         if request.conflict_policy.value != "overwrite":
@@ -132,7 +133,12 @@ class NativeScpBackend:
             interaction_policy="broker",
             target_override=destination,
         )
-        scope_id = SessionId(f"scp-{connection_id}-{id(cancel_event)}")
+        # One public scope per daemon resource: the interaction scope of an
+        # SCP transfer IS its public TransferId. The frontend learns that ID
+        # from TransferSummary and binds its interaction presenter to it; a
+        # private random scope (``scp-<connection>-<id(cancel_event)>``) would
+        # be unknowable and its prompts would never be presented.
+        scope_id = SessionId(str(transfer_id))
         argv, env = self._interaction_broker.prepare_operation_launch(
             tuple(base_argv),
             dict(base_env),
@@ -140,6 +146,7 @@ class NativeScpBackend:
             connection_id=connection_id,
             hostname=connection_target,
         )
+        succeeded = False
         try:
             result = self._run_attempt(
                 argv,
@@ -147,6 +154,7 @@ class NativeScpBackend:
                 cancel_event=cancel_event,
             )
             if result.returncode == 0:
+                succeeded = True
                 return result
             if cancel_event.is_set():
                 raise SshPilotError(
@@ -161,6 +169,7 @@ class NativeScpBackend:
                     cancel_event=cancel_event,
                 )
                 if legacy.returncode == 0:
+                    succeeded = True
                     return legacy
                 if cancel_event.is_set():
                     raise SshPilotError(
@@ -172,6 +181,14 @@ class NativeScpBackend:
                 raise self._failure(legacy.stderr)
             raise self._failure(result.stderr)
         finally:
+            if succeeded:
+                # Commit credentials the user chose to remember AFTER a
+                # successful run — BEFORE the interaction scope is torn down.
+                # ``cancel_session`` destroys the askpass context and clears
+                # pending remembered secrets, so ``mark_authenticated`` must
+                # run first. On failure/cancellation the raises above skip it
+                # and the ``finally`` still cleans the scope up.
+                self._interaction_broker.mark_authenticated(scope_id)
             self._interaction_broker.cancel_session(scope_id)
 
     def _run_attempt(

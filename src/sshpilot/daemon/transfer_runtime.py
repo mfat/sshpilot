@@ -221,6 +221,31 @@ class TransferRuntime:
             self._require_accepting_reads_locked()
             return self._summary_locked(self._record_locked(transfer_id))
 
+    def client_can_interact(
+        self,
+        transfer_id: TransferId,
+        client_id: ClientId,
+    ) -> bool:
+        """Whether *client_id* may claim interactions scoped to a transfer.
+
+        Mirrors the session/SFTP/forward/operation runtimes: only the owning
+        client of a native SCP transfer may see and answer the prompts its
+        worker raises (password, passphrase, host-key, FIDO presence). Only
+        native SCP transfers create a ``transfer-`` scoped askpass context;
+        SFTP-backed transfers scope their interactions to the SFTP service id
+        instead. A transfer recorded without an owner is not claimable by any
+        client, and unknown transfer ids are always denied — a ``transfer-``
+        prefixed scope that never belonged to a registered native SCP transfer
+        stays invisible.
+        """
+        with self._lock:
+            record = self._records.get(transfer_id)
+            if record is None or record.owner_client_id is None:
+                return False
+            if record.scp_request is None:
+                return False
+            return record.owner_client_id == client_id
+
     # -- lifecycle ------------------------------------------------------
     def prepare_start_transfer(
         self,
@@ -507,6 +532,7 @@ class TransferRuntime:
             record.scp_request,
             connection_target=target,
             connection_id=record.connection_id,
+            transfer_id=record.transfer_id,
             cancel_event=record.scp_cancel_event,
         )
         with self._lock:
