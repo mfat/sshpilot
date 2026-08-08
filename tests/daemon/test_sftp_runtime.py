@@ -7,6 +7,7 @@ from sshpilot.api.models.common import ClientId, ConnectionId
 from sshpilot.api.models.operations import (
     AttachSftpRequest,
     CloseSftpRequest,
+    ListDirectoryRequest,
     OpenSftpRequest,
     SftpCopyRequest,
     SftpPathRequest,
@@ -43,6 +44,9 @@ class _Attr:
         else:
             self.st_mode = 0o040755 if is_dir else 0o100644
         self.st_size = 0
+        self.st_uid = 0
+        self.st_gid = 0
+        self.st_mtime = None
 
     def is_dir(self):
         return self._is_dir
@@ -85,6 +89,12 @@ class _FakeSftpClient:
         self.files = {"/source.txt": b"payload"}
         self.directories = {"/"}
         self.symlinks = {}
+        # The real OpenSSHSFTPClient.realpath(".") returns the sftp-server's
+        # cwd (the user's home); the fake mirrors that.
+        self.cwd = "/"
+
+    def realpath(self, path):
+        return self.cwd if path == "." else path
 
     def stat(self, path):
         if path in self.directories:
@@ -351,3 +361,134 @@ def test_remove_recursive_single_file_is_removed():
 
     assert "/source.txt" in client.remove_calls
     assert "/source.txt" not in client.files
+
+
+# ---------------------------------------------------------------------------
+# list_directory: tilde (``~``) expansion
+# ---------------------------------------------------------------------------
+# OpenSSH's sftp-server performs no tilde expansion in OPENDIR, so a literal
+# ``~`` sent to ``FXP_OPENDIR`` fails with FX_NO_SUCH_FILE. The runtime must
+# resolve the home (REALPATH("."), the sftp-server cwd) and expand ``~``/
+# ``~/`` before listing -- mirroring DaemonSftpManager._resolve_home().
+
+
+def _ready_service(runtime, runner):
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    return owner, summary, runner.handles[0].client
+
+
+def test_list_directory_expands_tilde_to_resolved_home():
+    runtime, runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, runner)
+    client.cwd = "/home/alice"
+    client.directories.add("/home/alice")
+    client.directories.add("/home/alice/docs")
+
+    result = runtime.list_directory(
+        ListDirectoryRequest(
+            connection_id=ConnectionId("demo"),
+            service_id=summary.id,
+            path="~",
+        ),
+        client_id=owner,
+    )
+
+    # The home path, not the raw tilde, must reach the SFTP client.
+    assert result.path == "/home/alice"
+    assert [entry.name for entry in result.entries] == ["docs"]
+
+
+def test_list_directory_expands_tilde_slash_subpath():
+    runtime, runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, runner)
+    client.cwd = "/home/alice"
+    client.directories.add("/home/alice")
+    client.directories.add("/home/alice/docs")
+    client.directories.add("/home/alice/docs/reports")
+
+    result = runtime.list_directory(
+        ListDirectoryRequest(
+            connection_id=ConnectionId("demo"),
+            service_id=summary.id,
+            path="~/docs",
+        ),
+        client_id=owner,
+    )
+
+    assert result.path == "/home/alice/docs"
+    assert [entry.name for entry in result.entries] == ["reports"]
+
+
+def test_list_directory_passes_absolute_and_plain_paths_through():
+    runtime, runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, runner)
+    client.directories.add("/var/tmp")
+
+    absolute = runtime.list_directory(
+        ListDirectoryRequest(
+            connection_id=ConnectionId("demo"),
+            service_id=summary.id,
+            path="/var/tmp",
+        ),
+        client_id=owner,
+    )
+    assert absolute.path == "/var/tmp"
+
+    plain = runtime.list_directory(
+        ListDirectoryRequest(
+            connection_id=ConnectionId("demo"),
+            service_id=summary.id,
+            path=".",
+        ),
+        client_id=owner,
+    )
+    assert plain.path == "."
+
+
+def test_list_directory_home_resolution_failure_falls_back_to_raw_path():
+    runtime, runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, runner)
+
+    def _boom(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "realpath failed")
+
+    client.realpath = _boom
+
+    result = runtime.list_directory(
+        ListDirectoryRequest(
+            connection_id=ConnectionId("demo"),
+            service_id=summary.id,
+            path="~",
+        ),
+        client_id=owner,
+    )
+
+    # Graceful fallback: the raw path is passed through rather than crashing.
+    assert result.path == "~"
+
+
+def test_list_directory_resolves_home_once_per_service():
+    runtime, runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, runner)
+    client.cwd = "/home/alice"
+    client.directories.add("/home/alice")
+    realpath_calls = []
+    original = client.realpath
+
+    def _counting(path):
+        realpath_calls.append(path)
+        return original(path)
+
+    client.realpath = _counting
+    request = ListDirectoryRequest(
+        connection_id=ConnectionId("demo"),
+        service_id=summary.id,
+        path="~",
+    )
+
+    runtime.list_directory(request, client_id=owner)
+    runtime.list_directory(request, client_id=owner)
+
+    assert realpath_calls == ["."]

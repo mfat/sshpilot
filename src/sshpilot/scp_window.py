@@ -843,7 +843,12 @@ class ScpWindowController:
                 _load_remote()
 
             refresh_button.connect('clicked', lambda *_: _refresh())
-            remote_row.connect('activate', lambda *_: _refresh())
+            # ``Adw.EntryRow`` has no ``activate`` signal: ``activate`` here
+            # binds the inherited ``GtkListBoxRow::activate`` (row body
+            # activation), while pressing Enter inside the embedded entry
+            # emits ``entry-activated``. Connecting the wrong signal left
+            # Enter dead.
+            remote_row.connect('entry-activated', lambda *_: _refresh())
             download_button.connect('clicked', lambda *_: _start_download())
 
             def _on_row_activated(_box, row):

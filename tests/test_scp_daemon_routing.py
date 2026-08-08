@@ -188,6 +188,11 @@ class _SftpBrowserClient:
         self.claims = []
         self._claimed_by = {}
         self._subscribers = []
+        self.listed = []
+
+    def sftp_list_directory(self, request):
+        self.listed.append(request)
+        return request
 
     def get_capabilities(self):
         return self.capabilities
@@ -393,6 +398,121 @@ def test_scp_download_browser_handshake_prompt_event_path(monkeypatch):
     assert client.claims == [summary.id]
     controller._close_sftp_browser_controller()
     assert dialogs._closed
+
+
+# ---------------------------------------------------------------------------
+# SCP download browser: Enter in the remote-path row reloads the listing
+# ---------------------------------------------------------------------------
+
+
+class _Widget:
+    """Permissive stand-in for any Gtk/Adw widget in the browser dialog."""
+
+    def __init__(self, **kwargs):
+        del kwargs
+        self._handlers = {}
+        self._text = ""
+
+    def __getattr__(self, _name):
+        return lambda *args, **_kwargs: None
+
+    def connect(self, signal, handler):
+        self._handlers.setdefault(signal, []).append(handler)
+        return None
+
+    def set_text(self, text):
+        self._text = text
+
+    def get_text(self):
+        return self._text
+
+    def set_sensitive(self, _value):
+        return None
+
+
+class _EntryRow(_Widget):
+    instances = []
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        _EntryRow.instances.append(self)
+
+    def get_editable(self):
+        return None
+
+
+class _Dialog:
+    def __init__(self, parent, subtitle=""):
+        del parent, subtitle
+        self.content_box = _Widget()
+        self.download_button = _Widget()
+
+    def connect(self, *_args):
+        return None
+
+    def present(self, *_args):
+        return None
+
+    def set_application(self, *_args):
+        return None
+
+
+def _patch_browser_widgets(monkeypatch):
+    import sshpilot.scp_window as scp_window_mod
+    from sshpilot import icon_utils
+
+    _EntryRow.instances = []
+    monkeypatch.setattr(scp_window_mod, "ScpDownloadWindow", _Dialog)
+    monkeypatch.setattr(scp_window_mod.Adw, "EntryRow", _EntryRow)
+    monkeypatch.setattr(scp_window_mod.Adw, "PreferencesGroup", _Widget)
+    monkeypatch.setattr(scp_window_mod.Adw, "Clamp", _Widget)
+    monkeypatch.setattr(scp_window_mod.Gtk, "Box", _Widget)
+    monkeypatch.setattr(scp_window_mod.Gtk, "Label", _Widget)
+    monkeypatch.setattr(scp_window_mod.Gtk, "ScrolledWindow", _Widget)
+    monkeypatch.setattr(scp_window_mod.Gtk, "ListBox", _Widget)
+    monkeypatch.setattr(
+        icon_utils, "new_button_from_icon_name", lambda *args, **_kwargs: _Widget()
+    )
+
+
+def test_scp_browser_remote_path_row_reloads_on_entry_activated(monkeypatch):
+    """Enter in the remote-path row reloads the remote listing.
+
+    Regression: ``remote_row`` is an ``Adw.EntryRow`` whose ``activate``
+    signal is the inherited ``GtkListBoxRow::activate`` (fired only when the
+    *row* is activated, e.g. double-click). Pressing Enter inside the
+    embedded entry emits ``entry-activated`` instead, so connecting
+    ``activate`` left Enter dead.
+    """
+    monkeypatch.setattr(dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args))
+    _patch_browser_widgets(monkeypatch)
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1"),
+        "sftp-7",
+    )
+
+    remote_row = _EntryRow.instances[0]
+    # Enter must be wired to entry-activated; the dead row-level activate
+    # signal must not be the reload trigger.
+    assert "entry-activated" in remote_row._handlers
+    assert "activate" not in remote_row._handlers
+
+    submitted_before = len(bridge.submitted)
+    remote_row._handlers["entry-activated"][0]()
+
+    assert len(bridge.submitted) == submitted_before + 1
+    operation, _on_success, _on_error = bridge.submitted[-1]
+    request = operation()
+    assert request.path == remote_row.get_text()
+    assert client.listed[-1] is request
 
 
 def test_scp_download_browser_presenter_never_steals_other_scopes(monkeypatch):

@@ -301,6 +301,8 @@ class _SftpRecord:
     handle: Optional[SftpProcessHandle] = None
     launch_spec: Optional[SessionLaunchSpec] = None
     close_scheduled: bool = False
+    # Resolved home directory (REALPATH(".")), used to expand ``~`` paths.
+    home: Optional[str] = None
 
 
 @dataclass
@@ -1173,6 +1175,38 @@ class SftpServiceRuntime:
         )
 
     # -- remote filesystem operations -------------------------------------
+    def _expand_tilde_path(self, record: _SftpRecord, path: str) -> str:
+        """Expand a leading ``~``/``~/`` using the service's home directory.
+
+        OpenSSH's sftp-server performs no tilde expansion in OPENDIR (the
+        ``expand-path@openssh.com`` extension is opt-in and the app's client
+        does not use it), so a literal ``~`` sent to ``FXP_OPENDIR`` fails
+        with FX_NO_SUCH_FILE. Resolve the home once per service via
+        REALPATH(".") -- the sftp-server's cwd is the user's home -- and
+        expand here, mirroring ``DaemonSftpManager._resolve_home()``.
+
+        Only ``list_directory`` expands today; the other path-accepting
+        operations (stat/read/write/remove/...) still pass ``~`` through raw.
+        """
+        if not (path == "~" or path.startswith("~/")):
+            return path
+        home = record.home
+        if home is None:
+            try:
+                home = record.handle.client.realpath(".")
+            except Exception:
+                home = None
+            if home:
+                with self._lock:
+                    if record.home is None:
+                        record.home = home
+        if not home:
+            return path
+        if path == "~":
+            return home
+        expanded = home.rstrip("/") + "/" + path[2:]
+        return expanded.rstrip("/") or home
+
     def list_directory(
         self,
         request: ListDirectoryRequest,
@@ -1190,7 +1224,7 @@ class SftpServiceRuntime:
                 "A SFTP service id is required to list a directory",
             )
         record = self._ready_record_for_read(request.service_id, client_id)
-        path = _validate_path(request.path)
+        path = self._expand_tilde_path(record, _validate_path(request.path))
         limit = min(request.limit or self._list_limit, self._list_limit)
         client = record.handle.client
         try:
