@@ -44,7 +44,6 @@ from .platform_utils import is_macos, get_ssh_dir
 from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
-    _fingerprint_for_pub_line,
 )
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
@@ -1887,16 +1886,47 @@ class ConnectionDialog(
             return None
 
     def _discover_disk_keys(self):
-        """[(key_name, path)] of private key files on disk (names only)."""
+        """[(key_name, path)] of private key files discovered by the daemon.
+
+        Key discovery is daemon-owned: the legacy ``ConnectionManager
+        .load_ssh_keys`` surface was retired with the connection-store
+        migration, so the dialog uses the parent window's daemon-backed
+        ``KeyManager`` (the same object the ssh-copy-id window uses). When the
+        parent has a daemon client but no pre-built manager, one is
+        constructed with the parent's key scope. Without either, the chooser
+        shows its empty-state placeholder.
+        """
+        parent = getattr(self, 'parent_window', None)
+        if parent is None:
+            try:
+                parent = self.get_transient_for()
+            except Exception:
+                parent = None
+        key_manager = getattr(parent, 'key_manager', None)
+        if key_manager is None:
+            client = getattr(parent, 'client', None)
+            if client is not None:
+                try:
+                    from .api.models.keys import KeyStoreScope
+                    from .key_manager import KeyManager
+
+                    key_manager = KeyManager(
+                        client,
+                        scope=getattr(parent, '_key_scope', KeyStoreScope.DEFAULT),
+                    )
+                except Exception:
+                    logger.debug("daemon key manager unavailable", exc_info=True)
+                    key_manager = None
+        if key_manager is None:
+            return []
         out = []
         seen = set()
-        cm = getattr(self, 'connection_manager', None)
         try:
-            if cm is not None and hasattr(cm, 'load_ssh_keys'):
-                for path in (cm.load_ssh_keys() or []):
-                    if path and path not in seen:
-                        seen.add(path)
-                        out.append((os.path.basename(path), path))
+            for key in key_manager.discover_keys() or []:
+                path = key.private_path
+                if path and path not in seen:
+                    seen.add(path)
+                    out.append((key.name or os.path.basename(path), path))
         except Exception:
             logger.debug("disk key discovery failed", exc_info=True)
         return out
