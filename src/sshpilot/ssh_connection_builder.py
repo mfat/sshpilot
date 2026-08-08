@@ -980,8 +980,16 @@ def build_ssh_connection(
         if ctx.interaction_policy == "none":
             launch_mode = LaunchMode.BATCH
 
+        # LaunchMode only tunes validation/options; it never picks the binary.
+        # scp transfers must exec scp (ssh would treat the first source path as
+        # the hostname). sftp deliberately keeps ssh: the daemon rides
+        # ``ssh -s <alias> sftp`` (subsystem request), and ssh-copy-id composes
+        # its own argv via _build_base_ssh_command.
+        executable = 'scp' if ctx.command_type == 'scp' else 'ssh'
+
         req = SSHLaunchRequest(
             destination=native_target,
+            executable=executable,
             config_file=config_override,
             ssh_overrides=overrides,
             extra_options=extra_options,
