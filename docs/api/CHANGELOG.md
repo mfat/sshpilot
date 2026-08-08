@@ -5,6 +5,24 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.18`; `PROTOCOL_VERSION` stays `1.0`.
+
+- Added the semantic `sftp.privileged_file` capability. `sftp_read_file` and
+  `sftp_replace_file` accept an `access` (`SftpFileAccess.NORMAL` / `SUDO`)
+  field; privileged operations require the new capability and are refused with
+  `UNSUPPORTED_CAPABILITY` when the daemon privileged file runner is absent —
+  there is no frontend sudo fallback. Sudo file access is daemon-owned:
+  passwordless sudo first, stored `sudo_password_spec` secret next, then a
+  protected password interaction through the interaction broker. The one-use
+  secret is fed directly to the child stdin and never appears in DTOs, events,
+  logs, or errors. Privileged replacement is revision-safe under the per-target
+  lock and preserves an existing file's owner/mode via `sudo tee`.
+
+- Added the daemon-owned `sftp.create_file` RPC (`SftpCreateFileRequest` /
+  `SftpCreateFileResult`). Remote file creation is a daemon-side touch; the
+  frontend no longer uploads a temporary file or fakes a transfer. Already-exists,
+  permission, and path failures surface as structured errors.
+
 - Removed plaintext connection-password and key-passphrase lookup methods from
   the public client RPC surface. Added metadata-only availability methods and
   explicit reveal methods with separate capabilities. Reveal acknowledgments use

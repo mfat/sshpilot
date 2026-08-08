@@ -235,17 +235,27 @@ class SftpFileTarget(str, Enum):
     LOCAL_AUTHORIZED_KEYS = "local_authorized_keys"
 
 
+class SftpFileAccess(str, Enum):
+    NORMAL = "normal"
+    SUDO = "sudo"
+
+
 @dataclass(frozen=True)
 class SftpReadFileRequest:
     target: SftpFileTarget
     path: str
     service_id: Optional[SftpServiceId] = None
+    access: SftpFileAccess = SftpFileAccess.NORMAL
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, SftpFileTarget):
             raise TypeError("SFTP file target must be a SftpFileTarget")
         if not self.path or "\x00" in self.path:
             raise ValueError("SFTP file path must be a non-empty safe string")
+        if not isinstance(self.access, SftpFileAccess):
+            raise TypeError("SFTP file access must be a SftpFileAccess")
+        if self.access is SftpFileAccess.SUDO and self.target is not SftpFileTarget.REMOTE:
+            raise ValueError("privileged file access requires the remote file target")
         if self.target is SftpFileTarget.REMOTE and self.service_id is None:
             raise ValueError("remote file reads require an SFTP service")
         if self.target is SftpFileTarget.LOCAL_AUTHORIZED_KEYS:
@@ -291,6 +301,7 @@ class SftpReplaceFileRequest:
     expected_revision: str
     backup: bool = True
     service_id: Optional[SftpServiceId] = None
+    access: SftpFileAccess = SftpFileAccess.NORMAL
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, SftpFileTarget):
@@ -302,6 +313,10 @@ class SftpReplaceFileRequest:
         require_identifier(self.expected_revision, "expected file revision")
         if type(self.backup) is not bool:
             raise TypeError("SFTP file backup must be a boolean")
+        if not isinstance(self.access, SftpFileAccess):
+            raise TypeError("SFTP file access must be a SftpFileAccess")
+        if self.access is SftpFileAccess.SUDO and self.target is not SftpFileTarget.REMOTE:
+            raise ValueError("privileged file access requires the remote file target")
         if self.target is SftpFileTarget.REMOTE and self.service_id is None:
             raise ValueError("remote file replacements require an SFTP service")
         if self.target is SftpFileTarget.LOCAL_AUTHORIZED_KEYS:
@@ -329,6 +344,36 @@ class SftpReplaceFileResult:
             raise ValueError("SFTP replacement size must be non-negative")
         if self.backup_path is not None and "\x00" in self.backup_path:
             raise ValueError("SFTP backup path must not contain NUL")
+
+
+@dataclass(frozen=True)
+class SftpCreateFileRequest:
+    """Create an empty remote file within one SFTP service.
+
+    The daemon owns the create: no frontend temporary file or fake upload is
+    involved, and already-exists / permission / path failures surface as
+    structured errors.
+    """
+
+    service_id: SftpServiceId
+    path: str
+
+    def __post_init__(self) -> None:
+        require_identifier(self.service_id, "SFTP service id")
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP create path must be a non-empty safe string")
+
+
+@dataclass(frozen=True)
+class SftpCreateFileResult:
+    path: str
+    mode: int = 0o644
+
+    def __post_init__(self) -> None:
+        if not self.path or "\x00" in self.path:
+            raise ValueError("SFTP create result path must be safe")
+        if type(self.mode) is not int or self.mode < 0:
+            raise ValueError("SFTP create result mode must be non-negative")
 
 
 @dataclass(frozen=True)

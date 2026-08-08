@@ -11,11 +11,13 @@ from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ClientId, ConnectionId
 from sshpilot.api.models.operations import (
     OpenSftpRequest,
+    SftpCreateFileRequest,
+    SftpFileAccess,
     SftpFileTarget,
     SftpReadFileRequest,
     SftpReplaceFileRequest,
 )
-from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
+from sshpilot.daemon.sftp_runtime import SftpServiceRuntime, _file_revision
 
 
 def test_local_authorized_keys_read_is_bounded_and_revisioned(tmp_path, monkeypatch):
@@ -618,3 +620,159 @@ def test_shutdown_rejects_waiting_local_replacement(tmp_path, monkeypatch):
     assert not worker.is_alive()
     assert outcomes == [ErrorCode.DAEMON_SHUTTING_DOWN]
     assert path.read_text(encoding="utf-8") == "original\n"
+
+
+class _FakePrivilegedRunner:
+    def __init__(self):
+        self.reads = []
+        self.replaces = []
+        self.content = b"privileged\n"
+        self.exists = True
+        self.revision = "priv-rev"
+        self.backup_path = "/etc/something.bak-1"
+
+    def read(self, **kwargs):
+        self.reads.append(kwargs)
+        return SimpleNamespace(content=self.content, exists=self.exists, mode=None)
+
+    def replace(self, **kwargs):
+        self.replaces.append(kwargs)
+        return SimpleNamespace(
+            path=kwargs["path"],
+            revision=self.revision,
+            size=len(kwargs["payload"]),
+            backup_path=self.backup_path,
+        )
+
+
+def _privileged_runtime(client=None, privileged=None):
+    client = client or _RemoteSftpClient()
+    runner = _RemoteFakeRunner(client)
+    runtime = SftpServiceRuntime(
+        _RemoteCoreClient(), runner=runner, privileged_file_runner=privileged
+    )
+    summary = runtime.prepare_open_service(
+        OpenSftpRequest(ConnectionId("demo")), client_id=ClientId("client:owner")
+    )
+    runtime.start_service(summary.id)
+    return runtime, runner, summary
+
+
+def test_sudo_read_without_privileged_runner_is_unsupported():
+    runtime, _, summary = _privileged_runtime()
+    with pytest.raises(SshPilotError) as raised:
+        runtime.read_file(
+            SftpReadFileRequest(
+                SftpFileTarget.REMOTE,
+                "/etc/hosts",
+                summary.id,
+                access=SftpFileAccess.SUDO,
+            ),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+
+
+def test_sudo_read_routes_to_privileged_runner():
+    runner = _FakePrivilegedRunner()
+    runtime, _, summary = _privileged_runtime(privileged=runner)
+    result = runtime.read_file(
+        SftpReadFileRequest(
+            SftpFileTarget.REMOTE,
+            "/etc/hosts",
+            summary.id,
+            access=SftpFileAccess.SUDO,
+        ),
+        client_id=ClientId("client:owner"),
+    )
+
+    assert result.exists is True
+    assert result.content == "privileged\n"
+    assert result.revision == _file_revision(b"privileged\n", True)
+    call = runner.reads[0]
+    assert call["connection_id"] == ConnectionId("demo")
+    assert str(call["scope_id"]) == str(summary.id)
+    assert call["hostname"] == "example.test"
+    assert call["username"] == "alice"
+    assert call["port"] == 22
+    assert call["path"] == "/etc/hosts"
+
+
+def test_sudo_replace_routes_to_privileged_runner():
+    runner = _FakePrivilegedRunner()
+    runtime, _, summary = _privileged_runtime(privileged=runner)
+    result = runtime.replace_file(
+        SftpReplaceFileRequest(
+            SftpFileTarget.REMOTE,
+            "/etc/hosts",
+            "root wrote\n",
+            "priv-rev",
+            backup=True,
+            service_id=summary.id,
+            access=SftpFileAccess.SUDO,
+        ),
+        client_id=ClientId("client:owner"),
+    )
+
+    assert result.path == "/etc/hosts"
+    assert result.revision == "priv-rev"
+    assert result.size == len(b"root wrote\n")
+    assert result.backup_path == "/etc/something.bak-1"
+    call = runner.replaces[0]
+    assert call["path"] == "/etc/hosts"
+    assert call["payload"] == b"root wrote\n"
+    assert call["expected_revision"] == "priv-rev"
+    assert call["backup"] is True
+    assert call["connection_id"] == ConnectionId("demo")
+
+
+def test_sudo_target_requires_remote_target():
+    with pytest.raises(ValueError):
+        SftpReadFileRequest(
+            SftpFileTarget.LOCAL_AUTHORIZED_KEYS,
+            "~/.ssh/authorized_keys",
+            access=SftpFileAccess.SUDO,
+        )
+    with pytest.raises(ValueError):
+        SftpReplaceFileRequest(
+            SftpFileTarget.LOCAL_AUTHORIZED_KEYS,
+            "~/.ssh/authorized_keys",
+            "content",
+            "rev",
+            access=SftpFileAccess.SUDO,
+        )
+
+
+def test_create_file_creates_empty_remote_file():
+    client = _RemoteSftpClient()
+    runtime, _, summary = _privileged_runtime(client)
+    result = runtime.create_file(
+        SftpCreateFileRequest(summary.id, "/remote/new.txt"),
+        client_id=ClientId("client:owner"),
+    )
+
+    assert result.path == "/remote/new.txt"
+    assert result.mode == 0o644
+    assert client.files["/remote/new.txt"] == b""
+
+
+def test_create_file_already_exists_raises_structured_error():
+    client = _RemoteSftpClient()
+    client.files["/remote/taken"] = b"existing"
+    runtime, _, summary = _privileged_runtime(client)
+    with pytest.raises(SshPilotError) as raised:
+        runtime.create_file(
+            SftpCreateFileRequest(summary.id, "/remote/taken"),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.REMOTE_PATH_EXISTS
+
+
+def test_create_file_rejects_invalid_request():
+    runtime, _, summary = _privileged_runtime()
+    with pytest.raises(SshPilotError) as raised:
+        runtime.create_file(
+            SimpleNamespace(path="/x", service_id=summary.id),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.INVALID_REQUEST

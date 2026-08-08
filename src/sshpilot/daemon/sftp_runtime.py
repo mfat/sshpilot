@@ -65,6 +65,9 @@ from sshpilot.api.models.operations import (
     ServiceFailure,
     SftpChmodRequest,
     SftpCopyRequest,
+    SftpCreateFileRequest,
+    SftpCreateFileResult,
+    SftpFileAccess,
     SftpFileTarget,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -385,6 +388,7 @@ class SftpServiceRuntime:
         core_client: SshPilotClient,
         *,
         runner: Optional[Any] = None,
+        privileged_file_runner: Optional[Any] = None,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         id_factory: Callable[[], SftpServiceId] = new_sftp_id,
@@ -400,6 +404,7 @@ class SftpServiceRuntime:
             raise ValueError("SFTP list limit must be positive")
         self._core_client = core_client
         self._runner: Any = runner or UnsupportedSftpProcessRunner()
+        self._privileged_file_runner: Any = privileged_file_runner
         self._clock = clock
         self._monotonic = monotonic
         self._id_factory = id_factory
@@ -795,8 +800,14 @@ class SftpServiceRuntime:
                 size=len(content),
                 mode=mode,
             )
-        record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
+        if request.access is SftpFileAccess.SUDO:
+            key = (SftpFileTarget.REMOTE, request.service_id, path)
+            with self._serialized_target(key):
+                self._require_accepting_commands()
+                record = self._ready_record_for_read(request.service_id, client_id)
+                return self._read_privileged(request, path, record)
+        record = self._ready_record_for_read(request.service_id, client_id)
         client = record.handle.client
         try:
             attr = client.stat(path)
@@ -846,6 +857,33 @@ class SftpServiceRuntime:
             mode=mode,
         )
 
+    def _read_privileged(
+        self,
+        request: SftpReadFileRequest,
+        path: str,
+        record: _SftpRecord,
+    ) -> SftpReadFileResult:
+        runner = self._require_privileged_runner(record)
+        spec = record.launch_spec
+        content = runner.read(
+            connection_id=record.connection_id,
+            scope_id=SessionId(str(record.service_id)),
+            hostname=spec.hostname if spec is not None else "",
+            username=spec.username if spec is not None else "",
+            port=spec.port if spec is not None else 22,
+            path=path,
+        )
+        payload = content.content
+        return SftpReadFileResult(
+            target=request.target,
+            path=path,
+            content=payload.decode("utf-8", errors="replace"),
+            exists=content.exists,
+            revision=_file_revision(payload, content.exists),
+            size=len(payload),
+            mode=content.mode,
+        )
+
     def replace_file(
         self,
         request: SftpReplaceFileRequest,
@@ -871,7 +909,82 @@ class SftpServiceRuntime:
         key = (SftpFileTarget.REMOTE, request.service_id, path)
         with self._serialized_target(key):
             record = self._ready_record_for_mutation(request.service_id, client_id)
+            if request.access is SftpFileAccess.SUDO:
+                return self._replace_privileged(request, payload, path, record)
             return self._replace_remote_file(request, payload, path, record)
+
+    def _replace_privileged(
+        self,
+        request: SftpReplaceFileRequest,
+        payload: bytes,
+        path: str,
+        record: _SftpRecord,
+    ) -> SftpReplaceFileResult:
+        runner = self._require_privileged_runner(record)
+        spec = record.launch_spec
+        result = runner.replace(
+            connection_id=record.connection_id,
+            scope_id=SessionId(str(record.service_id)),
+            hostname=spec.hostname if spec is not None else "",
+            username=spec.username if spec is not None else "",
+            port=spec.port if spec is not None else 22,
+            path=path,
+            payload=payload,
+            expected_revision=request.expected_revision,
+            backup=request.backup,
+        )
+        return SftpReplaceFileResult(
+            target=request.target,
+            path=path,
+            revision=result.revision,
+            size=result.size,
+            backup_path=result.backup_path,
+        )
+
+    def create_file(
+        self,
+        request: SftpCreateFileRequest,
+        *,
+        client_id: ClientId,
+    ) -> SftpCreateFileResult:
+        """Create an empty remote file through the daemon-owned SFTP session."""
+        if type(request) is not SftpCreateFileRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP create file request is required")
+        record = self._ready_record_for_mutation(request.service_id, client_id)
+        path = _validate_path(request.path)
+        client = record.handle.client
+        try:
+            try:
+                client.stat(path)
+            except FileNotFoundError:
+                pass
+            except Exception as exc:
+                if getattr(exc, "errno", None) != errno.ENOENT:
+                    raise
+            else:
+                raise SshPilotError(
+                    ErrorCode.REMOTE_PATH_EXISTS,
+                    "The remote file already exists",
+                    connection_id=record.connection_id,
+                    details={"path": path},
+                )
+            client.file(path, "wb").close()
+        except SshPilotError:
+            raise
+        except Exception as exc:
+            raise self._map_error(exc, record) from exc
+        return SftpCreateFileResult(path=path, mode=0o644)
+
+    def _require_privileged_runner(self, record: _SftpRecord):
+        runner = self._privileged_file_runner
+        if runner is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Privileged file operations are unavailable",
+                connection_id=record.connection_id,
+                details={"service_id": record.service_id},
+            )
+        return runner
 
     def _replace_remote_file(
         self,

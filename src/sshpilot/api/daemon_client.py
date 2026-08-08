@@ -99,6 +99,9 @@ from .models.operations import (
     RemoteFileEntry,
     SftpChmodRequest,
     SftpCopyRequest,
+    SftpCreateFileRequest,
+    SftpCreateFileResult,
+    SftpFileAccess,
     SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
@@ -201,6 +204,8 @@ from .transport.codec import (
     session_summary_from_wire,
     sftp_chmod_request_to_wire,
     sftp_copy_request_to_wire,
+    sftp_create_file_request_to_wire,
+    sftp_create_file_result_from_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
     sftp_replace_file_request_to_wire,
@@ -313,6 +318,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "sftp_readlink": Capability.SFTP_METADATA,
     "sftp_read_file": Capability.SFTP_READ,
     "sftp_replace_file": Capability.SFTP_MUTATE,
+    "sftp_create_file": Capability.SFTP_MUTATE,
     "sftp_mkdir": Capability.SFTP_MUTATE,
     "sftp_copy": Capability.SFTP_MUTATE,
     "sftp_rmdir": Capability.SFTP_MUTATE,
@@ -1237,6 +1243,8 @@ class DaemonClient:
 
     def sftp_read_file(self, request: SftpReadFileRequest) -> SftpReadFileResult:
         self._require_capability(Capability.SFTP_READ)
+        if request.access is SftpFileAccess.SUDO:
+            self._require_capability(Capability.SFTP_PRIVILEGED_FILE)
         result = self._request("sftp.read_file", sftp_read_file_request_to_wire(request))
         try:
             return sftp_read_file_result_from_wire(result)
@@ -1245,6 +1253,8 @@ class DaemonClient:
 
     def sftp_replace_file(self, request: SftpReplaceFileRequest) -> SftpReplaceFileResult:
         self._require_capability(Capability.SFTP_MUTATE)
+        if request.access is SftpFileAccess.SUDO:
+            self._require_capability(Capability.SFTP_PRIVILEGED_FILE)
         result = self._request(
             "sftp.replace_file",
             sftp_replace_file_request_to_wire(request),
@@ -1253,6 +1263,14 @@ class DaemonClient:
             return sftp_replace_file_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid file replacement result")
+
+    def sftp_create_file(self, request: SftpCreateFileRequest) -> SftpCreateFileResult:
+        self._require_capability(Capability.SFTP_MUTATE)
+        result = self._request("sftp.create_file", sftp_create_file_request_to_wire(request))
+        try:
+            return sftp_create_file_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid file creation result")
 
     def sftp_mkdir(self, request: SftpPathRequest) -> None:
         self._require_capability(Capability.SFTP_MUTATE)

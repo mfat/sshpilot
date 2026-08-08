@@ -102,6 +102,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `sftp.events` | Observe SFTP service lifecycle | Daemon: Implemented | `subscribe_events` | `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed` | Bounded daemon event stream | v1 / API 0.10 |
 | `sftp.metadata` | Stat, lstat, realpath, and readlink | Daemon: Implemented when SFTP runtime present | `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink` | None | Ready SFTP service | v1 / API 0.10 |
 | `sftp.mutate` | mkdir, rmdir, remove, rename, chmod, symlink | Daemon: Implemented when SFTP runtime present | `sftp_mkdir`, `sftp_rmdir`, `sftp_remove`, `sftp_rename`, `sftp_chmod`, `sftp_symlink` | None | Ready SFTP service | v1 / API 0.10 |
+| `sftp.privileged_file` | Read and replace remote files with elevated (sudo) access | Daemon: Implemented when the privileged file runner is wired | `sftp_read_file`, `sftp_replace_file` with `access=Sudo` | Interaction lifecycle events for the protected sudo-password prompt | Daemon `PrivilegedFileService` over canonical SSH launch | v1 / API 0.18 |
 | `transfers.read` | List and inspect transfer records | Daemon: Implemented when transfer runtime present | `list_transfers`, `get_transfer` | None required | Daemon `TransferRuntime` | v1 / API 0.10 |
 | `transfers.write` | Start and cancel transfers | Daemon: Implemented when transfer runtime present | `start_transfer`, `cancel_transfer` | Transfer lifecycle events | Daemon `TransferRuntime` and ready SFTP service | v1 / API 0.10 |
 | `transfers.events` | Observe transfer lifecycle and progress | Daemon: Implemented | `subscribe_events` | `transfer.*` lifecycle events | Bounded daemon event stream | v1 / API 0.10 |
@@ -296,6 +297,16 @@ Daemon-only path metadata operations against a ready SFTP service: `stat`,
 
 Daemon-only mutating remote filesystem operations: `mkdir`, `rmdir`, `remove`,
 `rename`, `chmod`, and `symlink`.
+
+<!-- api-capability: sftp.privileged_file -->
+## `sftp.privileged_file`
+
+Advertises daemon-owned elevated (sudo) remote file reads and replacements via
+`sftp_read_file` / `sftp_replace_file` with `access=Sudo`. The sudo password
+never crosses the wire as a DTO: the daemon presents a protected password
+interaction through the interaction broker and feeds the one-use secret
+directly to the child stdin. Required in addition to `sftp.read` /
+`sftp.mutate` for privileged operations.
 
 <!-- api-capability: transfers.read -->
 ## `transfers.read`

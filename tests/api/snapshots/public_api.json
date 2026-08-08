@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.17",
+  "api_implementation_version": "0.18",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -63,6 +63,7 @@
     "sftp.events",
     "sftp.metadata",
     "sftp.mutate",
+    "sftp.privileged_file",
     "sftp.read",
     "sftp.write",
     "ssh_overrides.read",
@@ -494,6 +495,10 @@
       "status": "daemon-only"
     },
     "sftp_copy": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_create_file": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
@@ -2474,6 +2479,9 @@
     "sftp.copy": {
       "capability": "sftp.mutate"
     },
+    "sftp.create_file": {
+      "capability": "sftp.mutate"
+    },
     "sftp.detach": {
       "capability": "sftp.write"
     },
@@ -2869,7 +2877,10 @@
     "SetGroupColorRequest",
     "SftpChmodRequest",
     "SftpCopyRequest",
+    "SftpCreateFileRequest",
+    "SftpCreateFileResult",
     "SftpEntry",
+    "SftpFileAccess",
     "SftpFileTarget",
     "SftpPathRequest",
     "SftpReadFileRequest",
@@ -3629,6 +3640,14 @@
       "recursive",
       "move"
     ],
+    "SftpCreateFileRequest": [
+      "service_id",
+      "path"
+    ],
+    "SftpCreateFileResult": [
+      "path",
+      "mode"
+    ],
     "SftpEntry": [
       "name",
       "path",
@@ -3642,7 +3661,8 @@
     "SftpReadFileRequest": [
       "target",
       "path",
-      "service_id"
+      "service_id",
+      "access"
     ],
     "SftpReadFileResult": [
       "target",
@@ -3665,7 +3685,8 @@
       "content",
       "expected_revision",
       "backup",
-      "service_id"
+      "service_id",
+      "access"
     ],
     "SftpReplaceFileResult": [
       "target",
@@ -3840,6 +3861,7 @@
       "sftp.events",
       "sftp.metadata",
       "sftp.mutate",
+      "sftp.privileged_file",
       "transfers.read",
       "transfers.write",
       "transfers.events",
@@ -4134,6 +4156,10 @@
       "exited",
       "failed",
       "closed"
+    ],
+    "SftpFileAccess": [
+      "normal",
+      "sudo"
     ],
     "SftpFileTarget": [
       "remote",

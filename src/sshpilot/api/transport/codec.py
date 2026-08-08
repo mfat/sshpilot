@@ -155,6 +155,9 @@ from ..models.operations import (
     ServiceFailure,
     SftpChmodRequest,
     SftpCopyRequest,
+    SftpCreateFileRequest,
+    SftpCreateFileResult,
+    SftpFileAccess,
     SftpFileTarget,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -3796,6 +3799,13 @@ def _sftp_file_target_from_wire(value: Any) -> SftpFileTarget:
         raise ValueError("SFTP file target is unknown") from None
 
 
+def _sftp_file_access_from_wire(value: Any) -> "SftpFileAccess":
+    try:
+        return SftpFileAccess(_identifier(value, "SFTP file access"))
+    except (TypeError, ValueError):
+        raise ValueError("SFTP file access is unknown") from None
+
+
 def sftp_read_file_request_to_wire(request: SftpReadFileRequest) -> Dict[str, Any]:
     if type(request) is not SftpReadFileRequest:
         raise TypeError("SFTP read file request is required")
@@ -3803,6 +3813,7 @@ def sftp_read_file_request_to_wire(request: SftpReadFileRequest) -> Dict[str, An
         "target": _sftp_file_target_to_wire(request.target),
         "path": request.path,
         "service_id": request.service_id,
+        "access": request.access.value,
     }
 
 
@@ -3810,10 +3821,11 @@ def sftp_read_file_request_from_wire(value: Any) -> SftpReadFileRequest:
     data = _strict_fields(
         value,
         required={"target", "path"},
-        optional={"service_id"},
+        optional={"service_id", "access"},
         context="SFTP read file request",
     )
     service_id = data.get("service_id")
+    access = data.get("access", SftpFileAccess.NORMAL.value)
     return SftpReadFileRequest(
         target=_sftp_file_target_from_wire(data["target"]),
         path=_text(data["path"], "SFTP file path"),
@@ -3822,6 +3834,7 @@ def sftp_read_file_request_from_wire(value: Any) -> SftpReadFileRequest:
             if service_id is not None
             else None
         ),
+        access=_sftp_file_access_from_wire(access),
     )
 
 
@@ -3867,6 +3880,7 @@ def sftp_replace_file_request_to_wire(request: SftpReplaceFileRequest) -> Dict[s
         "expected_revision": request.expected_revision,
         "backup": request.backup,
         "service_id": request.service_id,
+        "access": request.access.value,
     }
 
 
@@ -3874,10 +3888,11 @@ def sftp_replace_file_request_from_wire(value: Any) -> SftpReplaceFileRequest:
     data = _strict_fields(
         value,
         required={"target", "path", "content", "expected_revision", "backup"},
-        optional={"service_id"},
+        optional={"service_id", "access"},
         context="SFTP replace file request",
     )
     service_id = data.get("service_id")
+    access = data.get("access", SftpFileAccess.NORMAL.value)
     return SftpReplaceFileRequest(
         target=_sftp_file_target_from_wire(data["target"]),
         path=_text(data["path"], "SFTP file path"),
@@ -3889,6 +3904,7 @@ def sftp_replace_file_request_from_wire(value: Any) -> SftpReplaceFileRequest:
             if service_id is not None
             else None
         ),
+        access=_sftp_file_access_from_wire(access),
     )
 
 
@@ -3937,6 +3953,42 @@ def sftp_path_request_from_wire(value: Any) -> SftpPathRequest:
     return SftpPathRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         path=_text(data["path"], "SFTP path"),
+    )
+
+
+def sftp_create_file_request_to_wire(request: SftpCreateFileRequest) -> Dict[str, Any]:
+    if type(request) is not SftpCreateFileRequest:
+        raise TypeError("SFTP create file request is required")
+    return {"service_id": request.service_id, "path": request.path}
+
+
+def sftp_create_file_request_from_wire(value: Any) -> SftpCreateFileRequest:
+    data = _strict_fields(
+        value,
+        required={"service_id", "path"},
+        context="SFTP create file request",
+    )
+    return SftpCreateFileRequest(
+        service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
+        path=_text(data["path"], "SFTP create path"),
+    )
+
+
+def sftp_create_file_result_to_wire(result: SftpCreateFileResult) -> Dict[str, Any]:
+    if type(result) is not SftpCreateFileResult:
+        raise TypeError("SFTP create file result is required")
+    return {"path": result.path, "mode": result.mode}
+
+
+def sftp_create_file_result_from_wire(value: Any) -> SftpCreateFileResult:
+    data = _strict_fields(
+        value,
+        required={"path", "mode"},
+        context="SFTP create file result",
+    )
+    return SftpCreateFileResult(
+        path=_text(data["path"], "SFTP create result path"),
+        mode=_integer(data["mode"], "SFTP create result mode"),
     )
 
 

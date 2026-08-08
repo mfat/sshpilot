@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.17",
+  "api_implementation_version": "0.18",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -414,6 +414,10 @@
       "status": "daemon-only"
     },
     "sftp_copy": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_create_file": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
     },
@@ -876,6 +880,9 @@
     "sftp.copy": {
       "capability": "sftp.mutate"
     },
+    "sftp.create_file": {
+      "capability": "sftp.mutate"
+    },
     "sftp.detach": {
       "capability": "sftp.write"
     },
@@ -1006,6 +1013,7 @@
       "sftp.events",
       "sftp.metadata",
       "sftp.mutate",
+      "sftp.privileged_file",
       "transfers.read",
       "transfers.write",
       "transfers.events",
@@ -1300,6 +1308,10 @@
       "exited",
       "failed",
       "closed"
+    ],
+    "SftpFileAccess": [
+      "normal",
+      "sudo"
     ],
     "SftpFileTarget": [
       "remote",
@@ -5349,6 +5361,44 @@
       ],
       "status": "Schema only"
     },
+    "SftpCreateFileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpCreateFileResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 420,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
     "SftpEntry": {
       "fields": [
         {
@@ -5423,6 +5473,13 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": "normal",
+          "name": "access",
+          "required": false,
+          "sensitive": false,
+          "type": "SftpFileAccess"
         }
       ],
       "status": "Schema only"
@@ -5557,6 +5614,13 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": "normal",
+          "name": "access",
+          "required": false,
+          "sensitive": false,
+          "type": "SftpFileAccess"
         }
       ],
       "status": "Schema only"

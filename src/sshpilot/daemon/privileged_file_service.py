@@ -1,0 +1,522 @@
+"""Daemon-owned privileged (sudo) remote file operations.
+
+The privileged file path runs the canonical native SSH launch
+(``ssh <alias> <remote_command>``) exactly like daemon authorized-key
+operations, so the saved connection's SSH configuration (ProxyJump,
+identities, ports, host-key policy) applies unchanged. The remote command is a
+sudo read or write built daemon-side from a validated remote path — never a
+client-supplied shell string.
+
+Sudo passwords never cross the wire as DTOs or event payloads. The daemon
+presents a protected ``PASSWORD`` interaction through the
+:class:`~sshpilot.daemon.interaction_broker.InteractionBroker`, awaits the
+one-use secret, feeds it directly to the child stdin, and clears it afterwards.
+Stored sudo passwords reuse the existing per-connection secret schema
+(``sudo_password_spec``); a stored password that proves wrong is cleared and
+the daemon re-prompts through the broker.
+
+``sudo tee`` writes through an existing file's inode, so ownership and mode of
+an existing root-owned file are preserved without the daemon needing to know
+them. Replacement is revision-safe: the daemon re-reads the authoritative
+current content (through sudo), compares ``expected_revision``, and refuses to
+write on ``FILE_REVISION_CONFLICT`` — the caller holds the per-target lock.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shlex
+import subprocess
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models.common import ConnectionId, SessionId
+from sshpilot.api.models.interactions import (
+    InteractionType,
+    PasswordPrompt,
+    RememberPolicy,
+    SecretDecision,
+)
+from sshpilot.askpass_utils import (
+    clear_sudo_password,
+    is_sudo_denied_error,
+    lookup_sudo_password,
+    store_sudo_password,
+)
+
+logger = logging.getLogger(__name__)
+
+REMOTE_COMMAND_TIMEOUT = 30.0
+SSH_ERROR_EXIT = 255
+MAX_SUDO_ATTEMPTS = 3
+
+_SUDO_READ_HEAD = "cat"
+_SUDO_WRITE_HEAD = "tee"
+
+_PASSWORD_REQUIRED_MARKERS = (
+    "a password is required",
+    "password required",
+)
+_NOT_FOUND_MARKERS = (
+    "no such file",
+    "not found",
+)
+
+
+@dataclass(frozen=True)
+class PrivilegedFileContent:
+    content: bytes
+    exists: bool
+    mode: Optional[int]
+
+
+@dataclass(frozen=True)
+class PrivilegedReplaceResult:
+    path: str
+    revision: str
+    size: int
+    backup_path: Optional[str]
+
+
+@dataclass
+class _CommandResult:
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    exists: bool = True
+
+
+@dataclass
+class _PromptResult:
+    password: Optional[str]
+    remember_policy: RememberPolicy
+    from_stored: bool = False
+
+
+def _sudo_read_command(path: str, *, passwordless: bool) -> str:
+    sudo = "sudo -n" if passwordless else "sudo -S -p ''"
+    return f"{sudo} -- {_SUDO_READ_HEAD} -- {shlex.quote(path)}"
+
+
+def _sudo_write_command(path: str, *, passwordless: bool) -> str:
+    sudo = "sudo -n" if passwordless else "sudo -S -p ''"
+    return f"{sudo} -- {_SUDO_WRITE_HEAD} -- {shlex.quote(path)} > /dev/null"
+
+
+def _sudo_backup_command(path: str, backup_path: str) -> str:
+    """Best-effort ``sudo cp -a`` backup; path positional args avoid shell quoting."""
+    return (
+        "sudo -n -- sh -c 'cp -a -- \"$1\" \"$2\"' sh "
+        f"{shlex.quote(path)} {shlex.quote(backup_path)}"
+    )
+
+
+def _file_revision(content: bytes, exists: bool) -> str:
+    if not exists:
+        return "absent"
+    import hashlib
+
+    return hashlib.sha256(content).hexdigest()
+
+
+def _is_password_required(stderr: bytes) -> bool:
+    text = (stderr or b"").decode("utf-8", errors="replace").lower()
+    return any(marker in text for marker in _PASSWORD_REQUIRED_MARKERS)
+
+
+def _is_missing(stderr: bytes) -> bool:
+    text = (stderr or b"").decode("utf-8", errors="replace").lower()
+    return any(marker in text for marker in _NOT_FOUND_MARKERS)
+
+
+def _denied_error(connection_id: ConnectionId) -> SshPilotError:
+    return SshPilotError(
+        ErrorCode.REMOTE_PERMISSION_DENIED,
+        "The user is not allowed to run sudo on this host",
+        connection_id=connection_id,
+    )
+
+
+class PrivilegedFileService:
+    """Run sudo file reads/writes over the canonical native SSH launch.
+
+    ``launch_provider`` is the daemon ``ConnectionLaunchProvider`` (its
+    ``prepare_remote_command_launch`` builds ``ssh <alias> <remote_command>``)
+    and ``broker`` is the daemon InteractionBroker used for both the SSH
+    child's own auth prompts (via ``prepare_operation_launch``) and the
+    protected sudo-password prompt. Password lookup/store/clear callables are
+    injectable for tests and default to the existing ``sudo_password_spec``
+    secret backend.
+    """
+
+    def __init__(
+        self,
+        launch_provider: Any,
+        broker: Any,
+        *,
+        popen: Callable[..., "subprocess.Popen"] = subprocess.Popen,
+        environ: Optional[dict] = None,
+        command_timeout: float = REMOTE_COMMAND_TIMEOUT,
+        max_password_attempts: int = MAX_SUDO_ATTEMPTS,
+        secret_lookup: Callable[[str, str], str] = lookup_sudo_password,
+        secret_store: Callable[[str, str, str], bool] = store_sudo_password,
+        secret_clear: Callable[[str, str], bool] = clear_sudo_password,
+    ) -> None:
+        if launch_provider is None or broker is None:
+            raise TypeError("a launch provider and interaction broker are required")
+        if command_timeout <= 0:
+            raise ValueError("the privileged command timeout must be positive")
+        if type(max_password_attempts) is not int or max_password_attempts < 1:
+            raise ValueError("the sudo attempt limit must be positive")
+        self._launch_provider = launch_provider
+        self._broker = broker
+        self._popen = popen
+        self._environ = dict(environ if environ is not None else os.environ)
+        self._command_timeout = float(command_timeout)
+        self._max_password_attempts = max_password_attempts
+        self._secret_lookup = secret_lookup
+        self._secret_store = secret_store
+        self._secret_clear = secret_clear
+
+    # -- public operations -------------------------------------------------
+
+    def read(
+        self,
+        *,
+        connection_id: ConnectionId,
+        scope_id: SessionId,
+        hostname: str,
+        username: str,
+        port: int,
+        path: str,
+    ) -> PrivilegedFileContent:
+        """Read ``path`` as root. Passwordless sudo is attempted first; a
+        stored sudo password is tried next; then a protected prompt."""
+        result = self._execute(
+            connection_id,
+            scope_id,
+            lambda passwordless: _sudo_read_command(path, passwordless=passwordless),
+            _stdin_for_password,
+            hostname=hostname,
+            username=username,
+            port=port,
+            allow_missing=True,
+        )
+        if not result.exists:
+            return PrivilegedFileContent(content=b"", exists=False, mode=None)
+        return PrivilegedFileContent(content=result.stdout, exists=True, mode=None)
+
+    def replace(
+        self,
+        *,
+        connection_id: ConnectionId,
+        scope_id: SessionId,
+        hostname: str,
+        username: str,
+        port: int,
+        path: str,
+        payload: bytes,
+        expected_revision: str,
+        backup: bool,
+    ) -> PrivilegedReplaceResult:
+        """Write ``payload`` to ``path`` as root, revision-safe.
+
+        The caller holds the per-target lock covering this authoritative read,
+        revision comparison, backup, and write. ``sudo tee`` preserves an
+        existing file's owner/mode by writing through its inode.
+        """
+        current = self.read(
+            connection_id=connection_id,
+            scope_id=scope_id,
+            hostname=hostname,
+            username=username,
+            port=port,
+            path=path,
+        )
+        if not current.exists:
+            raise SshPilotError(
+                ErrorCode.FILE_REVISION_CONFLICT,
+                "The remote file no longer exists",
+                connection_id=connection_id,
+            )
+        current_revision = _file_revision(current.content, current.exists)
+        if current_revision != expected_revision:
+            raise SshPilotError(
+                ErrorCode.FILE_REVISION_CONFLICT,
+                "The remote file changed since it was read",
+                connection_id=connection_id,
+            )
+        backup_path: Optional[str] = None
+        if backup and current.exists:
+            backup_path = f"{path}.bak-{time.time_ns()}"
+            try:
+                self._execute(
+                    connection_id,
+                    scope_id,
+                    lambda passwordless: _sudo_backup_command(path, backup_path),
+                    _no_stdin,
+                    hostname=hostname,
+                    username=username,
+                    port=port,
+                )
+            except SshPilotError:
+                logger.debug("Privileged file backup failed", exc_info=True)
+                backup_path = None
+
+        def _stdin(password: Optional[str]) -> Optional[bytes]:
+            return _stdin_with_payload(password, payload)
+
+        result = self._execute(
+            connection_id,
+            scope_id,
+            lambda passwordless: _sudo_write_command(path, passwordless=passwordless),
+            _stdin,
+            hostname=hostname,
+            username=username,
+            port=port,
+        )
+        if not result.exists:
+            raise SshPilotError(
+                ErrorCode.FILE_REPLACEMENT_FAILED,
+                "The remote file could not be replaced",
+                connection_id=connection_id,
+            )
+        return PrivilegedReplaceResult(
+            path=path,
+            revision=_file_revision(payload, True),
+            size=len(payload),
+            backup_path=backup_path,
+        )
+    # -- sudo execution ----------------------------------------------------
+
+    def _execute(
+        self,
+        connection_id: ConnectionId,
+        scope_id: SessionId,
+        command_builder: Callable[[bool], str],
+        stdin_builder: Callable[[Optional[str]], Optional[bytes]],
+        *,
+        hostname: str,
+        username: str,
+        port: int,
+        allow_missing: bool = False,
+    ) -> _CommandResult:
+        """Run a sudo command, resolving the password when required.
+
+        Returns a ``_CommandResult`` with ``exists`` reflecting whether the
+        target path is present (missing marker classification). Raises
+        ``SshPilotError`` for denied/cancelled/exhausted/timeout conditions.
+        """
+        result = self._run(
+            connection_id,
+            scope_id,
+            command_builder(passwordless=True),
+            stdin_builder(None),
+        )
+        if result.returncode == 0:
+            result.exists = True
+            return result
+        if is_sudo_denied_error(result.stderr.decode("utf-8", errors="replace")):
+            raise _denied_error(connection_id)
+        if allow_missing and _is_missing(result.stderr):
+            result.exists = False
+            return result
+        if result.returncode == SSH_ERROR_EXIT:
+            raise SshPilotError(
+                ErrorCode.REMOTE_COMMAND_FAILED,
+                "The SSH connection could not run the remote command",
+                connection_id=connection_id,
+            )
+
+        password = self._secret_lookup(hostname, username)
+        from_stored = bool(password)
+        attempt = 1
+        while attempt <= self._max_password_attempts:
+            if not password:
+                prompt = self._prompt_password(
+                    scope_id, connection_id, hostname, username, port, attempt
+                )
+                if prompt.password is None:
+                    raise SshPilotError(
+                        ErrorCode.OPERATION_CANCELLED,
+                        "The sudo password prompt was cancelled",
+                        connection_id=connection_id,
+                    )
+                password = prompt.password
+                remember_policy = prompt.remember_policy
+            else:
+                remember_policy = RememberPolicy.DO_NOT_STORE
+            stdin = stdin_builder(password)
+            result = self._run(
+                connection_id,
+                scope_id,
+                command_builder(passwordless=False),
+                stdin,
+            )
+            if result.returncode == 0:
+                result.exists = True
+                self._remember_password(
+                    hostname,
+                    username,
+                    password,
+                    remember_policy,
+                    from_stored,
+                )
+                return result
+            if is_sudo_denied_error(result.stderr.decode("utf-8", errors="replace")):
+                raise _denied_error(connection_id)
+            if from_stored:
+                try:
+                    self._secret_clear(hostname, username)
+                except Exception:
+                    logger.debug("Failed to clear a wrong stored sudo password", exc_info=True)
+                from_stored = False
+            password = None
+            attempt += 1
+        raise SshPilotError(
+            ErrorCode.AUTHENTICATION_ATTEMPTS_EXHAUSTED,
+            "The sudo password was not accepted",
+            connection_id=connection_id,
+        )
+
+    def _remember_password(
+        self,
+        hostname: str,
+        username: str,
+        password: str,
+        policy: RememberPolicy,
+        from_stored: bool,
+    ) -> None:
+        if policy in {
+            RememberPolicy.STORE_AFTER_SUCCESS,
+            RememberPolicy.REPLACE_STORED_AFTER_SUCCESS,
+        }:
+            try:
+                self._secret_store(hostname, username, password)
+            except Exception:
+                logger.debug("Could not store the sudo password", exc_info=True)
+        elif policy is RememberPolicy.DELETE_STORED_SECRET and from_stored:
+            try:
+                self._secret_clear(hostname, username)
+            except Exception:
+                logger.debug("Could not clear the stored sudo password", exc_info=True)
+
+    def _prompt_password(
+        self,
+        scope_id: SessionId,
+        connection_id: ConnectionId,
+        hostname: str,
+        username: str,
+        port: int,
+        attempt: int,
+    ) -> _PromptResult:
+        """Present a protected PASSWORD interaction and collect the one-use secret."""
+        summary = self._broker.create(
+            session_id=scope_id,
+            connection_id=connection_id,
+            interaction_type=InteractionType.PASSWORD,
+            prompt=PasswordPrompt(
+                username=username or "unknown",
+                hostname=hostname,
+                port=int(port or 22),
+                attempt=attempt,
+                can_remember=True,
+                stored_secret_available=False,
+            ),
+            attempt=attempt,
+        )
+        result = self._broker.wait_for_result(summary.id)
+        if (
+            result is None
+            or result.decision is not SecretDecision.SUBMIT
+            or result.secret is None
+        ):
+            if result is not None:
+                result.clear()
+            return _PromptResult(password=None, remember_policy=RememberPolicy.DO_NOT_STORE)
+        secret = result.secret
+        result.secret = None
+        policy = result.remember_policy
+        result.clear()
+        try:
+            password = bytes(secret).decode("utf-8", errors="strict")
+        except (UnicodeDecodeError, ValueError):
+            password = ""
+        if not password or "\x00" in password:
+            return _PromptResult(password=None, remember_policy=policy)
+        del secret
+        return _PromptResult(password=password, remember_policy=policy)
+
+    def _run(
+        self,
+        connection_id: ConnectionId,
+        scope_id: SessionId,
+        remote_command: str,
+        stdin_data: Optional[bytes],
+    ) -> _CommandResult:
+        argv, environment = self._launch_provider.prepare_remote_command_launch(
+            connection_id, remote_command
+        )
+        argv, environment = self._broker.prepare_operation_launch(
+            argv,
+            environment,
+            scope_id=scope_id,
+            connection_id=connection_id,
+        )
+        try:
+            process = self._popen(
+                list(argv),
+                stdin=(
+                    subprocess.PIPE
+                    if stdin_data is not None
+                    else subprocess.DEVNULL
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=dict(environment),
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise SshPilotError(
+                ErrorCode.SESSION_STARTUP_FAILED,
+                "The SSH command could not be started",
+                connection_id=connection_id,
+            ) from exc
+        try:
+            stdout, stderr = process.communicate(stdin_data, timeout=self._command_timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except OSError:
+                pass
+            process.wait()
+            raise SshPilotError(
+                ErrorCode.OPERATION_TIMED_OUT,
+                "The remote command timed out",
+                connection_id=connection_id,
+            ) from None
+        return _CommandResult(
+            returncode=process.returncode,
+            stdout=stdout or b"",
+            stderr=stderr or b"",
+        )
+
+
+def _stdin_for_password(password: Optional[str]) -> Optional[bytes]:
+    if password is None:
+        return None
+    return password.encode("utf-8") + b"\n"
+
+
+def _stdin_with_payload(password: Optional[str], payload: bytes) -> Optional[bytes]:
+    if password is None:
+        return payload
+    return password.encode("utf-8") + b"\n" + payload
+
+
+def _no_stdin(password: Optional[str]) -> Optional[bytes]:
+    del password
+    return None

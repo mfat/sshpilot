@@ -3273,6 +3273,58 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpCreateFileRequest -->
+## `SftpCreateFileRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Create an empty remote file within one SFTP service.
+
+The daemon owns the create: no frontend temporary file or fake upload is
+involved, and already-exists / permission / path failures surface as
+structured errors.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `service_id` | `SftpServiceId` | Yes | — | No |
+| `path` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "path": "/remote/example",
+  "service_id": {}
+}
+```
+
+<!-- api-model: SftpCreateFileResult -->
+## `SftpCreateFileResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** SftpCreateFileResult(path: 'str', mode: 'int' = 420)
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `path` | `str` | Yes | — | No |
+| `mode` | `int` | No | `420` | No |
+
+Synthetic representation:
+
+```json
+{
+  "mode": 420,
+  "path": "/remote/example"
+}
+```
+
 <!-- api-model: SftpEntry -->
 ## `SftpEntry`
 
@@ -3330,7 +3382,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpReadFileRequest(target: 'SftpFileTarget', path: 'str', service_id: 'Optional[SftpServiceId]' = None)
+**Purpose:** SftpReadFileRequest(target: 'SftpFileTarget', path: 'str', service_id: 'Optional[SftpServiceId]' = None, access: 'SftpFileAccess' = <SftpFileAccess.NORMAL: 'normal'>)
 
 **Related methods:** None
 **Related events:** None
@@ -3340,11 +3392,13 @@ Synthetic representation:
 | `target` | `SftpFileTarget` | Yes | — | No |
 | `path` | `str` | Yes | — | No |
 | `service_id` | `Optional[SftpServiceId]` | No | `null` | No |
+| `access` | `SftpFileAccess` | No | `normal` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "access": "normal",
   "path": "/remote/example",
   "service_id": null,
   "target": {}
@@ -3418,7 +3472,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpReplaceFileRequest(target: 'SftpFileTarget', path: 'str', content: 'str', expected_revision: 'str', backup: 'bool' = True, service_id: 'Optional[SftpServiceId]' = None)
+**Purpose:** SftpReplaceFileRequest(target: 'SftpFileTarget', path: 'str', content: 'str', expected_revision: 'str', backup: 'bool' = True, service_id: 'Optional[SftpServiceId]' = None, access: 'SftpFileAccess' = <SftpFileAccess.NORMAL: 'normal'>)
 
 **Related methods:** None
 **Related events:** None
@@ -3431,11 +3485,13 @@ Synthetic representation:
 | `expected_revision` | `str` | Yes | — | No |
 | `backup` | `bool` | No | `true` | No |
 | `service_id` | `Optional[SftpServiceId]` | No | `null` | No |
+| `access` | `SftpFileAccess` | No | `normal` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "access": "normal",
   "backup": true,
   "content": "<sensitive value omitted>",
   "expected_revision": {},

@@ -60,6 +60,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `sftp_realpath` | Daemon only | `sftp.metadata` |
 | `sftp_readlink` | Daemon only | `sftp.metadata` |
 | `sftp_mkdir` | Daemon only | `sftp.mutate` |
+| `sftp_create_file` | Daemon only | `sftp.mutate` |
 | `sftp_rmdir` | Daemon only | `sftp.mutate` |
 | `sftp_remove` | Daemon only | `sftp.mutate` |
 | `sftp_rename` | Daemon only | `sftp.mutate` |
@@ -136,6 +137,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: sftp_list_directory status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: sftp_lstat status=daemon-only capability=sftp.metadata -->
 <!-- api-method-contract: sftp_mkdir status=daemon-only capability=sftp.mutate -->
+<!-- api-method-contract: sftp_create_file status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_copy status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_read_file status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: sftp_readlink status=daemon-only capability=sftp.metadata -->
@@ -315,6 +317,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sftp.realpath` | `sftp.metadata` | Implemented |
 | `sftp.readlink` | `sftp.metadata` | Implemented |
 | `sftp.mkdir` | `sftp.mutate` | Implemented |
+| `sftp.create_file` | `sftp.mutate` | Implemented |
 | `sftp.copy` | `sftp.mutate` | Implemented |
 | `sftp.rmdir` | `sftp.mutate` | Implemented |
 | `sftp.rename` | `sftp.mutate` | Implemented |
@@ -419,6 +422,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sftp.list_services capability=sftp.read -->
 <!-- api-daemon-method: sftp.lstat capability=sftp.metadata -->
 <!-- api-daemon-method: sftp.mkdir capability=sftp.mutate -->
+<!-- api-daemon-method: sftp.create_file capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.copy capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.open capability=sftp.write -->
 <!-- api-daemon-method: sftp.read_file capability=sftp.read -->

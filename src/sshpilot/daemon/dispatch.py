@@ -32,6 +32,7 @@ from sshpilot.api.models.connections import (
     get_plugin_secret_request_from_wire,
     store_plugin_secret_request_from_wire,
 )
+from sshpilot.api.models.operations import SftpFileAccess
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
     agent_key_list_to_wire,
@@ -109,6 +110,8 @@ from sshpilot.api.transport.codec import (
     session_summary_to_wire,
     sftp_chmod_request_from_wire,
     sftp_copy_request_from_wire,
+    sftp_create_file_request_from_wire,
+    sftp_create_file_result_to_wire,
     sftp_path_request_from_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
@@ -212,6 +215,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sftp.readlink": Capability.SFTP_METADATA,
     "sftp.read_file": Capability.SFTP_READ,
     "sftp.replace_file": Capability.SFTP_MUTATE,
+    "sftp.create_file": Capability.SFTP_MUTATE,
     "sftp.mkdir": Capability.SFTP_MUTATE,
     "sftp.copy": Capability.SFTP_MUTATE,
     "sftp.rmdir": Capability.SFTP_MUTATE,
@@ -320,6 +324,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "sftp.chmod",
         "sftp.symlink",
         "sftp.replace_file",
+        "sftp.create_file",
         "transfers.start",
         "forwards.open",
         "known_hosts.remove",
@@ -412,6 +417,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "sftp.readlink",
         "sftp.read_file",
         "sftp.replace_file",
+        "sftp.create_file",
         "sftp.mkdir",
         "sftp.copy",
         "sftp.rmdir",
@@ -660,6 +666,7 @@ class RequestDispatcher:
             "sftp.readlink": self._handle_sftp_readlink,
             "sftp.read_file": self._handle_sftp_read_file,
             "sftp.replace_file": self._handle_sftp_replace_file,
+            "sftp.create_file": self._handle_sftp_create_file,
             "sftp.mkdir": self._handle_sftp_mkdir,
             "sftp.copy": self._handle_sftp_copy,
             "sftp.rmdir": self._handle_sftp_rmdir,
@@ -1970,6 +1977,8 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         runtime = self._required_sftp_runtime()
         file_request = sftp_read_file_request_from_wire(request.params)
+        if file_request.access is SftpFileAccess.SUDO:
+            self._require_capability(state, Capability.SFTP_PRIVILEGED_FILE)
         command_key = file_request.service_id or "local-authorized-keys"
         return DeferredResult(
             operation=lambda: sftp_read_file_result_to_wire(
@@ -1987,12 +1996,30 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         runtime = self._required_sftp_runtime()
         file_request = sftp_replace_file_request_from_wire(request.params)
+        if file_request.access is SftpFileAccess.SUDO:
+            self._require_capability(state, Capability.SFTP_PRIVILEGED_FILE)
         command_key = file_request.service_id or "local-authorized-keys"
         return DeferredResult(
             operation=lambda: sftp_replace_file_result_to_wire(
                 runtime.replace_file(file_request, client_id=client_id)
             ),
             command_key=command_key,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_sftp_create_file(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        client_id = self._required_client_id(state)
+        runtime = self._required_sftp_runtime()
+        create_request = sftp_create_file_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: sftp_create_file_result_to_wire(
+                runtime.create_file(create_request, client_id=client_id)
+            ),
+            command_key=create_request.service_id,
             on_rejected=lambda: None,
         )
 

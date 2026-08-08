@@ -43,6 +43,7 @@ class Capability(str, Enum):
     SFTP_EVENTS = "sftp.events"
     SFTP_METADATA = "sftp.metadata"
     SFTP_MUTATE = "sftp.mutate"
+    SFTP_PRIVILEGED_FILE = "sftp.privileged_file"
     TRANSFERS_READ = "transfers.read"
     TRANSFERS_WRITE = "transfers.write"
     TRANSFERS_EVENTS = "transfers.events"

@@ -602,8 +602,11 @@ class DaemonServer:
                 sftp_runner = SubprocessSftpProcessRunner(
                     lambda spec: self._prepare_sftp_launch(spec, sftp_builder)
                 )
+                privileged_runner = self._build_privileged_file_runner()
                 self._sftp_runtime = SftpServiceRuntime(
-                    self._connection_service, runner=sftp_runner
+                    self._connection_service,
+                    runner=sftp_runner,
+                    privileged_file_runner=privileged_runner,
                 )
             else:
                 self._sftp_runtime = SftpServiceRuntime(self._connection_service)
@@ -794,6 +797,29 @@ class DaemonServer:
         return broker.prepare_launch(
             spec, launch_builder, trailing_args=("sftp",), headless=True
         )
+
+    def _build_privileged_file_runner(self) -> Optional[Any]:
+        """Wire the daemon-owned sudo file runner when the launch provider is set.
+
+        Returns None when the daemon cannot prepare privileged launches; the
+        SFTP runtime then rejects ``access=SUDO`` reads/replacements with a
+        stable ``UNSUPPORTED_CAPABILITY`` error instead of falling back to a
+        frontend-owned SSH path.
+        """
+        launch_provider = getattr(self._connection_service, "_launch_provider", None)
+        broker = self._interaction_broker
+        if (
+            launch_provider is None
+            or not callable(
+                getattr(launch_provider, "prepare_remote_command_launch", None)
+            )
+            or broker is None
+        ):
+            return None
+        from .privileged_file_service import PrivilegedFileService
+
+        return PrivilegedFileService(launch_provider, broker)
+
 
     def _prepare_forward_launch(
         self,
