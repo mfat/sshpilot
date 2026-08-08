@@ -934,3 +934,102 @@ def test_directory_size_missing_root_raises_structured_error():
             client_id=ClientId("client:owner"),
         )
     assert raised.value.code is ErrorCode.REMOTE_PATH_NOT_FOUND
+
+
+class _FxFailureMkdirClient(_RemoteSftpClient):
+    """SFTP double whose mkdir answers FX_FAILURE for existing directories.
+
+    Mirrors real OpenSSH sftp-server behavior: SFTP v3 has no EEXIST status,
+    so mkdir on an existing directory returns a bare FX_FAILURE (which
+    SFTPError maps to EIO, never EEXIST/EISDIR).
+    """
+
+    def __init__(self, existing_dirs=()):
+        super().__init__()
+        self.dirs = set(existing_dirs)
+
+    def mkdir(self, path, _mode):
+        self._enter_op()
+        try:
+            if path in self.dirs:
+                raise _sftp_proto.SFTPError(_sftp_proto.FX_FAILURE, "Failure")
+            self.dirs.add(path)
+        finally:
+            self._exit_op()
+
+    def stat(self, path):
+        if path in self.dirs:
+            self._enter_op()
+            try:
+                return SimpleNamespace(
+                    st_size=0,
+                    st_mode=0o040700,
+                    st_uid=0,
+                    st_mtime=0,
+                )
+            finally:
+                self._exit_op()
+        return super().stat(path)
+
+
+def test_remote_replace_tolerates_fx_failure_mkdir_on_existing_parent():
+    """A bare FX_FAILURE from mkdir on an existing parent must not fail saves."""
+    client = _FxFailureMkdirClient(existing_dirs={"/remote"})
+    runtime, _, summary = _remote_runtime(client)
+    client.files["/remote/notes.txt"] = b"old\n"
+    client.modes["/remote/notes.txt"] = 0o600
+
+    original = runtime.read_file(
+        SftpReadFileRequest(SftpFileTarget.REMOTE, "/remote/notes.txt", summary.id),
+        client_id=ClientId("client:owner"),
+    )
+    result = runtime.replace_file(
+        SftpReplaceFileRequest(
+            SftpFileTarget.REMOTE,
+            "/remote/notes.txt",
+            "new\n",
+            original.revision,
+            backup=False,
+            service_id=summary.id,
+        ),
+        client_id=ClientId("client:owner"),
+    )
+
+    assert client.files["/remote/notes.txt"] == b"new\n"
+    assert result.size == len(b"new\n")
+    # The pre-existing parent directory's mode must be left untouched.
+    assert client.modes.get("/remote") is None
+
+
+def test_remote_replace_mkdir_failure_with_missing_parent_still_fails():
+    """mkdir FX_FAILURE with a genuinely missing parent stays an SFTP error."""
+    client = _FxFailureMkdirClient(existing_dirs={"/remote"})
+    # A parent that exists in `dirs` for mkdir (raises FX_FAILURE) but is
+    # filtered out of stat (looks missing) simulates a vanished directory.
+    client.dirs.add("/remote/gone")
+    original_stat = client.stat
+
+    def _stat(path):
+        if path == "/remote/gone":
+            raise _sftp_proto.SFTPError(_sftp_proto.FX_NO_SUCH_FILE, "No such file")
+        return original_stat(path)
+
+    client.stat = _stat
+    runtime, _, summary = _remote_runtime(client)
+    client.files["/remote/gone/notes.txt"] = b"old\n"
+    client.modes["/remote/gone/notes.txt"] = 0o600
+
+    with pytest.raises(SshPilotError) as raised:
+        runtime.replace_file(
+            SftpReplaceFileRequest(
+                SftpFileTarget.REMOTE,
+                "/remote/gone/notes.txt",
+                "new\n",
+                _file_revision(b"old\n", True),
+                backup=False,
+                service_id=summary.id,
+            ),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
+    assert raised.value.details["sftp_status"] == _sftp_proto.FX_FAILURE

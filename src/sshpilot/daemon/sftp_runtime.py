@@ -1032,12 +1032,18 @@ class SftpServiceRuntime:
                 try:
                     client.mkdir(parent, 0o700)
                 except Exception as exc:
-                    if getattr(exc, "errno", None) not in (errno.EEXIST, errno.EISDIR):
+                    # SFTP v3 has no EEXIST status: servers answer a bare
+                    # FX_FAILURE when the directory already exists, which
+                    # SFTPError maps to EIO — never EEXIST/EISDIR, so an errno
+                    # check here can never pass. Confirm the parent is a
+                    # usable directory instead; only a genuinely missing or
+                    # non-directory parent is an error.
+                    try:
+                        parent_attr = client.stat(parent)
+                    except Exception:
                         raise self._map_error(exc, record) from exc
-                try:
-                    client.chmod(parent, 0o700)
-                except Exception:
-                    logger.debug("Could not enforce remote directory mode", exc_info=True)
+                    if not stat_module.S_ISDIR(parent_attr.st_mode or 0):
+                        raise self._map_error(exc, record) from exc
             backup_path = None
             if request.backup and current_mode is not None:
                 backup_path = f"{path}.bak-{time.time_ns()}"
@@ -1546,6 +1552,13 @@ class SftpServiceRuntime:
     def _map_error(self, exc: Exception, record: _SftpRecord) -> SshPilotError:
         details = {"service_id": record.service_id}
         if isinstance(exc, sftp_proto.SFTPError):
+            # Keep the server's status code and message in details: the wire
+            # message is intentionally generic, and without these every SFTP
+            # failure is indistinguishable from the client side.
+            details["sftp_status"] = int(exc.code)
+            server_message = str(exc)
+            if server_message:
+                details["server_message"] = server_message
             code = _ERRNO_TO_ERROR_CODE.get(
                 getattr(exc, "errno", None), ErrorCode.SFTP_COMMAND_FAILED
             )
