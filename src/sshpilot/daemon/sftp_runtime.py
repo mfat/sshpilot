@@ -986,6 +986,10 @@ class SftpServiceRuntime:
             )
         return runner
 
+    @property
+    def privileged_file_supported(self) -> bool:
+        return self._privileged_file_runner is not None
+
     def _replace_remote_file(
         self,
         request: SftpReplaceFileRequest,
@@ -1341,10 +1345,43 @@ class SftpServiceRuntime:
     def remove(self, request: SftpPathRequest, *, client_id: ClientId) -> None:
         record = self._ready_record_for_mutation(request.service_id, client_id)
         path = _validate_path(request.path)
+        client = record.handle.client
         try:
-            record.handle.client.remove(path)
+            if request.recursive:
+                self._remove_recursive(client, path)
+            else:
+                client.remove(path)
+        except SshPilotError:
+            raise
         except Exception as exc:
             raise self._map_error(exc, record) from exc
+
+    def _remove_recursive(self, client, path: str) -> None:
+        """Delete a remote tree with lstat so symlinks are never followed.
+
+        A symlink is removed as a link (like ``rm -r``), never recursed into,
+        which keeps cycles and escapes out of the tree impossible.
+        """
+        try:
+            attr = client.lstat(path)
+        except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+            if not isinstance(exc, sftp_proto.SFTPError) or exc.code == sftp_proto.FX_NO_SUCH_FILE:
+                return
+            raise
+        if not attr.is_dir() or attr.is_symlink():
+            client.remove(path)
+            return
+        for entry in client.listdir_attr(path):
+            child = path.rstrip("/") + "/" + entry.filename
+            if entry.is_dir() and not entry.is_symlink():
+                self._remove_recursive(client, child)
+            else:
+                try:
+                    client.remove(child)
+                except (FileNotFoundError, sftp_proto.SFTPError) as exc:
+                    if not isinstance(exc, sftp_proto.SFTPError) or exc.code != sftp_proto.FX_NO_SUCH_FILE:
+                        raise
+        client.rmdir(path)
 
     def rename(self, request: SftpRenameRequest, *, client_id: ClientId) -> None:
         if type(request) is not SftpRenameRequest:

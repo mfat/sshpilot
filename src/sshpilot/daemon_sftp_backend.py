@@ -20,10 +20,10 @@ and directory transfers) is owned by the daemon through the typed API.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import pathlib
-import tempfile
 from concurrent.futures import Future
 from typing import Any, Callable, Dict, List, Optional
 
@@ -510,48 +510,25 @@ class DaemonSftpManager(GObject.GObject):
         future: Future = Future()
         target = self._expand(path)
         try:
-            service_id = self._require_ready_service_id()
+            self._require_ready_service_id()
         except OSError as exc:
             future.set_exception(exc)
             return future
 
-        tmp_fd, tmp_path = tempfile.mkstemp(prefix="sshpilot-touch-")
-        os.close(tmp_fd)
-
-        def _cleanup_tmp() -> None:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
-        def _on_done(summary: TransferSummary) -> None:
-            _cleanup_tmp()
-            if summary.state is TransferState.COMPLETED:
-                self._safe_set(future, result=None)
-            elif summary.state is TransferState.CANCELLED:
-                self._safe_set(future, exc=TransferCancelledException("Touch was cancelled"))
-            else:
-                failure = summary.failure
-                if failure is not None and failure.code == ErrorCode.TRANSFER_CONFLICT.value:
-                    self._safe_set(future, exc=FileExistsError(target))
-                else:
-                    message = failure.message if failure is not None else "Could not create file"
-                    self._safe_set(future, exc=OSError(message))
-
         def _on_error(exc) -> None:
-            _cleanup_tmp()
-            self._safe_set(future, exc=exc)
+            if isinstance(exc, SshPilotError) and exc.code is ErrorCode.REMOTE_PATH_EXISTS:
+                self._safe_set(
+                    future,
+                    exc=FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), target),
+                )
+            elif isinstance(exc, SshPilotError):
+                self._safe_set(future, exc=OSError(exc.message))
+            else:
+                self._safe_set(future, exc=exc)
 
-        self._transfers.start_transfer(
-            StartTransferRequest(
-                connection_id=self._connection_id,
-                sftp_service_id=service_id,
-                direction=TransferDirection.UPLOAD,
-                remote_path=target,
-                local_path=tmp_path,
-                conflict_policy=TransferConflictPolicy.FAIL,
-            ),
-            on_done=_on_done,
+        self._sftp_controller.create_file(
+            target,
+            on_success=lambda _result: self._safe_set(future, result=None),
             on_error=_on_error,
         )
         return future
@@ -592,40 +569,11 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
-        def _remove_path(current: str, on_done: Callable[[], None], on_error: Callable[[BaseException], None]) -> None:
-            def _on_stat(entry) -> None:
-                if entry.file_type is RemoteFileType.DIRECTORY:
-                    _remove_dir_contents(current, on_done, on_error)
-                else:
-                    self._sftp_controller.remove(current, on_success=lambda _r: on_done(), on_error=on_error)
-
-            def _on_stat_error(exc) -> None:
-                if isinstance(exc, SshPilotError) and exc.code is ErrorCode.REMOTE_PATH_NOT_FOUND:
-                    on_done()
-                else:
-                    on_error(exc)
-
-            self._sftp_controller.stat(current, follow_symlinks=False, on_success=_on_stat, on_error=_on_stat_error)
-
-        def _remove_dir_contents(current: str, on_done: Callable[[], None], on_error: Callable[[BaseException], None]) -> None:
-            def _on_list(result) -> None:
-                entries = list(result.entries)
-
-                def _process(index: int) -> None:
-                    if index >= len(entries):
-                        self._sftp_controller.rmdir(current, on_success=lambda _r: on_done(), on_error=on_error)
-                        return
-                    child = current.rstrip("/") + "/" + entries[index].name
-                    _remove_path(child, lambda: _process(index + 1), on_error)
-
-                _process(0)
-
-            self._sftp_controller.list_directory(current, on_success=_on_list, on_error=on_error)
-
-        _remove_path(
+        self._sftp_controller.remove(
             target,
-            lambda: self._safe_set(future, result=None),
-            lambda exc: self._safe_set(future, exc=exc),
+            recursive=True,
+            on_success=lambda _result: self._safe_set(future, result=None),
+            on_error=lambda exc: self._safe_set(future, exc=exc),
         )
         return future
 

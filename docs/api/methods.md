@@ -1105,7 +1105,9 @@ Removes an empty remote directory.
 <!-- api-method: sftp_remove -->
 ## `sftp_remove`
 
-Removes a remote file or symlink.
+Removes a remote file or symlink; with `recursive=true` removes a directory
+tree. Recursive deletion is daemon-owned and lstat-based so symlinks are
+removed as links and never followed; a missing path is idempotent.
 
 <!-- api-method: sftp_rename -->
 ## `sftp_rename`

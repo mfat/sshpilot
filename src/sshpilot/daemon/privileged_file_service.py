@@ -52,6 +52,8 @@ logger = logging.getLogger(__name__)
 REMOTE_COMMAND_TIMEOUT = 30.0
 SSH_ERROR_EXIT = 255
 MAX_SUDO_ATTEMPTS = 3
+MAX_READ_BYTES = 1024 * 1024
+_READ_CHUNK_BYTES = 64 * 1024
 
 _SUDO_READ_HEAD = "cat"
 _SUDO_WRITE_HEAD = "tee"
@@ -106,10 +108,15 @@ def _sudo_write_command(path: str, *, passwordless: bool) -> str:
     return f"{sudo} -- {_SUDO_WRITE_HEAD} -- {shlex.quote(path)} > /dev/null"
 
 
-def _sudo_backup_command(path: str, backup_path: str) -> str:
-    """Best-effort ``sudo cp -a`` backup; path positional args avoid shell quoting."""
+def _sudo_backup_command(path: str, backup_path: str, *, passwordless: bool) -> str:
+    """Best-effort ``sudo cp -a`` backup; path positional args avoid shell quoting.
+
+    Uses the same passwordless/``-S -p ''`` pattern as reads and writes so
+    password hosts can create backups too.
+    """
+    sudo = "sudo -n" if passwordless else "sudo -S -p ''"
     return (
-        "sudo -n -- sh -c 'cp -a -- \"$1\" \"$2\"' sh "
+        f"{sudo} -- sh -c 'cp -a -- \"$1\" \"$2\"' sh "
         f"{shlex.quote(path)} {shlex.quote(backup_path)}"
     )
 
@@ -161,6 +168,7 @@ class PrivilegedFileService:
         environ: Optional[dict] = None,
         command_timeout: float = REMOTE_COMMAND_TIMEOUT,
         max_password_attempts: int = MAX_SUDO_ATTEMPTS,
+        max_read_bytes: int = MAX_READ_BYTES,
         secret_lookup: Callable[[str, str], str] = lookup_sudo_password,
         secret_store: Callable[[str, str, str], bool] = store_sudo_password,
         secret_clear: Callable[[str, str], bool] = clear_sudo_password,
@@ -171,12 +179,15 @@ class PrivilegedFileService:
             raise ValueError("the privileged command timeout must be positive")
         if type(max_password_attempts) is not int or max_password_attempts < 1:
             raise ValueError("the sudo attempt limit must be positive")
+        if type(max_read_bytes) is not int or max_read_bytes < 1:
+            raise ValueError("the privileged read limit must be positive")
         self._launch_provider = launch_provider
         self._broker = broker
         self._popen = popen
         self._environ = dict(environ if environ is not None else os.environ)
         self._command_timeout = float(command_timeout)
         self._max_password_attempts = max_password_attempts
+        self._max_read_bytes = max_read_bytes
         self._secret_lookup = secret_lookup
         self._secret_store = secret_store
         self._secret_clear = secret_clear
@@ -204,6 +215,7 @@ class PrivilegedFileService:
             username=username,
             port=port,
             allow_missing=True,
+            read_limit=self._max_read_bytes,
         )
         if not result.exists:
             return PrivilegedFileContent(content=b"", exists=False, mode=None)
@@ -252,19 +264,17 @@ class PrivilegedFileService:
         backup_path: Optional[str] = None
         if backup and current.exists:
             backup_path = f"{path}.bak-{time.time_ns()}"
-            try:
-                self._execute(
-                    connection_id,
-                    scope_id,
-                    lambda passwordless: _sudo_backup_command(path, backup_path),
-                    _no_stdin,
-                    hostname=hostname,
-                    username=username,
-                    port=port,
-                )
-            except SshPilotError:
-                logger.debug("Privileged file backup failed", exc_info=True)
-                backup_path = None
+            self._execute(
+                connection_id,
+                scope_id,
+                lambda passwordless: _sudo_backup_command(
+                    path, backup_path, passwordless=passwordless
+                ),
+                _stdin_for_password,
+                hostname=hostname,
+                username=username,
+                port=port,
+            )
 
         def _stdin(password: Optional[str]) -> Optional[bytes]:
             return _stdin_with_payload(password, payload)
@@ -303,18 +313,21 @@ class PrivilegedFileService:
         username: str,
         port: int,
         allow_missing: bool = False,
+        read_limit: Optional[int] = None,
     ) -> _CommandResult:
         """Run a sudo command, resolving the password when required.
 
         Returns a ``_CommandResult`` with ``exists`` reflecting whether the
         target path is present (missing marker classification). Raises
-        ``SshPilotError`` for denied/cancelled/exhausted/timeout conditions.
+        ``SshPilotError`` for denied/cancelled/exhausted/timeout/oversized
+        conditions.
         """
         result = self._run(
             connection_id,
             scope_id,
             command_builder(passwordless=True),
             stdin_builder(None),
+            read_limit=read_limit,
         )
         if result.returncode == 0:
             result.exists = True
@@ -355,6 +368,7 @@ class PrivilegedFileService:
                 scope_id,
                 command_builder(passwordless=False),
                 stdin,
+                read_limit=read_limit,
             )
             if result.returncode == 0:
                 result.exists = True
@@ -456,6 +470,7 @@ class PrivilegedFileService:
         scope_id: SessionId,
         remote_command: str,
         stdin_data: Optional[bytes],
+        read_limit: Optional[int] = None,
     ) -> _CommandResult:
         argv, environment = self._launch_provider.prepare_remote_command_launch(
             connection_id, remote_command
@@ -486,7 +501,14 @@ class PrivilegedFileService:
                 connection_id=connection_id,
             ) from exc
         try:
-            stdout, stderr = process.communicate(stdin_data, timeout=self._command_timeout)
+            if read_limit is not None:
+                stdout, stderr = self._read_bounded(
+                    process, stdin_data, read_limit, connection_id
+                )
+            else:
+                stdout, stderr = process.communicate(
+                    stdin_data, timeout=self._command_timeout
+                )
         except subprocess.TimeoutExpired:
             try:
                 process.kill()
@@ -504,6 +526,65 @@ class PrivilegedFileService:
             stderr=stderr or b"",
         )
 
+    def _read_bounded(
+        self,
+        process: "subprocess.Popen",
+        stdin_data: Optional[bytes],
+        read_limit: int,
+        connection_id: ConnectionId,
+    ) -> tuple[bytes, bytes]:
+        """Stream a privileged read, failing fast past ``read_limit`` bytes.
+
+        A bounded reader (instead of ``communicate``) means a remote file that
+        exceeds the contract fails with a typed ``FILE_CONTENT_TOO_LARGE``
+        error and the child is killed instead of buffering unbounded output.
+        """
+        if stdin_data is not None:
+            try:
+                process.stdin.write(stdin_data)
+                process.stdin.flush()
+                process.stdin.close()
+            except (OSError, ValueError):
+                pass
+        out = bytearray()
+        deadline = time.monotonic() + self._command_timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._terminate_process(process)
+                raise subprocess.TimeoutExpired("ssh", self._command_timeout)
+            try:
+                chunk = process.stdout.read(_READ_CHUNK_BYTES)
+            except (OSError, ValueError):
+                chunk = b""
+            if not chunk:
+                break
+            out.extend(chunk)
+            if len(out) > read_limit:
+                self._terminate_process(process)
+                raise SshPilotError(
+                    ErrorCode.FILE_CONTENT_TOO_LARGE,
+                    "The remote file is too large",
+                    connection_id=connection_id,
+                )
+        try:
+            stderr = process.stderr.read()
+        except (OSError, ValueError):
+            stderr = b""
+        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        return bytes(out), stderr or b""
+
+    @staticmethod
+    def _terminate_process(process: "subprocess.Popen") -> None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait()
+        except Exception:
+            pass
+
 
 def _stdin_for_password(password: Optional[str]) -> Optional[bytes]:
     if password is None:
@@ -515,8 +596,3 @@ def _stdin_with_payload(password: Optional[str], payload: bytes) -> Optional[byt
     if password is None:
         return payload
     return password.encode("utf-8") + b"\n" + payload
-
-
-def _no_stdin(password: Optional[str]) -> Optional[bytes]:
-    del password
-    return None

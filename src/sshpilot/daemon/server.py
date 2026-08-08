@@ -595,6 +595,33 @@ class DaemonServer:
                 self._session_runtime = self._session_runtime_factory(
                     self._connection_service
                 )
+            self._interaction_broker = (
+                self._interaction_broker_factory(self._session_runtime)
+                if self._interaction_broker_factory is not None
+                else InteractionBroker(
+                    client_is_eligible=self._client_can_interact,
+                    password_lookup=getattr(
+                        self._connection_service,
+                        "lookup_daemon_password",
+                        None,
+                    ),
+                    password_store=getattr(
+                        self._connection_service,
+                        "store_daemon_password",
+                        None,
+                    ),
+                    passphrase_lookup=getattr(
+                        self._connection_service,
+                        "lookup_daemon_passphrase",
+                        None,
+                    ),
+                    passphrase_store=getattr(
+                        self._connection_service,
+                        "store_daemon_passphrase",
+                        None,
+                    ),
+                )
+            )
             sftp_builder = getattr(
                 self._connection_service, "prepare_daemon_sftp_launch", None
             )
@@ -626,33 +653,6 @@ class DaemonServer:
                 )
             else:
                 self._forward_runtime = ForwardRuntime(self._connection_service)
-            self._interaction_broker = (
-                self._interaction_broker_factory(self._session_runtime)
-                if self._interaction_broker_factory is not None
-                else InteractionBroker(
-                    client_is_eligible=self._client_can_interact,
-                    password_lookup=getattr(
-                        self._connection_service,
-                        "lookup_daemon_password",
-                        None,
-                    ),
-                    password_store=getattr(
-                        self._connection_service,
-                        "store_daemon_password",
-                        None,
-                    ),
-                    passphrase_lookup=getattr(
-                        self._connection_service,
-                        "lookup_daemon_passphrase",
-                        None,
-                    ),
-                    passphrase_store=getattr(
-                        self._connection_service,
-                        "store_daemon_passphrase",
-                        None,
-                    ),
-                )
-            )
             if scp_backend is None:
                 scp_provider = getattr(
                     getattr(self._connection_service, "_launch_provider", None),

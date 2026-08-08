@@ -120,6 +120,8 @@ class _RecursiveSftpClient(_FakeSftpClient):
         super().__init__()
         self.dirs = set()
         self.mkdirs = []
+        self.links = {}
+        self.listdir_paths = []
 
     def mkdir(self, path, _mode=None):
         self.dirs.add(path)
@@ -129,15 +131,24 @@ class _RecursiveSftpClient(_FakeSftpClient):
         import errno
 
         if path in self.files:
-            return SimpleNamespace(st_size=len(self.files[path]), is_dir=lambda: False)
+            return SimpleNamespace(
+                st_size=len(self.files[path]),
+                is_dir=lambda: False,
+                is_symlink=lambda: False,
+            )
         if path in self.dirs:
-            return SimpleNamespace(st_size=0, is_dir=lambda: True)
+            return SimpleNamespace(
+                st_size=0,
+                is_dir=lambda: True,
+                is_symlink=lambda: False,
+            )
         raise OSError(errno.ENOENT, path)
 
     def listdir_attr(self, path):
         entries = []
+        self.listdir_paths.append(path)
         prefix = path.rstrip("/") + "/" if path != "/" else "/"
-        names = set(self.files) | self.dirs
+        names = set(self.files) | self.dirs | set(self.links)
         for full in sorted(names):
             if not full.startswith(prefix):
                 continue
@@ -149,12 +160,21 @@ class _RecursiveSftpClient(_FakeSftpClient):
                     filename=rest,
                     st_size=len(self.files[full]),
                     is_dir=lambda: False,
+                    is_symlink=lambda: False,
+                ))
+            elif full in self.links:
+                entries.append(SimpleNamespace(
+                    filename=rest,
+                    st_size=0,
+                    is_dir=lambda: True,
+                    is_symlink=lambda: True,
                 ))
             else:
                 entries.append(SimpleNamespace(
                     filename=rest,
                     st_size=0,
                     is_dir=lambda: True,
+                    is_symlink=lambda: False,
                 ))
         if not entries and path not in self.dirs and path not in self.files:
             raise FileNotFoundError(path)
@@ -807,3 +827,139 @@ def test_non_recursive_dir_upload_rejected():
 
     assert summary.state is TransferState.FAILED
     assert summary.failure.code == ErrorCode.TRANSFER_IO_FAILED.value
+
+
+def test_recursive_upload_skip_policy_reaches_full_progress():
+    owner = ClientId("client:owner")
+    client = _RecursiveSftpClient()
+    client.files["/remote/dst/a.txt"] = b"existing"
+    client.dirs.add("/remote/dst")
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_root = _tree_source(None, {"a.txt": b"aaa", "b.txt": b"bbb"})
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        _tree_request(service_id, local_root, "/remote/dst", TransferDirection.UPLOAD,
+                      TransferConflictPolicy.SKIP),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.COMPLETED
+    assert summary.bytes_total == 6
+    assert summary.bytes_completed == summary.bytes_total
+
+
+def test_recursive_download_skip_policy_reaches_full_progress(tmp_path):
+    owner = ClientId("client:owner")
+    client = _RecursiveSftpClient()
+    client.files.update({
+        "/home/user/docs/a.txt": b"remote-a",
+        "/home/user/docs/b.txt": b"bbb",
+    })
+    client.dirs.add("/home/user/docs")
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_dst = tmp_path / "docs-copy"
+    local_dst.mkdir()
+    (local_dst / "a.txt").write_text("local-a")
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        _tree_request(service_id, str(local_dst), "/home/user/docs",
+                      TransferDirection.DOWNLOAD, TransferConflictPolicy.SKIP),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.COMPLETED
+    assert summary.bytes_total == 11
+    assert summary.bytes_completed == summary.bytes_total
+    assert (local_dst / "a.txt").read_text() == "local-a"
+
+
+def test_recursive_download_never_descends_into_symlinked_dirs(tmp_path):
+    owner = ClientId("client:owner")
+    client = _RecursiveSftpClient()
+    client.files.update({
+        "/home/user/docs/a.txt": b"aaa",
+        "/home/user/secret/s.txt": b"secret",
+        "/home/user/docs/linkdir": b"dereferenced",
+    })
+    client.dirs.update({"/home/user/docs", "/home/user/secret"})
+    client.links["/home/user/docs/linkdir"] = "/home/user/secret"
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_dst = tmp_path / "docs-copy"
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        _tree_request(service_id, str(local_dst), "/home/user/docs",
+                      TransferDirection.DOWNLOAD, TransferConflictPolicy.OVERWRITE),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.COMPLETED
+    assert (local_dst / "a.txt").read_bytes() == b"aaa"
+    assert (local_dst / "linkdir").read_bytes() == b"dereferenced"
+    assert not (local_dst / "secret").exists()
+    assert not (local_dst / "s.txt").exists()
+    assert client.listdir_paths == ["/home/user/docs"]
+
+
+def test_ensure_remote_dir_handles_real_sftp_missing_code():
+    from sshpilot.sftp import protocol as sftp_proto
+
+    owner = ClientId("client:owner")
+
+    class _RealStatClient(_RecursiveSftpClient):
+        def stat(self, path):
+            if path in self.files or path in self.dirs:
+                return super().stat(path)
+            raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE, "No such file")
+
+    client = _RealStatClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_root = _tree_source(None, {"a.txt": b"aaa"})
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        _tree_request(service_id, local_root, "/remote/newdir", TransferDirection.UPLOAD,
+                      TransferConflictPolicy.OVERWRITE),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.COMPLETED
+    assert "/remote/newdir" in client.dirs
+    assert client.files["/remote/newdir/a.txt"] == b"aaa"
+
+
+def test_finish_completed_reconciles_single_file_skip():
+    owner = ClientId("client:owner")
+    client = _RecursiveSftpClient()
+    client.files["/remote/file.txt"] = b"existing"
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_source = _temp_source(b"new content")
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        StartTransferRequest(
+            connection_id=ConnectionId("demo"),
+            sftp_service_id=service_id,
+            direction=TransferDirection.UPLOAD,
+            remote_path="/remote/file.txt",
+            local_path=local_source,
+            conflict_policy=TransferConflictPolicy.SKIP,
+        ),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.COMPLETED
+    assert summary.bytes_total == 11
+    assert summary.bytes_completed == summary.bytes_total

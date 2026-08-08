@@ -5447,6 +5447,13 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"

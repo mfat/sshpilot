@@ -3358,7 +3358,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SftpPathRequest(service_id: 'SftpServiceId', path: 'str')
+**Purpose:** SftpPathRequest(service_id: 'SftpServiceId', path: 'str', recursive: 'bool' = False)
 
 **Related methods:** `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink`, `sftp_mkdir`, `sftp_rmdir`, `sftp_remove`
 **Related events:** None
@@ -3367,12 +3367,14 @@ Synthetic representation:
 | --- | --- | ---: | --- | ---: |
 | `service_id` | `SftpServiceId` | Yes | — | No |
 | `path` | `str` | Yes | — | No |
+| `recursive` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
   "path": "/remote/example",
+  "recursive": false,
   "service_id": {}
 }
 ```

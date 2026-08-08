@@ -138,7 +138,7 @@ class DaemonRemoteFileService:
                     SftpFileTarget.REMOTE,
                     self._path,
                     text,
-                    self._privileged_revision,
+                    self._privileged_revision or self._revision,
                     backup=make_backup,
                     service_id=self._service_id,
                     access=SftpFileAccess.SUDO,

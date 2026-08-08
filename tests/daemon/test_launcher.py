@@ -159,6 +159,7 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.SFTP_EVENTS,
                 Capability.SFTP_METADATA,
                 Capability.SFTP_MUTATE,
+                Capability.SFTP_PRIVILEGED_FILE,
                 Capability.TRANSFERS_READ,
                 Capability.TRANSFERS_WRITE,
                 Capability.TRANSFERS_EVENTS,

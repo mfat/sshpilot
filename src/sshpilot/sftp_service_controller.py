@@ -26,6 +26,8 @@ from .api.models.operations import (
     RemoteFileEntry,
     SftpChmodRequest,
     SftpCopyRequest,
+    SftpCreateFileRequest,
+    SftpCreateFileResult,
     SftpFileTarget,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -313,6 +315,24 @@ class DaemonSftpServiceController:
     ) -> None:
         self._path_mutation("sftp_mkdir", path, on_success=on_success, on_error=on_error)
 
+    def create_file(
+        self,
+        path: str,
+        *,
+        on_success: Callable[[SftpCreateFileResult], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_create_file(
+                SftpCreateFileRequest(service_id=service_id, path=path)
+            )
+
+        self._submit(_op, on_success=on_success, on_error=on_error)
+
     def rmdir(
         self,
         path: str,
@@ -353,10 +373,17 @@ class DaemonSftpServiceController:
         self,
         path: str,
         *,
+        recursive: bool = False,
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
-        self._path_mutation("sftp_remove", path, on_success=on_success, on_error=on_error)
+        self._path_mutation(
+            "sftp_remove",
+            path,
+            recursive=recursive,
+            on_success=on_success,
+            on_error=on_error,
+        )
 
     def rename(
         self,
@@ -498,6 +525,7 @@ class DaemonSftpServiceController:
         method_name: str,
         path: str,
         *,
+        recursive: bool = False,
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
@@ -507,7 +535,9 @@ class DaemonSftpServiceController:
         method = getattr(self._client, method_name)
 
         def _op():
-            return method(SftpPathRequest(service_id=service_id, path=path))
+            return method(
+                SftpPathRequest(service_id=service_id, path=path, recursive=recursive)
+            )
 
         self._submit(_op, on_success=on_success, on_error=on_error)
 

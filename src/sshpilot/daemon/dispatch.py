@@ -868,6 +868,10 @@ class RequestDispatcher:
                     and "binary-secret-v1" in metadata.supported_frame_types
                 ),
                 sftp=self._sftp_runtime is not None,
+                privileged_file=bool(
+                    self._sftp_runtime is not None
+                    and self._sftp_runtime.privileged_file_supported
+                ),
                 transfers=self._transfer_runtime is not None,
                 scp=self._scp_capability_available(),
                 forwards=self._forward_runtime is not None,
@@ -2576,6 +2580,10 @@ class RequestDispatcher:
                     and "binary-secret-v1" in metadata.supported_frame_types
                 ),
                 sftp=self._sftp_runtime is not None,
+                privileged_file=bool(
+                    self._sftp_runtime is not None
+                    and self._sftp_runtime.privileged_file_supported
+                ),
                 transfers=self._transfer_runtime is not None,
                 scp=self._scp_capability_available(),
                 forwards=self._forward_runtime is not None,
@@ -2609,6 +2617,7 @@ class RequestDispatcher:
         terminal_frames: bool = False,
         secret_frames: bool = False,
         sftp: bool = False,
+        privileged_file: bool = False,
         transfers: bool = False,
         scp: bool = False,
         forwards: bool = False,
@@ -2678,6 +2687,10 @@ class RequestDispatcher:
                     Capability.SFTP_MUTATE,
                 }
             )
+            if privileged_file:
+                daemon_capabilities |= frozenset(
+                    {Capability.SFTP_PRIVILEGED_FILE}
+                )
         if transfers:
             daemon_capabilities |= frozenset(
                 {

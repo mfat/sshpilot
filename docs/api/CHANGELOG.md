@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- Added an optional `recursive` field to `SftpPathRequest`. `sftp_remove` with
+  `recursive=true` deletes an entire remote directory tree inside the daemon
+  (`SftpServiceRuntime`) using lstat-based traversal that never follows
+  symlinks; a missing path is idempotent. The field is sent on the wire only
+  when true and defaults to `false` when absent, so Protocol v1 strict daemons
+  remain compatible. The frontend no longer issues a per-entry remove loop for
+  recursive deletion.
+
 - Added daemon-owned recursive directory transfers. `transfers.start` with
   `recursive=true` now walks and copies an entire local/remote directory tree
   inside `TransferRuntime` — per-file atomic temp+rename, cumulative byte

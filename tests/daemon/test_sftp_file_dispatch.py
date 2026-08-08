@@ -10,10 +10,15 @@ from sshpilot.api.models.common import ClientId, RequestId
 from sshpilot.api.models.operations import (
     SftpCopyRequest,
     SftpFileTarget,
+    SftpPathRequest,
     SftpReadFileRequest,
     SftpReadFileResult,
     SftpReplaceFileRequest,
     SftpReplaceFileResult,
+)
+from sshpilot.api.transport.codec import (
+    sftp_path_request_from_wire,
+    sftp_path_request_to_wire,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, RequestEnvelope
 from sshpilot.core.connection_application_service import ConnectionApplicationService
@@ -61,6 +66,7 @@ class _FakeSftpRuntime:
         self.read_calls = []
         self.replace_calls = []
         self.copy_calls = []
+        self.remove_calls = []
 
     def read_file(self, request, client_id=None):
         self.read_calls.append(request)
@@ -86,6 +92,9 @@ class _FakeSftpRuntime:
 
     def copy(self, request, client_id=None):
         self.copy_calls.append(request)
+
+    def remove(self, request, client_id=None):
+        self.remove_calls.append(request)
 
 
 def _dispatcher(with_runtime=True):
@@ -189,6 +198,38 @@ def test_copy_returns_deferred_execution():
     assert isinstance(request, SftpCopyRequest)
     assert request.recursive is True
     assert request.move is True
+
+
+def test_path_request_recursive_round_trips_through_wire():
+    request = SftpPathRequest(service_id="sftp-1", path="/tree", recursive=True)
+    wire = sftp_path_request_to_wire(request)
+    assert wire["recursive"] is True
+    decoded = sftp_path_request_from_wire(wire)
+    assert decoded.recursive is True
+    assert decoded.path == "/tree"
+    assert sftp_path_request_from_wire(
+        {"service_id": "sftp-1", "path": "/tree"}
+    ).recursive is False
+
+
+def test_remove_recursive_passes_flag_through_wire():
+    dispatcher, runtime = _dispatcher()
+    result = dispatcher.dispatch(
+        _envelope(
+            "sftp.remove",
+            {
+                "service_id": "sftp-1",
+                "path": "/tree",
+                "recursive": True,
+            },
+        ),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+    assert result.operation() is None
+    request = runtime.remove_calls[0]
+    assert request.recursive is True
+    assert request.path == "/tree"
 
 
 def test_replace_file_returns_deferred_execution():

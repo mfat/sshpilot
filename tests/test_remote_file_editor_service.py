@@ -156,6 +156,32 @@ def test_normal_and_privileged_revisions_are_independent():
     assert client.replaces[1].expected_revision == "rev-1"
 
 
+def test_privileged_save_without_privileged_load_falls_back_to_normal_revision():
+    client = FakeClient()
+    service = _make(client, privileged=True)
+
+    _wait(service.load())
+    _wait(service.save_text_privileged("root edit"))
+
+    req = client.replaces[0]
+    assert req.access is SftpFileAccess.SUDO
+    assert req.expected_revision == "rev-1"
+
+
+def test_privileged_save_after_privileged_load_prefers_privileged_revision():
+    client = FakeClient()
+    service = _make(client, privileged=True)
+
+    _wait(service.load())
+    client._revision = "rev-2"
+    _wait(service.load_privileged())
+    _wait(service.save_text_privileged("root edit"))
+
+    req = client.replaces[0]
+    assert req.access is SftpFileAccess.SUDO
+    assert req.expected_revision == "rev-2"
+
+
 def test_close_shuts_down_executor():
     client = FakeClient()
     service = _make(client, privileged=True)

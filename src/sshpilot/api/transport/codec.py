@@ -3941,18 +3941,23 @@ def sftp_replace_file_result_from_wire(value: Any) -> SftpReplaceFileResult:
 def sftp_path_request_to_wire(request: SftpPathRequest) -> Dict[str, Any]:
     if type(request) is not SftpPathRequest:
         raise TypeError("SFTP path request is required")
-    return {"service_id": request.service_id, "path": request.path}
+    wire = {"service_id": request.service_id, "path": request.path}
+    if request.recursive:
+        wire["recursive"] = True
+    return wire
 
 
 def sftp_path_request_from_wire(value: Any) -> SftpPathRequest:
     data = _strict_fields(
         value,
         required={"service_id", "path"},
+        optional={"recursive"},
         context="SFTP path request",
     )
     return SftpPathRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         path=_text(data["path"], "SFTP path"),
+        recursive=bool(data.get("recursive")),
     )
 
 

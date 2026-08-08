@@ -221,6 +221,7 @@ class ListDirectoryResult:
 class SftpPathRequest:
     service_id: SftpServiceId
     path: str
+    recursive: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.service_id, "SFTP service id")
@@ -228,6 +229,8 @@ class SftpPathRequest:
             raise ValueError("SFTP path must not be empty")
         if "\x00" in self.path:
             raise ValueError("SFTP path must not contain NUL")
+        if type(self.recursive) is not bool:
+            raise ValueError("SFTP path recursive flag must be a bool")
 
 
 class SftpFileTarget(str, Enum):

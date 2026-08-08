@@ -3656,7 +3656,8 @@
     ],
     "SftpPathRequest": [
       "service_id",
-      "path"
+      "path",
+      "recursive"
     ],
     "SftpReadFileRequest": [
       "target",

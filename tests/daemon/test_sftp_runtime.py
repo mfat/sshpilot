@@ -34,14 +34,21 @@ class _CoreClient:
 
 
 class _Attr:
-    def __init__(self, name, is_dir=False):
+    def __init__(self, name, is_dir=False, is_link=False):
         self.filename = name
         self._is_dir = is_dir
-        self.st_mode = 0o040755 if is_dir else 0o100644
+        self._is_link = is_link
+        if is_link:
+            self.st_mode = 0o120777
+        else:
+            self.st_mode = 0o040755 if is_dir else 0o100644
         self.st_size = 0
 
     def is_dir(self):
         return self._is_dir
+
+    def is_symlink(self):
+        return self._is_link
 
 
 class _File:
@@ -77,20 +84,31 @@ class _FakeSftpClient:
         self.closed = False
         self.files = {"/source.txt": b"payload"}
         self.directories = {"/"}
+        self.symlinks = {}
 
     def stat(self, path):
         if path in self.directories:
             return _Attr(path, is_dir=True)
+        if path in self.symlinks:
+            return _Attr(path, is_dir=False, is_link=False)
         if path in self.files:
             return _Attr(path)
         raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE, "missing")
 
+    def lstat(self, path):
+        if path in self.symlinks:
+            return _Attr(path, is_dir=False, is_link=True)
+        return self.stat(path)
+
     def listdir_attr(self, path):
         prefix = path.rstrip("/") + "/"
         result = []
-        for child in sorted(self.directories | set(self.files)):
+        for child in sorted(self.directories | set(self.files) | set(self.symlinks)):
             if child.startswith(prefix) and "/" not in child[len(prefix):]:
-                result.append(_Attr(child[len(prefix):], child in self.directories))
+                if child in self.symlinks:
+                    result.append(_Attr(child[len(prefix):], is_link=True))
+                else:
+                    result.append(_Attr(child[len(prefix):], child in self.directories))
         return result
 
     def mkdir(self, path):
@@ -103,6 +121,7 @@ class _FakeSftpClient:
     def remove(self, path):
         self.remove_calls.append(path)
         self.files.pop(path, None)
+        self.symlinks.pop(path, None)
 
     def rmdir(self, path):
         self.directories.discard(path)
@@ -257,3 +276,78 @@ def test_remote_copy_rejects_existing_destination_and_self_directory():
             client_id=owner,
         )
     assert self_copy.value.code is ErrorCode.VALIDATION_FAILED
+
+
+def test_remove_recursive_deletes_tree_files_then_dirs():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.files.update({"/tree/a.txt": b"a", "/tree/sub/b.txt": b"b", "/tree/root.txt": b"r"})
+    client.directories.update({"/tree", "/tree/sub"})
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+    )
+
+    assert set(client.remove_calls) == {"/tree/a.txt", "/tree/sub/b.txt", "/tree/root.txt"}
+    assert "/tree" not in client.directories
+    assert "/tree/sub" not in client.directories
+    assert "/tree/a.txt" not in client.files
+    assert "/tree/sub/b.txt" not in client.files
+    assert "/tree/root.txt" not in client.files
+
+
+def test_remove_recursive_never_follows_symlinks():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+    client.files["/tree/plain.txt"] = b"p"
+    client.symlinks["/tree/escaped-link"] = None
+    client.directories.update({"/tree", "/elsewhere"})
+    client.files["/elsewhere/secret.txt"] = b"s"
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/tree", recursive=True),
+        client_id=owner,
+    )
+
+    assert "/tree/escaped-link" in client.remove_calls
+    assert "/elsewhere/secret.txt" not in client.remove_calls
+    assert "/elsewhere" in client.directories
+
+
+def test_remove_recursive_missing_path_is_idempotent():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/absent", recursive=True),
+        client_id=owner,
+    )
+
+    assert client.remove_calls == []
+    assert client.directories == {"/"}
+
+
+def test_remove_recursive_single_file_is_removed():
+    runtime, runner = _make_runtime()
+    owner = ClientId("client:owner")
+    summary = runtime.prepare_open_service(_open_request(), client_id=owner)
+    runtime.start_service(summary.id)
+    client = runner.handles[0].client
+
+    runtime.remove(
+        SftpPathRequest(service_id=summary.id, path="/source.txt", recursive=True),
+        client_id=owner,
+    )
+
+    assert "/source.txt" in client.remove_calls
+    assert "/source.txt" not in client.files

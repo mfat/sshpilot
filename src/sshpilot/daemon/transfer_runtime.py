@@ -535,7 +535,12 @@ class TransferRuntime:
     # -- recursive transfers ------------------------------------------------
 
     def _run_recursive_upload(self, record: _TransferRecord, client) -> None:
-        """Copy a local directory tree to a remote destination directory."""
+        """Copy a local directory tree to a remote destination directory.
+
+        Symlinked directories are not descended into (``os.walk`` default) and
+        symlinked files are transferred by content, so a link can never pull an
+        unrelated tree or a cycle into the upload.
+        """
         local_root = record.local_path
         if not os.path.isdir(local_root):
             raise SshPilotError(
@@ -555,11 +560,13 @@ class TransferRuntime:
             for name in names:
                 local_abs = os.path.join(root, name)
                 remote_path = self._join_remote(remote_dir, name)
-                files.append((local_abs, remote_path))
+                size = 0
                 try:
-                    total += os.path.getsize(local_abs)
+                    size = os.path.getsize(local_abs)
                 except OSError:
                     pass
+                total += size
+                files.append((local_abs, remote_path, size))
         with self._lock:
             record.bytes_total = total
 
@@ -568,11 +575,12 @@ class TransferRuntime:
             self._ensure_remote_dir(record, client, remote_dir)
 
         completed = 0
-        for local_abs, remote_path in files:
+        for local_abs, remote_path, size in files:
             self._check_cancel(record)
             try:
                 destination = self._resolve_remote_destination(record, client, remote_path)
             except _TransferSkipped:
+                completed += size
                 continue
             copied = self._copy_local_to_remote(record, client, local_abs, destination, base=completed)
             completed += copied
@@ -581,7 +589,12 @@ class TransferRuntime:
             record.bytes_completed = completed
 
     def _run_recursive_download(self, record: _TransferRecord, client) -> None:
-        """Copy a remote directory tree to a local destination directory."""
+        """Copy a remote directory tree to a local destination directory.
+
+        Symlinked entries are never descended into: a link to a directory is
+        treated as a file (dereferenced by the read), so the walk cannot follow
+        a cycle or escape the requested tree.
+        """
         remote_root = record.remote_path
         local_root = record.local_path
         try:
@@ -615,12 +628,13 @@ class TransferRuntime:
                 self._check_cancel(record)
                 child_remote = self._join_remote(remote_dir, entry.filename)
                 child_local = os.path.join(local_dir, entry.filename)
-                if entry.is_dir():
+                if entry.is_dir() and not entry.is_symlink():
                     os.makedirs(child_local, exist_ok=True)
                     pending.append((child_remote, child_local))
                 else:
-                    files.append((child_remote, child_local))
-                    total += entry.st_size or 0
+                    size = entry.st_size or 0
+                    files.append((child_remote, child_local, size))
+                    total += size
 
         while pending:
             self._check_cancel(record)
@@ -630,13 +644,14 @@ class TransferRuntime:
             record.bytes_total = total
 
         completed = 0
-        for remote_abs, local_abs in files:
+        for remote_abs, local_abs, size in files:
             self._check_cancel(record)
             parent = os.path.dirname(local_abs) or "."
             os.makedirs(parent, exist_ok=True)
             try:
                 destination = self._resolve_local_destination(record, local_abs)
             except _TransferSkipped:
+                completed += size
                 continue
             copied = self._copy_remote_to_local(record, client, remote_abs, destination, base=completed)
             completed += copied
@@ -664,7 +679,7 @@ class TransferRuntime:
                 )
             return
         except sftp_proto.SFTPError as exc:
-            if exc.code not in (sftp_proto.FX_NO_SUCH_FILE, sftp_proto.FX_NOT_A_DIRECTORY):
+            if exc.code != sftp_proto.FX_NO_SUCH_FILE:
                 raise
         except SshPilotError:
             raise
@@ -885,6 +900,13 @@ class TransferRuntime:
 
     def _finish_completed(self, record: _TransferRecord) -> None:
         with self._lock:
+            # Skipped (conflict policy) or single-file transfers may not have
+            # accounted every byte during the run; a completed transfer reports
+            # every byte as handled so progress reaches 100%.
+            if record.bytes_total is not None:
+                record.bytes_completed = max(
+                    record.bytes_completed or 0, record.bytes_total
+                )
             if record.state is TransferState.CANCELLING:
                 record.completed_at = self._clock()
                 event = self._transition_locked(record, TransferState.CANCELLED)
