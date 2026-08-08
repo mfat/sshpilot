@@ -242,6 +242,19 @@ class TestConnectionManager:
     def delete_connection_password(self, connection_id, **_kwargs):
         return self.plugin_secrets.pop(("connection", str(connection_id)), None) is not None
 
+    def lookup_key_passphrase(self, key_path):
+        return self.plugin_secrets.get(("key-passphrase", key_path))
+
+    def has_key_passphrase(self, key_path):
+        return self.lookup_key_passphrase(key_path) is not None
+
+    def store_key_passphrase(self, key_path, passphrase):
+        self.plugin_secrets[("key-passphrase", key_path)] = passphrase
+        return True
+
+    def delete_key_passphrase(self, key_path):
+        return self.plugin_secrets.pop(("key-passphrase", key_path), None) is not None
+
     def store_plugin_secret(self, plugin_id, key, value):
         self.plugin_secrets[(plugin_id, key)] = value
         return True

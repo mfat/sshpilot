@@ -155,6 +155,39 @@ def test_secret_methods_map_to_operate_capability():
     )
 
 
+def test_connection_secret_methods_are_deferred_and_capability_mapped():
+    """Every connections.* secret handler returns a DeferredResult, so each
+    method must be in DEFERRED_DAEMON_METHODS — otherwise dispatch rejects it
+    with an opaque INTERNAL_ERROR (see issue #1136, where
+    ``connections.delete_passphrase`` was missing)."""
+    for method in (
+        "connections.store_password",
+        "connections.delete_password",
+        "connections.store_passphrase",
+        "connections.delete_passphrase",
+        "connections.store_plugin_secret",
+        "connections.delete_plugin_secret",
+    ):
+        assert DAEMON_METHOD_CAPABILITIES[method] is Capability.CONNECTIONS_SECRETS_WRITE
+        assert method in DEFERRED_DAEMON_METHODS, method
+    for method in (
+        "connections.has_password",
+        "connections.has_passphrase",
+    ):
+        assert (
+            DAEMON_METHOD_CAPABILITIES[method]
+            is Capability.CONNECTIONS_SECRETS_STATUS_READ
+        )
+        assert method in DEFERRED_DAEMON_METHODS, method
+    for method in (
+        "connections.reveal_password",
+        "connections.reveal_passphrase",
+        "connections.get_plugin_secret",
+    ):
+        assert DAEMON_METHOD_CAPABILITIES[method] is Capability.CONNECTIONS_SECRETS_REVEAL
+        assert method in DEFERRED_DAEMON_METHODS, method
+
+
 def test_secret_handlers_are_registered():
     dispatcher, _ = _dispatcher()
     for method in (

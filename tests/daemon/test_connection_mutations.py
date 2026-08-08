@@ -401,3 +401,31 @@ def test_daemon_groups_place_stale_generation_rejected(daemon_factory, tmp_path)
     current_child = next(g for g in current.groups if g.id == child_id)
     assert current_child.parent_id == parent_id
     client.close()
+
+
+def test_delete_key_passphrase_roundtrips_over_daemon(daemon_factory):
+    """Regression: ``connections.delete_passphrase`` must be accepted as deferred work.
+
+    The handler returns a ``DeferredResult``; while the method was missing from
+    ``DEFERRED_DAEMON_METHODS`` the dispatcher rejected it as "immediate daemon
+    method returned deferred work", surfacing to clients as an opaque
+    INTERNAL_ERROR ("The daemon could not complete the request").
+    """
+    from sshpilot.api.models.connections import (
+        DeleteKeyPassphraseRequest,
+        StoreKeyPassphraseRequest,
+    )
+
+    server, _manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+
+    key_path = "/tmp/sshpilot-mutation-test-id_ed25519"
+    assert client.store_key_passphrase(
+        StoreKeyPassphraseRequest(key_path=key_path, passphrase="pw")
+    ) is True
+    assert client.has_key_passphrase(key_path) is True
+    assert client.delete_key_passphrase(
+        DeleteKeyPassphraseRequest(key_path=key_path)
+    ) is True
+    assert client.has_key_passphrase(key_path) is False
+    client.close()

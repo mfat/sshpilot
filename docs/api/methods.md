@@ -250,6 +250,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `connections.store_password` | `connections.secrets.write` | Implemented |
 | `connections.delete_password` | `connections.secrets.write` | Implemented |
 | `connections.store_passphrase` | `connections.secrets.write` | Implemented |
+| `connections.delete_passphrase` | `connections.secrets.write` | Implemented |
 | `connections.has_password` | `connections.secrets.status.read` | Implemented |
 | `connections.has_passphrase` | `connections.secrets.status.read` | Implemented |
 | `connections.reveal_password` | `connections.secrets.reveal` | Implemented; binary secret response |
@@ -368,6 +369,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.duplicate capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.delete_password capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.delete_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.delete_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
