@@ -43,7 +43,43 @@ class DaemonInteractionDialogs:
         self._subscription = client.subscribe_events(self._on_transport_event)
 
     def set_session(self, session_id: SessionId) -> None:
+        """Bind this presenter to exactly one daemon interaction scope.
+
+        Binding is race-safe: an interaction created before the frontend
+        learned the scope ID (a prompt raised between ``deploy_key()``
+        starting and the OperationSummary arriving, or during an SFTP
+        handshake) is reconciled from the daemon's live interaction snapshot.
+        Reconciliation is idempotent: event-driven delivery and the snapshot
+        are deduplicated by interaction id, so nothing is presented twice.
+        Repeated binds to the same scope are no-ops.
+        """
+        if session_id == self._session_id:
+            return
         self._session_id = session_id
+        self._reconcile()
+
+    def _reconcile(self) -> None:
+        """Pull currently pending interactions for the bound scope."""
+        if self._closed or self._session_id is None:
+            return
+        try:
+            self._bridge.submit_interaction(
+                lambda: self._client.list_interactions(),
+                on_success=lambda summaries: self._reconcile_present(summaries),
+                on_error=lambda _error: None,
+            )
+        except RuntimeError:
+            # Bridge already closed while shutting down; nothing to present.
+            pass
+
+    def _reconcile_present(self, summaries) -> None:
+        """Feed only our own scope's interactions through the normal path."""
+        if self._closed or self._session_id is None:
+            return
+        for summary in summaries or ():
+            if summary.session_id != self._session_id:
+                continue
+            self._handle_event(summary)
 
     def set_parent(self, parent: Gtk.Widget) -> None:
         """Reparent future dialogs (e.g. once the real window exists)."""
@@ -62,7 +98,14 @@ class DaemonInteractionDialogs:
             return False
         if is_secret_service_session(summary.session_id):
             return False
-        if self._session_id is not None and summary.session_id != self._session_id:
+        # An unbound presenter must never claim or display an unrelated
+        # prompt. With no scope set, no interaction is ours — in particular
+        # the File Manager, Authorized Keys, a terminal and ssh-copy-id can
+        # all operate concurrently under one frontend client, and an unbound
+        # presenter must not act as a wildcard for any of them.
+        if self._session_id is None:
+            return False
+        if summary.session_id != self._session_id:
             return False
         if summary.state in {
             InteractionState.ANSWERED,

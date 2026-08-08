@@ -40,7 +40,11 @@ from sshpilot.api.models.daemon import (
     DaemonStatus,
 )
 from sshpilot.api.models.interactions import InteractionState
-from sshpilot.api.models.operations import ForwardState, SftpServiceState
+from sshpilot.api.models.operations import (
+    ForwardState,
+    OperationId,
+    SftpServiceState,
+)
 from sshpilot.api.models.sessions import SessionState
 from sshpilot.api.models.terminal import TerminalInput, TerminalOutput
 from sshpilot.api.models.transfers import TransferState
@@ -871,6 +875,13 @@ class DaemonServer:
         if text.startswith("forward-") and self._forward_runtime is not None:
             return self._forward_runtime.client_can_interact(
                 ForwardId(text), client_id
+            )
+        if text.startswith("operation-") and self._operation_runtime is not None:
+            # Long-running operations (public-key deployment, authorized-key
+            # removal) scope their interactions to the public OperationId; the
+            # owning client must be able to see and answer them.
+            return self._operation_runtime.client_can_interact(
+                OperationId(text), client_id
             )
         return False
 

@@ -176,6 +176,26 @@ class OperationRuntime:
                 )
             return summary
 
+    def client_can_interact(
+        self,
+        operation_id: OperationId,
+        client_id: ClientId,
+    ) -> bool:
+        """Whether *client_id* may claim interactions scoped to an operation.
+
+        Mirrors the session/SFTP/forward runtimes: only the operation's owner
+        client may see and answer the prompts its worker raises (password,
+        passphrase, host-key, FIDO presence). An operation recorded without an
+        owner is not claimable by any client, and unknown operation ids are
+        always denied — a ``operation-`` prefixed scope that never belonged to
+        a registered operation stays invisible.
+        """
+        with self._condition:
+            summary = self._records.get(operation_id)
+            if summary is None or summary.owner_client_id is None:
+                return False
+            return summary.owner_client_id == client_id
+
     def cancel_operation(self, operation_id: OperationId) -> OperationSummary:
         """Request cancellation and interrupt registered work when possible."""
         with self._condition:

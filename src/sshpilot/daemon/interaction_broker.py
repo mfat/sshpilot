@@ -353,6 +353,20 @@ class InteractionBroker:
                 "The operation launch command is invalid",
             )
         env = dict(environment)
+        if not hostname:
+            # Headless operation callers (ssh-copy-id, ssh-add, remote
+            # commands) do not always know the connection's display host; the
+            # launch target (``argv[-1]``) carries it. Deriving safe display
+            # metadata here keeps every typed prompt (password, passphrase,
+            # host-key) constructible for every headless operation — a
+            # PASSWORD prompt with an empty hostname would fail model
+            # validation and the askpass worker would silently drop it.
+            target_hostname, target_username = self._target_identity(
+                str(argv[-1])
+            )
+            hostname = target_hostname
+            if target_username and not username:
+                username = target_username
         token = secrets.token_urlsafe(32)
         context = _AskpassContext(
             token=token,
@@ -393,6 +407,41 @@ class InteractionBroker:
             f"ASKPASS: daemon broker ready for operation scope={scope_id}"
         )
         return argv, env
+
+    @staticmethod
+    def _target_identity(target: str) -> tuple[str, str]:
+        """Best-effort ``(hostname, username)`` from a launch target.
+
+        Headless operation callers pass the OpenSSH target as ``argv[-1]``
+        (e.g. ``alice@example.com`` for ssh-copy-id). When the caller supplies
+        no explicit hostname/username, this derives safe display values from
+        the target so typed prompts can be constructed. The target may be
+        ``user@host[:port]``, ``host[:port]``, an IPv6 bracket form, a remote
+        command, or a local path — the result is sanitized to a non-empty
+        display string, never validated OpenSSH config.
+        """
+
+        raw = str(target or "").split("/", 1)[0]
+        if "@" in raw:
+            user, _, host_part = raw.rpartition("@")
+        else:
+            user = ""
+            host_part = raw
+        if host_part.startswith("[") and "]" in host_part:
+            hostname = host_part[1:].split("]", 1)[0]
+        elif host_part.count(":") == 1 and host_part.rsplit(":", 1)[1].isdigit():
+            hostname = host_part.rsplit(":", 1)[0]
+        else:
+            hostname = host_part
+        cleaned = "".join(
+            char for char in hostname if char == "\t" or ord(char) >= 0x20
+        ).strip()
+        if not cleaned or len(cleaned) > 255:
+            # Last resort: a fixed safe display value. An empty or over-long
+            # value would fail prompt-model validation and the askpass worker
+            # would silently drop the interaction again.
+            return "unknown", user
+        return cleaned, user
 
     @staticmethod
     def _strict_host_key_mode(

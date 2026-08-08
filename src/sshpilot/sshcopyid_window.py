@@ -791,6 +791,7 @@ class SshCopyIdRunner:
         self.window = window
         self._operation_id = None
         self._poll_id = None
+        self._interaction_dialogs = None
 
     def run(self, connection, ssh_key, force=False):
         client = getattr(self.window, "client", None)
@@ -802,6 +803,17 @@ class SshCopyIdRunner:
                 _("Reconnect to the sshPilot daemon and try again."),
             )
             return
+        # Attach the interaction presenter before starting the operation so a
+        # password/passphrase/host-key/FIDO prompt during deployment is never
+        # missed. It starts unbound (ignoring every interaction); once the
+        # daemon returns the OperationSummary it binds to the operation ID —
+        # the one public scope the deployment worker scopes its interactions
+        # to — and set_session() reconciles any prompt already created.
+        dialogs = None
+        bridge = getattr(self.window, "client_bridge", None)
+        if bridge is not None:
+            from .daemon_interaction_dialogs import DaemonInteractionDialogs
+            dialogs = DaemonInteractionDialogs(client, bridge, self.window)
         try:
             from .api.connection_identity import connection_id_for
             from .api.models.identity import DeployKeyRequest
@@ -815,6 +827,8 @@ class SshCopyIdRunner:
                 )
             )
         except SshPilotError as exc:
+            if dialogs is not None:
+                dialogs.close()
             self.window._error_dialog(
                 _("SSH Key Copy Error"),
                 _("Could not start public-key deployment."),
@@ -822,6 +836,8 @@ class SshCopyIdRunner:
             )
             return
         except Exception:
+            if dialogs is not None:
+                dialogs.close()
             logger.error("Could not start daemon key deployment", exc_info=True)
             self.window._error_dialog(
                 _("SSH Key Copy Error"),
@@ -829,6 +845,10 @@ class SshCopyIdRunner:
                 _("Reconnect to the sshPilot daemon and try again."),
             )
             return
+        if dialogs is not None:
+            from .api.models.common import SessionId
+            dialogs.set_session(SessionId(str(summary.operation_id)))
+        self._interaction_dialogs = dialogs
         self._operation_id = summary.operation_id
         self._poll_operation()
 
@@ -838,12 +858,16 @@ class SshCopyIdRunner:
         client = getattr(self.window, "client", None)
         if client is None:
             self._operation_id = None
+            self._dispose_interaction_dialogs()
             return False
         try:
             summary = client.get_operation(self._operation_id)
             if summary.state.value in {"succeeded", "failed", "cancelled"}:
                 self._operation_id = None
                 self._poll_id = None
+                # The operation's interaction scope is done: release the
+                # presenter so it never claims unrelated interactions again.
+                self._dispose_interaction_dialogs()
                 if summary.state.value == "succeeded":
                     self.window._info_dialog(
                         _("SSH Key Copy"),
@@ -866,6 +890,12 @@ class SshCopyIdRunner:
         self._poll_id = GLib.timeout_add(250, self._poll_operation)
         return False
 
+    def _dispose_interaction_dialogs(self):
+        """Close and detach the presenter; never claim interactions after teardown."""
+        if self._interaction_dialogs is not None:
+            self._interaction_dialogs.close()
+            self._interaction_dialogs = None
+
     def cancel(self):
         operation_id = self._operation_id
         client = getattr(self.window, "client", None)
@@ -875,6 +905,7 @@ class SshCopyIdRunner:
             except Exception:
                 logger.debug("Daemon deployment cancellation failed", exc_info=True)
         self._operation_id = None
+        self._dispose_interaction_dialogs()
         if self._poll_id is not None:
             try:
                 GLib.source_remove(self._poll_id)

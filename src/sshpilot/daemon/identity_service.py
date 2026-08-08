@@ -274,7 +274,11 @@ class DaemonIdentityService:
         final_env = dict(env)
         final_argv = tuple(argv)
         if self._broker is not None:
-            scope_id = SessionId(new_operation_id())
+            # One public scope per daemon resource: the interaction scope of a
+            # key-deployment operation IS its public OperationId. The frontend
+            # learns that ID from OperationSummary and binds its interaction
+            # presenter to it; a private random scope would be unknowable.
+            scope_id = SessionId(str(handle.operation_id))
             final_argv, final_env = self._broker.prepare_operation_launch(
                 final_argv,
                 final_env,
@@ -315,18 +319,23 @@ class DaemonIdentityService:
             finally:
                 handle.clear_process()
             handle.raise_if_cancelled()
+            if returncode != 0:
+                raise SshPilotError(
+                    ErrorCode.REMOTE_COMMAND_FAILED,
+                    _deploy_failure_message(last_line),
+                )
+            if scope_id is not None and self._broker is not None:
+                # Commit secrets the user chose to remember after a successful
+                # run — BEFORE the interaction scope is torn down.
+                # ``cancel_session`` destroys the askpass context and clears its
+                # pending remembered secrets, so ``mark_authenticated`` must
+                # come first. On failure/cancellation the raise below skips it
+                # and the ``finally`` still cleans the scope up.
+                self._broker.mark_authenticated(scope_id)
+            return "The public key was installed on the server"
         finally:
             if scope_id is not None and self._broker is not None:
                 self._broker.cancel_session(scope_id)
-        if returncode != 0:
-            raise SshPilotError(
-                ErrorCode.REMOTE_COMMAND_FAILED,
-                _deploy_failure_message(last_line),
-            )
-        if scope_id is not None and self._broker is not None:
-            # Commit secrets the user chose to remember after a successful run.
-            self._broker.mark_authenticated(scope_id)
-        return "The public key was installed on the server"
 
     # ------------------------------------------------------------------
     # Remote authorized-keys management (ordinary ssh transport)
@@ -530,7 +539,16 @@ class DaemonIdentityService:
         )
         scope_id: Optional[SessionId] = None
         if self._broker is not None:
-            scope_id = SessionId(new_operation_id())
+            if handle is not None:
+                # Long-running authorized-key operations scope their prompts to
+                # their public OperationId — the same one the frontend learns
+                # from OperationSummary (one public scope per resource).
+                scope_id = SessionId(str(handle.operation_id))
+            else:
+                # Direct RPC (list_authorized_keys): no public resource ID is
+                # visible to the frontend, so there is still no presenter to
+                # bind; keep a private scope rather than inventing one.
+                scope_id = SessionId(new_operation_id())
             argv, env = self._broker.prepare_operation_launch(
                 argv,
                 env,
