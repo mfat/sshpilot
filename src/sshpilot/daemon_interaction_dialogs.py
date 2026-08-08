@@ -139,19 +139,52 @@ class DaemonInteractionDialogs:
         self._claims[summary.id] = claim.nonce
         self._present(summary)
 
+    def _resolve_present_parent(self):
+        """Return the window the interaction dialog should be presented on.
+
+        The configured parent is used only when it is a *visible* window. A
+        window that is not on screen must never be force-presented behind the
+        prompt: an embedded FileManagerWindow whose content was detached into a
+        tab (and which is removed from the application) is a blank,
+        decoration-less shell with no window controls — presenting it shows
+        exactly that empty box behind the password dialog. In that case the
+        live application window is resolved instead.
+        """
+        parent = self._parent
+        if self._parent_window_is_visible(parent):
+            return parent
+        from .window_dialogs import resolve_app_modal_parent
+
+        try:
+            return resolve_app_modal_parent(self._parent)
+        except RuntimeError:
+            root = self._parent.get_root()
+            if self._parent_window_is_visible(root):
+                return root
+            return self._parent
+
+    @staticmethod
+    def _parent_window_is_visible(widget) -> bool:
+        """True when *widget* is a Gtk.Window currently shown on screen.
+
+        The probe is guarded: a window destroyed mid-race (e.g. the owning
+        window closed while an interaction event is still in flight, before
+        the presenter is disposed) must not raise out of the idle callback —
+        it just reads as not visible and falls back to the resolved parent.
+        """
+        if not isinstance(widget, Gtk.Window):
+            return False
+        try:
+            return bool(widget.get_visible())
+        except Exception:
+            return False
+
     def _present(self, summary: InteractionSummary) -> None:
         if self._closed or summary.id in self._dialogs:
             return
-        from .window_dialogs import present_for_modal_dialog, resolve_app_modal_parent
+        from .window_dialogs import present_for_modal_dialog
 
-        parent = self._parent
-        if not isinstance(parent, Gtk.Window):
-            try:
-                parent = resolve_app_modal_parent(self._parent)
-            except RuntimeError:
-                parent = self._parent.get_root()
-                if not isinstance(parent, Gtk.Window):
-                    parent = self._parent
+        parent = self._resolve_present_parent()
         if isinstance(parent, Gtk.Window):
             # Raise the parent so the modal child stacks above it (Wayland).
             present_for_modal_dialog(parent)

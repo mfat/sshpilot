@@ -212,6 +212,108 @@ def immediate_idle(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Blank-window regression: an embedded FM shell must never host the prompt
+# ---------------------------------------------------------------------------
+
+
+class _FakeWindow:
+    """Minimal Gtk.Window stand-in exposing visibility + root."""
+
+    def __init__(self, visible: bool):
+        self._visible = visible
+        self._root = self
+
+    def get_visible(self):
+        return self._visible
+
+    def get_root(self):
+        return self._root
+
+
+def test_present_parent_skips_invisible_window_shell(monkeypatch):
+    """An embedded FM window shell (content detached, never presented) is not
+    a valid dialog parent — the live app window is resolved instead."""
+    monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
+
+    main_window = _FakeWindow(visible=True)
+    shell = _FakeWindow(visible=False)
+
+    resolved_from = []
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.resolve_app_modal_parent",
+        lambda from_widget: (resolved_from.append(from_widget), main_window)[1],
+    )
+
+    client = _FakeClient()
+    dialogs = _RecordingDialogs(client, _SyncBridge(), parent=shell)
+
+    parent = dialogs._resolve_present_parent()
+
+    assert parent is main_window
+    assert resolved_from == [shell]
+    dialogs.close()
+
+
+def test_present_parent_uses_visible_window_directly(monkeypatch):
+    """A window that is actually on screen (e.g. a standalone FM window)
+    keeps hosting its own prompts — no re-parenting to the main window."""
+    monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
+
+    visible_window = _FakeWindow(visible=True)
+
+    def _must_not_resolve(_from_widget):
+        raise AssertionError("visible window must be used directly")
+
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.resolve_app_modal_parent",
+        _must_not_resolve,
+    )
+
+    client = _FakeClient()
+    dialogs = _RecordingDialogs(client, _SyncBridge(), parent=visible_window)
+
+    assert dialogs._resolve_present_parent() is visible_window
+    dialogs.close()
+
+
+def test_present_passes_resolved_parent_not_invisible_shell(
+    monkeypatch, immediate_idle
+):
+    """Full ``_present`` path: a password prompt whose presenter is bound to an
+    invisible FM shell is presented over the resolved main window — the blank
+    shell is never shown behind the dialog."""
+    monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
+
+    main_window = _FakeWindow(visible=True)
+    shell = _FakeWindow(visible=False)
+
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.resolve_app_modal_parent",
+        lambda from_widget: main_window,
+    )
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _window: None
+    )
+
+    client = _FakeClient()
+    dialogs = DaemonInteractionDialogs(client, _SyncBridge(), parent=shell)
+    dialogs.set_session(SessionId("operation-1"))
+
+    presented_with = []
+    monkeypatch.setattr(
+        dialogs,
+        "_present_secret",
+        lambda summary, parent: presented_with.append(parent),
+    )
+
+    summary = _summary(InteractionType.PASSWORD, "operation-1")
+    client.emit(summary)
+
+    assert presented_with == [main_window]
+    dialogs.close()
+
+
 def test_unbound_presenter_ignores_all_interactions(immediate_idle):
     client = _FakeClient()
     dialogs = _RecordingDialogs(client, _SyncBridge())
