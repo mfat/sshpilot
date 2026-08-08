@@ -586,7 +586,18 @@ class DaemonSftpServiceController:
                 if self._service_id is not None and summary.id != self._service_id:
                     return
                 generation = self._generation
-            self._on_open_accepted(summary, generation)
+            # Daemon events are delivered on the client's reader thread, but
+            # the lifecycle callbacks build and touch GTK widgets (the SCP
+            # browser window, the file manager). Round-trip through the bridge
+            # so _on_open_accepted runs on the GTK main context — the same
+            # marshalling TransferServiceController uses. Off-thread GTK with
+            # the GL renderer surfaces as gdk_gl_context_make_current()
+            # failures and broken rendering.
+            self._submit(
+                lambda: (summary, generation),
+                on_success=self._dispatch_event,
+                on_error=lambda _error: None,
+            )
 
         try:
             self._event_subscription = subscribe(_on_event)
@@ -604,6 +615,13 @@ class DaemonSftpServiceController:
                 unsubscribe()
             except Exception:
                 logger.debug("SFTP event unsubscription failed", exc_info=True)
+
+    def _dispatch_event(self, item) -> None:
+        """Apply one marshalled SFTP event on the GTK main context."""
+        if self._closed:
+            return
+        summary, generation = item
+        self._on_open_accepted(summary, generation)
 
     def _on_open_accepted(self, summary: SftpServiceSummary, generation: int) -> None:
         became_ready = False
