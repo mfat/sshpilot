@@ -1964,9 +1964,6 @@ class ConnectionDialog(
                 pass
             if filters is not None:
                 dialog.set_filters(filters)
-            parent = self.get_transient_for()
-            if not isinstance(parent, Gtk.Window):
-                parent = None
 
             def _done(dlg, result):
                 try:
@@ -1976,7 +1973,12 @@ class ConnectionDialog(
                 except Exception:
                     logger.debug("File chooser cancelled or failed", exc_info=True)
 
-            dialog.open(parent, None, _done)
+            # Parent the chooser to THIS dialog — the window the user is
+            # looking at — never to ``get_transient_for()``. The connection
+            # dialog is modal and stacked above its transient parent, so a
+            # chooser parented to the MainWindow opens invisibly behind the
+            # modal dialog on Wayland portal stacks (issue #1103).
+            dialog.open(self, None, _done)
         except Exception:
             logger.debug("Failed to open file chooser", exc_info=True)
 

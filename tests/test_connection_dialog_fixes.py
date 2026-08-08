@@ -107,3 +107,94 @@ def test_dialog_disk_key_discovery_swallows_failures():
 
     parent = types.SimpleNamespace(key_manager=_Boom(), client=None)
     assert _discover_disk_keys(parent) == []
+
+
+# ---------------------------------------------------------------------------
+# Browse / file chooser parentage (issue #1103)
+# ---------------------------------------------------------------------------
+# Regression: ``_browse_file`` parented the ``Gtk.FileDialog`` to
+# ``self.get_transient_for()`` — the MainWindow — while the ConnectionDialog is
+# a modal window stacked above it. On Wayland portal stacks the chooser then
+# opens invisibly behind the modal dialog, so Browse appeared to do nothing.
+# The chooser must be parented to the window the user is looking at (``self``).
+
+
+def _browse_file(self, title="Pick a file", on_chosen=None, filters=None):
+    """Invoke the production method without constructing the GTK dialog."""
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    method = ConnectionDialog.__dict__["_browse_file"]
+    return types.MethodType(method, self)(title, on_chosen, filters=filters)
+
+
+def test_browse_file_parents_dialog_to_self(monkeypatch, tmp_path):
+    """The chooser is parented to the dialog itself, never its transient-for
+    window (the reach-across that hid the chooser behind the modal dialog)."""
+    from sshpilot import connection_dialog as cd
+
+    opened = []
+    initial_folders = []
+
+    class _FakeDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def set_initial_folder(self, gfile):
+            initial_folders.append(gfile)
+
+        def set_filters(self, filters):
+            pass
+
+        def open(self, parent, _cancellable, _callback):
+            opened.append(parent)
+
+    monkeypatch.setattr(cd.Gtk, "FileDialog", _FakeDialog)
+    monkeypatch.setattr(cd, "get_ssh_dir", lambda: str(tmp_path))
+
+    # The transient-for window is what the old code reached across to.
+    main_window = cd.Gtk.Window.__new__(cd.Gtk.Window)
+    self = types.SimpleNamespace(get_transient_for=lambda: main_window)
+
+    _browse_file(self, on_chosen=lambda path: None)
+
+    assert opened == [self], (
+        "File chooser must be parented to the dialog itself, not to "
+        "get_transient_for()"
+    )
+    assert initial_folders, "initial folder should still be the SSH directory"
+
+
+def test_browse_file_delivers_chosen_path(monkeypatch, tmp_path):
+    """A successful portal selection still flows through to ``on_chosen``."""
+    from sshpilot import connection_dialog as cd
+
+    chosen = []
+    holder = {}
+
+    class _FakeDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def set_initial_folder(self, gfile):
+            pass
+
+        def set_filters(self, filters):
+            pass
+
+        def open(self, parent, _cancellable, callback):
+            holder["dialog"] = self
+            holder["callback"] = callback
+
+        def open_finish(self, _result):
+            return types.SimpleNamespace(
+                get_path=lambda: "/home/alice/.ssh/id_ed25519")
+
+    monkeypatch.setattr(cd.Gtk, "FileDialog", _FakeDialog)
+    monkeypatch.setattr(cd, "get_ssh_dir", lambda: str(tmp_path))
+    self = types.SimpleNamespace(
+        get_transient_for=lambda: cd.Gtk.Window.__new__(cd.Gtk.Window))
+
+    _browse_file(self, on_chosen=chosen.append)
+    holder["callback"](holder["dialog"], object())
+
+    assert chosen == ["/home/alice/.ssh/id_ed25519"]
