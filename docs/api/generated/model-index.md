@@ -2437,6 +2437,7 @@ Synthetic representation:
 | `attempt` | `int` | Yes | — | No |
 | `can_remember` | `bool` | Yes | — | No |
 | `stored_secret_available` | `bool` | Yes | — | No |
+| `confirmation_required` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -2444,6 +2445,7 @@ Synthetic representation:
 {
   "attempt": 0,
   "can_remember": false,
+  "confirmation_required": false,
   "key_display_name": "example",
   "key_fingerprint": null,
   "stored_secret_available": false

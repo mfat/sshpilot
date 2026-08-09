@@ -450,6 +450,84 @@ def test_secret_entry_activation_emits_submit_response():
     assert dialog.emitted == [("response", "submit")]
 
 
+class _ConfirmationEntry:
+    def __init__(self, text=""):
+        self.text = text
+        self.css_classes = set()
+        self.focused = False
+
+    def get_text(self):
+        return self.text
+
+    def add_css_class(self, name):
+        self.css_classes.add(name)
+
+    def remove_css_class(self, name):
+        self.css_classes.discard(name)
+
+    def grab_focus(self):
+        self.focused = True
+
+
+class _ConfirmationDialog:
+    def __init__(self):
+        self.enabled = {}
+        self.emitted = []
+
+    def set_response_enabled(self, response, enabled):
+        self.enabled[response] = enabled
+
+    def emit(self, signal, response):
+        self.emitted.append((signal, response))
+
+
+class _ConfirmationLabel:
+    def __init__(self):
+        self.visible = False
+
+    def set_visible(self, visible):
+        self.visible = visible
+
+
+def test_key_generation_passphrase_rows_reject_mismatch():
+    dialog = _ConfirmationDialog()
+    entry = _ConfirmationEntry("first-value")
+    confirmation = _ConfirmationEntry("different-value")
+    label = _ConfirmationLabel()
+
+    DaemonInteractionDialogs._activate_confirmed_secret_dialog(
+        dialog,
+        entry,
+        confirmation,
+        label,
+    )
+
+    assert dialog.enabled["submit"] is False
+    assert dialog.emitted == []
+    assert label.visible is True
+    assert "error" in confirmation.css_classes
+    assert confirmation.focused is True
+
+
+def test_key_generation_passphrase_rows_submit_one_matching_value():
+    dialog = _ConfirmationDialog()
+    entry = _ConfirmationEntry("matching-value")
+    confirmation = _ConfirmationEntry("matching-value")
+    label = _ConfirmationLabel()
+
+    DaemonInteractionDialogs._activate_confirmed_secret_dialog(
+        dialog,
+        entry,
+        confirmation,
+        label,
+    )
+
+    assert dialog.enabled["submit"] is True
+    assert dialog.emitted == [("response", "submit")]
+    assert label.visible is False
+    assert "error" not in confirmation.css_classes
+
+
 def test_repeated_set_session_does_not_duplicate(immediate_idle):
     client = _FakeClient()
     summary = _summary(InteractionType.PASSWORD, "operation-1")

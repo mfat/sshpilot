@@ -283,6 +283,7 @@ def test_encrypted_generation_and_verification_use_protected_interactions(
             or summary.type is not InteractionType.PRIVATE_KEY_PASSPHRASE
         ):
             return
+        assert summary.prompt.confirmation_required is True
 
         def respond():
             claim = client.claim_interaction(summary.id)

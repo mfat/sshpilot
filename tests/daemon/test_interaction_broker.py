@@ -643,9 +643,11 @@ def test_keygen_passphrase_confirmation_reuses_and_clears_protected_buffer(
         )
         token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
         waits = []
+        prompts = []
 
-        def wait_for_result(*_args, **_kwargs):
+        def wait_for_result(interaction_id, **_kwargs):
             waits.append(True)
+            prompts.append(instance._records[interaction_id].summary.prompt)
             return InteractionResult(
                 decision=SecretDecision.SUBMIT,
                 remember_policy=RememberPolicy.DO_NOT_STORE,
@@ -666,6 +668,7 @@ def test_keygen_passphrase_confirmation_reuses_and_clears_protected_buffer(
         assert second == sentinel
         assert first is not second
         assert waits == [True]
+        assert prompts[0].confirmation_required is True
         assert instance._askpass_contexts[token].confirmation_secret is None
         first[:] = b"\0" * len(first)
         first.clear()

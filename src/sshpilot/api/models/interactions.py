@@ -113,6 +113,7 @@ class PassphrasePrompt:
     attempt: int
     can_remember: bool
     stored_secret_available: bool
+    confirmation_required: bool = False
 
     def __post_init__(self) -> None:
         _require_safe_display(self.key_display_name, "key display name", 255)
@@ -128,6 +129,8 @@ class PassphrasePrompt:
             raise TypeError("passphrase remember availability must be boolean")
         if type(self.stored_secret_available) is not bool:
             raise TypeError("passphrase stored-secret availability must be boolean")
+        if type(self.confirmation_required) is not bool:
+            raise TypeError("passphrase confirmation requirement must be boolean")
 
 
 @dataclass(frozen=True)

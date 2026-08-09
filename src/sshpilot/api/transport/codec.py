@@ -3287,6 +3287,7 @@ def _interaction_prompt_to_wire(
             "attempt": prompt.attempt,
             "can_remember": prompt.can_remember,
             "saved_value_available": prompt.stored_secret_available,
+            "confirmation_required": prompt.confirmation_required,
         }
     if interaction_type is InteractionType.KEYBOARD_INTERACTIVE:
         if type(prompt) is not ChallengePrompt:
@@ -3361,6 +3362,7 @@ def _interaction_prompt_from_wire(
                 "can_remember",
                 "saved_value_available",
             },
+            optional={"confirmation_required"},
             context="passphrase prompt",
         )
         fingerprint = data["key_fingerprint"]
@@ -3374,6 +3376,10 @@ def _interaction_prompt_from_wire(
             stored_secret_available=_boolean(
                 data["saved_value_available"],
                 "passphrase stored-secret availability",
+            ),
+            confirmation_required=_boolean(
+                data.get("confirmation_required", False),
+                "passphrase confirmation requirement",
             ),
         )
     if interaction_type is InteractionType.KEYBOARD_INTERACTIVE:

@@ -12,6 +12,7 @@ from sshpilot.api.models import (
     InteractionState,
     InteractionSummary,
     InteractionType,
+    PassphrasePrompt,
     PasswordPrompt,
     SessionId,
 )
@@ -76,6 +77,49 @@ def test_typed_interaction_codec_round_trip_and_payload_match() -> None:
     }
     with pytest.raises(ValueError):
         interaction_summary_from_wire(wire)
+
+
+def test_passphrase_prompt_confirmation_requirement_round_trips() -> None:
+    now = datetime.now(timezone.utc)
+    summary = InteractionSummary(
+        id=_interaction_id(),
+        session_id=SessionId("key-operation-1"),
+        connection_id=ConnectionId("key-key-operation-1"),
+        type=InteractionType.PRIVATE_KEY_PASSPHRASE,
+        state=InteractionState.PENDING,
+        created_at=now,
+        expires_at=now + timedelta(seconds=120),
+        attempt=1,
+        prompt=PassphrasePrompt(
+            key_display_name="new_key",
+            key_fingerprint=None,
+            attempt=1,
+            can_remember=False,
+            stored_secret_available=False,
+            confirmation_required=True,
+        ),
+    )
+
+    wire = interaction_summary_to_wire(summary)
+
+    assert wire["metadata"]["confirmation_required"] is True
+    assert interaction_summary_from_wire(wire) == summary
+
+    wire["metadata"].pop("confirmation_required")
+    decoded = interaction_summary_from_wire(wire)
+    assert decoded.prompt.confirmation_required is False
+
+
+def test_passphrase_prompt_confirmation_requirement_is_strictly_boolean() -> None:
+    with pytest.raises(TypeError):
+        PassphrasePrompt(
+            key_display_name="new_key",
+            key_fingerprint=None,
+            attempt=1,
+            can_remember=False,
+            stored_secret_available=False,
+            confirmation_required=1,
+        )
 
 
 def test_host_key_prompt_has_no_raw_prompt_field() -> None:

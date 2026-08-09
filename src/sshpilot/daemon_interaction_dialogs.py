@@ -293,6 +293,9 @@ class DaemonInteractionDialogs:
                 if isinstance(
                     prompt, (ChallengePrompt, PresencePrompt, ConfirmationPrompt)
                 )
+                else "Enter and confirm a new passphrase."
+                if isinstance(prompt, PassphrasePrompt)
+                and prompt.confirmation_required
                 else f"Authentication attempt {summary.attempt}"
             ),
         )
@@ -322,7 +325,6 @@ class DaemonInteractionDialogs:
             dialog.present(parent)
             return
 
-
         content = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=12,
@@ -331,15 +333,34 @@ class DaemonInteractionDialogs:
             margin_start=12,
             margin_end=12,
         )
-        entry = Gtk.PasswordEntry(show_peek_icon=True)
-        # AlertDialog exposes a response signal, but no public response()
-        # convenience method.  do_response() is its language-binding virtual
-        # handler and cannot be invoked as the signal emitter.
-        entry.connect(
-            "activate",
-            lambda _entry: self._activate_secret_dialog(dialog),
-        )
-        content.append(entry)
+        confirmation_entry = None
+        mismatch_label = None
+        if isinstance(prompt, PassphrasePrompt) and prompt.confirmation_required:
+            entry = Adw.PasswordEntryRow(title="Passphrase")
+            confirmation_entry = Adw.PasswordEntryRow(title="Confirm passphrase")
+            group = Adw.PreferencesGroup()
+            group.add(entry)
+            group.add(confirmation_entry)
+            content.append(group)
+
+            mismatch_label = Gtk.Label(
+                label="Passphrases do not match",
+                xalign=0,
+                visible=False,
+            )
+            mismatch_label.add_css_class("error")
+            mismatch_label.add_css_class("caption")
+            content.append(mismatch_label)
+        else:
+            entry = Gtk.PasswordEntry(show_peek_icon=True)
+            # AlertDialog exposes a response signal, but no public response()
+            # convenience method.  do_response() is its language-binding virtual
+            # handler and cannot be invoked as the signal emitter.
+            entry.connect(
+                "activate",
+                lambda _entry: self._activate_secret_dialog(dialog),
+            )
+            content.append(entry)
         dialog.set_extra_child(content)
         dialog.add_response("cancel", "Cancel")
         dialog.add_response(
@@ -352,6 +373,39 @@ class DaemonInteractionDialogs:
         )
         dialog.set_default_response("submit")
         dialog.set_close_response("cancel")
+        if confirmation_entry is not None:
+            dialog.set_response_enabled("submit", False)
+            entry.connect(
+                "notify::text",
+                lambda *_args: self._sync_passphrase_confirmation(
+                    dialog,
+                    entry,
+                    confirmation_entry,
+                    mismatch_label,
+                ),
+            )
+            confirmation_entry.connect(
+                "notify::text",
+                lambda *_args: self._sync_passphrase_confirmation(
+                    dialog,
+                    entry,
+                    confirmation_entry,
+                    mismatch_label,
+                ),
+            )
+            entry.connect(
+                "entry-activated",
+                lambda _entry: confirmation_entry.grab_focus(),
+            )
+            confirmation_entry.connect(
+                "entry-activated",
+                lambda _entry: self._activate_confirmed_secret_dialog(
+                    dialog,
+                    entry,
+                    confirmation_entry,
+                    mismatch_label,
+                ),
+            )
         dialog.connect(
             "response",
             lambda item, response: self._secret_response(
@@ -359,6 +413,8 @@ class DaemonInteractionDialogs:
                 item,
                 response,
                 entry,
+                confirmation_entry,
+                mismatch_label,
             ),
         )
         self._dialogs[summary.id] = dialog
@@ -378,6 +434,51 @@ class DaemonInteractionDialogs:
     def _activate_secret_dialog(dialog) -> None:
         """Submit the default secret response from the password entry."""
         dialog.emit("response", "submit")
+
+    @staticmethod
+    def _passphrase_confirmation_is_valid(entry, confirmation_entry) -> bool:
+        """Return whether both key-generation passphrase rows match."""
+        passphrase = entry.get_text()
+        return bool(passphrase) and passphrase == confirmation_entry.get_text()
+
+    @classmethod
+    def _sync_passphrase_confirmation(
+        cls,
+        dialog,
+        entry,
+        confirmation_entry,
+        mismatch_label,
+    ) -> bool:
+        """Keep the key-generation submit response and mismatch state in sync."""
+        valid = cls._passphrase_confirmation_is_valid(entry, confirmation_entry)
+        confirmation = confirmation_entry.get_text()
+        mismatch = bool(confirmation) and entry.get_text() != confirmation
+        dialog.set_response_enabled("submit", valid)
+        mismatch_label.set_visible(mismatch)
+        if mismatch:
+            confirmation_entry.add_css_class("error")
+        else:
+            confirmation_entry.remove_css_class("error")
+        return valid
+
+    @classmethod
+    def _activate_confirmed_secret_dialog(
+        cls,
+        dialog,
+        entry,
+        confirmation_entry,
+        mismatch_label,
+    ) -> None:
+        """Submit from the confirmation row only after both values match."""
+        if cls._sync_passphrase_confirmation(
+            dialog,
+            entry,
+            confirmation_entry,
+            mismatch_label,
+        ):
+            dialog.emit("response", "submit")
+        else:
+            confirmation_entry.grab_focus()
 
     def _present_shared_password(
         self,
@@ -443,15 +544,31 @@ class DaemonInteractionDialogs:
         summary,
         dialog,
         response: str,
-        entry: Gtk.PasswordEntry,
+        entry,
+        confirmation_entry=None,
+        mismatch_label=None,
     ) -> None:
+        if response == "submit" and confirmation_entry is not None:
+            if not self._sync_passphrase_confirmation(
+                dialog,
+                entry,
+                confirmation_entry,
+                mismatch_label,
+            ):
+                confirmation_entry.grab_focus()
+                return
         self._dialogs.pop(summary.id, None)
         if response != "submit":
+            entry.set_text("")
+            if confirmation_entry is not None:
+                confirmation_entry.set_text("")
             self._cancel_secret(summary)
             dialog.close()
             return
         secret = bytearray(entry.get_text().encode("utf-8"))
         entry.set_text("")
+        if confirmation_entry is not None:
+            confirmation_entry.set_text("")
         self._submit_secret(summary, secret)
         dialog.close()
 

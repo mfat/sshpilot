@@ -4533,6 +4533,13 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "confirmation_required",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Schema only"

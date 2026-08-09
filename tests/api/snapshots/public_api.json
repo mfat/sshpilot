@@ -3617,7 +3617,8 @@
       "key_fingerprint",
       "attempt",
       "can_remember",
-      "stored_secret_available"
+      "stored_secret_available",
+      "confirmation_required"
     ],
     "PasswordPrompt": [
       "username",

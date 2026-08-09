@@ -12,6 +12,9 @@ notes remain separate.
   protected interaction secret frames and native askpass. Key-passphrase
   storage now uses the same protected frame boundary, so key passphrases are
   absent from ordinary request JSON, process argv, and process environment.
+  `PassphrasePrompt.confirmation_required` lets frontends collect and compare
+  a new key passphrase twice while sending it through the protected frame only
+  once.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.24`; `PROTOCOL_VERSION` stays `1.0`.
   Added typed `daemon.set_log_level` control for `warning`, `info`, and `debug`.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.23`; `PROTOCOL_VERSION` stays `1.0`.

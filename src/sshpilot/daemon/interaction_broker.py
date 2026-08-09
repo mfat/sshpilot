@@ -1457,6 +1457,7 @@ class InteractionBroker:
             hostname = context.hostname
             username = context.username
             port = context.port
+            confirmation_required = context.confirm_passphrase
         stored: Optional[str] = None
         if try_stored:
             try:
@@ -1551,6 +1552,7 @@ class InteractionBroker:
                 attempt=attempt,
                 can_remember=self._passphrase_store is not None and bool(key_path),
                 stored_secret_available=bool(stored),
+                confirmation_required=confirmation_required,
             )
             append_askpass_log(
                 f"ASKPASS: no stored passphrase for {key_path or '<none>'}; asking user"
