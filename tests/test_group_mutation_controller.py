@@ -29,7 +29,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1365,7 +1365,6 @@ class TestRunRefreshFailureTerminal:
 
     def test_run_ambiguity_refresh_execution_failure_is_terminal(self):
         """Refresh execution failure on the ambiguity path is terminal."""
-        client = FakeClient()
         refresh_calls = [0]
         def _refresh():
             refresh_calls[0] += 1

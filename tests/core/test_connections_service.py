@@ -258,7 +258,9 @@ def test_reorder_connection_within_group(service):
 
 
 def test_reorder_connection_in_root(service):
-    a, b, c = _conn(service, "A"), _conn(service, "B"), _conn(service, "C")
+    a = _conn(service, "A")
+    _conn(service, "B")
+    c = _conn(service, "C")
     service.reorder_connection(c.id, a.id, None, "above")
     assert service._root_order.index(c.id) < service._root_order.index(a.id)
 

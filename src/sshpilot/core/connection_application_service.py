@@ -451,7 +451,7 @@ class ConnectionApplicationService:
         except SshPilotError:
             raise
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to update connection metadata via daemon RPC")
             raise self._persistence_error(connection_id) from error
@@ -479,7 +479,7 @@ class ConnectionApplicationService:
             self._repository.move_connections(request)
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to move connections via daemon RPC")
             raise self._persistence_error() from error
@@ -495,7 +495,7 @@ class ConnectionApplicationService:
             )
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to assign connection to group via daemon RPC")
             raise self._persistence_error(connection_id) from error
@@ -513,7 +513,7 @@ class ConnectionApplicationService:
             )
             return group.id if group is not None else None
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to create group via daemon RPC")
             raise self._persistence_error() from error
@@ -525,7 +525,7 @@ class ConnectionApplicationService:
             self._repository.delete_group(group_id)
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to delete group via daemon RPC")
             raise self._persistence_error() from error
@@ -537,7 +537,7 @@ class ConnectionApplicationService:
             self._repository.rename_group(group_id, new_name)
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to rename group via daemon RPC")
             raise self._persistence_error() from error
@@ -549,7 +549,7 @@ class ConnectionApplicationService:
             self._repository.set_group_color(group_id, color)
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to set group color via daemon RPC")
             raise self._persistence_error() from error
@@ -573,7 +573,7 @@ class ConnectionApplicationService:
             )
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to place group via daemon RPC")
             raise self._persistence_error() from error
@@ -587,7 +587,7 @@ class ConnectionApplicationService:
             self._repository.copy_connection_to_group(connection_id, group_id)
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to copy connection to group via daemon RPC")
             raise self._persistence_error(connection_id) from error
@@ -601,7 +601,7 @@ class ConnectionApplicationService:
             self._repository.remove_connection_from_group(connection_id, group_id)
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to remove connection from group via daemon RPC")
             raise self._persistence_error(connection_id) from error
@@ -621,7 +621,7 @@ class ConnectionApplicationService:
             )
             return True
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to reorder connection via daemon RPC")
             raise self._persistence_error(connection_id) from error
@@ -635,7 +635,7 @@ class ConnectionApplicationService:
                 raise TypeError("repository returned an invalid tag rename count")
             return count
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
         except Exception as error:
             logger.exception("Failed to rename tag via daemon RPC")
             raise self._persistence_error() from error
@@ -674,10 +674,10 @@ class ConnectionApplicationService:
         except SshPilotError:
             raise
         except CoreError as error:
-            raise _map_core_error(error)
-        except Exception:
+            raise _map_core_error(error) from error
+        except Exception as error:
             logger.exception("Repository split failed")
-            raise self._persistence_error(request.connection_id)
+            raise self._persistence_error(request.connection_id) from error
         return ConnectionMutationResult(
             connection_id=record.id,
             nickname=record.nickname,
@@ -730,7 +730,7 @@ class ConnectionApplicationService:
         try:
             return self._repository.get_ssh_config_text()
         except CoreError as error:
-            raise _map_core_error(error)
+            raise _map_core_error(error) from error
 
     def save_ssh_config_text(
         self, request: SaveSshConfigTextRequest
@@ -762,10 +762,10 @@ class ConnectionApplicationService:
                 error.message,
             )
             logger.debug("SSH config text save failure details", exc_info=True)
-            raise _map_core_error(error)
-        except Exception:
+            raise _map_core_error(error) from error
+        except Exception as error:
             logger.exception("Repository SSH config text save failed")
-            raise self._persistence_error()
+            raise self._persistence_error() from error
 
     def snapshot_connection_store(self) -> Any:
         self._assert_command_thread()
@@ -800,10 +800,10 @@ class ConnectionApplicationService:
         except SshPilotError:
             raise
         except CoreError as error:
-            raise _map_core_error(error)
-        except Exception:
+            raise _map_core_error(error) from error
+        except Exception as error:
             logger.exception("Repository create failed")
-            raise self._persistence_error()
+            raise self._persistence_error() from error
         return ConnectionMutationResult(
             connection_id=record.id,
             nickname=record.nickname,
@@ -849,7 +849,7 @@ class ConnectionApplicationService:
                     raise SshPilotError(
                         ErrorCode.VALIDATION_FAILED,
                         str(error),
-                    )
+                    ) from error
             else:
                 data[key] = value
 
@@ -869,10 +869,10 @@ class ConnectionApplicationService:
         except SshPilotError:
             raise
         except CoreError as error:
-            raise _map_core_error(error)
-        except Exception:
+            raise _map_core_error(error) from error
+        except Exception as error:
             logger.exception("Repository duplicate failed")
-            raise self._persistence_error(connection_id)
+            raise self._persistence_error(connection_id) from error
         return ConnectionMutationResult(
             connection_id=record.id,
             nickname=record.nickname,
@@ -946,10 +946,10 @@ class ConnectionApplicationService:
                 error.diagnostic_reason,
             )
             logger.debug("Repository update failure details", exc_info=True)
-            raise _map_core_error(error)
-        except Exception:
+            raise _map_core_error(error) from error
+        except Exception as error:
             logger.exception("Repository update failed")
-            raise self._persistence_error(connection_id)
+            raise self._persistence_error(connection_id) from error
         after_data = dict(updated.data or {})
         changed_fields = tuple(sorted(
             field for field in compared_fields
@@ -983,10 +983,10 @@ class ConnectionApplicationService:
         except SshPilotError:
             raise
         except CoreError as error:
-            raise _map_core_error(error)
-        except Exception:
+            raise _map_core_error(error) from error
+        except Exception as error:
             logger.exception("Repository delete failed")
-            raise self._persistence_error(request.connection_id)
+            raise self._persistence_error(request.connection_id) from error
         return DeleteConnectionResult(
             connection_id=request.connection_id,
             deleted=True,

@@ -3794,10 +3794,6 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     ):
                                         return True
                             elif drop_tree_target_set:
-                                old_parent = (
-                                    source_group.get("parent_id")
-                                    if source_group else None
-                                )
                                 if _submit_group_dnd_place(
                                     window, group_id, drop_parent_id, drop_index,
                                     expected_generation=drop_generation,
@@ -3812,10 +3808,6 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     parent_id, index = _tree_target_insert_after(
                                         manager, target_group_id
                                     )
-                                old_parent = (
-                                    source_group.get("parent_id")
-                                    if source_group else None
-                                )
                                 if _submit_group_dnd_place(
                                     window, group_id, parent_id, index,
                                     expected_generation=_sidebar_projection_generation(window),

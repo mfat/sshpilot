@@ -3,7 +3,7 @@ import pytest
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api import DaemonClient
 from sshpilot.daemon import DaemonServer
-from tests.helpers.fake_connection_repository import FakeConnectionRepository, make_test_repository
+from tests.helpers.fake_connection_repository import make_test_repository
 
 
 @pytest.fixture

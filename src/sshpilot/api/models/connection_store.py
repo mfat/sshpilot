@@ -16,9 +16,12 @@ import json
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping, NewType, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Mapping, NewType, Optional, Tuple
 
 from .common import ConnectionId, require_identifier
+
+if TYPE_CHECKING:
+    from .connections import ConnectionSummary
 
 GroupId = NewType("GroupId", str)
 

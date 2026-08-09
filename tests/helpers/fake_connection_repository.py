@@ -8,7 +8,7 @@ publishes ``RepositoryChange`` events after each mutation.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from sshpilot.core.connections.models import ConnectionRecord, GroupRecord
 from sshpilot.core.connections.repository import RepositoryChange
@@ -20,6 +20,9 @@ from sshpilot.api.models.connections import (
     GroupReference,
 )
 from sshpilot.api.models.common import ConnectionId
+
+if TYPE_CHECKING:
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
 
 
 class FakeConnectionRepository:

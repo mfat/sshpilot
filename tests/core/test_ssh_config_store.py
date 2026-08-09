@@ -11,7 +11,6 @@ errors.
 from __future__ import annotations
 
 import os
-import shutil
 import stat
 import sys
 from pathlib import Path
@@ -625,7 +624,6 @@ def test_split_client_path_matching_accepted(tmp_path):
 
 def test_no_path_in_public_errors(tmp_path):
     root = _write(tmp_path / "config", "Host web\n    HostName example.com\n")
-    store = _store(root)
     link = tmp_path / "evil-link"
     link.symlink_to(root)
     linked_store = _store(link)

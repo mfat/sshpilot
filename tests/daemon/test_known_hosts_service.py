@@ -190,7 +190,7 @@ def test_concurrent_removals_serialize_with_one_winner(tmp_path):
     def remove(entry_id):
         barrier.wait()
         try:
-            result = service.remove_known_host_entries(
+            service.remove_known_host_entries(
                 _remove_request(snapshot.revision, entry_id)
             )
             results.append(entry_id)

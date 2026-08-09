@@ -11,7 +11,6 @@ import sys
 import threading
 import types
 
-import pytest
 
 sys.modules.setdefault("cairo", types.ModuleType("cairo"))
 

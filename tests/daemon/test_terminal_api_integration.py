@@ -14,7 +14,6 @@ from sshpilot.api import DaemonClient
 from sshpilot.api.models.sessions import (
     OpenSessionRequest,
     AttachSessionRequest,
-    DetachSessionRequest,
     CloseSessionRequest,
     SessionState,
 )

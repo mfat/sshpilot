@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
 from .api.capabilities import Capability
+from .api.errors import SshPilotError
 from .api.events import EventType
 from .api.models.common import ForwardId
 from .api.models.operations import (

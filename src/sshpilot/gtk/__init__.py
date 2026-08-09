@@ -10,9 +10,9 @@ from .connection_runtime_status import (
 
 __all__ = [
     "ConnectionPresentationStore",
-    "DaemonConnectionServices",
     "ConnectionRuntimeStatus",
     "ConnectionRuntimeStatusStore",
+    "DaemonConnectionServices",
     "GtkInteractionProvider",
     "get_default_provider",
     "set_default_provider",

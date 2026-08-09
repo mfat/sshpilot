@@ -37,10 +37,7 @@ from sshpilot.api.models.connections import (  # noqa: E402
     ConnectionHealth,
     ConnectionId,
     ConnectionSummary,
-    CreateConnectionRequest,
-    DeleteConnectionRequest,
     GroupReference,
-    SplitConnectionRequest,
     UpdateConnectionRequest,
 )
 from sshpilot.api.capabilities import Capability  # noqa: E402

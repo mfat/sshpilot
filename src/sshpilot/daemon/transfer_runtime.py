@@ -583,7 +583,7 @@ class TransferRuntime:
             raise SshPilotError(
                 ErrorCode.TRANSFER_IO_FAILED,
                 "The local source directory was not found",
-            )
+            ) from None
         if stat.S_ISLNK(local_info.st_mode):
             raise SshPilotError(
                 ErrorCode.TRANSFER_IO_FAILED,

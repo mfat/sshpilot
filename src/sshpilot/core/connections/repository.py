@@ -923,7 +923,7 @@ class ConnectionRepository:
                     raise CoreError(
                         ErrorCode.MUTATION_AMBIGUOUS,
                         "The mutation target changed during rollback",
-                    )
+                    ) from None
                 if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
                     raise CoreError(ErrorCode.MUTATION_AMBIGUOUS, "The mutation target is unsafe")
                 if (st.st_dev, st.st_ino) != post_identity:

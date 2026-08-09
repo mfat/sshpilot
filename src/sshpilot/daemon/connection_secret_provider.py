@@ -30,7 +30,7 @@ class DaemonConnectionSecretProvider:
         self,
         resolver: Callable[[ConnectionId], Optional[ConnectionRecord]],
         *,
-        secret_manager_factory: Callable[[], Any] = None,
+        secret_manager_factory: Optional[Callable[[], Any]] = None,
     ) -> None:
         if resolver is None:
             raise ValueError("a connection resolver is required")
@@ -144,15 +144,14 @@ class DaemonConnectionSecretProvider:
         from ..secret_storage import password_spec
 
         manager = self._secret_manager_factory()
-        removed = False
         if record is not None:
             # Delete under the record's current username (the primary identity).
             user = _string(record.username)
             conn = self._record_dict(record)
             if user:
                 for host in password_host_candidates(conn):
-                    if host and manager.delete(password_spec(host, user)):
-                        removed = True
+                    if host:
+                        manager.delete(password_spec(host, user))
         if previous_hostname or previous_host:
             prev_host = _string(previous_hostname) or _string(previous_host)
             prev_user = _string(previous_username) or (
@@ -160,8 +159,7 @@ class DaemonConnectionSecretProvider:
             )
             if prev_host and prev_user:
                 try:
-                    if manager.delete(password_spec(prev_host, prev_user)):
-                        removed = True
+                    manager.delete(password_spec(prev_host, prev_user))
                 except Exception:
                     pass
         # Idempotent by contract: an absent credential satisfies the request.

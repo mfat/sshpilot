@@ -82,7 +82,6 @@ def test_transfer_progress_dialog_and_cancel(phase14_harness, tmp_path):
         TransferDirection,
         TransferState,
     )
-    from sshpilot.file_manager.progress_dialog import SFTPProgressDialog
 
     service_id = mgr._sftp_controller.service_id
     local_path = Path(tmp_path) / "upload.bin"

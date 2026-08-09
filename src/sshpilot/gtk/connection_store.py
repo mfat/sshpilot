@@ -9,10 +9,8 @@ from dataclasses import replace
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.connection_store import ConnectionStoreSnapshot
 from sshpilot.api.models.connections import (
-    ConnectionHealth,
     ConnectionId,
     ConnectionSummary,
-    GroupReference,
 )
 
 _CONNECTION_EVENTS = frozenset(
@@ -219,7 +217,6 @@ class ConnectionPresentationStore:
         with self._lock:
             if generation != self._attach_generation or client is not self._client:
                 return
-            previous = self._store_snapshot
             self._store_snapshot = snapshot
             pending = sorted(self._pending_events, key=lambda item: item.sequence)
             self._pending_events = []

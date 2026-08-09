@@ -8,17 +8,12 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
 
 from sshpilot.api import DaemonClient
 from sshpilot.api.models.sessions import (
     OpenSessionRequest,
-    AttachSessionRequest,
-    DetachSessionRequest,
     CloseSessionRequest,
-    SessionState,
 )
-from sshpilot.api.models.terminal import TerminalInput
 
 
 class _BlockingSessionRunner:

@@ -24,12 +24,11 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from ...ssh_config_document import (
     HostBlock,
     MatchBlock,
-    RawSpan,
     SSHConfigDocument,
     _split_config_option,
     _split_keyword,

@@ -551,7 +551,6 @@ def test_rollback_after_state_failure_non_ssh_update(tmp_path):
     """Non-SSH update: if state file write fails, the state must be rolled back."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     repo.create_connection({"nickname": "tel", "protocol": "telnet", "hostname": "10.0.0.5"})
-    snap_before = repo.snapshot()
     state.unlink()
     state.mkdir()
     try:
@@ -671,7 +670,6 @@ def test_rollback_write_failure_raises_ambiguity(tmp_path, monkeypatch):
     disk_before = repo._capture_transaction_files_locked(root)
     repo._record_post_write_locked(disk_before, root)
     # Patch _atomic_write_text to simulate a write failure.
-    import os
     def fail_atomic(*_args, **_kwargs):
         raise OSError("disk full")
 
@@ -706,7 +704,6 @@ def test_unchanged_generation_and_memory(tmp_path):
     """Rollback does not change the generation counter."""
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     gen_before = repo._generation
-    disk_before = repo._capture_transaction_files_locked()
     # Simulate a failed mutation that rolls back.
     state.unlink()
     state.mkdir()
@@ -814,7 +811,6 @@ def test_chmod_failure_during_rollback_raises_ambiguity(tmp_path):
     We simulate this by making the target file immutable (``chattr +i`` on
     Linux).  If the OS doesn't support immutable flags, the test is skipped.
     """
-    import os
     import subprocess
     repo, root, state = _repo(tmp_path, "Host web\n    HostName example.com\n")
     disk_before = repo._capture_transaction_files_locked(root)

@@ -5,7 +5,6 @@ import pytest
 
 from sshpilot.api import ErrorCode, EventType, SshPilotError
 from sshpilot.api.models import (
-    ConnectionDetails,
     ConnectionMutationResult,
     CreateConnectionRequest,
     DeleteConnectionRequest,

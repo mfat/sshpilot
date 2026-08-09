@@ -1,6 +1,5 @@
 """Headless SSH config loader tests (golden fixtures from Task 0)."""
 
-import textwrap
 from pathlib import Path
 
 import pytest

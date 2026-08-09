@@ -3633,7 +3633,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
             client = DaemonClient(timeout=2.0)
             try:
-                status = client.get_daemon_status()
+                client.get_daemon_status()
                 request = RestartDaemonRequest(force=False)
                 result = client.restart_daemon(request)
                 if not result.accepted and result.confirmation:

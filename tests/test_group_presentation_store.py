@@ -6,11 +6,11 @@ snapshot and that GroupManager correctly delegates to the mutation controller.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from sshpilot.gtk.group_store import GroupPresentationStore, GroupMutationController
+from sshpilot.gtk.group_store import GroupPresentationStore
 from sshpilot.groups import GroupManager
 
 

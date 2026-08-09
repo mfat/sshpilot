@@ -389,10 +389,6 @@ class FileManagerWindow(Adw.Window):
         # Check for saved password before attempting connection
         # This matches the logic in _connect_impl to ensure we find passwords
         if not initial_password and connection_manager is not None:
-            lookup_user = username
-            if connection is not None:
-                lookup_user = getattr(connection, "username", None) or username
-
             # Try multiple host identifiers to match storage logic
             lookup_hosts = []
             if connection is not None:

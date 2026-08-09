@@ -15,10 +15,9 @@ import conftest  # noqa: F401  (installs the GI stub)
 
 from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
-    RepositoryChange,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
-from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
+from sshpilot.core.errors import CoreError  # noqa: E402
 
 
 def _repo(tmp_path, ssh_text: str = "", *, isolated: bool = False):

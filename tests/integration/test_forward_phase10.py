@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.errors import ErrorCode
 from sshpilot.api.models.operations import (
     ClaimForwardRequest,
     CloseForwardRequest,
@@ -285,7 +285,6 @@ def test_forward_survives_client_detach_and_second_client_closes(tmp_path, phase
             )
         )
         stack.wait_forward_active(opened.id)
-        owner_id = str(stack.client._client_id)
         stack.client.close()
         observer = stack.connect_client(client_id="client:phase10-observer")
         rediscovered = observer.get_forward(opened.id)

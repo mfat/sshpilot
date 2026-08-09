@@ -25,7 +25,6 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepositoryProtocol,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
-from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 from sshpilot.api.models.connections import (  # noqa: E402
     ConnectionDetails,
     ConnectionEditorDetails,

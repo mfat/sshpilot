@@ -476,7 +476,7 @@ def test_collect_imports_resolves_from_package_alias():
 
 def test_collect_imports_ignores_dunder_attributes():
     """``from sshpilot import __version__`` must not create a project-module edge."""
-    import tempfile, textwrap
+    import tempfile
 
     src = "from sshpilot import __version__\n"
     mf = _module_files()

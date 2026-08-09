@@ -5,8 +5,6 @@ import hashlib
 import pytest
 
 from sshpilot.core.known_hosts.document import (
-    KnownHostsDocument,
-    KnownHostsDocumentEntry,
     parse_known_hosts_document,
     remove_known_hosts_document_entries,
 )
