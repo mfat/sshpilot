@@ -1765,16 +1765,11 @@ class CommandBlocksPanel(Gtk.Box):
         self, command_text: str, cmd_id=None, *, connection=None, group=None, connections=None
     ) -> None:
         if connections:
-            if len(connections) == 1:
-                self._connect_and_feed(connections[0], command_text, cmd_id)
-            else:
-                self._feed_connections_in_split_view(
-                    list(connections), _("Split View"), command_text, cmd_id
-                )
+            self._submit_connections(list(connections), command_text, cmd_id)
         elif connection is not None:
-            self._connect_and_feed(connection, command_text, cmd_id)
+            self._submit_connections([connection], command_text, cmd_id)
         elif group is not None:
-            self._feed_group_in_split_view(group, command_text, cmd_id)
+            self._feed_group(group, command_text, cmd_id)
 
     def _show_custom_command_dialog(self, *, connection=None, group=None, connections=None) -> None:
         dlg = Adw.AlertDialog(
@@ -1799,50 +1794,6 @@ class CommandBlocksPanel(Gtk.Box):
 
         dlg.connect("response", _on_response)
         dlg.present(self.window)
-
-    def _feed_group_in_split_view(
-        self, group: dict, command_text: str, cmd_id: str | None = None
-    ) -> None:
-        cm = getattr(self.window, "connection_manager", None)
-        if cm is None:
-            return
-        nicknames = set(group.get("connections", []))
-        connections = [c for c in cm.connections if c.nickname in nicknames]
-        if not connections:
-            self._show_toast(_("No connections in group"))
-            return
-
-        self._feed_connections_in_split_view(
-            connections, group.get("name", _("Group")), command_text, cmd_id
-        )
-
-    def _feed_connections_in_split_view(
-        self, connections: list, title: str, command_text: str, cmd_id: str | None = None
-    ) -> None:
-        from .split_view import SplitViewTab
-        from sshpilot import icon_utils
-
-        svt = SplitViewTab(self.window)
-        page = self.window.tab_view.append(svt)
-        page.set_title(title)
-        page.set_icon(icon_utils.new_gicon_from_icon_name("view-dual-symbolic"))
-        svt._tab_page = page
-        svt.populate(connections)
-        self.window.show_tab_view()
-        self.window.tab_view.set_selected_page(page)
-
-        for terminal in svt.get_all_terminals():
-
-            def _make_handler(t):
-                handler_id = [None]
-
-                def _on_connected(_t):
-                    GObject.signal_handler_disconnect(_t, handler_id[0])
-                    self._feed_specific_terminal(command_text, _t, cmd_id)
-
-                handler_id[0] = t.connect("connection-established", _on_connected)
-
-            _make_handler(terminal)
 
     # ------------------------------------------------------------------
     # Run on host
@@ -1869,11 +1820,19 @@ class CommandBlocksPanel(Gtk.Box):
             self._connect_and_feed(connection, cmd.get("command", ""), cmd.get("id"))
 
     def _connect_and_feed(self, connection, command_text: str, cmd_id: str | None = None) -> None:
+        self._submit_connections([connection], command_text, cmd_id)
+
+    def _submit_connections(
+        self, connections: list, command_text: str, cmd_id: str | None = None
+    ) -> None:
+        """Start one daemon broadcast for all selected saved connections."""
         from .api.models.broadcast import BroadcastCommandRequest
 
         try:
-            connection_id = connection_id_for(connection)
-            request = BroadcastCommandRequest((connection_id,), command_text.strip())
+            connection_ids = tuple(
+                dict.fromkeys(connection_id_for(connection) for connection in connections)
+            )
+            request = BroadcastCommandRequest(connection_ids, command_text.strip())
         except (TypeError, ValueError):
             self._show_toast(_("This connection cannot run daemon commands"), timeout=3)
             return
@@ -1884,7 +1843,10 @@ class CommandBlocksPanel(Gtk.Box):
             return
 
         def accepted(_summary):
-            self._show_toast(_("Command queued for host"), timeout=3)
+            self._show_toast(
+                _("Command queued for {} connections").format(len(connection_ids)),
+                timeout=3,
+            )
             if cmd_id:
                 self.store.record_use(cmd_id)
 
@@ -1893,21 +1855,6 @@ class CommandBlocksPanel(Gtk.Box):
             on_success=accepted,
             on_error=lambda _error: self._show_toast(_("Command could not be started"), timeout=3),
         )
-
-    def _feed_specific_terminal(
-        self, command_text: str, terminal, cmd_id: str | None = None
-    ) -> None:
-        insert_only = bool(self.store._config.get_setting("command_blocks.insert_only", False))
-        data = (
-            command_text.encode("utf-8") if insert_only else (command_text + "\n").encode("utf-8")
-        )
-        try:
-            terminal.feed_child_data(data)
-        except Exception as exc:
-            logger.error("Failed to send command to terminal: %s", exc)
-            return
-        if cmd_id:
-            self.store.record_use(cmd_id)
 
     # ------------------------------------------------------------------
     # Run for group
@@ -2016,8 +1963,10 @@ class CommandBlocksPanel(Gtk.Box):
             return
         nicknames = set(group.get("connections", []))
         connections = [c for c in cm.connections if c.nickname in nicknames]
-        for connection in connections:
-            self._connect_and_feed(connection, command_text, cmd_id)
+        if not connections:
+            self._show_toast(_("No connections in group"))
+            return
+        self._submit_connections(connections, command_text, cmd_id)
 
     # ------------------------------------------------------------------
     # Context menu

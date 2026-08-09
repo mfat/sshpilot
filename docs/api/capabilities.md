@@ -1,8 +1,10 @@
 # Capabilities
 
-Broadcast execution advertises `broadcast.read`, `broadcast.write`, and
-`broadcast.events` only when the daemon has the operation runtime and canonical
-SSH launch provider. Absence never enables a frontend fallback.
+Broadcast execution advertises `broadcast.read` and `broadcast.write` only when
+the daemon has the operation runtime, canonical SSH launch provider, and
+protected interaction broker. `broadcast.events` is reserved by the schema but
+is not advertised until typed output-event forwarding is implemented. Absence
+never enables a frontend fallback.
 
 <!-- api-capability: broadcast.read -->
 <!-- api-capability: broadcast.write -->

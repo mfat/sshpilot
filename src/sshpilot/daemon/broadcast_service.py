@@ -10,6 +10,7 @@ import selectors
 import subprocess
 import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
 from typing import Callable, Dict, Optional
@@ -120,17 +121,26 @@ class BroadcastCommandService:
         operation_runtime: OperationRuntime,
         launch_provider,
         *,
+        interaction_broker,
         runner=None,
+        terminal_retention: int = 128,
         output_publisher: Optional[Callable[[OperationId, ConnectionId, str, str], None]] = None,
     ):
+        if interaction_broker is None:
+            raise ValueError("broadcast execution requires an interaction broker")
+        if type(terminal_retention) is not int or terminal_retention < 0:
+            raise ValueError("terminal_retention must be non-negative")
         self._operations = operation_runtime
         self._launch_provider = launch_provider
+        self._interaction_broker = interaction_broker
         self._runner = runner or NativeSshCommandRunner()
         self._output_publisher = output_publisher
         self._lock = threading.RLock()
         self._targets: Dict[OperationId, list[HostCommandResult]] = {}
         self._cancels: Dict[OperationId, threading.Event] = {}
         self._processes: Dict[OperationId, set[object]] = {}
+        self._terminal_records: OrderedDict[OperationId, None] = OrderedDict()
+        self._terminal_retention = terminal_retention
 
     def start(
         self, request: BroadcastCommandRequest, *, owner_client_id: ClientId
@@ -177,11 +187,10 @@ class BroadcastCommandService:
         current = self.get(operation_id, client_id=client_id)
         with self._lock:
             event = self._cancels.get(operation_id)
-            processes = tuple(self._processes.get(operation_id, ()))
             if event:
                 event.set()
-        for process in processes:
-            NativeSshCommandRunner._stop(process)
+        # Target workers own terminate -> grace -> kill -> reap.  The request
+        # dispatcher must never wait serially on every running SSH process.
         operation = self._operations.cancel_operation(operation_id)
         return BroadcastCommandSummary(operation, current.targets)
 
@@ -194,59 +203,74 @@ class BroadcastCommandService:
         handle.set_cancel_hook(cancel.set)
         pending = iter(enumerate(request.connection_ids))
         futures = {}
-        with ThreadPoolExecutor(
-            max_workers=request.policy.concurrency_limit, thread_name_prefix="sshpilot-broadcast"
-        ) as pool:
-            while True:
-                while not cancel.is_set() and len(futures) < request.policy.concurrency_limit:
-                    try:
-                        index, connection_id = next(pending)
-                    except StopIteration:
-                        break
-                    self._set(
-                        operation_id,
-                        index,
-                        HostCommandResult(connection_id, HostCommandState.RUNNING),
-                    )
-                    futures[
-                        pool.submit(self._run_target, operation_id, connection_id, request, cancel)
-                    ] = index
-                if not futures:
-                    break
-                done, _ = wait(futures, return_when=FIRST_COMPLETED, timeout=0.05)
-                for future in done:
-                    index = futures.pop(future)
-                    try:
-                        result = future.result()
-                    except OperationCancelled:
-                        result = HostCommandResult(
-                            request.connection_ids[index], HostCommandState.CANCELLED
+        try:
+            with ThreadPoolExecutor(
+                max_workers=request.policy.concurrency_limit,
+                thread_name_prefix="sshpilot-broadcast",
+            ) as pool:
+                while True:
+                    while not cancel.is_set() and len(futures) < request.policy.concurrency_limit:
+                        try:
+                            index, connection_id = next(pending)
+                        except StopIteration:
+                            break
+                        self._set(
+                            operation_id,
+                            index,
+                            HostCommandResult(connection_id, HostCommandState.RUNNING),
                         )
-                    self._set(operation_id, index, result)
-                    terminal = sum(
-                        item.state
-                        in (
-                            HostCommandState.SUCCEEDED,
-                            HostCommandState.FAILED,
-                            HostCommandState.CANCELLED,
-                        )
-                        for item in self._targets[operation_id]
-                    )
-                    handle.report(
-                        "Broadcast command running", terminal / len(request.connection_ids)
-                    )
-                if cancel.is_set() and not futures:
-                    break
-            if cancel.is_set():
-                with self._lock:
-                    for index, item in enumerate(self._targets[operation_id]):
-                        if item.state in (HostCommandState.PENDING, HostCommandState.RUNNING):
-                            self._targets[operation_id][index] = replace(
-                                item, state=HostCommandState.CANCELLED
+                        futures[
+                            pool.submit(
+                                self._run_target,
+                                operation_id,
+                                connection_id,
+                                request,
+                                cancel,
                             )
-                raise OperationCancelled()
-        with self._lock:
-            results = tuple(self._targets[operation_id])
+                        ] = index
+                    if not futures:
+                        break
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED, timeout=0.05)
+                    for future in done:
+                        index = futures.pop(future)
+                        try:
+                            result = future.result()
+                        except OperationCancelled:
+                            result = HostCommandResult(
+                                request.connection_ids[index], HostCommandState.CANCELLED
+                            )
+                        self._set(operation_id, index, result)
+                        terminal = sum(
+                            item.state
+                            in (
+                                HostCommandState.SUCCEEDED,
+                                HostCommandState.FAILED,
+                                HostCommandState.CANCELLED,
+                            )
+                            for item in self._targets[operation_id]
+                        )
+                        handle.report(
+                            "Broadcast command running",
+                            terminal / len(request.connection_ids),
+                        )
+                    if cancel.is_set() and not futures:
+                        break
+                if cancel.is_set():
+                    with self._lock:
+                        for index, item in enumerate(self._targets[operation_id]):
+                            if item.state in (
+                                HostCommandState.PENDING,
+                                HostCommandState.RUNNING,
+                            ):
+                                self._targets[operation_id][index] = replace(
+                                    item, state=HostCommandState.CANCELLED
+                                )
+                    raise OperationCancelled()
+            with self._lock:
+                results = tuple(self._targets[operation_id])
+        finally:
+            self._interaction_broker.cancel_session(operation_id)
+            self._remember_terminal(operation_id)
         handle.set_result({"targets": [self._result_wire(item) for item in results]})
         if any(item.state is HostCommandState.FAILED for item in results):
             raise SshPilotError(
@@ -258,6 +282,13 @@ class BroadcastCommandService:
         try:
             argv, environment = self._launch_provider.prepare_remote_command_launch(
                 connection_id, request.command, interaction_policy="broker"
+            )
+            argv, environment = self._interaction_broker.prepare_operation_launch(
+                argv,
+                environment,
+                scope_id=operation_id,
+                connection_id=connection_id,
+                hostname=str(connection_id),
             )
             owned_process = [None]
 
@@ -328,6 +359,17 @@ class BroadcastCommandService:
     def _set(self, operation_id, index, result):
         with self._lock:
             self._targets[operation_id][index] = result
+
+    def _remember_terminal(self, operation_id: OperationId) -> None:
+        """Bound retained target output alongside OperationRuntime retention."""
+        with self._lock:
+            self._terminal_records.pop(operation_id, None)
+            self._terminal_records[operation_id] = None
+            while len(self._terminal_records) > self._terminal_retention:
+                expired, _ = self._terminal_records.popitem(last=False)
+                self._targets.pop(expired, None)
+                self._cancels.pop(expired, None)
+                self._processes.pop(expired, None)
 
     @staticmethod
     def _result_wire(result):

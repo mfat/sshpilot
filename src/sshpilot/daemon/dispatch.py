@@ -2646,6 +2646,7 @@ class RequestDispatcher:
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
+                broadcast=self._broadcast_service is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -2820,7 +2821,7 @@ class RequestDispatcher:
             )
         if broadcast:
             daemon_capabilities |= frozenset(
-                {Capability.BROADCAST_READ, Capability.BROADCAST_WRITE, Capability.BROADCAST_EVENTS}
+                {Capability.BROADCAST_READ, Capability.BROADCAST_WRITE}
             )
         return daemon_capabilities
 

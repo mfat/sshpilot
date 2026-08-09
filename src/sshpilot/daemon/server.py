@@ -707,7 +707,9 @@ class DaemonServer:
                 getattr(launch_provider, "prepare_remote_command_launch", None)
             ):
                 self._broadcast_service = BroadcastCommandService(
-                    self._operation_runtime, launch_provider
+                    self._operation_runtime,
+                    launch_provider,
+                    interaction_broker=self._interaction_broker,
                 )
             self._dispatcher = RequestDispatcher(
                 self._connection_service,

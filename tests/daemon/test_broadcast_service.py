@@ -1,0 +1,203 @@
+"""Focused daemon-owned broadcast lifecycle and composition tests."""
+
+from __future__ import annotations
+
+import threading
+import time
+
+from sshpilot.api.models.broadcast import (
+    BroadcastCommandRequest,
+    BroadcastExecutionPolicy,
+    HostCommandState,
+)
+from sshpilot.api.models.common import ClientId, ConnectionId
+from sshpilot.api.models.operations import OperationState
+from sshpilot.daemon.broadcast_service import BroadcastCommandService
+from sshpilot.daemon.operation_runtime import OperationRuntime
+
+
+class LaunchProvider:
+    def __init__(self):
+        self.calls = []
+
+    def prepare_remote_command_launch(self, connection_id, command, *, interaction_policy):
+        self.calls.append((connection_id, command, interaction_policy))
+        return (("ssh", str(connection_id), command), {"BASE": "1"})
+
+
+class Broker:
+    def __init__(self):
+        self.calls = []
+        self.cancelled = []
+
+    def prepare_operation_launch(
+        self, argv, environment, *, scope_id, connection_id, hostname=""
+    ):
+        assert hostname == str(connection_id)
+        self.calls.append((scope_id, connection_id, tuple(argv), dict(environment)))
+        return tuple(argv), {**environment, "BROKER": str(connection_id)}
+
+    def cancel_session(self, scope_id):
+        self.cancelled.append(scope_id)
+
+
+class Runner:
+    def __init__(self, delays=None, exits=None):
+        self.delays = delays or {}
+        self.exits = exits or {}
+        self.active = 0
+        self.maximum = 0
+        self.lock = threading.Lock()
+
+    def run(self, argv, environment, policy, *, cancel_event, on_process, on_output):
+        connection_id = argv[1]
+        with self.lock:
+            self.active += 1
+            self.maximum = max(self.maximum, self.active)
+        try:
+            deadline = time.monotonic() + self.delays.get(connection_id, 0)
+            while time.monotonic() < deadline:
+                if cancel_event.is_set():
+                    from sshpilot.daemon.operation_runtime import OperationCancelled
+                    raise OperationCancelled()
+                time.sleep(0.002)
+            on_output("stdout", f"out:{connection_id}")
+            code = self.exits.get(connection_id, 0)
+            return code, f"out:{connection_id}", "err" if code else "", False, False
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def wait_terminal(service, started, owner):
+    for _ in range(500):
+        summary = service.get(started.operation.operation_id, client_id=owner)
+        if summary.operation.state in {
+            OperationState.SUCCEEDED,
+            OperationState.FAILED,
+            OperationState.CANCELLED,
+        }:
+            return summary
+        time.sleep(0.005)
+    raise AssertionError("broadcast did not finish")
+
+
+def test_broker_wraps_every_target_and_results_remain_in_request_order():
+    runtime = OperationRuntime()
+    launch = LaunchProvider()
+    broker = Broker()
+    runner = Runner(delays={"slow": 0.04, "fast": 0.001})
+    service = BroadcastCommandService(runtime, launch, interaction_broker=broker, runner=runner)
+    owner = ClientId("client-owner")
+    started = service.start(
+        BroadcastCommandRequest((ConnectionId("slow"), ConnectionId("fast")), "hostname"),
+        owner_client_id=owner,
+    )
+    result = wait_terminal(service, started, owner)
+    assert result.operation.state is OperationState.SUCCEEDED
+    assert tuple(item.connection_id for item in result.targets) == ("slow", "fast")
+    assert all(item.state is HostCommandState.SUCCEEDED for item in result.targets)
+    assert {call[1] for call in broker.calls} == {"slow", "fast"}
+    assert all(call[0] == started.operation.operation_id for call in broker.calls)
+    assert broker.cancelled == [started.operation.operation_id]
+    runtime.shutdown()
+
+
+def test_concurrency_is_bounded_and_nonzero_exit_fails_parent():
+    runtime = OperationRuntime()
+    runner = Runner(delays={str(i): 0.01 for i in range(6)}, exits={"3": 7})
+    service = BroadcastCommandService(
+        runtime, LaunchProvider(), interaction_broker=Broker(), runner=runner
+    )
+    owner = ClientId("client-owner")
+    request = BroadcastCommandRequest(
+        tuple(ConnectionId(str(i)) for i in range(6)),
+        "false",
+        BroadcastExecutionPolicy(concurrency_limit=2),
+    )
+    result = wait_terminal(service, service.start(request, owner_client_id=owner), owner)
+    assert runner.maximum <= 2
+    assert result.operation.state is OperationState.FAILED
+    assert result.targets[3].exit_code == 7
+    runtime.shutdown()
+
+
+def test_terminal_result_retention_is_bounded():
+    runtime = OperationRuntime(terminal_retention=1)
+    service = BroadcastCommandService(
+        runtime,
+        LaunchProvider(),
+        interaction_broker=Broker(),
+        runner=Runner(),
+        terminal_retention=1,
+    )
+    owner = ClientId("client-owner")
+    first = service.start(
+        BroadcastCommandRequest((ConnectionId("one"),), "true"), owner_client_id=owner
+    )
+    wait_terminal(service, first, owner)
+    second = service.start(
+        BroadcastCommandRequest((ConnectionId("two"),), "true"), owner_client_id=owner
+    )
+    wait_terminal(service, second, owner)
+    assert first.operation.operation_id not in service._targets
+    assert first.operation.operation_id not in service._cancels
+    runtime.shutdown()
+
+
+def test_real_server_capabilities_survive_refresh_and_client_can_start(tmp_path):
+    """Handshake and system.get_capabilities must agree for production clients."""
+    from sshpilot.api import DaemonClient
+    from sshpilot.api.capabilities import Capability
+    from sshpilot.daemon import DaemonServer
+    from tests.helpers.fake_connection_repository import make_test_connection_service
+
+    socket_path = tmp_path / "daemon.sock"
+    launch_provider = LaunchProvider()
+    server = DaemonServer(
+        lambda: make_test_connection_service(launch_provider=launch_provider),
+        socket_path=socket_path,
+    )
+    server.start_in_thread()
+    client = DaemonClient(socket_path=socket_path)
+    try:
+        capabilities = client.get_capabilities()
+        assert Capability.BROADCAST_READ in capabilities.supported
+        assert Capability.BROADCAST_WRITE in capabilities.supported
+        assert Capability.BROADCAST_EVENTS not in capabilities.supported
+        started = client.start_broadcast_command(
+            BroadcastCommandRequest((ConnectionId("demo"),), "true")
+        )
+        assert started.operation.kind.value == "broadcast_command"
+    finally:
+        client.close()
+        server.shutdown()
+        assert server.wait_stopped()
+
+
+def test_cancel_rpc_only_signals_and_workers_finish_cancellation():
+    runtime = OperationRuntime()
+    runner = Runner(delays={"0": 2, "1": 2, "2": 2})
+    service = BroadcastCommandService(
+        runtime, LaunchProvider(), interaction_broker=Broker(), runner=runner
+    )
+    owner = ClientId("client-owner")
+    started = service.start(
+        BroadcastCommandRequest(
+            (ConnectionId("0"), ConnectionId("1"), ConnectionId("2")),
+            "sleep",
+            BroadcastExecutionPolicy(concurrency_limit=2),
+        ),
+        owner_client_id=owner,
+    )
+    for _ in range(100):
+        if runner.maximum == 2:
+            break
+        time.sleep(0.005)
+    before = time.monotonic()
+    service.cancel(started.operation.operation_id, client_id=owner)
+    assert time.monotonic() - before < 0.1
+    result = wait_terminal(service, started, owner)
+    assert result.operation.state is OperationState.CANCELLED
+    assert all(item.state is HostCommandState.CANCELLED for item in result.targets)
+    runtime.shutdown()

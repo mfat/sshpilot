@@ -10,6 +10,7 @@ import logging
 
 from gi.repository import Adw, GLib, Gdk
 from gettext import gettext as _
+from .api.models.operations import OperationState
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +37,54 @@ class WindowBroadcastMixin:
             self._schedule_broadcast_hide_timeout()
 
     def _on_broadcast_started(self, summary):
-        """Remember daemon truth; completion is obtained by typed polling/events."""
+        """Poll retained daemon truth until the operation becomes terminal."""
         self._active_broadcast_operation_id = summary.operation.operation_id
         logger.info("Broadcast command accepted for %d targets", len(summary.targets))
+        self._broadcast_poll_pending = False
+        self._broadcast_poll_source = GLib.timeout_add(250, self._poll_broadcast)
+
+    def _poll_broadcast(self):
+        operation_id = getattr(self, "_active_broadcast_operation_id", None)
+        if not operation_id or getattr(self, "_broadcast_poll_pending", False):
+            return bool(operation_id)
+        client = getattr(self, "client", None)
+        bridge = getattr(self, "client_bridge", None)
+        if client is None or bridge is None:
+            self._on_broadcast_failed(RuntimeError("Daemon broadcast unavailable"))
+            return False
+        self._broadcast_poll_pending = True
+        bridge.submit(
+            lambda: client.get_broadcast_command(operation_id),
+            on_success=self._on_broadcast_polled,
+            on_error=self._on_broadcast_failed,
+        )
+        return True
+
+    def _on_broadcast_polled(self, summary):
+        self._broadcast_poll_pending = False
+        operation = summary.operation
+        if operation.state not in (
+            OperationState.SUCCEEDED,
+            OperationState.FAILED,
+            OperationState.CANCELLED,
+        ):
+            return
+        self._active_broadcast_operation_id = None
+        succeeded = sum(target.state.value == "succeeded" for target in summary.targets)
+        failed = sum(target.state.value == "failed" for target in summary.targets)
+        cancelled = sum(target.state.value == "cancelled" for target in summary.targets)
+        message = _("Broadcast complete: {} succeeded, {} failed, {} cancelled").format(
+            succeeded, failed, cancelled
+        )
+        logger.info("%s", message)
+        overlay = getattr(self, "toast_overlay", None)
+        if overlay is not None:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(5)
+            overlay.add_toast(toast)
 
     def _on_broadcast_failed(self, error):
+        self._broadcast_poll_pending = False
         self._active_broadcast_operation_id = None
         logger.warning("Broadcast command request was not accepted: %s", error)
 
