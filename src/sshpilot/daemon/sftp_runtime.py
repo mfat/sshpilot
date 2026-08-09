@@ -60,6 +60,8 @@ from sshpilot.api.models.operations import (
     ListDirectoryRequest,
     ListDirectoryResult,
     OpenSftpRequest,
+    OperationKind,
+    OperationSummary,
     RemoteFileEntry,
     RemoteFileType,
     ServiceFailure,
@@ -91,6 +93,7 @@ from sshpilot.api.sftp_identity import new_sftp_id
 from sshpilot.sftp import protocol as sftp_proto
 from sshpilot.sftp.client import OpenSSHSFTPClient
 
+from .operation_runtime import OperationCancelled
 from .session_runtime import SessionLaunchSpec
 
 logger = logging.getLogger(__name__)
@@ -107,6 +110,13 @@ def _file_revision(content: bytes, exists: bool) -> str:
     if not exists:
         return "absent"
     return hashlib.sha256(content).hexdigest()
+
+
+def _coarse_progress(processed: int, pending: int) -> float:
+    """Monotonic bounded walk progress from completed/pending entry counts."""
+    if pending <= 0:
+        return 1.0
+    return min(0.99, processed / (processed + pending))
 
 
 def _read_local_authorized_keys() -> tuple[str, bytes, int | None]:
@@ -399,6 +409,7 @@ class SftpServiceRuntime:
         shutdown_timeout_seconds: float = 3.0,
         max_retained_closed_services: int = DEFAULT_MAX_RETAINED_CLOSED_SERVICES,
         list_limit: int = DEFAULT_LIST_LIMIT,
+        operation_lifecycle: Optional[Any] = None,
     ) -> None:
         if shutdown_timeout_seconds < 0:
             raise ValueError("SFTP shutdown timeout must not be negative")
@@ -415,6 +426,7 @@ class SftpServiceRuntime:
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._max_retained_closed_services = max_retained_closed_services
         self._list_limit = list_limit
+        self._operation_lifecycle: Any = operation_lifecycle
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[SftpServiceId, _SftpRecord] = {}
@@ -983,7 +995,7 @@ class SftpServiceRuntime:
                     connection_id=record.connection_id,
                     details={"path": path},
                 ) from exc
-            raise
+            raise self._map_error(exc, record) from exc
         except SshPilotError:
             raise
         except Exception as exc:
@@ -1284,12 +1296,15 @@ class SftpServiceRuntime:
         request: SftpDirectorySizeRequest,
         *,
         client_id: ClientId,
+        progress: Optional[Callable[[float], None]] = None,
+        cancel: Optional[Callable[[], bool]] = None,
     ) -> SftpDirectorySizeResult:
         """Recursively summarise a remote directory tree owned by the daemon.
 
         Symlinked entries are never descended into (matching the transfer
         runtime's no-follow policy), so the walk cannot loop on cycles or
-        escape the requested tree.
+        escape the requested tree. When running as a long-lived operation the
+        walk reports coarse progress and cooperates with cancellation.
         """
         if type(request) is not SftpDirectorySizeRequest:
             raise SshPilotError(
@@ -1298,22 +1313,46 @@ class SftpServiceRuntime:
         record = self._ready_record_for_read(request.service_id, client_id)
         path = _validate_path(request.path)
         client = record.handle.client
+        try:
+            total, file_count, directory_count = self._walk_directory_size(
+                client, path, progress=progress, cancel=cancel
+            )
+        except OperationCancelled:
+            raise
+        except Exception as exc:
+            raise self._map_error(exc, record) from exc
+        return SftpDirectorySizeResult(
+            path=path,
+            size_bytes=total,
+            file_count=file_count,
+            directory_count=directory_count,
+        )
+
+    @staticmethod
+    def _walk_directory_size(
+        client,
+        path: str,
+        *,
+        progress: Optional[Callable[[float], None]] = None,
+        cancel: Optional[Callable[[], bool]] = None,
+    ) -> Tuple[int, int, int]:
+        """Iterative best-effort tree summary shared by sync and operation paths."""
         total = 0
         file_count = 0
         directory_count = 0
+        processed = 0
         pending = [path]
-
         while pending:
+            if cancel is not None and cancel():
+                raise OperationCancelled()
             current = pending.pop()
             try:
                 attrs = client.listdir_attr(current)
             except Exception as exc:
                 if current == path:
-                    raise self._map_error(exc, record) from exc
-                # Unreadable subdirectory: skip it (same best-effort semantics
-                # as the legacy frontend walk) rather than failing the whole
-                # summary over one permission-denied folder.
+                    raise exc
                 continue
+            processed += 1
             for attr in attrs:
                 if attr.is_dir() and not attr.is_symlink():
                     directory_count += 1
@@ -1321,12 +1360,74 @@ class SftpServiceRuntime:
                 else:
                     file_count += 1
                     total += int(attr.st_size or 0)
-        return SftpDirectorySizeResult(
-            path=path,
-            size_bytes=total,
-            file_count=file_count,
-            directory_count=directory_count,
+            if progress is not None:
+                progress(_coarse_progress(processed, len(pending)))
+        if progress is not None:
+            progress(1.0)
+        return total, file_count, directory_count
+
+    def start_directory_size(
+        self,
+        request: SftpDirectorySizeRequest,
+        *,
+        client_id: ClientId,
+    ) -> OperationSummary:
+        """Start a daemon operation that recursively measures a remote tree.
+
+        The heavy walk runs on the shared operation worker (not the SFTP
+        command stream), reporting progress and honouring cancellation. The
+        measured result is attached to the succeeded summary's ``result``.
+        """
+        if type(request) is not SftpDirectorySizeRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST, "A SFTP directory size request is required"
+            )
+        path = _validate_path(request.path)
+        record = self._ready_record_for_read(request.service_id, client_id)
+        runtime = self._require_operation_lifecycle()
+
+        def _body(handle) -> str:
+            handle.report("Measuring directory…", 0.0)
+
+            def _should_cancel() -> bool:
+                handle.raise_if_cancelled()
+                return False
+
+            with self._serialized_target((request.service_id, "sftp-operation")):
+                self._ready_record_for_read(request.service_id, client_id)
+                handle.raise_if_cancelled()
+                result = self.directory_size(
+                    request,
+                    client_id=client_id,
+                    progress=lambda fraction: handle.report(
+                        "Measuring directory…", fraction
+                    ),
+                    cancel=_should_cancel,
+                )
+            from sshpilot.api.transport.codec import sftp_directory_size_result_to_wire
+
+            handle.set_result(sftp_directory_size_result_to_wire(result))
+            return (
+                f"Measured {result.file_count} files, "
+                f"{result.directory_count} directories"
+            )
+
+        return runtime.start_operation(
+            OperationKind.SFTP_DIRECTORY_SIZE,
+            _body,
+            connection_id=record.connection_id,
+            owner_client_id=client_id,
+            message=f"Measuring {path}",
         )
+
+    def _require_operation_lifecycle(self):
+        runtime = self._operation_lifecycle
+        if runtime is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Long-running SFTP operations are not available",
+            )
+        return runtime
 
     def realpath(self, request: SftpPathRequest, *, client_id: ClientId) -> str:
         if type(request) is not SftpPathRequest:
@@ -1364,7 +1465,14 @@ class SftpServiceRuntime:
         except Exception as exc:
             raise self._map_error(exc, record) from exc
 
-    def copy(self, request: SftpCopyRequest, *, client_id: ClientId) -> None:
+    def copy(
+        self,
+        request: SftpCopyRequest,
+        *,
+        client_id: ClientId,
+        progress: Optional[Callable[[float], None]] = None,
+        cancel: Optional[Callable[[], bool]] = None,
+    ) -> None:
         if type(request) is not SftpCopyRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP copy request is required")
         record = self._ready_record_for_mutation(request.service_id, client_id)
@@ -1377,8 +1485,17 @@ class SftpServiceRuntime:
                 details={"service_id": record.service_id},
             )
         client = record.handle.client
+        copied = 0
+        pending_files = 0
+
+        def _report_copy_progress() -> None:
+            if progress is not None:
+                progress(_coarse_progress(copied, pending_files))
 
         def _copy_file(source_path: str, destination_path: str) -> None:
+            nonlocal copied, pending_files
+            if cancel is not None and cancel():
+                raise OperationCancelled()
             with client.open(source_path, "rb") as source_file, client.open(
                 destination_path, "wb"
             ) as destination_file:
@@ -1387,10 +1504,17 @@ class SftpServiceRuntime:
                     if not chunk:
                         break
                     destination_file.write(chunk)
+            copied += 1
+            _report_copy_progress()
 
         def _copy_directory(source_path: str, destination_path: str) -> None:
+            nonlocal pending_files
+            if cancel is not None and cancel():
+                raise OperationCancelled()
             client.mkdir(destination_path)
-            for entry in client.listdir_attr(source_path):
+            entries = client.listdir_attr(source_path)
+            pending_files += sum(1 for entry in entries if not entry.is_dir())
+            for entry in entries:
                 child_source = posixpath.join(source_path, entry.filename)
                 child_destination = posixpath.join(destination_path, entry.filename)
                 if entry.is_dir():
@@ -1430,41 +1554,161 @@ class SftpServiceRuntime:
                         details={"service_id": record.service_id},
                     )
                 _copy_file(source, destination)
+            if progress is not None:
+                progress(1.0)
             if request.move:
                 if source_attr.is_dir():
-                    self._remove_tree(client, source)
+                    self._remove_tree(client, source, cancel=cancel)
                 else:
                     client.remove(source)
+        except OperationCancelled:
+            raise
         except SshPilotError:
             raise
         except Exception as exc:
             raise self._map_error(exc, record) from exc
 
+    def start_copy(
+        self,
+        request: SftpCopyRequest,
+        *,
+        client_id: ClientId,
+    ) -> OperationSummary:
+        """Start a daemon operation that recursively copies (or moves) a tree.
+
+        The recursive walk runs on the shared operation worker with progress
+        reporting and cooperative cancellation instead of blocking the SFTP
+        command stream.
+        """
+        if type(request) is not SftpCopyRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST, "A SFTP copy request is required"
+            )
+        source = _validate_path(request.source_path)
+        destination = _validate_path(request.destination_path)
+        record = self._ready_record_for_mutation(request.service_id, client_id)
+        if request.recursive and _remote_path_is_descendant(source, destination):
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "A directory cannot be copied into itself",
+                details={"service_id": record.service_id},
+            )
+        runtime = self._require_operation_lifecycle()
+
+        def _body(handle) -> str:
+            verb = "Moving" if request.move else "Copying"
+            handle.report(f"{verb}…", 0.0)
+
+            def _should_cancel() -> bool:
+                handle.raise_if_cancelled()
+                return False
+
+            with self._serialized_target((request.service_id, "sftp-operation")):
+                self._ready_record_for_mutation(request.service_id, client_id)
+                handle.raise_if_cancelled()
+                self.copy(
+                    request,
+                    client_id=client_id,
+                    progress=lambda fraction: handle.report(f"{verb}…", fraction),
+                    cancel=_should_cancel,
+                )
+            return f"{verb} complete"
+
+        return runtime.start_operation(
+            OperationKind.SFTP_COPY_TREE,
+            _body,
+            connection_id=record.connection_id,
+            owner_client_id=client_id,
+            message=f"{'Moving' if request.move else 'Copying'} {source}",
+        )
+
     @staticmethod
-    def _remove_tree(client, path: str) -> None:
+    def _remove_tree(client, path: str, *, cancel: Optional[Callable[[], bool]] = None) -> None:
         for entry in client.listdir_attr(path):
+            if cancel is not None and cancel():
+                raise OperationCancelled()
             child = posixpath.join(path, entry.filename)
             if entry.is_dir():
-                SftpServiceRuntime._remove_tree(client, child)
+                SftpServiceRuntime._remove_tree(client, child, cancel=cancel)
             else:
                 client.remove(child)
         client.rmdir(path)
 
-    def remove(self, request: SftpPathRequest, *, client_id: ClientId) -> None:
+    def remove(
+        self,
+        request: SftpPathRequest,
+        *,
+        client_id: ClientId,
+        progress: Optional[Callable[[float], None]] = None,
+        cancel: Optional[Callable[[], bool]] = None,
+    ) -> None:
         record = self._ready_record_for_mutation(request.service_id, client_id)
         path = _validate_path(request.path)
         client = record.handle.client
         try:
             if request.recursive:
-                self._remove_recursive(client, path)
+                self._remove_recursive(client, path, progress=progress, cancel=cancel)
             else:
                 client.remove(path)
+        except OperationCancelled:
+            raise
         except SshPilotError:
             raise
         except Exception as exc:
             raise self._map_error(exc, record) from exc
 
-    def _remove_recursive(self, client, path: str) -> None:
+    def start_remove(
+        self,
+        request: SftpPathRequest,
+        *,
+        client_id: ClientId,
+    ) -> OperationSummary:
+        """Start a daemon operation that recursively deletes a remote tree.
+
+        The walk runs on the shared operation worker with progress reporting
+        and cooperative cancellation instead of blocking the SFTP command
+        stream.
+        """
+        if type(request) is not SftpPathRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A SFTP path request is required")
+        path = _validate_path(request.path)
+        record = self._ready_record_for_mutation(request.service_id, client_id)
+        runtime = self._require_operation_lifecycle()
+
+        def _body(handle) -> str:
+            handle.report("Deleting…", 0.0)
+
+            def _should_cancel() -> bool:
+                handle.raise_if_cancelled()
+                return False
+
+            with self._serialized_target((request.service_id, "sftp-operation")):
+                self._ready_record_for_mutation(request.service_id, client_id)
+                handle.raise_if_cancelled()
+                self.remove(
+                    request,
+                    client_id=client_id,
+                    progress=lambda fraction: handle.report("Deleting…", fraction),
+                    cancel=_should_cancel,
+                )
+            return "Deleted"
+
+        return runtime.start_operation(
+            OperationKind.SFTP_REMOVE_TREE,
+            _body,
+            connection_id=record.connection_id,
+            owner_client_id=client_id,
+            message=f"Deleting {path}",
+        )
+
+    def _remove_recursive(
+        self,
+        client,
+        path: str,
+        *,
+        progress: Optional[Callable[[float], None]] = None,
+        cancel: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """Delete a remote tree with lstat so symlinks are never followed.
 
         A symlink is removed as a link (like ``rm -r``), never recursed into,
@@ -1479,16 +1723,23 @@ class SftpServiceRuntime:
         if not attr.is_dir() or attr.is_symlink():
             client.remove(path)
             return
-        for entry in client.listdir_attr(path):
+        entries = client.listdir_attr(path)
+        processed = 0
+        for entry in entries:
+            if cancel is not None and cancel():
+                raise OperationCancelled()
             child = path.rstrip("/") + "/" + entry.filename
             if entry.is_dir() and not entry.is_symlink():
-                self._remove_recursive(client, child)
+                self._remove_recursive(client, child, progress=progress, cancel=cancel)
             else:
                 try:
                     client.remove(child)
                 except (FileNotFoundError, sftp_proto.SFTPError) as exc:
                     if not isinstance(exc, sftp_proto.SFTPError) or exc.code != sftp_proto.FX_NO_SUCH_FILE:
                         raise
+            processed += 1
+            if progress is not None:
+                progress(_coarse_progress(processed, len(entries)))
         client.rmdir(path)
 
     def rename(self, request: SftpRenameRequest, *, client_id: ClientId) -> None:

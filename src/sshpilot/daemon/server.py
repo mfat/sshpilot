@@ -630,6 +630,10 @@ class DaemonServer:
             sftp_builder = getattr(
                 self._connection_service, "prepare_daemon_sftp_launch", None
             )
+            if self._operation_runtime is None:
+                from .operation_runtime import OperationRuntime
+
+                self._operation_runtime = OperationRuntime()
             if callable(sftp_builder):
                 sftp_runner = SubprocessSftpProcessRunner(
                     lambda spec: self._prepare_sftp_launch(spec, sftp_builder)
@@ -639,13 +643,13 @@ class DaemonServer:
                     self._connection_service,
                     runner=sftp_runner,
                     privileged_file_runner=privileged_runner,
+                    operation_lifecycle=self._operation_runtime,
                 )
             else:
-                self._sftp_runtime = SftpServiceRuntime(self._connection_service)
-            if self._operation_runtime is None:
-                from .operation_runtime import OperationRuntime
-
-                self._operation_runtime = OperationRuntime()
+                self._sftp_runtime = SftpServiceRuntime(
+                    self._connection_service,
+                    operation_lifecycle=self._operation_runtime,
+                )
             forward_builder = getattr(
                 self._connection_service, "prepare_daemon_forward_launch", None
             )

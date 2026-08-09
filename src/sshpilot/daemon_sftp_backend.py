@@ -421,8 +421,9 @@ class DaemonSftpManager(GObject.GObject):
     def directory_size(self, path: str) -> Future:
         """Future resolving to the recursive byte size of a remote directory.
 
-        The whole tree walk happens daemon-side via the typed
-        ``sftp.directory_size`` RPC (single request); the frontend never
+        The whole tree walk happens daemon-side as a long-lived operation
+        (``sftp.directory_size`` returns an ``OperationSummary``); the frontend
+        resolves the size from the succeeded operation's typed result and never
         recurses through per-directory listings.
         """
         future: Future = Future()

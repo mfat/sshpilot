@@ -5,6 +5,21 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.20`; `PROTOCOL_VERSION` stays `1.0`.
+  Recursive remote size, copy, and delete now run through the daemon operation
+  lifecycle instead of blocking the per-service SFTP command stream:
+  `sftp.directory_size` always starts a `sftp_directory_size` operation and
+  `sftp.remove`/`sftp.copy` with `recursive=true` start `sftp_remove_tree` /
+  `sftp_copy_tree` operations, each returning an `OperationSummary` immediately.
+  The heavy tree walk runs on the shared operation worker with safe progress,
+  cooperative cancellation (`operations.cancel`), and the same no-follow
+  symlink policy as before. `OperationSummary` gains an optional wire-safe
+  `result` payload so a succeeded directory-size operation carries the
+  `SftpDirectorySizeResult`; the frontend resolves it from the terminal
+  summary. Non-recursive `sftp.remove`/`sftp.copy` keep the plain synchronous
+  RPC shape. Recursive copy is now write-gated like recursive removal, and the
+  generated API artifacts were regenerated.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.19`; `PROTOCOL_VERSION` stays `1.0`.
   The additive `recursive` field on the existing `sftp.remove` RPC is sent to
   strict daemons only at API `0.19` and newer, so the client now refuses a

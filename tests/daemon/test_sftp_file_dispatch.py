@@ -6,8 +6,12 @@ import pytest
 
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.api.models.common import ClientId, RequestId
+from sshpilot.api.models.common import ClientId, ConnectionId, RequestId, utc_now
 from sshpilot.api.models.operations import (
+    OperationId,
+    OperationKind,
+    OperationState,
+    OperationSummary,
     SftpCopyRequest,
     SftpDirectorySizeRequest,
     SftpDirectorySizeResult,
@@ -80,6 +84,35 @@ class _FakeSftpRuntime:
             directory_count=1,
         )
 
+    def _operation(self, kind, message):
+        return OperationSummary(
+            operation_id=OperationId("operation-1"),
+            kind=kind,
+            state=OperationState.QUEUED,
+            message=message,
+            created_at=utc_now(),
+            connection_id=ConnectionId("conn-1"),
+            owner_client_id=ClientId("client-1"),
+        )
+
+    def start_directory_size(self, request, client_id=None):
+        self.directory_size_calls.append(request)
+        return self._operation(
+            OperationKind.SFTP_DIRECTORY_SIZE, f"Measuring {request.path}"
+        )
+
+    def start_copy(self, request, client_id=None):
+        self.copy_calls.append(request)
+        return self._operation(
+            OperationKind.SFTP_COPY_TREE, f"Copying {request.source_path}"
+        )
+
+    def start_remove(self, request, client_id=None):
+        self.remove_calls.append(request)
+        return self._operation(
+            OperationKind.SFTP_REMOVE_TREE, f"Deleting {request.path}"
+        )
+
     def read_file(self, request, client_id=None):
         self.read_calls.append(request)
         return SftpReadFileResult(
@@ -142,7 +175,7 @@ def test_directory_size_maps_to_read_capability():
     assert "sftp.directory_size" not in DRAIN_REJECTED_METHODS
 
 
-def test_directory_size_returns_deferred_execution():
+def test_directory_size_starts_daemon_operation():
     dispatcher, runtime = _dispatcher()
     result = dispatcher.dispatch(
         _envelope(
@@ -154,9 +187,9 @@ def test_directory_size_returns_deferred_execution():
     assert isinstance(result, DeferredResult)
     assert result.command_key == "sftp-1"
     wire = result.operation()
-    assert wire["size_bytes"] == 42
-    assert wire["file_count"] == 2
-    assert wire["directory_count"] == 1
+    assert wire["operation_id"] == "operation-1"
+    assert wire["kind"] == OperationKind.SFTP_DIRECTORY_SIZE.value
+    assert wire["state"] == OperationState.QUEUED.value
     assert isinstance(runtime.directory_size_calls[0], SftpDirectorySizeRequest)
     assert runtime.directory_size_calls[0].path == "/tree"
 
@@ -230,7 +263,9 @@ def test_copy_returns_deferred_execution():
     )
     assert isinstance(result, DeferredResult)
     assert result.command_key == "sftp-1"
-    assert result.operation() is None
+    wire = result.operation()
+    assert wire["operation_id"] == "operation-1"
+    assert wire["kind"] == OperationKind.SFTP_COPY_TREE.value
     request = runtime.copy_calls[0]
     assert isinstance(request, SftpCopyRequest)
     assert request.recursive is True
@@ -305,7 +340,9 @@ def test_remove_recursive_passes_flag_through_wire():
         _state(),
     )
     assert isinstance(result, DeferredResult)
-    assert result.operation() is None
+    wire = result.operation()
+    assert wire["operation_id"] == "operation-1"
+    assert wire["kind"] == OperationKind.SFTP_REMOVE_TREE.value
     request = runtime.remove_calls[0]
     assert request.recursive is True
     assert request.path == "/tree"

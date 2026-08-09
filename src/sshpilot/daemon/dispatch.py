@@ -113,7 +113,6 @@ from sshpilot.api.transport.codec import (
     sftp_create_file_request_from_wire,
     sftp_create_file_result_to_wire,
     sftp_directory_size_request_from_wire,
-    sftp_directory_size_result_to_wire,
     sftp_path_request_from_wire,
     sftp_read_file_request_from_wire,
     sftp_read_file_result_to_wire,
@@ -1941,8 +1940,8 @@ class RequestDispatcher:
         runtime = self._required_sftp_runtime()
         size_request = sftp_directory_size_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: sftp_directory_size_result_to_wire(
-                runtime.directory_size(size_request, client_id=client_id)
+            operation=lambda: operation_summary_to_wire(
+                runtime.start_directory_size(size_request, client_id=client_id)
             ),
             command_key=size_request.service_id,
             on_rejected=lambda: None,
@@ -2072,6 +2071,14 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         runtime = self._required_sftp_runtime()
         copy_request = sftp_copy_request_from_wire(request.params)
+        if copy_request.recursive:
+            return DeferredResult(
+                operation=lambda: operation_summary_to_wire(
+                    runtime.start_copy(copy_request, client_id=client_id)
+                ),
+                command_key=copy_request.service_id,
+                on_rejected=lambda: None,
+            )
         return DeferredResult(
             operation=lambda: runtime.copy(copy_request, client_id=client_id),
             command_key=copy_request.service_id,
@@ -2100,6 +2107,14 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         runtime = self._required_sftp_runtime()
         path_request = sftp_path_request_from_wire(request.params)
+        if path_request.recursive:
+            return DeferredResult(
+                operation=lambda: operation_summary_to_wire(
+                    runtime.start_remove(path_request, client_id=client_id)
+                ),
+                command_key=path_request.service_id,
+                on_rejected=lambda: None,
+            )
         return DeferredResult(
             operation=lambda: runtime.remove(path_request, client_id=client_id),
             command_key=path_request.service_id,

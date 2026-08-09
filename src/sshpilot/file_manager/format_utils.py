@@ -4,6 +4,33 @@ from __future__ import annotations
 
 import stat
 from datetime import datetime
+from typing import Optional
+
+from ..api.models.operations import RemoteFileType
+
+
+def _type_char(mode: int, file_type: Optional[RemoteFileType]) -> str:
+    """Leading ``ls -l`` style type character.
+
+    Remote entries carry permission bits only (``mode & 0o7777``), so their
+    file type must come from ``RemoteFileEntry.file_type`` rather than the
+    stat bits.
+    """
+    if file_type is RemoteFileType.DIRECTORY:
+        return "d"
+    if file_type is RemoteFileType.SYMLINK:
+        return "l"
+    if file_type is RemoteFileType.BLOCK:
+        return "b"
+    if file_type is RemoteFileType.CHARACTER:
+        return "c"
+    if file_type is RemoteFileType.SOCKET:
+        return "s"
+    if file_type is RemoteFileType.FIFO:
+        return "p"
+    if file_type is not None:
+        return "-"
+    return "d" if stat.S_ISDIR(mode) else "-"
 
 
 def _human_size(n: int) -> str:
@@ -23,16 +50,16 @@ def _human_time(ts: float) -> str:
         return "—"
 
 
-def _mode_to_str(mode: int) -> str:
+def _mode_to_str(mode: int, file_type: Optional[RemoteFileType] = None) -> str:
     """Convert file mode to string representation like -rw-r--r--."""
-    is_dir = "d" if stat.S_ISDIR(mode) else "-"
+    type_char = _type_char(mode, file_type)
     perm = ""
     for who, shift in (("USR", 6), ("GRP", 3), ("OTH", 0)):
         r = "r" if mode & (4 << shift) else "-"
         w = "w" if mode & (2 << shift) else "-"
         x = "x" if mode & (1 << shift) else "-"
         perm += r + w + x
-    return is_dir + perm
+    return type_char + perm
 
 
 def _mode_to_octal(mode: int) -> str:

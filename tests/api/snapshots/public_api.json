@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.19",
+  "api_implementation_version": "0.20",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -1826,7 +1826,7 @@
           "type": "SftpCopyRequest"
         }
       ],
-      "return": "None"
+      "return": "OperationSummary | None"
     },
     "sftp_directory_size": {
       "parameters": [
@@ -1836,7 +1836,7 @@
           "type": "SftpDirectorySizeRequest"
         }
       ],
-      "return": "SftpDirectorySizeResult"
+      "return": "OperationSummary"
     },
     "sftp_list_directory": {
       "parameters": [
@@ -1906,7 +1906,7 @@
           "type": "SftpPathRequest"
         }
       ],
-      "return": "None"
+      "return": "OperationSummary | None"
     },
     "sftp_rename": {
       "parameters": [
@@ -2169,6 +2169,9 @@
     },
     "connections.delete_group": {
       "capability": "connections.groups"
+    },
+    "connections.delete_passphrase": {
+      "capability": "connections.secrets.write"
     },
     "connections.delete_password": {
       "capability": "connections.secrets.write"
@@ -3480,7 +3483,8 @@
       "finished_at",
       "progress",
       "owner_client_id",
-      "failure"
+      "failure",
+      "result"
     ],
     "PassphrasePrompt": [
       "key_display_name",
@@ -4150,7 +4154,10 @@
     ],
     "OperationKind": [
       "key_deployment",
-      "authorized_key_removal"
+      "authorized_key_removal",
+      "sftp_directory_size",
+      "sftp_remove_tree",
+      "sftp_copy_tree"
     ],
     "OperationState": [
       "queued",

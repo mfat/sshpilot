@@ -285,7 +285,7 @@ class PropertiesDialog(Adw.Window):
                         entry = None
                     if entry is not None:
                         if entry.mode:
-                            new_text = f"{_mode_to_str(entry.mode)} ({_mode_to_octal(entry.mode)})"
+                            new_text = f"{_mode_to_str(entry.mode, entry.file_type)} ({_mode_to_octal(entry.mode)})"
                         else:
                             new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
                         if entry.uid is not None and entry.gid is not None:

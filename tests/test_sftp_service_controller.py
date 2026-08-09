@@ -6,8 +6,15 @@ from unittest.mock import Mock
 import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.api.models.common import ConnectionId, SftpServiceId
-from sshpilot.api.models.operations import SftpDirectorySizeResult
+from sshpilot.api.models.common import ClientId, ConnectionId, SftpServiceId, utc_now
+from sshpilot.api.models.operations import (
+    OperationId,
+    OperationKind,
+    OperationState,
+    OperationSummary,
+    SftpDirectorySizeResult,
+)
+from sshpilot.api.transport.codec import sftp_directory_size_result_to_wire
 from sshpilot.daemon_sftp_backend import DaemonSftpManager
 from sshpilot.file_manager.common import FileEntry
 from sshpilot.sftp_service_controller import (
@@ -76,12 +83,30 @@ def test_detach_marks_not_ready_immediately(controller, mock_bridge):
     assert errors and errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
 
 
-def test_directory_size_issues_single_daemon_rpc(controller, mock_client, mock_bridge):
+def test_directory_size_starts_operation_and_resolves_result(controller, mock_client, mock_bridge):
     _mark_ready(controller)
     result = SftpDirectorySizeResult(
         path="/tree", size_bytes=123, file_count=3, directory_count=1
     )
-    mock_client.sftp_directory_size.return_value = result
+    started = OperationSummary(
+        operation_id=OperationId("operation-size-1"),
+        kind=OperationKind.SFTP_DIRECTORY_SIZE,
+        state=OperationState.QUEUED,
+        message="Measuring /tree",
+        created_at=utc_now(),
+        owner_client_id=ClientId("client-1"),
+    )
+    succeeded = OperationSummary(
+        operation_id=started.operation_id,
+        kind=OperationKind.SFTP_DIRECTORY_SIZE,
+        state=OperationState.SUCCEEDED,
+        message="Measured 3 files, 1 directories",
+        created_at=started.created_at,
+        owner_client_id=ClientId("client-1"),
+        result=sftp_directory_size_result_to_wire(result),
+    )
+    mock_client.sftp_directory_size.return_value = started
+    mock_client.get_operation.return_value = succeeded
     mock_bridge.submit.side_effect = (
         lambda factory, on_success=None, on_error=None: on_success(factory())
     )
@@ -95,6 +120,7 @@ def test_directory_size_issues_single_daemon_rpc(controller, mock_client, mock_b
     request = mock_client.sftp_directory_size.call_args[0][0]
     assert request.service_id == SftpServiceId("svc-1")
     assert request.path == "/tree"
+    controller._poll_operations()
     assert seen == [result]
 
 

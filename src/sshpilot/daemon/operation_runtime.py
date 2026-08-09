@@ -72,6 +72,10 @@ class OperationHandle:
         if self._runtime.cancel_requested(self.operation_id):
             raise OperationCancelled()
 
+    def set_result(self, result: Dict) -> None:
+        """Attach a wire-safe result payload to the operation summary."""
+        self._runtime.set_operation_result(self.operation_id, result)
+
 
 OperationBody = Callable[[OperationHandle], str]
 
@@ -233,6 +237,29 @@ class OperationRuntime:
                 self._drain_events()
         return updated
 
+    def set_operation_result(self, operation_id: OperationId, result: Dict) -> None:
+        if type(result) is not dict:
+            raise TypeError("operation result must be a mapping")
+        with self._condition:
+            summary = self._records.get(operation_id)
+            if summary is None or is_terminal_operation_state(summary.state):
+                return
+            updated = OperationSummary(
+                operation_id=summary.operation_id,
+                kind=summary.kind,
+                state=summary.state,
+                message=summary.message,
+                created_at=summary.created_at,
+                connection_id=summary.connection_id,
+                started_at=summary.started_at,
+                finished_at=summary.finished_at,
+                progress=summary.progress,
+                owner_client_id=summary.owner_client_id,
+                failure=summary.failure,
+                result=result,
+            )
+            self._records[operation_id] = updated
+
     def report_progress(
         self,
         operation_id: OperationId,
@@ -256,6 +283,7 @@ class OperationRuntime:
                 progress=normalized_progress,
                 owner_client_id=summary.owner_client_id,
                 failure=summary.failure,
+                result=summary.result,
             )
             self._records[operation_id] = updated
             should_drain = self._queue_event_locked(
@@ -500,6 +528,7 @@ class OperationRuntime:
             progress=summary.progress,
             owner_client_id=summary.owner_client_id,
             failure=failure,
+            result=summary.result,
         )
 
     def _remember_terminal_locked(self, operation_id: OperationId) -> None:

@@ -11,7 +11,9 @@ from __future__ import annotations
 import logging
 import threading
 from enum import Enum
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
+
+from gi.repository import GLib
 
 from .api.capabilities import Capability
 from .api.errors import ErrorCode, SshPilotError
@@ -23,6 +25,9 @@ from .api.models.operations import (
     ListDirectoryRequest,
     ListDirectoryResult,
     OpenSftpRequest,
+    OperationId,
+    OperationState,
+    OperationSummary,
     RemoteFileEntry,
     SftpChmodRequest,
     SftpCopyRequest,
@@ -39,7 +44,9 @@ from .api.models.operations import (
     SftpServiceState,
     SftpServiceSummary,
     SftpSymlinkRequest,
+    is_terminal_operation_state,
 )
+from .api.transport.codec import sftp_directory_size_result_from_wire
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +117,8 @@ class DaemonSftpServiceController:
         self._state = SftpControllerState.IDLE
         self._service_id: Optional[SftpServiceId] = None
         self._event_subscription = None
+        self._operation_watchers: Dict[OperationId, tuple] = {}
+        self._operation_poll_id = None
         self._closed = False
 
     @property
@@ -214,6 +223,7 @@ class DaemonSftpServiceController:
         # background directory-count pass) cannot start new RPCs against a
         # service we are already leaving — mirrors terminal detach.
         self._mark(SftpControllerState.DETACHED, generation)
+        self._stop_operation_poller()
         if service_id is None:
             return
 
@@ -233,6 +243,7 @@ class DaemonSftpServiceController:
         self._unsubscribe_events()
         # Mark closed immediately so callback-driven follow-up work stops.
         self._mark(SftpControllerState.CLOSED, generation)
+        self._stop_operation_poller()
         if service_id is None:
             return
 
@@ -315,7 +326,11 @@ class DaemonSftpServiceController:
         on_success: Callable[[SftpDirectorySizeResult], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
-        """Summarise a remote directory tree with a single daemon RPC."""
+        """Measure a remote directory tree through a daemon operation.
+
+        The walk runs on the daemon operation worker; the result is decoded
+        from the succeeded operation summary's typed payload.
+        """
         service_id = self._ready_service_id_or_error(on_error)
         if service_id is None:
             return
@@ -325,7 +340,38 @@ class DaemonSftpServiceController:
                 SftpDirectorySizeRequest(service_id=service_id, path=path)
             )
 
-        self._submit(_op, on_success=on_success, on_error=on_error)
+        def _on_started(summary) -> None:
+            self._watch_operation(
+                summary.operation_id,
+                on_terminal=lambda done: self._resolve_size_result(
+                    done, on_success=on_success, on_error=on_error
+                ),
+                on_error=on_error,
+            )
+
+        self._submit(_op, on_success=_on_started, on_error=on_error)
+
+    def _resolve_size_result(self, summary, *, on_success, on_error) -> None:
+        if summary.state is OperationState.SUCCEEDED:
+            if summary.result is None:
+                on_error(
+                    SshPilotError(
+                        ErrorCode.SFTP_PROTOCOL_ERROR,
+                        "The daemon returned no directory size result",
+                    )
+                )
+                return
+            try:
+                on_success(sftp_directory_size_result_from_wire(summary.result))
+            except (TypeError, ValueError):
+                on_error(
+                    SshPilotError(
+                        ErrorCode.SFTP_PROTOCOL_ERROR,
+                        "The daemon returned an invalid directory size result",
+                    )
+                )
+            return
+        on_error(self._operation_failure(summary))
 
     def mkdir(
         self,
@@ -388,7 +434,25 @@ class DaemonSftpServiceController:
                 )
             )
 
-        self._submit(_op, on_success=on_success, on_error=on_error)
+        if recursive:
+            def _on_started(summary) -> None:
+                self._watch_operation(
+                    summary.operation_id,
+                    on_terminal=lambda done: self._resolve_tree_operation(
+                        done, on_success=on_success, on_error=on_error
+                    ),
+                    on_error=on_error,
+                )
+
+            self._submit(_op, on_success=_on_started, on_error=on_error)
+        else:
+            self._submit(_op, on_success=on_success, on_error=on_error)
+
+    def _resolve_tree_operation(self, summary, *, on_success, on_error) -> None:
+        if summary.state is OperationState.SUCCEEDED:
+            on_success(None)
+            return
+        on_error(self._operation_failure(summary))
 
     def remove(
         self,
@@ -398,13 +462,36 @@ class DaemonSftpServiceController:
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
     ) -> None:
-        self._path_mutation(
-            "sftp_remove",
-            path,
-            recursive=recursive,
-            on_success=on_success,
-            on_error=on_error,
-        )
+        if recursive:
+            self._recursive_remove(path, on_success=on_success, on_error=on_error)
+        else:
+            self._path_mutation(
+                "sftp_remove",
+                path,
+                on_success=on_success,
+                on_error=on_error,
+            )
+
+    def _recursive_remove(self, path, *, on_success, on_error) -> None:
+        service_id = self._ready_service_id_or_error(on_error)
+        if service_id is None:
+            return
+
+        def _op():
+            return self._client.sftp_remove(
+                SftpPathRequest(service_id=service_id, path=path, recursive=True)
+            )
+
+        def _on_started(summary) -> None:
+            self._watch_operation(
+                summary.operation_id,
+                on_terminal=lambda done: self._resolve_tree_operation(
+                    done, on_success=on_success, on_error=on_error
+                ),
+                on_error=on_error,
+            )
+
+        self._submit(_op, on_success=_on_started, on_error=on_error)
 
     def rename(
         self,
@@ -786,3 +873,93 @@ class DaemonSftpServiceController:
             self._bridge.submit(factory, on_success=on_success, on_error=on_error)
         except RuntimeError as exc:
             on_error(exc)
+
+    def _watch_operation(
+        self,
+        operation_id: OperationId,
+        *,
+        on_terminal: Callable[[OperationSummary], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        """Track a daemon operation and resolve its callbacks once terminal.
+
+        Polls ``get_operation`` on a short GLib timeout (the same pattern the
+        SSH key-copy window uses) rather than blocking the single bridge
+        worker; each poll is a quick independent RPC.
+        """
+        self._operation_watchers[operation_id] = (on_terminal, on_error)
+        self._ensure_operation_poller()
+
+    def _ensure_operation_poller(self) -> None:
+        if self._operation_poll_id is None:
+            self._operation_poll_id = GLib.timeout_add(
+                200, self._poll_operations
+            )
+
+    def _poll_operations(self) -> bool:
+        if self._closed:
+            self._stop_operation_poller()
+            return False
+        if not self._operation_watchers:
+            self._operation_poll_id = None
+            return False
+        for operation_id in list(self._operation_watchers):
+            self._submit(
+                lambda op_id=operation_id: self._client.get_operation(op_id),
+                on_success=lambda summary, op_id=operation_id: (
+                    self._on_operation_polled(op_id, summary)
+                ),
+                on_error=lambda error, op_id=operation_id: (
+                    self._fail_operation_watch(op_id, error)
+                ),
+            )
+        return True
+
+    def _on_operation_polled(self, operation_id, summary) -> None:
+        callbacks = self._operation_watchers.pop(operation_id, None)
+        if callbacks is None:
+            return
+        on_terminal, _on_error = callbacks
+        if not is_terminal_operation_state(summary.state):
+            self._operation_watchers[operation_id] = callbacks
+            return
+        on_terminal(summary)
+
+    def _fail_operation_watch(self, operation_id, error) -> None:
+        callbacks = self._operation_watchers.pop(operation_id, None)
+        if callbacks is None:
+            return
+        _on_terminal, on_error = callbacks
+        on_error(error)
+
+    def _stop_operation_poller(self) -> None:
+        poll_id = self._operation_poll_id
+        self._operation_poll_id = None
+        if poll_id is not None:
+            try:
+                GLib.source_remove(poll_id)
+            except Exception:
+                pass
+        pending = self._operation_watchers
+        self._operation_watchers = {}
+        for _operation_id, (_on_terminal, on_error) in pending.items():
+            try:
+                on_error(
+                    SshPilotError(
+                        ErrorCode.SFTP_SERVICE_NOT_READY,
+                        "The SFTP service closed before the operation finished",
+                    )
+                )
+            except Exception:
+                logger.debug("SFTP operation watcher teardown error", exc_info=True)
+
+    @staticmethod
+    def _operation_failure(summary: OperationSummary) -> BaseException:
+        message = (
+            summary.failure.message if summary.failure else summary.message
+        ) or "The operation failed"
+        code = summary.failure.code if summary.failure else ErrorCode.SFTP_COMMAND_FAILED.value
+        try:
+            return SshPilotError(ErrorCode(code), message)
+        except (TypeError, ValueError):
+            return SshPilotError(ErrorCode.SFTP_COMMAND_FAILED, message)

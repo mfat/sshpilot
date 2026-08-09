@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from math import isfinite
-from typing import NewType, Optional, Tuple
+from typing import Dict, NewType, Optional, Tuple
 
 from .common import (
     ClientId,
@@ -673,6 +673,9 @@ OperationId = NewType("OperationId", str)
 class OperationKind(str, Enum):
     KEY_DEPLOYMENT = "key_deployment"
     AUTHORIZED_KEY_REMOVAL = "authorized_key_removal"
+    SFTP_DIRECTORY_SIZE = "sftp_directory_size"
+    SFTP_REMOVE_TREE = "sftp_remove_tree"
+    SFTP_COPY_TREE = "sftp_copy_tree"
 
 
 class OperationState(str, Enum):
@@ -727,6 +730,7 @@ class OperationSummary:
     progress: Optional[float] = None
     owner_client_id: Optional[ClientId] = None
     failure: Optional[ServiceFailure] = None
+    result: Optional[Dict] = None
 
     def __post_init__(self) -> None:
         require_identifier(self.operation_id, "operation id")
@@ -760,3 +764,5 @@ class OperationSummary:
             require_identifier(self.owner_client_id, "operation owner client id")
         if self.failure is not None and type(self.failure) is not ServiceFailure:
             raise TypeError("operation failure must be ServiceFailure or None")
+        if self.result is not None and type(self.result) is not dict:
+            raise TypeError("operation result must be a mapping or None")

@@ -5652,6 +5652,7 @@ def operation_summary_to_wire(summary: Any) -> Dict[str, Any]:
         "progress": summary.progress,
         "owner_client_id": summary.owner_client_id,
         "failure": _service_failure_to_wire(summary.failure),
+        "result": _json_value(summary.result, "operation result"),
     }
 
 
@@ -5673,6 +5674,7 @@ def operation_summary_from_wire(value: Any) -> Any:
             "owner_client_id",
             "failure",
         },
+        optional={"result"},
         context="operation summary",
     )
     try:
@@ -5694,6 +5696,9 @@ def operation_summary_from_wire(value: Any) -> Any:
             progress = float(progress)
         if type(progress) is not float:
             raise ValueError("operation progress must be a number or null")
+    result = data.get("result")
+    if result is not None and type(result) is not dict:
+        raise ValueError("operation result must be a JSON object or null")
     return OperationSummary(
         operation_id=_identifier(data["operation_id"], "operation id"),
         kind=kind,
@@ -5712,6 +5717,7 @@ def operation_summary_from_wire(value: Any) -> Any:
             data["owner_client_id"], "operation owner client id"
         ),
         failure=_service_failure_from_wire(data["failure"]),
+        result=result,
     )
 
 

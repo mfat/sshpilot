@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.19",
+  "api_implementation_version": "0.20",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -559,6 +559,9 @@
     },
     "connections.delete_group": {
       "capability": "connections.groups"
+    },
+    "connections.delete_passphrase": {
+      "capability": "connections.secrets.write"
     },
     "connections.delete_password": {
       "capability": "connections.secrets.write"
@@ -1278,7 +1281,10 @@
     ],
     "OperationKind": [
       "key_deployment",
-      "authorized_key_removal"
+      "authorized_key_removal",
+      "sftp_directory_size",
+      "sftp_remove_tree",
+      "sftp_copy_tree"
     ],
     "OperationState": [
       "queued",
@@ -4404,6 +4410,13 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[ServiceFailure]"
+        },
+        {
+          "default": null,
+          "name": "result",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[Dict]"
         }
       ],
       "status": "Schema only"

@@ -102,7 +102,6 @@ from .models.operations import (
     SftpCreateFileRequest,
     SftpCreateFileResult,
     SftpDirectorySizeRequest,
-    SftpDirectorySizeResult,
     SftpFileAccess,
     SftpPathRequest,
     SftpReadFileRequest,
@@ -209,7 +208,6 @@ from .transport.codec import (
     sftp_create_file_request_to_wire,
     sftp_create_file_result_from_wire,
     sftp_directory_size_request_to_wire,
-    sftp_directory_size_result_from_wire,
     sftp_path_request_to_wire,
     sftp_read_file_request_to_wire,
     sftp_replace_file_request_to_wire,
@@ -219,6 +217,7 @@ from .transport.codec import (
     sftp_service_summary_from_wire,
     sftp_symlink_request_to_wire,
     scp_transfer_request_to_wire,
+    operation_summary_from_wire,
     start_transfer_request_to_wire,
     stop_daemon_request_to_wire,
     store_connection_password_request_to_wire,
@@ -1227,16 +1226,16 @@ class DaemonClient:
     def sftp_directory_size(
         self,
         request: SftpDirectorySizeRequest,
-    ) -> SftpDirectorySizeResult:
+    ) -> Any:
         self._require_capability(Capability.SFTP_READ)
         result = self._request(
             "sftp.directory_size",
             sftp_directory_size_request_to_wire(request),
         )
         try:
-            return sftp_directory_size_result_from_wire(result)
+            return operation_summary_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol("The daemon returned an invalid directory size result")
+            self._fail_protocol("The daemon returned an invalid directory size operation")
 
     def sftp_lstat(self, request: SftpPathRequest) -> RemoteFileEntry:
         self._require_capability(Capability.SFTP_METADATA)
@@ -1297,9 +1296,16 @@ class DaemonClient:
         if result is not None:
             self._fail_protocol("The daemon returned an invalid mkdir result")
 
-    def sftp_copy(self, request: SftpCopyRequest) -> None:
+    def sftp_copy(self, request: SftpCopyRequest) -> Any:
         self._require_capability(Capability.SFTP_MUTATE)
+        if request.recursive:
+            self._require_write_compatibility("recursive copy")
         result = self._request("sftp.copy", sftp_copy_request_to_wire(request))
+        if request.recursive:
+            try:
+                return operation_summary_from_wire(result)
+            except (TypeError, ValueError):
+                self._fail_protocol("The daemon returned an invalid SFTP copy operation")
         if result is not None:
             self._fail_protocol("The daemon returned an invalid SFTP copy result")
 
@@ -1309,11 +1315,16 @@ class DaemonClient:
         if result is not None:
             self._fail_protocol("The daemon returned an invalid rmdir result")
 
-    def sftp_remove(self, request: SftpPathRequest) -> None:
+    def sftp_remove(self, request: SftpPathRequest) -> Any:
         self._require_capability(Capability.SFTP_MUTATE)
         if request.recursive:
             self._require_write_compatibility("recursive removal")
         result = self._request("sftp.remove", sftp_path_request_to_wire(request))
+        if request.recursive:
+            try:
+                return operation_summary_from_wire(result)
+            except (TypeError, ValueError):
+                self._fail_protocol("The daemon returned an invalid remove operation")
         if result is not None:
             self._fail_protocol("The daemon returned an invalid remove result")
 
