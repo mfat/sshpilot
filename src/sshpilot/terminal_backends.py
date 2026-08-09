@@ -628,20 +628,64 @@ class VTETerminalBackend:
             env_list = [f"{key}={value}" for key, value in env.items()]
         cwd = cwd or None
         pty_flags = Vte.PtyFlags(flags) if flags else Vte.PtyFlags.DEFAULT
+
+        def spawn_complete(
+            terminal: Any,
+            pid: int,
+            error: Optional[Exception],
+            *_ignored: Any,
+        ) -> None:
+            # Keep the backend callback contract independent of the GI
+            # binding's callback-user-data layout.  In particular, VTE 0.76
+            # exposes an extra child_setup_data slot in this method.
+            if callback is not None:
+                callback(terminal, pid, error, user_data)
+
         # Terminal.spawn_async() is the terminal-aware convenience API: it
         # creates, sizes and attaches the PTY before spawning the child.
-        self.vte.spawn_async(
+        spawn_args = (
             pty_flags,
             cwd,
             list(argv),
             env_list,
             GLib.SpawnFlags.DEFAULT,
-            child_setup,
-            -1,
-            None,
-            callback,
-            user_data,
         )
+        try:
+            # Current PyGObject bindings expose the nullable arguments by
+            # name.  Keywords also avoid a VTE 0.76 marshalling issue where
+            # positional None values are assigned to the wrong GI slot.
+            self.vte.spawn_async(
+                pty_flags=spawn_args[0],
+                working_directory=spawn_args[1],
+                argv=spawn_args[2],
+                envv=spawn_args[3],
+                spawn_flags=spawn_args[4],
+                child_setup=child_setup,
+                timeout=-1,
+                cancellable=None,
+                callback=spawn_complete,
+                user_data=user_data,
+            )
+        except TypeError as exc:
+            logger.debug(
+                "VTE modern spawn_async signature unavailable; "
+                "retrying legacy GI signature: %s",
+                exc,
+            )
+            # Older VTE/PyGObject bindings expose child_setup_data explicitly
+            # between child_setup and timeout.  The callback closure above
+            # deliberately owns SSH Pilot's user_data.  Passing the native
+            # slot as well keeps the call aligned with the underlying C API,
+            # but callback delivery never depends on GI preserving it.
+            self.vte.spawn_async(
+                *spawn_args,
+                child_setup,
+                None,
+                -1,
+                None,
+                spawn_complete,
+                user_data,
+            )
 
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         return self.vte.connect("child-exited", callback)
@@ -751,13 +795,15 @@ class VTETerminalBackend:
             return False
 
     def clear_native_context_menu(self) -> None:
-        """Return ownership of the configured popover to GTK/VTE cleanup."""
+        """Release SSH Pilot state for the native VTE context menu.
+
+        Do not call ``set_context_menu(None)`` here.  VTE 0.76's GTK4
+        implementation dereferences the replacement menu while disconnecting
+        handlers from an existing menu, so passing NULL emits GLib criticals.
+        VTE owns the configured menu reference and releases it when the
+        terminal is replaced or disposed.
+        """
         self._native_context_callback = None
-        if hasattr(self.vte, "set_context_menu"):
-            try:
-                self.vte.set_context_menu(None)
-            except Exception:
-                logger.debug("Could not clear VTE native context menu", exc_info=True)
 
     def disconnect(self, handler_id: Any) -> None:
         try:
