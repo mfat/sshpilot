@@ -47,6 +47,7 @@ from .models.identity import (
     IdentityProviderRegistry,
     IdentityState,
     ListAuthorizedKeysRequest,
+    ListProviderAgentKeysRequest,
     RemoveAuthorizedKeyRequest,
     UpdateIdentityConfigurationRequest,
     UpdateIdentitySelectionRequest,
@@ -522,6 +523,11 @@ class SshPilotClient(Protocol):
         ...
 
     def list_agent_keys(self) -> AgentKeyList:
+        ...
+
+    def list_provider_agent_keys(
+        self, request: ListProviderAgentKeysRequest
+    ) -> AgentKeyList:
         ...
 
     def add_agent_key(self, request: AgentKeyMutationRequest) -> AgentKeyList:

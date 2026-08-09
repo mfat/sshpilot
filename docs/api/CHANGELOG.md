@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.27`; `PROTOCOL_VERSION` stays
+  `1.0`. Added the daemon-owned, provider-scoped agent-key read
+  `identity.provider.keys.get` (client method `list_provider_agent_keys` with
+  `ListProviderAgentKeysRequest`). The daemon runs the native `ssh-add -l`
+  against the named provider's agent environment (`'auto'` = the system
+  ssh-agent inherited by the daemon), so a caller can observe a specific
+  provider regardless of which provider is selected.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.26`; `PROTOCOL_VERSION` stays
   `1.0`. Added typed daemon-owned SSH key deletion by opaque `KeyId` and
   `KeyStoreScope` through `Capability.KEYS_WRITE`.

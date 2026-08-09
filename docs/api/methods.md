@@ -257,6 +257,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: get_identity_state status=daemon-only capability=identity.read -->
 <!-- api-method-contract: get_operation status=daemon-only capability=operations.read -->
 <!-- api-method-contract: list_agent_keys status=daemon-only capability=identity.read -->
+<!-- api-method-contract: list_provider_agent_keys status=daemon-only capability=identity.read -->
 <!-- api-method-contract: list_authorized_keys status=daemon-only capability=identity.read -->
 <!-- api-method-contract: remove_agent_key status=daemon-only capability=identity.operate -->
 <!-- api-method-contract: remove_authorized_key status=daemon-only capability=identity.operate -->
@@ -536,6 +537,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: identity.configuration.update capability=identity.write -->
 <!-- api-daemon-method: identity.deploy_key capability=identity.operate -->
 <!-- api-daemon-method: identity.providers.get capability=identity.read -->
+<!-- api-daemon-method: identity.provider.keys.get capability=identity.read -->
 <!-- api-daemon-method: identity.selection.update capability=identity.write -->
 <!-- api-daemon-method: identity.state.get capability=identity.read -->
 <!-- api-daemon-method: operations.cancel capability=operations.control -->
@@ -1670,6 +1672,16 @@ finally:
   separate identity phase review.
 - **Capability / purpose:** `identity.read`; list safe SSH-agent key metadata.
 - **Parameters / return:** None; returns `AgentKeyList`.
+
+<!-- api-method: list_provider_agent_keys -->
+## `list_provider_agent_keys`
+
+- **Status / review:** Implemented in the daemon identity service.
+- **Capability / purpose:** `identity.read`; list the keys loaded in one named
+  provider's agent (native `ssh-add -l`), scoped to a registry provider id
+  (`'auto'` = the system ssh-agent) regardless of the current selection.
+- **Parameters / return:** `ListProviderAgentKeysRequest`; returns
+  `AgentKeyList`.
 
 <!-- api-method: add_agent_key -->
 ## `add_agent_key`

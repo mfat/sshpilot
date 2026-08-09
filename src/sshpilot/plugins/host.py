@@ -342,6 +342,19 @@ class PluginHost:
         self.ui.bind_window(window)
         self._connect_cm_signals()
 
+    def daemon_client(self) -> Optional[Any]:
+        """The live daemon ``SshPilotClient`` once the main window is bound, or
+        None before the window/client exist.
+
+        Read-only observation facades (e.g. ``ctx.identities``) use this to
+        reach daemon-owned state through the typed API; they never fall back
+        to a frontend process route.
+        """
+        window = self._window
+        if window is None:
+            return None
+        return getattr(window, "client", None)
+
     def _connect_cm_signals(self) -> None:
         cm = self._cm
         # ConnectionManager overrides connect() (it's the async per-connection

@@ -51,6 +51,7 @@ from sshpilot.api.transport.codec import (
     known_hosts_snapshot_to_wire,
     list_authorized_keys_request_from_wire,
     list_keys_request_from_wire,
+    list_provider_agent_keys_request_from_wire,
     operation_id_request_from_wire,
     operation_summary_to_wire,
     public_key_result_to_wire,
@@ -259,6 +260,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "identity.selection.update": Capability.IDENTITY_WRITE,
     "identity.configuration.update": Capability.IDENTITY_WRITE,
     "identity.agent.keys.get": Capability.IDENTITY_READ,
+    "identity.provider.keys.get": Capability.IDENTITY_READ,
     "identity.agent.key.add": Capability.IDENTITY_OPERATE,
     "identity.agent.key.remove": Capability.IDENTITY_OPERATE,
     "identity.deploy_key": Capability.IDENTITY_OPERATE,
@@ -459,6 +461,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "keys.delete",
         "keys.verify_passphrase",
         "identity.agent.keys.get",
+        "identity.provider.keys.get",
         "identity.agent.key.add",
         "identity.agent.key.remove",
         "identity.deploy_key",
@@ -718,6 +721,7 @@ class RequestDispatcher:
             "identity.selection.update": self._handle_update_identity_selection,
             "identity.configuration.update": self._handle_update_identity_configuration,
             "identity.agent.keys.get": self._handle_list_agent_keys,
+            "identity.provider.keys.get": self._handle_list_provider_agent_keys,
             "identity.agent.key.add": self._handle_add_agent_key,
             "identity.agent.key.remove": self._handle_remove_agent_key,
             "identity.deploy_key": self._handle_deploy_key,
@@ -2565,6 +2569,21 @@ class RequestDispatcher:
         service = self._required_identity_service()
         return DeferredResult(
             operation=lambda: agent_key_list_to_wire(service.list_agent_keys()),
+            command_key="identity.agent",
+            on_rejected=lambda: None,
+        )
+
+    def _handle_list_provider_agent_keys(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = list_provider_agent_keys_request_from_wire(request.params)
+        service = self._required_identity_service()
+        return DeferredResult(
+            operation=lambda: agent_key_list_to_wire(
+                service.list_provider_agent_keys(typed_request.provider_id)
+            ),
             command_key="identity.agent",
             on_rejected=lambda: None,
         )

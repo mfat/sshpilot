@@ -252,23 +252,80 @@ class _SecretStore:
 class _IdentityView:
     """Read-only view of SSH identities (``ctx.identities``).
 
-    Lists the identities the configured identity providers currently expose (e.g.
-    keys loaded in the system ssh-agent), paralleling the credential side. This is
-    observation only — choosing/configuring providers is the user's job, not the
-    plugin's.
+    Lists the keys the identity providers currently expose (e.g. keys loaded
+    in the system ssh-agent), paralleling the credential side. Everything is
+    answered by the daemon through the typed API — the facade never runs
+    ``ssh-add`` or reads a frontend ``IdentityManager``. This is observation
+    only — choosing/configuring providers is the user's job, not the plugin's.
     """
 
-    def list(self) -> List["Identity"]:
-        """All identities across currently-available providers."""
-        from ..identity import get_identity_manager
+    # The daemon registry id of the system ssh-agent provider. The legacy
+    # ``provider_name`` on returned ``Identity`` objects stays "system-agent".
+    SYSTEM_AGENT_PROVIDER = "auto"
 
-        return get_identity_manager().list_identities()
+    def __init__(self, client_resolver: Optional[Callable[[], Any]] = None):
+        self._client_resolver = client_resolver
+
+    def _client(self) -> Any:
+        resolver = self._client_resolver
+        if not callable(resolver):
+            return None
+        try:
+            return resolver()
+        except Exception:
+            return None
+
+    def list(self) -> List["Identity"]:
+        """All identities the system ssh-agent currently exposes.
+
+        An empty list means the daemon client is unavailable or the agent
+        cannot be reached — never a partial frontend fallback.
+        """
+        client = self._client()
+        if client is None:
+            return []
+        from ..api.models.identity import ListProviderAgentKeysRequest
+        from ..identity import Identity
+
+        try:
+            key_list = client.list_provider_agent_keys(
+                ListProviderAgentKeysRequest(provider_id=self.SYSTEM_AGENT_PROVIDER)
+            )
+        except Exception:
+            return []
+        identities: List[Identity] = []
+        for key in key_list.keys:
+            fingerprint = key.fingerprint
+            identities.append(
+                Identity(
+                    id=fingerprint,
+                    display_name=key.comment or fingerprint,
+                    fingerprint=fingerprint,
+                    provider_name="system-agent",
+                )
+            )
+        return identities
 
     def is_agent_available(self) -> bool:
-        """Whether the system ssh-agent is reachable right now."""
-        from ..identity import get_identity_manager
+        """Whether the system ssh-agent is reachable right now.
 
-        return get_identity_manager().system_agent().is_available()
+        Answered from daemon-owned provider state: the availability flag on
+        the registry descriptor for the ``'auto'`` (system ssh-agent)
+        provider, even when another provider is selected.
+        """
+        client = self._client()
+        if client is None:
+            return False
+        try:
+            registry = client.get_identity_providers()
+        except Exception:
+            return False
+        if registry is None:
+            return False
+        for provider in registry.providers:
+            if provider.provider_id == self.SYSTEM_AGENT_PROVIDER:
+                return bool(provider.available)
+        return False
 
 
 class _SettingStore:
@@ -531,7 +588,10 @@ class PluginContext:
         self.events = _EventsFacade(host.events, plugin_id) if host is not None else None
         self.ui = _UiFacade(host.ui, plugin_id) if host is not None else None
         self.secrets = _SecretStore(connection_manager, plugin_id)
-        self.identities = _IdentityView()
+        client_resolver = getattr(host, "daemon_client", None)
+        self.identities = _IdentityView(
+            client_resolver if callable(client_resolver) else None
+        )
         self.settings = _SettingStore(app_config, plugin_id)
         # Self-contained helpers (no host needed) — available even in for_spawn.
         self.files = _FilesFacade(self._data_dir)

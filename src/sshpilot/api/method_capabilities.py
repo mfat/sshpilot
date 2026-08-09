@@ -108,6 +108,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "update_identity_selection": Capability.IDENTITY_WRITE,
     "update_identity_configuration": Capability.IDENTITY_WRITE,
     "list_agent_keys": Capability.IDENTITY_READ,
+    "list_provider_agent_keys": Capability.IDENTITY_READ,
     "add_agent_key": Capability.IDENTITY_OPERATE,
     "remove_agent_key": Capability.IDENTITY_OPERATE,
     "deploy_key": Capability.IDENTITY_OPERATE,

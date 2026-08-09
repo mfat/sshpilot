@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.26",
+  "api_implementation_version": "0.27",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -287,6 +287,10 @@
     },
     "list_interactions": {
       "capability": "interactions.read",
+      "status": "daemon-only"
+    },
+    "list_provider_agent_keys": {
+      "capability": "identity.read",
       "status": "daemon-only"
     },
     "list_sessions": {
@@ -735,6 +739,9 @@
     },
     "identity.deploy_key": {
       "capability": "identity.operate"
+    },
+    "identity.provider.keys.get": {
+      "capability": "identity.read"
     },
     "identity.providers.get": {
       "capability": "identity.read"

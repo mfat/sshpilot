@@ -145,8 +145,23 @@ class DaemonIdentityService:
 
     def list_agent_keys(self) -> AgentKeyList:
         """List the keys loaded in the selected agent (``ssh-add -l``)."""
+        return self._list_agent_keys(None)
+
+    def list_provider_agent_keys(self, provider_id: str) -> AgentKeyList:
+        """List the keys loaded in one named provider's agent (``ssh-add -l``).
+
+        Scoped to an explicit registry provider id (e.g. ``'auto'`` for the
+        system ssh-agent) so the caller observes that provider regardless of
+        which provider is currently selected.  Raises ``AGENT_UNAVAILABLE``
+        when the named provider's agent cannot be reached.
+        """
+        if type(provider_id) is not str or not provider_id.strip():
+            raise TypeError("a non-empty provider id is required")
+        return self._list_agent_keys(provider_id.strip().lower())
+
+    def _list_agent_keys(self, provider_id: Optional[str]) -> AgentKeyList:
         returncode, stdout, _stderr = self._run_ssh_add(
-            ["-l"], askpass=False
+            ["-l"], askpass=False, provider_id=provider_id
         )
         if returncode == 1:
             # "The agent has no identities."
@@ -195,9 +210,18 @@ class DaemonIdentityService:
         return self.list_agent_keys()
 
     def _run_ssh_add(
-        self, args: Sequence[str], *, askpass: bool
+        self,
+        args: Sequence[str],
+        *,
+        askpass: bool,
+        provider_id: Optional[str] = None,
     ) -> Tuple[int, str, str]:
-        env = self._state.agent_environment(self._base_env())
+        if provider_id is None:
+            env = self._state.agent_environment(self._base_env())
+        else:
+            env = self._state.provider_agent_environment(
+                provider_id, self._base_env()
+            )
         argv = ["ssh-add", *[str(arg) for arg in args]]
         scope_id: Optional[SessionId] = None
         if askpass and self._broker is not None:

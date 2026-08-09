@@ -207,6 +207,21 @@ class AgentKeyList:
 
 
 @dataclass(frozen=True)
+class ListProviderAgentKeysRequest:
+    """List the keys loaded in one named identity provider's agent.
+
+    Read-only, scoped to an explicit provider id (``'auto'`` = the system
+    ssh-agent inherited by the daemon) so a plugin may observe a specific
+    provider regardless of which provider is currently selected.
+    """
+
+    provider_id: str
+
+    def __post_init__(self) -> None:
+        _validate_safe_text(self.provider_id, "provider id", allow_empty=False)
+
+
+@dataclass(frozen=True)
 class AgentKeyMutationRequest:
     """Add or remove one daemon-known key in the selected agent.
 

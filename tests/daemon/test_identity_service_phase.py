@@ -24,7 +24,7 @@ class _Completed:
         self.stderr = stderr
 
     def communicate(self, *_args, **_kwargs):
-        return self.stdout, self.stderr
+        return self.stdout.getvalue(), self.stderr
 
     def wait(self, *_args, **_kwargs):
         return self.returncode
@@ -67,10 +67,10 @@ class _Provider:
         return ["ssh", connection_id, command], {"PATH": "/usr/bin"}
 
 
-def _service(tmp_path, popen):
+def _service(tmp_path, popen, *, state_environ=None, base_environ=None):
     state = IdentityStateService(
         tmp_path / "identity.json",
-        environ={"PATH": "/usr/bin"},
+        environ={"PATH": "/usr/bin", **(state_environ or {})},
         ssh_copy_id_probe=lambda: True,
     )
     return DaemonIdentityService(
@@ -79,7 +79,7 @@ def _service(tmp_path, popen):
         OperationRuntime(),
         launch_provider=_Provider(),
         popen=popen,
-        environ={"PATH": "/usr/bin"},
+        environ={"PATH": "/usr/bin", **(base_environ or {})},
     )
 
 
@@ -102,6 +102,60 @@ def test_agent_failure_is_typed(tmp_path):
     with pytest.raises(SshPilotError) as raised:
         service.list_agent_keys()
     assert raised.value.details["code"] == "agent_unavailable"
+
+
+def test_provider_agent_keys_scope_to_named_provider_not_selection(tmp_path):
+    """A provider-scoped listing runs ``ssh-add -l`` against the *named*
+    provider's agent environment, not the currently selected one."""
+    calls = []
+
+    def popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return _Completed(
+            returncode=0,
+            stdout="256 SHA256:abc123 ed25519 user@host (ED25519)\n",
+        )
+
+    service = _service(
+        tmp_path,
+        popen,
+        state_environ={"SSH_AUTH_SOCK": "/run/user/1000/agent.sock"},
+    )
+    result = service.list_provider_agent_keys("auto")
+    assert len(result.keys) == 1
+    assert result.keys[0].fingerprint == "SHA256:abc123"
+    assert calls[0][0] == ["ssh-add", "-l"]
+    # The system-agent provider forwards the daemon's inherited SSH_AUTH_SOCK.
+    assert calls[0][1]["env"]["SSH_AUTH_SOCK"] == "/run/user/1000/agent.sock"
+
+
+def test_provider_agent_keys_use_fixed_socket_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/test")
+    calls = []
+
+    def popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return _Completed(returncode=0, stdout="")
+
+    service = _service(tmp_path, popen)
+    result = service.list_provider_agent_keys("onepassword")
+    assert result.keys == ()
+    assert calls[0][0] == ["ssh-add", "-l"]
+    assert calls[0][1]["env"]["SSH_AUTH_SOCK"] == "/home/test/.1password/agent.sock"
+    assert "SSH_AGENT_PID" not in calls[0][1]["env"]
+
+
+def test_provider_agent_keys_unavailable_is_typed(tmp_path):
+    service = _service(tmp_path, lambda *_args, **_kwargs: _Completed(returncode=2))
+    with pytest.raises(SshPilotError) as raised:
+        service.list_provider_agent_keys("auto")
+    assert raised.value.details["code"] == "agent_unavailable"
+
+
+def test_provider_agent_keys_requires_provider_id(tmp_path):
+    service = _service(tmp_path, lambda *_args, **_kwargs: _Completed())
+    with pytest.raises(TypeError):
+        service.list_provider_agent_keys("")
 
 
 def test_ssh_copy_id_deployment_registers_operation(tmp_path):

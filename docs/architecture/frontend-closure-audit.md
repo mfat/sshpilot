@@ -67,7 +67,7 @@ update both this audit and `tests/architecture/test_frontend_closure.py`.
 | Plugin secrets | plugin credential actions and protocol spawn context | `PluginContext.get_secret`, `PluginContext.set_secret`, `PluginContext.delete_secret`, `_SecretStore.get`, `_SecretStore.set`, `_SecretStore.delete` | `DaemonConnectionServices` and protected secret service through `SshPilotClient` | `tests/daemon/test_secret_dispatch.py`, `tests/test_plugin_connection_services.py` | API/daemon owned | Existing daemon routing is recorded as correct and is not being migrated again. |
 | Plugin settings, presentation state | built-in plugin settings panels | `_SettingStore.get`, `_SettingStore.set` | None for presentation-only keys | `tests/test_plugin_context.py`, built-in plugin tests | legitimate frontend/platform-local | Keys such as `last_host`, `refresh_interval`, `log_tail`, `max_log_lines`, and `show_all_containers` are presentation/local plugin state. The same facade is also used for operational settings below, so the identities remain classified as migration-required overall. |
 | Plugin settings, operational state | Docker, EasyEnv, and Mock VPS plugin actions | `_SettingStore.get`, `_SettingStore.set` | No typed daemon settings owner for plugin operational state | built-in plugin tests only; no headless daemon proof | migration required | Active examples include Docker `runtime:<nickname>`, `runtime_mode:<nickname>`, `sudo:<nickname>`, and `controlmaster`, EasyEnv `account_uuid`/`base_url`, and Mock VPS `region`. The exact ownership blocker is `_SettingStore.set` (with `_SettingStore.get` required to read the same state); it is not frontend-only merely because it is namespaced under `plugins.*`. |
-| Identity listing and agent availability | plugin identity-aware actions and protocol spawn context | `_IdentityView.list`, `_IdentityView.is_agent_available` | No daemon identity API route; process-wide `IdentityManager` and system-agent provider | `tests/daemon/test_identity_service.py`, `tests/test_agent_preload.py` cover daemon identity behavior, not this facade route | migration required | The public `ctx.identities` surface is usable and therefore is not dead compatibility. Its provider can execute local `ssh-add -l`; both exact facade identities remain blockers until routed through the daemon identity API. |
+| Identity listing and agent availability | plugin identity-aware actions and protocol spawn context | `_IdentityView.list`, `_IdentityView.is_agent_available` | daemon-owned identity state and native agent inspection through `SshPilotClient` (`identity.provider.keys.get`, `identity.providers.get`) | `tests/daemon/test_socket_identity_api.py`, `tests/daemon/test_identity_service_phase.py`, `tests/test_plugin_host.py` | API/daemon owned | `ctx.identities` is answered from daemon provider state: availability comes from the registry descriptor for the `'auto'` (system ssh-agent) provider even when another provider is selected, and identity listing runs the native `ssh-add -l` daemon-side against that provider's agent environment. The facade never runs `ssh-add` or reads a frontend `IdentityManager`. |
 | Key generate/list | plugin key panels | `PluginContext.generate_key`, `PluginContext.list_keys` | daemon-backed `KeyManager`/`KeyController` | `tests/test_key_manager_daemon.py`, `tests/daemon/test_key_dispatch.py` | API/daemon owned | Existing KeyManager calls use the daemon-backed key service; GTK does not invoke `ssh-keygen` for these operations. |
 | Key deletion | plugin key panels | `PluginContext.delete_key` → `delete_key` / `keys.delete` (`KEYS_WRITE`) | `DaemonKeyService` → GTK-free `KeyService.delete_key` | `tests/daemon/test_key_service.py`, `tests/daemon/test_key_dispatch.py`, `tests/daemon/test_socket_key_api.py`, plugin compatibility tests | API/daemon owned | The legacy private-path signature is compatibility-only: the host matches it against daemon-listed metadata and deletes by opaque `KeyId`; no frontend file operation remains. |
 | Key deployment compatibility method | legacy plugin callers | `PluginContext.copy_key_to_host` | None in current production graph; `deploy_key` is the authoritative API | daemon key-deployment tests; no production caller for this method | dead/unreachable code | This is the known direct `ssh-copy-id` compatibility path. It is not a replacement for the existing daemon deploy route and must not be reactivated. |
@@ -129,8 +129,8 @@ identity; the prose matrix above remains the human-readable operation audit.
 `_SecretStore.get` | `API/daemon owned`
 `_SecretStore.set` | `API/daemon owned`
 `_SecretStore.delete` | `API/daemon owned`
-`_IdentityView.list` | `migration required`
-`_IdentityView.is_agent_available` | `migration required`
+`_IdentityView.list` | `API/daemon owned`
+`_IdentityView.is_agent_available` | `API/daemon owned`
 `_SettingStore.get` | `migration required`
 `_SettingStore.set` | `migration required`
 `_FilesFacade.path` | `legitimate frontend/platform-local`
@@ -174,7 +174,7 @@ following are the individually audited identities at this base.
 |---|---|---|
 | M5 | `secret_storage.py: subprocess`, `secret_storage.py: SecretManager`, `bitwarden_setup.py: subprocess` | The first two are shared daemon/askpass compatibility; Bitwarden installation is a narrow platform installer. No active GTK vault owner remains. |
 | M7 | `agent_client.py: subprocess`; `askpass_utils.py: subprocess, ssh_binary`; `autocomplete.py: subprocess`; `file_manager/openssh_backend.py: subprocess`; `providers/system_agent.py: subprocess, ssh_binary`; `scp_utils.py: subprocess`; `sftp_utils.py: subprocess`; `ssh_config_utils.py: subprocess, ssh_binary`; `ssh_multiplex.py: subprocess, ssh_binary`; `terminal.py: subprocess` | These are respectively local helper, daemon askpass/identity compatibility, dead legacy routes, external OS presentation, or shared native-process compatibility. ControlMaster teardown was removed from GTK and moved behind `SshOverridesService`; the remaining helper identity is compatibility debt. |
-| M8 | `plugins/api.py: subprocess` | Function-level identities are now audited by the final guard: active `run_command`, `run_command_stream`/`_spawn_stream`, and both `acquire_multiplex` and `release_multiplex` remain closure blockers; `copy_key_to_host`, `get_effective_ssh_config`, and the legacy branch of `ensure_local_forward` are explicitly dead compatibility identities. The separate facade inventory also records settings, identity, and widget-backed session blockers that do not contain subprocess calls; key deletion is now daemon-owned. |
+| M8 | `plugins/api.py: subprocess` | Function-level identities are now audited by the final guard: active `run_command`, `run_command_stream`/`_spawn_stream`, and both `acquire_multiplex` and `release_multiplex` remain closure blockers; `copy_key_to_host`, `get_effective_ssh_config`, and the legacy branch of `ensure_local_forward` are explicitly dead compatibility identities. The separate facade inventory also records settings and widget-backed session blockers that do not contain subprocess calls; key deletion and the identity view are now daemon-owned. |
 
 ### `DAEMON_DEBT` (16 identities)
 
@@ -193,7 +193,7 @@ prevents silently broadening the exception. `CORE_DEBT` is empty.
 
 ## Closure blockers and next semantic APIs
 
-Remaining migration blockers: **6 semantic capabilities** (**11 public facade
+Remaining migration blockers: **5 semantic capabilities** (**9 public facade
 identities**, plus the supporting `PluginHost`/stream implementation
 identities listed below).
 
@@ -212,10 +212,6 @@ identities listed below).
   authoritative typed owner. Exact identities: `_SettingStore.get` and
   `_SettingStore.set`; presentation-only keys are separately allowed, but the
   shared facade cannot currently distinguish ownership at the API boundary.
-* `P7-PLUGIN-IDENTITIES`: route the supported plugin identity view through the
-  daemon identity API. Exact identities: `_IdentityView.list` and
-  `_IdentityView.is_agent_available`; the current system-agent provider can
-  execute local `ssh-add -l`.
 * `P7-PLUGIN-SESSION-VIEW`: replace widget-backed plugin session inspection
   and input with typed session/terminal API operations. Exact identities:
   `PluginContext.list_sessions`, `PluginContext.read_terminal`,
@@ -231,18 +227,19 @@ contract is designed and tested headlessly.
 
 <!-- phase7-plugin-report:start -->
 plugin capabilities audited: 53
-api/daemon owned: 20
+api/daemon owned: 22
 legitimate frontend/platform-local: 20
 dead/unreachable compatibility: 2
-migration-required public identities: 11
-semantic migration capabilities: 6
+migration-required public identities: 9
+semantic migration capabilities: 5
 <!-- phase7-plugin-report:end -->
 
 These counts are derived from the classification registry by the closure
 guard.  They are identity-based and deliberately include the mixed settings
 facade as migration-required because it is used for operational state. No
 other plugin migration is implemented in this correction; this slice closes
-only `P7-PLUGIN-KEY-DELETE`, and the other six semantic blockers remain.
+`P7-PLUGIN-IDENTITIES` (the plugin identity view is daemon-routed through the
+typed identity API), and the other five semantic blockers remain.
 
 ## Version and evidence
 

@@ -5578,6 +5578,27 @@ def agent_key_list_from_wire(value: Any) -> Any:
     return AgentKeyList(keys=tuple(_agent_key_from_wire(key) for key in keys))
 
 
+def list_provider_agent_keys_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.identity import ListProviderAgentKeysRequest
+
+    if type(request) is not ListProviderAgentKeysRequest:
+        raise TypeError("ListProviderAgentKeysRequest is required")
+    return {"provider_id": request.provider_id}
+
+
+def list_provider_agent_keys_request_from_wire(value: Any) -> Any:
+    from ..models.identity import ListProviderAgentKeysRequest
+
+    data = _strict_fields(
+        value,
+        required={"provider_id"},
+        context="list provider agent keys request",
+    )
+    return ListProviderAgentKeysRequest(
+        provider_id=_identifier(data["provider_id"], "provider id")
+    )
+
+
 def agent_key_mutation_request_to_wire(request: Any) -> Dict[str, Any]:
     from ..models.identity import AgentKeyMutationRequest
 

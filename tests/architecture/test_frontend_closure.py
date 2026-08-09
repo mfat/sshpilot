@@ -135,8 +135,8 @@ PLUGIN_FACADE_SURFACE = {
     "_SecretStore.get": "API/daemon owned",
     "_SecretStore.set": "API/daemon owned",
     "_SecretStore.delete": "API/daemon owned",
-    "_IdentityView.list": "migration required",
-    "_IdentityView.is_agent_available": "migration required",
+    "_IdentityView.list": "API/daemon owned",
+    "_IdentityView.is_agent_available": "API/daemon owned",
     "_SettingStore.get": "migration required",
     "_SettingStore.set": "migration required",
     "_FilesFacade.path": "legitimate frontend/platform-local",
@@ -172,10 +172,6 @@ SEMANTIC_BLOCKER_GROUPS = {
         "PluginContext.release_multiplex",
     },
     "P7-PLUGIN-SETTINGS": {"_SettingStore.get", "_SettingStore.set"},
-    "P7-PLUGIN-IDENTITIES": {
-        "_IdentityView.list",
-        "_IdentityView.is_agent_available",
-    },
     "P7-PLUGIN-SESSION-VIEW": {
         "PluginContext.list_sessions",
         "PluginContext.read_terminal",
@@ -536,3 +532,36 @@ def test_plugin_gap_identities_are_still_exactly_deferred():
     observed = _plugin_backend_functions(tree)
     assert observed == PLUGIN_API_BACKEND_IDENTITIES | {"run_local_command"}
     assert not PLUGIN_API_BACKEND_IDENTITIES & PLUGIN_API_LOCAL_FUNCTIONS
+
+
+def test_identity_view_is_daemon_client_routed_not_frontend_owned():
+    """The plugin identity facade answers only from daemon-owned state.
+
+    ``ctx.identities`` must never fall back to the frontend ``IdentityManager``
+    or run ``ssh-add`` locally; its results come through ``SshPilotClient``
+    (``identity.provider.keys.get`` / ``identity.providers.get``).
+    """
+    nodes = _class_method_nodes(SOURCE / "plugins/api.py", {"_IdentityView"})
+    assert {"_IdentityView.list", "_IdentityView.is_agent_available"} <= set(nodes)
+
+    for identity in ("_IdentityView.list", "_IdentityView.is_agent_available"):
+        node = nodes[identity]
+        names = {
+            child.attr for child in ast.walk(node) if isinstance(child, ast.Attribute)
+        }
+        assert "get_identity_manager" not in names, identity
+        assert "system_agent" not in names, identity
+        assert "ssh_add" not in names, identity
+
+    daemon_routes = {
+        child.attr
+        for child in ast.walk(nodes["_IdentityView.list"])
+        if isinstance(child, ast.Attribute)
+    }
+    assert "list_provider_agent_keys" in daemon_routes
+    availability_routes = {
+        child.attr
+        for child in ast.walk(nodes["_IdentityView.is_agent_available"])
+        if isinstance(child, ast.Attribute)
+    }
+    assert "get_identity_providers" in availability_routes

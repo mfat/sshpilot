@@ -185,6 +185,7 @@ class FakeWindow:
         self._plugins_menu_section = FakeMenuSection()
         self.terminal_manager = FakeTerminalManager()
         self.key_manager = FakeKeyManager()
+        self.client = None
         self._actions = {}
         self.shown_tab_view = 0
 
@@ -525,3 +526,139 @@ def test_loader_builds_per_plugin_context(monkeypatch):
     assert ("ssh", "ssh", True) in seen_ids
     assert ("telnet", "telnet", True) in seen_ids
     assert captured["ssh"] is not captured["telnet"]  # distinct contexts
+
+
+# --- identity facade (daemon-owned) ---------------------------------------
+
+class FakeDaemonClient:
+    """Minimal SshPilotClient used by the identity facade tests."""
+
+    def __init__(self, registry=None, agent_keys=None):
+        self.registry = registry
+        self.agent_keys = agent_keys
+        self.calls = []
+
+    def get_identity_providers(self):
+        self.calls.append("get_identity_providers")
+        return self.registry
+
+    def list_provider_agent_keys(self, request):
+        self.calls.append(("list_provider_agent_keys", request.provider_id))
+        return self.agent_keys
+
+
+def _identity_ctx(fake_client):
+    cm = FakeCM()
+    host = PluginHost(connection_manager=cm)
+    window = FakeWindow()
+    window.client = fake_client
+    host.bind_window(window)
+    return PluginContext(plugin_id="acme", app_config=FakeConfig(),
+                         connection_manager=cm,
+                         protocol_registry=registry_mod.ProtocolRegistry(),
+                         host=host)
+
+
+def _registry(auto_available, *, selected="auto"):
+    from sshpilot.api.models.identity import IdentityProviderDescriptor, IdentityProviderRegistry
+
+    def _descriptor(provider_id, label, available, selected):
+        return IdentityProviderDescriptor(
+            provider_id=provider_id,
+            label=label,
+            available=available,
+            selected=selected,
+            effective_agent_socket="/run/user/1000/agent.sock",
+            custom_socket_required=False,
+            capabilities=("ssh_auth_sock",),
+        )
+
+    return IdentityProviderRegistry(
+        providers=(
+            _descriptor("auto", "Automatic (system ssh-agent)", auto_available,
+                        selected == "auto"),
+            _descriptor("onepassword", "1Password", True, selected == "onepassword"),
+        ),
+        revision="rev-1",
+    )
+
+
+def test_identities_is_agent_available_comes_from_daemon_state():
+    """ctx.identities.is_agent_available() reflects daemon-owned provider
+    state: the 'auto' (system ssh-agent) descriptor's flag, even when another
+    provider is selected."""
+    client = FakeDaemonClient(registry=_registry(True, selected="onepassword"))
+    ctx = _identity_ctx(client)
+    assert ctx.identities.is_agent_available() is True
+
+    unavailable = FakeDaemonClient(registry=_registry(False))
+    ctx = _identity_ctx(unavailable)
+    assert ctx.identities.is_agent_available() is False
+
+    ctx = _identity_ctx(FakeDaemonClient(registry=None))
+    assert ctx.identities.is_agent_available() is False
+
+
+def test_identities_list_routes_through_daemon_provider_agent_keys():
+    from sshpilot.api.models.identity import AgentKey, AgentKeyList
+
+    client = FakeDaemonClient(
+        registry=_registry(True),
+        agent_keys=AgentKeyList(
+            keys=(
+                AgentKey(fingerprint="SHA256:abc", comment="user@host", key_type="ed25519"),
+                AgentKey(fingerprint="SHA256:def", comment="", key_type="rsa"),
+            )
+        ),
+    )
+    ctx = _identity_ctx(client)
+    identities = ctx.identities.list()
+    assert client.calls == [("list_provider_agent_keys", "auto")]
+    assert [identity.fingerprint for identity in identities] == ["SHA256:abc", "SHA256:def"]
+    assert identities[0].provider_name == "system-agent"
+    assert identities[0].display_name == "user@host"
+    assert identities[1].display_name == "SHA256:def"  # falls back to fingerprint
+
+
+def test_identities_facade_never_uses_frontend_identity_manager(monkeypatch):
+    """The facade answers from the daemon client even when the frontend
+    IdentityManager is unavailable — proving there is no frontend fallback."""
+    from sshpilot.api.models.identity import AgentKey, AgentKeyList
+    from sshpilot import identity as identity_module
+
+    def boom(*_a, **_k):
+        raise AssertionError("frontend identity manager must not be used")
+
+    monkeypatch.setattr(identity_module, "get_identity_manager", boom)
+
+    client = FakeDaemonClient(
+        registry=_registry(True),
+        agent_keys=AgentKeyList(
+            keys=(AgentKey(fingerprint="SHA256:abc", comment="user@host", key_type="ed25519"),)
+        ),
+    )
+    ctx = _identity_ctx(client)
+    assert ctx.identities.list()[0].fingerprint == "SHA256:abc"
+    assert ctx.identities.is_agent_available() is True
+
+
+def test_identities_facade_client_error_returns_empty_not_raise():
+    class _Broken:
+        def get_identity_providers(self):
+            raise OSError("no socket")
+
+        def list_provider_agent_keys(self, _request):
+            raise RuntimeError("boom")
+
+    ctx = _identity_ctx(_Broken())
+    assert ctx.identities.list() == []
+    assert ctx.identities.is_agent_available() is False
+
+
+def test_identities_facade_hostless_is_inert():
+    cm = FakeCM()
+    ctx = PluginContext(plugin_id="x", app_config=FakeConfig(),
+                        connection_manager=cm,
+                        protocol_registry=registry_mod.ProtocolRegistry(), host=None)
+    assert ctx.identities.list() == []
+    assert ctx.identities.is_agent_available() is False

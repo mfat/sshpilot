@@ -210,6 +210,41 @@ class IdentityStateService:
                 env[var] = value
         return env
 
+    def provider_agent_environment(
+        self, provider_id: str, base_env: Mapping[str, str]
+    ) -> Dict[str, str]:
+        """Return a copy of *base_env* with one *named* provider's agent applied.
+
+        Unlike :meth:`agent_environment`, which resolves the *selected*
+        provider, this scopes to an explicit registry provider id so callers
+        can observe a specific provider regardless of the current selection:
+
+        * ``'auto'`` (the system ssh-agent): the daemon's inherited
+          ``SSH_AUTH_SOCK``/``SSH_AGENT_PID`` are forwarded;
+        * a fixed-socket provider (``'onepassword'``, ``'custom'``):
+          ``SSH_AUTH_SOCK`` points at the provider's socket.
+
+        Unknown provider ids resolve to the system agent.  Never raises: an
+        unreadable settings file degrades to the canonical defaults.
+        """
+        try:
+            with self._lock:
+                semantic = self._semantic(self._load_view())
+        except Exception:  # defensive: the launch path must not break
+            logger.debug("identity view unavailable; using defaults", exc_info=True)
+            semantic = dict(DEFAULT_IDENTITY_SETTINGS)
+        env = dict(base_env)
+        socket = self._provider_socket(provider_id, semantic)
+        if socket:
+            env["SSH_AUTH_SOCK"] = socket
+            env.pop("SSH_AGENT_PID", None)
+            return env
+        for var in _AGENT_ENV_VARS:
+            value = self._environ.get(var)
+            if value:
+                env[var] = value
+        return env
+
     def effective_agent_socket(self) -> str:
         """The agent socket the selected provider effectively uses (or '')."""
         try:
@@ -241,6 +276,24 @@ class IdentityStateService:
             return None
         # 'auto', 'system-agent', and unknown selections: system agent.
         return None
+
+    def _provider_socket(
+        self, provider_id: str, semantic: Mapping[str, Any]
+    ) -> str:
+        """The explicit provider's fixed agent socket, or '' for the system agent.
+
+        Mirrors :meth:`_resolve_socket_provider` but for a *named* provider id
+        rather than the current selection, so a provider can be observed even
+        when it is not selected.
+        """
+        name = str(provider_id or "").strip().lower()
+        if name == ONEPASSWORD_PROVIDER:
+            return os.path.expanduser(ONEPASSWORD_SOCKET)
+        if name == CUSTOM_PROVIDER:
+            socket = semantic["custom_socket"]
+            return os.path.expanduser(socket) if socket else ""
+        # 'auto', 'system-agent', and unknown provider ids: system agent.
+        return ""
 
     def _effective_socket(self, semantic: Mapping[str, Any]) -> str:
         provider = self._resolve_socket_provider(semantic)

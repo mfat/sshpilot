@@ -410,6 +410,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "update_identity_selection": Capability.IDENTITY_WRITE,
     "update_identity_configuration": Capability.IDENTITY_WRITE,
     "list_agent_keys": Capability.IDENTITY_READ,
+    "list_provider_agent_keys": Capability.IDENTITY_READ,
     "add_agent_key": Capability.IDENTITY_OPERATE,
     "remove_agent_key": Capability.IDENTITY_OPERATE,
     "deploy_key": Capability.IDENTITY_OPERATE,
@@ -2305,6 +2306,32 @@ class DaemonClient:
         try:
             from sshpilot.api.transport.codec import agent_key_list_from_wire
 
+            return agent_key_list_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid agent key list")
+
+    def list_provider_agent_keys(self, request):
+        """Keys loaded in one named provider's agent (via native ssh-add).
+
+        ``request.provider_id`` is a registry provider id (``'auto'`` = the
+        system ssh-agent), so a caller can observe that provider regardless of
+        which provider is currently selected.
+        """
+        from sshpilot.api.models.identity import ListProviderAgentKeysRequest
+
+        self._require_capability(Capability.IDENTITY_READ)
+        if type(request) is not ListProviderAgentKeysRequest:
+            raise TypeError("a ListProviderAgentKeysRequest is required")
+        from sshpilot.api.transport.codec import (
+            agent_key_list_from_wire,
+            list_provider_agent_keys_request_to_wire,
+        )
+
+        result = self._request(
+            "identity.provider.keys.get",
+            list_provider_agent_keys_request_to_wire(request),
+        )
+        try:
             return agent_key_list_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid agent key list")
