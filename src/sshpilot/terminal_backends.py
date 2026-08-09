@@ -130,20 +130,24 @@ class BaseTerminalBackend(Protocol):
     ) -> None:
         """Install hyperlink interaction callbacks when supported."""
 
+    def setup_native_context_menu(self, menu: Any, callback: Callable) -> bool:
+        """Let the emulator own context-menu presentation when supported."""
+
+    def clear_native_context_menu(self) -> None:
+        """Release a native context menu previously given to the emulator."""
+
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
         """Return a hyperlink at widget coordinates, if supported.
 
-        Full point lookup (OSC 8 + plain-text regex); intended for one-shot
-        queries such as Ctrl+click. High-frequency hover tracking must use
-        the ``hyperlink-hover-uri-changed`` signal (OSC 8) plus
-        :meth:`plain_text_link_at` (regex fallback) instead.
+        Full point lookup (OSC 8 + plain-text regex); intended only for
+        one-shot user actions such as Ctrl+click and context menus.
         """
 
     def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
         """Return the plain-text regex match at widget coordinates, if any.
 
-        Deliberately excludes OSC 8 hyperlinks so it can run on every
-        pointer-motion event without probing VTE's hyperlink state.
+        Deliberately excludes OSC 8 hyperlinks. Coordinate lookup is reserved
+        for explicit user actions, never pointer motion.
         """
 
     def set_pointer_over_link(self, over_link: bool) -> None:
@@ -239,10 +243,16 @@ class VTETerminalBackend:
         self._selection_background = None
         self._selection_foreground = None
         self._destroyed = False
-        self._hover_handler: Optional[int] = None
-        self._motion_controller: Optional[Any] = None
+        self._link_match_tag: Optional[int] = None
+        self._selection_handler: Optional[int] = None
+        self._native_context_handler: Optional[int] = None
+        self._native_context_callback: Optional[Callable[[bool], None]] = None
+        self._initialized = False
 
     def initialize(self) -> None:
+        if self._initialized:
+            return
+        self._initialized = True
         self.vte.set_hexpand(True)
         self.vte.set_vexpand(True)
 
@@ -302,16 +312,8 @@ class VTETerminalBackend:
             except Exception:
                 logger.debug("Failed to enable mouse autohide", exc_info=True)
 
-        try:
-            self.vte.set_encoding("UTF-8")
-        except Exception:
-            logger.debug("Failed to set encoding", exc_info=True)
-
-        try:
-            if hasattr(self.vte, "set_allow_bold"):
-                self.vte.set_allow_bold(True)
-        except Exception:
-            logger.debug("Failed to enable bold text", exc_info=True)
+        # VTE is a UTF-8 terminal.  Its old encoding and allow-bold knobs are
+        # deprecated and are deliberately not part of the VTE backend.
 
         try:
             self.vte.show()
@@ -328,9 +330,8 @@ class VTETerminalBackend:
             ("scroll on keystroke", lambda: self.vte.set_scroll_on_keystroke(True)),
             ("scroll on output", lambda: self.vte.set_scroll_on_output(False)),
             ("mouse autohide", lambda: self.vte.set_mouse_autohide(True)),
-            ("bold text", lambda: self.vte.set_allow_bold(True)),
             ("OSC 8 hyperlinks", lambda: self.vte.set_allow_hyperlink(True)),
-            ("encoding", lambda: self.set_encoding(str(settings.get("encoding", "UTF-8")))),
+            ("fallback scrolling", lambda: self.vte.set_enable_fallback_scrolling(True)),
             ("visibility", lambda: self.vte.show()),
         )
         for name, operation in operations:
@@ -347,61 +348,22 @@ class VTETerminalBackend:
             logger.debug("Could not configure VTE word selection", exc_info=True)
 
     def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
-        """Install optional VTE URL behavior without making startup depend on it."""
-        try:
-            pattern = (r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
-                       r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]')
-            regex = Vte.Regex.new_for_match(pattern, len(pattern), 0x00000400)
-            tag = self.vte.match_add_regex(regex, 0)
-            self.vte.match_set_cursor_name(tag, "pointer")
-        except Exception:
-            logger.debug("VTE plain-text hyperlink matching unavailable", exc_info=True)
-        # setup_terminal() can run more than once on the same backend widget
-        # (construction, then setup_local_shell()); remove the previously
-        # installed controller/handler instead of stacking duplicates that
-        # would each re-probe on every pointer event.
-        previous_controller = getattr(self, "_motion_controller", None)
-        if previous_controller is not None:
+        """Register VTE-native URL matching and selection observation once."""
+        if getattr(self, "_link_match_tag", None) is None:
             try:
-                self.vte.remove_controller(previous_controller)
+                pattern = (r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
+                           r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]')
+                regex = Vte.Regex.new_for_match(pattern, len(pattern), 0x00000400)
+                self._link_match_tag = self.vte.match_add_regex(regex, 0)
+                self.vte.match_set_cursor_name(self._link_match_tag, "pointer")
             except Exception:
-                pass
-            self._motion_controller = None
-        try:
-            controller = Gtk.EventControllerMotion()
-            controller.connect("motion", motion_callback)
-            controller.connect("enter", enter_callback)
-            self.vte.add_controller(controller)
-            self._motion_controller = controller
-        except Exception:
-            logger.debug("VTE hyperlink motion controller unavailable", exc_info=True)
-            self._motion_controller = None
-        # VTE tracks the hovered OSC 8 hyperlink itself and notifies on change
-        # (since 0.50); prefer it over polling check_hyperlink_at() on every
-        # pointer move. The uri/bbox arguments are owned by VTE, so the handler
-        # must not retain them beyond the call.
-        if hover_callback is not None:
-            previous_handler = getattr(self, "_hover_handler", None)
-            if previous_handler is not None:
-                try:
-                    self.vte.disconnect(previous_handler)
-                except Exception:
-                    pass
-                self._hover_handler = None
+                logger.debug("VTE plain-text hyperlink matching unavailable", exc_info=True)
+        if getattr(self, "_selection_handler", None) is None:
             try:
-                def _on_hover(_terminal, uri, _bbox):
-                    hover_callback(uri)
-                self._hover_handler = self.vte.connect(
-                    "hyperlink-hover-uri-changed", _on_hover)
+                self._selection_handler = self.vte.connect(
+                    "selection-changed", selection_callback)
             except Exception:
-                logger.debug("VTE hyperlink hover signal unavailable", exc_info=True)
-                self._hover_handler = None
-        for signal, callback in (("contents-changed", lambda terminal: terminal.queue_draw()),
-                                 ("selection-changed", selection_callback)):
-            try:
-                self.vte.connect(signal, callback)
-            except Exception:
-                logger.debug("VTE %s signal unavailable", signal, exc_info=True)
+                logger.debug("VTE selection signal unavailable", exc_info=True)
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
         """Full point lookup for one-shot queries (Ctrl+click).
@@ -420,7 +382,7 @@ class VTETerminalBackend:
         return self.plain_text_link_at(x, y)
 
     def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
-        """Plain-text regex match only — safe for the high-frequency motion path."""
+        """Return a registered regex match for a one-shot user action."""
         if getattr(self, "_destroyed", False):
             return None
         if hasattr(self.vte, "check_match_at"):
@@ -433,34 +395,31 @@ class VTETerminalBackend:
         return result[0] if isinstance(result, tuple) else result
 
     def set_pointer_over_link(self, over_link: bool) -> None:
-        if getattr(self, "_destroyed", False):
-            return
-        self.vte.set_cursor(Gdk.Cursor.new_from_name("pointer" if over_link else "text", None))
+        """VTE owns match and OSC 8 cursor feedback."""
 
     def save_contents(self, stream: Any) -> None:
         self.vte.write_contents_sync(stream, Vte.WriteFlags.DEFAULT, None)
 
     def get_supported_encodings(self) -> list[str]:
-        values = []
-        for item in self.vte.get_encodings() or []:
-            code = item[0] if isinstance(item, (tuple, list)) and item else item
-            if isinstance(code, str) and code not in values:
-                values.append(code)
-        return values
+        return ["UTF-8"]
 
     def set_encoding(self, encoding: str) -> None:
-        self.vte.set_encoding(encoding)
+        if encoding.upper().replace("_", "-") != "UTF-8":
+            raise TerminalBackendCapabilityError("VTE supports UTF-8 only")
 
     def destroy(self) -> None:
         self._destroyed = True
+        self.clear_native_context_menu()
         try:
             if self._termprops_handler is not None:
                 self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
         except Exception:
             pass
         try:
-            if getattr(self, "_hover_handler", None) is not None:
-                self.vte.disconnect(self._hover_handler)  # type: ignore[arg-type]
+            if getattr(self, "_selection_handler", None) is not None:
+                self.vte.disconnect(self._selection_handler)
+            if getattr(self, "_native_context_handler", None) is not None:
+                self.vte.disconnect(self._native_context_handler)
         except Exception:
             pass
         self._remove_background_provider()
@@ -669,13 +628,8 @@ class VTETerminalBackend:
             env_list = [f"{key}={value}" for key, value in env.items()]
         cwd = cwd or None
         pty_flags = Vte.PtyFlags(flags) if flags else Vte.PtyFlags.DEFAULT
-        # PTY creation, initial sizing and attachment are implementation details.
-        if self.vte.get_pty() is None:
-            pty = Vte.Pty.new_sync(pty_flags)
-            rows, cols = self.get_size()
-            if (rows, cols) != (24, 80):
-                pty.set_size(rows, cols)
-            self.vte.set_pty(pty)
+        # Terminal.spawn_async() is the terminal-aware convenience API: it
+        # creates, sizes and attaches the PTY before spawning the child.
         self.vte.spawn_async(
             pty_flags,
             cwd,
@@ -683,50 +637,127 @@ class VTETerminalBackend:
             env_list,
             GLib.SpawnFlags.DEFAULT,
             child_setup,
-            user_data,
             -1,
             None,
             callback,
-            (),
+            user_data,
         )
 
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         return self.vte.connect("child-exited", callback)
 
     def connect_title_changed(self, callback: Callable[[Gtk.Widget, str], None]) -> Any:
+        # VTE 0.78+ reports titles through XTERM_TITLE termprops.  Keep the
+        # deprecated signal only as the legacy 0.70--0.76 fallback.
+        if hasattr(Vte, "PropertyId") and hasattr(
+                self.vte, "get_termprop_string_by_id"):
+            return None
         return self.vte.connect("window-title-changed", callback)
 
     def connect_termprops_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Snapshot modern termprops and defer delivery outside VTE's signal.
+
+        The changed values and modern getter arguments are numeric
+        ``PropertyId`` members. VTE restricts synchronous work in this signal,
+        hence the idle delivery of the plain Python snapshot.
+        """
         try:
             def _on_changed(terminal, ids, _user_data=None):
                 changed = set(ids) if ids and hasattr(ids, "__iter__") else {ids}
                 event: dict[str, Any] = {}
-                if hasattr(Vte, "TERMPROP_XTERM_TITLE"):
+                property_id = Vte.PropertyId
+                if property_id.XTERM_TITLE in changed:
                     try:
-                        event["title"] = terminal.get_termprop_string(
-                            Vte.TERMPROP_XTERM_TITLE
-                        )[0]
+                        value, _length = terminal.get_termprop_string_by_id(
+                            property_id.XTERM_TITLE)
+                        if value is not None:
+                            event["title"] = value
                     except Exception:
                         pass
-                for name, key, getter in (
-                    ("postexec", "TERMPROP_SHELL_POSTEXEC", "get_termprop_uint"),
-                    ("preexec", "TERMPROP_SHELL_PREEXEC", "get_termprop_value"),
-                    ("precmd", "TERMPROP_SHELL_PRECMD", "get_termprop_value"),
-                ):
-                    prop = getattr(Vte, key, None)
-                    if prop is not None and prop in changed:
-                        try:
-                            ok, value = getattr(terminal, getter)(prop)
-                            if ok:
-                                event[name] = value
-                        except Exception:
-                            pass
-                callback(self.widget, event)
+                if property_id.CURRENT_DIRECTORY_URI in changed:
+                    try:
+                        if hasattr(terminal, "ref_termprop_uri_by_id"):
+                            value = terminal.ref_termprop_uri_by_id(
+                                property_id.CURRENT_DIRECTORY_URI)
+                        else:
+                            value = terminal.get_termprop_value_by_id(
+                                property_id.CURRENT_DIRECTORY_URI)
+                            if (isinstance(value, tuple) and len(value) == 2
+                                    and isinstance(value[0], bool)):
+                                value = value[1] if value[0] else None
+                            if hasattr(value, "get_boxed"):
+                                value = value.get_boxed()
+                        if value is not None:
+                            event["cwd_uri"] = (
+                                value.to_string()
+                                if hasattr(value, "to_string") else str(value))
+                    except Exception:
+                        pass
+                if property_id.SHELL_PREEXEC in changed:
+                    event["preexec"] = True
+                if property_id.SHELL_PRECMD in changed:
+                    event["precmd"] = True
+                if property_id.SHELL_POSTEXEC in changed:
+                    try:
+                        ok, value = terminal.get_termprop_uint_by_id(
+                            property_id.SHELL_POSTEXEC)
+                        if ok:
+                            event["postexec"] = value
+                    except Exception:
+                        pass
+                if event:
+                    GLib.idle_add(callback, self.widget, event)
 
             self._termprops_handler = self.vte.connect("termprops-changed", _on_changed)
         except Exception:
-            self._termprops_handler = None
+            # VTE 0.70--0.76 exposes OSC 7 through this legacy property/signal.
+            try:
+                def _on_legacy_cwd(terminal, *_args):
+                    uri = terminal.get_current_directory_uri()
+                    if uri:
+                        GLib.idle_add(callback, self.widget, {"cwd_uri": uri})
+                self._termprops_handler = self.vte.connect(
+                    "current-directory-uri-changed", _on_legacy_cwd)
+            except Exception:
+                self._termprops_handler = None
         return self._termprops_handler
+
+    def setup_native_context_menu(self, menu: Any, callback: Callable) -> bool:
+        """Install VTE 0.76+'s native context-menu lifecycle.
+
+        ``EventContext.get_coordinates()`` only exposes a boolean through the
+        Python binding.  The owner records mouse coordinates in a capture-phase
+        GTK gesture instead; this callback reports show/dismiss lifecycle only.
+        """
+        if not (hasattr(self.vte, "set_context_menu")
+                and hasattr(Vte, "EventContext")):
+            return False
+        try:
+            self.vte.set_context_menu(menu)
+            self._native_context_callback = callback
+            if getattr(self, "_native_context_handler", None) is None:
+                def _on_setup(_terminal, context):
+                    # VTE emits a final setup-context-menu with None after the
+                    # menu is dismissed. Never dereference that sentinel.
+                    current_callback = getattr(
+                        self, "_native_context_callback", None)
+                    if current_callback is not None:
+                        current_callback(context is not None)
+                self._native_context_handler = self.vte.connect(
+                    "setup-context-menu", _on_setup)
+            return True
+        except Exception:
+            logger.debug("VTE native context menu unavailable", exc_info=True)
+            return False
+
+    def clear_native_context_menu(self) -> None:
+        """Return ownership of the configured popover to GTK/VTE cleanup."""
+        self._native_context_callback = None
+        if hasattr(self.vte, "set_context_menu"):
+            try:
+                self.vte.set_context_menu(None)
+            except Exception:
+                logger.debug("Could not clear VTE native context menu", exc_info=True)
 
     def disconnect(self, handler_id: Any) -> None:
         try:
@@ -881,10 +912,7 @@ class VTETerminalBackend:
             logger.debug("Could not update VTE search highlight", exc_info=True)
 
     def get_child_pid(self) -> Optional[int]:
-        try:
-            return self.vte.get_current_process_id()
-        except Exception:
-            return None
+        return getattr(self.owner, "process_pid", None)
 
     def get_child_pgid(self) -> Optional[int]:
         pid = self.get_child_pid()
@@ -900,13 +928,11 @@ class VTETerminalBackend:
             "terminal_search",
             "dynamic_font",
             "clipboard",
-            "termprops",
             "local_process",
             "content_extraction",
             "pty_access",
             "daemon_input",
             "daemon_resize",
-            "encoding",
             "save_output",
             # Compatibility spellings.
             "search", "font-scaling",
@@ -918,6 +944,12 @@ class VTETerminalBackend:
                      or hasattr(self.vte, "check_match_at")
                      or hasattr(self.vte, "match_check"))
             )
+        if feature == "native_context_menu":
+            return bool(hasattr(self.vte, "set_context_menu")
+                        and hasattr(Vte, "EventContext"))
+        if feature == "termprops":
+            return bool(hasattr(Vte, "PropertyId")
+                        and hasattr(self.vte, "get_termprop_string_by_id"))
         return feature in supported
 
     def get_pty(self) -> Optional[Any]:

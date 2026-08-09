@@ -1,220 +1,99 @@
-"""Regression tests for the #1104 follow-up.
-
-The pointer-motion path must never call ``check_hyperlink_at`` (that native
-probe dereferences VTE screen state and segfaulted from ``_on_vte_motion``):
-OSC 8 hover comes from VTE's ``hyperlink-hover-uri-changed`` signal and the
-motion handler probes the plain-text regex only. Repeated link setup (init +
-``setup_local_shell``) must not stack duplicate hover handlers/controllers.
-"""
-
+"""Regression coverage for VTE link delegation and issue #1104."""
 import types
-
 import pytest
-
 pytest.importorskip("gi")
-
 from sshpilot import terminal_backends
 from sshpilot.terminal import TerminalWidget
 from sshpilot.terminal_backends import VTETerminalBackend
 
 
-def _make_backend(**vte_attrs):
-    backend = object.__new__(VTETerminalBackend)
-    backend.vte = types.SimpleNamespace(**vte_attrs)
-    return backend
+def _backend(**attrs):
+    value = object.__new__(VTETerminalBackend)
+    value.vte = types.SimpleNamespace(**attrs)
+    value._destroyed = False
+    return value
 
 
-# --------------------------------------------------------------------------
-# Backend probes
-# --------------------------------------------------------------------------
-
-def test_plain_text_link_at_never_touches_hyperlink_probe():
-    def _forbidden(x, y):
-        raise AssertionError("check_hyperlink_at called from regex-only probe")
-
-    backend = _make_backend(
-        check_hyperlink_at=_forbidden,
-        check_match_at=lambda x, y: ("https://example.com", 7),
+def test_one_shot_lookup_prefers_osc8_and_falls_back_to_match():
+    calls = []
+    backend = _backend(
+        check_hyperlink_at=lambda x, y: calls.append(("osc8", x, y)),
+        check_match_at=lambda x, y: (calls.append(("match", x, y)) or ("https://plain", 1)),
     )
-    assert backend.plain_text_link_at(3, 4) == "https://example.com"
+    assert backend.hyperlink_at(4, 8) == "https://plain"
+    assert calls == [("osc8", 4, 8), ("match", 4, 8)]
+
+    backend.vte.check_hyperlink_at = lambda x, y: "https://osc8"
+    assert backend.hyperlink_at(1, 2) == "https://osc8"
 
 
-def test_plain_text_link_at_handles_plain_string_result():
-    backend = _make_backend(check_match_at=lambda x, y: "https://example.com")
-    assert backend.plain_text_link_at(0, 0) == "https://example.com"
+def test_repeated_motion_never_looks_up_vte_coordinates():
+    class Backend:
+        def hyperlink_at(self, *_args):
+            raise AssertionError("motion performed a coordinate lookup")
+        def plain_text_link_at(self, *_args):
+            raise AssertionError("motion performed a match lookup")
+    terminal = types.SimpleNamespace(backend=Backend())
+    for position in range(100):
+        TerminalWidget._on_vte_motion(terminal, object(), position, position)
 
 
-def test_hyperlink_at_prefers_osc8_then_falls_back_to_regex():
-    osc8 = _make_backend(check_hyperlink_at=lambda x, y: "https://osc8.example")
-    assert osc8.hyperlink_at(0, 0) == "https://osc8.example"
-
-    regex_only = _make_backend(
-        check_hyperlink_at=lambda x, y: None,
-        check_match_at=lambda x, y: ("https://plain.example", 1),
-    )
-    assert regex_only.hyperlink_at(0, 0) == "https://plain.example"
-
-
-def test_probes_return_none_after_destroy():
-    backend = _make_backend(
-        check_hyperlink_at=lambda x, y: "https://osc8.example",
-        check_match_at=lambda x, y: ("https://plain.example", 1),
-    )
-    backend._destroyed = True
-    assert backend.hyperlink_at(0, 0) is None
-    assert backend.plain_text_link_at(0, 0) is None
-
-
-# --------------------------------------------------------------------------
-# Idempotent link setup
-# --------------------------------------------------------------------------
-
-class _FakeController:
+class FakeVte:
     def __init__(self):
-        self.connected = []
-
-    def connect(self, name, callback):
-        self.connected.append(name)
-
-
-class _FakeVte:
-    def __init__(self):
-        self.signals = {}
-        self._next_id = 0
-        self.disconnected = []
-        self.controllers = []
-        self.removed_controllers = []
-
+        self.matches = []
+        self.cursor_names = []
+        self.signals = []
     def match_add_regex(self, regex, flags):
-        return 1
-
+        self.matches.append((regex, flags)); return 7
     def match_set_cursor_name(self, tag, name):
-        pass
-
-    def add_controller(self, controller):
-        self.controllers.append(controller)
-
-    def remove_controller(self, controller):
-        self.removed_controllers.append(controller)
-
-    def connect(self, name, callback):
-        self._next_id += 1
-        self.signals[self._next_id] = (name, callback)
-        return self._next_id
-
-    def disconnect(self, handler_id):
-        self.disconnected.append(handler_id)
-        self.signals.pop(handler_id, None)
-
-    def queue_draw(self):
-        pass
+        self.cursor_names.append((tag, name))
+    def connect(self, signal, callback):
+        self.signals.append(signal); return len(self.signals)
 
 
-def test_setup_link_handling_disconnects_previous_hover_handler(monkeypatch):
-    monkeypatch.setattr(
-        terminal_backends.Vte, "Regex",
-        types.SimpleNamespace(new_for_match=lambda *args: object()),
-    )
-    monkeypatch.setattr(terminal_backends.Gtk, "EventControllerMotion", _FakeController)
-
+def test_link_and_selection_setup_is_idempotent(monkeypatch):
+    monkeypatch.setattr(terminal_backends.Vte, "Regex", types.SimpleNamespace(
+        new_for_match=lambda *args: object()))
     backend = object.__new__(VTETerminalBackend)
-    backend.vte = _FakeVte()
-
+    backend.vte = FakeVte()
+    backend._link_match_tag = None
+    backend._selection_handler = None
     noop = lambda *args: None
-    backend.setup_link_handling(noop, noop, noop, noop)
-    first_hover = backend._hover_handler
-    first_controller = backend._motion_controller
-    assert first_hover is not None
-    assert first_controller is not None
-
-    # Second pass (e.g. setup_local_shell after construction) must replace,
-    # not stack.
-    backend.setup_link_handling(noop, noop, noop, noop)
-
-    assert first_hover in backend.vte.disconnected
-    assert first_controller in backend.vte.removed_controllers
-    hover_signals = [
-        name for name, _cb in backend.vte.signals.values()
-        if name == "hyperlink-hover-uri-changed"
-    ]
-    assert hover_signals == ["hyperlink-hover-uri-changed"]
-    assert len(backend.vte.controllers) - len(backend.vte.removed_controllers) == 1
+    backend.setup_link_handling(noop, noop, noop)
+    backend.setup_link_handling(noop, noop, noop)
+    assert len(backend.vte.matches) == 1
+    assert backend.vte.cursor_names == [(7, "pointer")]
+    assert backend.vte.signals == ["selection-changed"]
 
 
-# --------------------------------------------------------------------------
-# TerminalWidget hover-state merge (unbound methods on a fake instance)
-# --------------------------------------------------------------------------
-
-class _FakeBackend:
-    def __init__(self, plain_uri=None):
-        self.plain_uri = plain_uri
-        self.pointer_over_link = None
-
-    def supports_feature(self, name):
-        return True
-
-    def plain_text_link_at(self, x, y):
-        return self.plain_uri
-
-    def hyperlink_at(self, x, y):
-        raise AssertionError("motion path called the full probe")
-
-    def set_pointer_over_link(self, over_link):
-        self.pointer_over_link = over_link
+def test_context_and_click_queries_are_exact_one_shot():
+    calls = []
+    terminal = types.SimpleNamespace(
+        _destroyed=False, _is_quitting=False,
+        backend=types.SimpleNamespace(
+            supports_feature=lambda name: name == "hyperlinks",
+            hyperlink_at=lambda x, y: calls.append((x, y)) or "https://url"))
+    assert TerminalWidget._vte_uri_at(terminal, 12, 34) == "https://url"
+    assert calls == [(12, 34)]
 
 
-class _FakeControllerMotion:
-    def get_current_event(self):
-        return object()
-
-
-class _FakeTerminal:
-    _on_vte_motion = TerminalWidget._on_vte_motion
-    _on_vte_hyperlink_hover = TerminalWidget._on_vte_hyperlink_hover
-    _update_hover_state = TerminalWidget._update_hover_state
-
-    def __init__(self, plain_uri=None):
-        self.backend = _FakeBackend(plain_uri)
-        self._destroyed = False
-        self._is_quitting = False
-        self._hovered_osc8_uri = None
-        self._hovered_plaintext_uri = None
-        self._hovered_hyperlink_uri = None
-
-
-def test_motion_uses_regex_probe_only_and_updates_cursor():
-    term = _FakeTerminal(plain_uri="https://plain.example")
-    term._on_vte_motion(_FakeControllerMotion(), 10, 10)
-    assert term._hovered_plaintext_uri == "https://plain.example"
-    assert term._hovered_hyperlink_uri == "https://plain.example"
-    assert term.backend.pointer_over_link is True
-
-
-def test_motion_regex_miss_does_not_clobber_osc8_hover():
-    term = _FakeTerminal(plain_uri=None)
-    term._on_vte_hyperlink_hover("https://osc8.example")
-    assert term._hovered_hyperlink_uri == "https://osc8.example"
-    assert term.backend.pointer_over_link is True
-
-    # Pointer moves within the OSC 8 link: regex misses must not clear it.
-    term._on_vte_motion(_FakeControllerMotion(), 12, 12)
-    assert term._hovered_plaintext_uri is None
-    assert term._hovered_hyperlink_uri == "https://osc8.example"
-    assert term.backend.pointer_over_link is True
-
-
-def test_osc8_signal_clearing_restores_text_cursor():
-    term = _FakeTerminal(plain_uri=None)
-    term._on_vte_hyperlink_hover("https://osc8.example")
-    term._on_vte_hyperlink_hover(None)
-    assert term._hovered_hyperlink_uri is None
-    assert term.backend.pointer_over_link is False
-
-
-def test_motion_and_hover_are_noops_after_destroy():
-    term = _FakeTerminal(plain_uri="https://plain.example")
-    term._destroyed = True
-    term._on_vte_motion(_FakeControllerMotion(), 10, 10)
-    term._on_vte_hyperlink_hover("https://osc8.example")
-    assert term._hovered_hyperlink_uri is None
-    assert term.backend.pointer_over_link is None
+def test_native_context_menu_handles_show_and_none_dismissal(monkeypatch):
+    monkeypatch.setattr(terminal_backends.Vte, "EventContext", object, raising=False)
+    class NativeVte:
+        def __init__(self): self.callback = None; self.menus = []
+        def set_context_menu(self, menu): self.menus.append(menu)
+        def connect(self, signal, callback):
+            assert signal == "setup-context-menu"; self.callback = callback; return 3
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = NativeVte()
+    backend._native_context_handler = None
+    lifecycle = []
+    menu = object()
+    assert backend.setup_native_context_menu(menu, lifecycle.append)
+    context = object()
+    backend.vte.callback(backend.vte, context)
+    backend.vte.callback(backend.vte, None)
+    assert backend.vte.menus == [menu]
+    assert lifecycle == [True, False]
+    backend.clear_native_context_menu()
+    assert backend.vte.menus == [menu, None]
