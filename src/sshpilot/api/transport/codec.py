@@ -524,9 +524,7 @@ def public_event_to_envelope(
     if event.type in _CONNECTION_EVENT_TYPES:
         if event.type is EventType.CONNECTION_STORE_CHANGED:
             if type(event.payload) is not ConnectionStoreSnapshot:
-                raise TypeError(
-                    "connection store event payload must be ConnectionStoreSnapshot"
-                )
+                raise TypeError("connection store event payload must be ConnectionStoreSnapshot")
             payload = connection_store_snapshot_to_wire(event.payload)
         else:
             if type(event.payload) is not ConnectionSummary:
@@ -732,15 +730,9 @@ def known_host_entry_summary_from_wire(value: Any) -> KnownHostEntrySummary:
         context="known-hosts entry summary",
     )
     return KnownHostEntrySummary(
-        entry_id=KnownHostEntryId(
-            _identifier(data["entry_id"], "known-hosts entry id")
-        ),
-        hostname=_text(
-            data["hostname"], "known-hosts hostname", allow_empty=True
-        ),
-        key_type=_text(
-            data["key_type"], "known-hosts key type", allow_empty=True
-        ),
+        entry_id=KnownHostEntryId(_identifier(data["entry_id"], "known-hosts entry id")),
+        hostname=_text(data["hostname"], "known-hosts hostname", allow_empty=True),
+        key_type=_text(data["key_type"], "known-hosts key type", allow_empty=True),
         display_line=_text(data["display_line"], "known-hosts display line"),
     )
 
@@ -752,9 +744,7 @@ def known_hosts_snapshot_to_wire(
         raise TypeError("known-hosts snapshot is required")
     return {
         "revision": snapshot.revision,
-        "entries": [
-            known_host_entry_summary_to_wire(item) for item in snapshot.entries
-        ],
+        "entries": [known_host_entry_summary_to_wire(item) for item in snapshot.entries],
     }
 
 
@@ -769,9 +759,7 @@ def known_hosts_snapshot_from_wire(value: Any) -> KnownHostsSnapshot:
         raise ValueError("known-hosts entries must be an array")
     return KnownHostsSnapshot(
         revision=_identifier(data["revision"], "known-hosts revision"),
-        entries=tuple(
-            known_host_entry_summary_from_wire(item) for item in entries
-        ),
+        entries=tuple(known_host_entry_summary_from_wire(item) for item in entries),
     )
 
 
@@ -800,8 +788,7 @@ def remove_known_host_entries_request_from_wire(
     return RemoveKnownHostEntriesRequest(
         revision=_identifier(data["revision"], "known-hosts revision"),
         entry_ids=tuple(
-            KnownHostEntryId(_identifier(item, "known-hosts entry id"))
-            for item in entry_ids
+            KnownHostEntryId(_identifier(item, "known-hosts entry id")) for item in entry_ids
         ),
     )
 
@@ -814,9 +801,7 @@ def known_hosts_mutation_result_to_wire(
     return {
         "revision": result.revision,
         "removed_count": result.removed_count,
-        "entries": [
-            known_host_entry_summary_to_wire(item) for item in result.entries
-        ],
+        "entries": [known_host_entry_summary_to_wire(item) for item in result.entries],
     }
 
 
@@ -833,12 +818,8 @@ def known_hosts_mutation_result_from_wire(
         raise ValueError("known-hosts entries must be an array")
     return KnownHostsMutationResult(
         revision=_identifier(data["revision"], "known-hosts revision"),
-        removed_count=_integer(
-            data["removed_count"], "known-hosts removed count"
-        ),
-        entries=tuple(
-            known_host_entry_summary_from_wire(item) for item in entries
-        ),
+        removed_count=_integer(data["removed_count"], "known-hosts removed count"),
+        entries=tuple(known_host_entry_summary_from_wire(item) for item in entries),
     )
 
 
@@ -879,9 +860,7 @@ def key_summary_from_wire(value: Any) -> KeySummary:
         name=_text(data["name"], "key name"),
         private_path=_text(data["private_path"], "key private path"),
         public_path=_text(data["public_path"], "key public path"),
-        public_key_available=_boolean(
-            data["public_key_available"], "key public availability"
-        ),
+        public_key_available=_boolean(data["public_key_available"], "key public availability"),
     )
 
 
@@ -893,9 +872,7 @@ def list_keys_request_to_wire(request: ListKeysRequest) -> Dict[str, Any]:
 
 def list_keys_request_from_wire(value: Any) -> ListKeysRequest:
     data = _strict_fields(value, required={"scope"}, context="list keys request")
-    return ListKeysRequest(
-        scope=_key_store_scope(data["scope"], "key store scope")
-    )
+    return ListKeysRequest(scope=_key_store_scope(data["scope"], "key store scope"))
 
 
 def key_list_to_wire(key_list: KeyList) -> Dict[str, Any]:
@@ -1027,15 +1004,12 @@ def group_summary_from_wire(value: Any) -> GroupSummary:
         id=GroupId(_identifier(data["id"], "group id")),
         name=_text(data["name"], "group name"),
         parent_id=(
-            GroupId(_identifier(parent_id, "group parent id"))
-            if parent_id is not None
-            else None
+            GroupId(_identifier(parent_id, "group parent id")) if parent_id is not None else None
         ),
         order=_integer(data["order"], "group order"),
         color=_text(data["color"], "group color", allow_empty=True),
         connection_ids=tuple(
-            ConnectionId(_identifier(item, "group connection id"))
-            for item in connection_ids
+            ConnectionId(_identifier(item, "group connection id")) for item in connection_ids
         ),
     )
 
@@ -1045,6 +1019,7 @@ def connection_metadata_summary_to_wire(
 ) -> Dict[str, Any]:
     if type(summary) is not ConnectionMetadataSummary:
         raise TypeError("connection metadata summary is required")
+
     def thaw(value: Any) -> Any:
         if isinstance(value, Mapping):
             return {key: thaw(item) for key, item in value.items()}
@@ -1070,9 +1045,7 @@ def connection_metadata_summary_from_wire(
     if type(values) is not dict:
         raise ValueError("connection metadata values must be an object")
     return ConnectionMetadataSummary(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         values=validate_safe_metadata(values),
     )
 
@@ -1084,15 +1057,10 @@ def connection_store_snapshot_to_wire(
         raise TypeError("connection store snapshot is required")
     return {
         "generation": snapshot.generation,
-        "connections": [
-            connection_summary_to_wire(item) for item in snapshot.connections
-        ],
+        "connections": [connection_summary_to_wire(item) for item in snapshot.connections],
         "groups": [group_summary_to_wire(item) for item in snapshot.groups],
         "root_connection_ids": list(snapshot.root_connection_ids),
-        "metadata": [
-            connection_metadata_summary_to_wire(item)
-            for item in snapshot.metadata
-        ],
+        "metadata": [connection_metadata_summary_to_wire(item) for item in snapshot.metadata],
     }
 
 
@@ -1116,17 +1084,12 @@ def connection_store_snapshot_from_wire(value: Any) -> ConnectionStoreSnapshot:
         raise ValueError("connection store metadata must be an array")
     return ConnectionStoreSnapshot(
         generation=_integer(data["generation"], "connection store generation"),
-        connections=tuple(
-            connection_summary_from_wire(item) for item in connections
-        ),
+        connections=tuple(connection_summary_from_wire(item) for item in connections),
         groups=tuple(group_summary_from_wire(item) for item in groups),
         root_connection_ids=tuple(
-            ConnectionId(_identifier(item, "root connection id"))
-            for item in root_ids
+            ConnectionId(_identifier(item, "root connection id")) for item in root_ids
         ),
-        metadata=tuple(
-            connection_metadata_summary_from_wire(item) for item in metadata
-        ),
+        metadata=tuple(connection_metadata_summary_from_wire(item) for item in metadata),
     )
 
 
@@ -1180,9 +1143,7 @@ def place_group_request_from_wire(value: Any) -> PlaceGroupRequest:
     return PlaceGroupRequest(
         group_id=GroupId(_identifier(data["group_id"], "group id")),
         parent_id=(
-            GroupId(_identifier(parent_id, "group parent id"))
-            if parent_id is not None
-            else None
+            GroupId(_identifier(parent_id, "group parent id")) if parent_id is not None else None
         ),
         index=_integer(data["index"], "group placement index"),
         expected_generation=generation,
@@ -1209,9 +1170,7 @@ def copy_connection_to_group_request_from_wire(
         context="copy connection to group request",
     )
     return CopyConnectionToGroupRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         group_id=GroupId(_identifier(data["group_id"], "group id")),
     )
 
@@ -1236,9 +1195,7 @@ def remove_connection_from_group_request_from_wire(
         context="remove connection from group request",
     )
     return RemoveConnectionFromGroupRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         group_id=GroupId(_identifier(data["group_id"], "group id")),
     )
 
@@ -1271,16 +1228,12 @@ def reorder_connection_request_from_wire(
     if group_id is not None and type(group_id) is not str:
         raise ValueError("reorder group id must be a string or null")
     return ReorderConnectionRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         target_connection_id=ConnectionId(
             _identifier(data["target_connection_id"], "target connection id")
         ),
         group_id=(
-            GroupId(_identifier(group_id, "reorder group id"))
-            if group_id is not None
-            else None
+            GroupId(_identifier(group_id, "reorder group id")) if group_id is not None else None
         ),
         position=_identifier(data["position"], "reorder position"),
     )
@@ -1344,9 +1297,7 @@ def move_connections_request_from_wire(value: Any) -> MoveConnectionsRequest:
     if generation is not None:
         generation = _integer(generation, "expected generation")
     return MoveConnectionsRequest(
-        connection_ids=tuple(
-            ConnectionId(_identifier(item, "connection id")) for item in ids
-        ),
+        connection_ids=tuple(ConnectionId(_identifier(item, "connection id")) for item in ids),
         target_group_id=(
             GroupId(_identifier(target_group_id, "target group id"))
             if target_group_id is not None
@@ -1398,9 +1349,7 @@ def add_tag_to_connections_request_from_wire(
     if generation is not None:
         generation = _integer(generation, "expected generation")
     return AddTagToConnectionsRequest(
-        connection_ids=tuple(
-            ConnectionId(_identifier(item, "connection id")) for item in ids
-        ),
+        connection_ids=tuple(ConnectionId(_identifier(item, "connection id")) for item in ids),
         tag=_text(data["tag"], "tag"),
         expected_generation=generation,
     )
@@ -1660,6 +1609,7 @@ def connection_mutation_result_to_wire(result: Any) -> Dict[str, Any]:
 
 def connection_mutation_result_from_wire(value: Any) -> Any:
     from ..models.connections import ConnectionMutationResult
+
     data = _strict_fields(
         value,
         context="ConnectionMutationResult",
@@ -1677,6 +1627,7 @@ def connection_mutation_result_from_wire(value: Any) -> Any:
         changed=changed,
         changed_fields=tuple(_text(item, "changed field") for item in fields),
     )
+
 
 def connection_details_from_wire(value: Any) -> ConnectionDetails:
     detail_fields = {
@@ -1755,18 +1706,19 @@ def forwarding_rule_from_wire(value: Any) -> ForwardingRule:
         value,
         required={"type", "listen_port"},
         optional={
-            "listen_addr", "enabled",
-            "remote_host", "remote_port",
-            "local_host", "local_port",
+            "listen_addr",
+            "enabled",
+            "remote_host",
+            "remote_port",
+            "local_host",
+            "local_port",
             "socks",
         },
         context="forwarding rule",
     )
     rule_type = _identifier(data["type"], "forwarding rule type")
     if rule_type not in ("local", "remote", "dynamic"):
-        raise ValueError(
-            f"forwarding rule type must be local/remote/dynamic, got {rule_type!r}"
-        )
+        raise ValueError(f"forwarding rule type must be local/remote/dynamic, got {rule_type!r}")
     listen_port = _integer(data["listen_port"], "forwarding rule listen_port")
     if not 1 <= listen_port <= 65535:
         raise ValueError("forwarding rule listen_port must be 1-65535")
@@ -1779,15 +1731,11 @@ def forwarding_rule_from_wire(value: Any) -> ForwardingRule:
         remote_host=_text(
             data.get("remote_host", ""), "forwarding rule remote_host", allow_empty=True
         ),
-        remote_port=_integer(
-            data.get("remote_port", 0), "forwarding rule remote_port"
-        ),
+        remote_port=_integer(data.get("remote_port", 0), "forwarding rule remote_port"),
         local_host=_text(
             data.get("local_host", ""), "forwarding rule local_host", allow_empty=True
         ),
-        local_port=_integer(
-            data.get("local_port", 0), "forwarding rule local_port"
-        ),
+        local_port=_integer(data.get("local_port", 0), "forwarding rule local_port"),
         enabled=_boolean(data.get("enabled", True), "forwarding rule enabled"),
         socks=_boolean(data.get("socks", False), "forwarding rule socks"),
     )
@@ -1807,79 +1755,81 @@ def _forwarding_rules_from_wire(value: Any) -> Any:
     return tuple(forwarding_rule_from_wire(item) for item in value)
 
 
-_EDITOR_DETAIL_FIELDS = frozenset({
-    "aliases",
-    "authentication_method",
-    "identity_configured",
-    "certificate_configured",
-    "x11_forwarding",
-    "forwarding_rule_count",
-    "proxy_jump",
-    # auth
-    "key_select_mode",
-    "identity_files",
-    "certificate_files",
-    "identity_agent",
-    "add_keys_to_agent",
-    "pkcs11_provider",
-    "security_key_provider",
-    "pubkey_auth_no",
-    # routing
-    "forward_agent",
-    "forward_agent_target",
-    "forward_agent_explicit_no",
-    "proxy_command",
-    # forwarding
-    "forwarding_rules",
-    "x11_forwarding_explicit_no",
-    "identities_only_explicit_no",
-    # commands
-    "pre_command",
-    "local_command",
-    "remote_command",
-    "request_tty",
-    # advanced
-    "extra_ssh_config",
-    "identity_file_none",
-    "preferred_authentications",
-    # context
-    "source",
-    "generation",
-})
+_EDITOR_DETAIL_FIELDS = frozenset(
+    {
+        "aliases",
+        "authentication_method",
+        "identity_configured",
+        "certificate_configured",
+        "x11_forwarding",
+        "forwarding_rule_count",
+        "proxy_jump",
+        # auth
+        "key_select_mode",
+        "identity_files",
+        "certificate_files",
+        "identity_agent",
+        "add_keys_to_agent",
+        "pkcs11_provider",
+        "security_key_provider",
+        "pubkey_auth_no",
+        # routing
+        "forward_agent",
+        "forward_agent_target",
+        "forward_agent_explicit_no",
+        "proxy_command",
+        # forwarding
+        "forwarding_rules",
+        "x11_forwarding_explicit_no",
+        "identities_only_explicit_no",
+        # commands
+        "pre_command",
+        "local_command",
+        "remote_command",
+        "request_tty",
+        # advanced
+        "extra_ssh_config",
+        "identity_file_none",
+        "preferred_authentications",
+        # context
+        "source",
+        "generation",
+    }
+)
 
 
 def connection_editor_details_to_wire(
     details: ConnectionEditorDetails,
 ) -> Dict[str, Any]:
     result = connection_details_to_wire(details)
-    result.update({
-        "key_select_mode": details.key_select_mode,
-        "identity_files": list(details.identity_files),
-        "certificate_files": list(details.certificate_files),
-        "identity_agent": details.identity_agent,
-        "add_keys_to_agent": details.add_keys_to_agent,
-        "pkcs11_provider": details.pkcs11_provider,
-        "security_key_provider": details.security_key_provider,
-        "pubkey_auth_no": details.pubkey_auth_no,
-        "forward_agent": details.forward_agent,
-        "forward_agent_target": details.forward_agent_target,
-        "forward_agent_explicit_no": details.forward_agent_explicit_no,
-        "proxy_command": details.proxy_command,
-        "forwarding_rules": [
-            forwarding_rule_to_wire(r) for r in details.forwarding_rules
-        ],
-        "x11_forwarding_explicit_no": details.x11_forwarding_explicit_no,
-        "identities_only_explicit_no": details.identities_only_explicit_no,
-        "pre_command": details.pre_command,
-        "local_command": details.local_command,
-        "remote_command": details.remote_command,
-        "request_tty": details.request_tty,
-        "extra_ssh_config": details.extra_ssh_config,
-        "identity_file_none": details.identity_file_none,
-        "preferred_authentications": details.preferred_authentications,
-        "source": details.source,
-        "generation": details.generation,
-    })
+    result.update(
+        {
+            "key_select_mode": details.key_select_mode,
+            "identity_files": list(details.identity_files),
+            "certificate_files": list(details.certificate_files),
+            "identity_agent": details.identity_agent,
+            "add_keys_to_agent": details.add_keys_to_agent,
+            "pkcs11_provider": details.pkcs11_provider,
+            "security_key_provider": details.security_key_provider,
+            "pubkey_auth_no": details.pubkey_auth_no,
+            "forward_agent": details.forward_agent,
+            "forward_agent_target": details.forward_agent_target,
+            "forward_agent_explicit_no": details.forward_agent_explicit_no,
+            "proxy_command": details.proxy_command,
+            "forwarding_rules": [forwarding_rule_to_wire(r) for r in details.forwarding_rules],
+            "x11_forwarding_explicit_no": details.x11_forwarding_explicit_no,
+            "identities_only_explicit_no": details.identities_only_explicit_no,
+            "pre_command": details.pre_command,
+            "local_command": details.local_command,
+            "remote_command": details.remote_command,
+            "request_tty": details.request_tty,
+            "extra_ssh_config": details.extra_ssh_config,
+            "identity_file_none": details.identity_file_none,
+            "preferred_authentications": details.preferred_authentications,
+            "source": details.source,
+            "generation": details.generation,
+        }
+    )
     return result
 
 
@@ -1924,33 +1874,17 @@ def connection_editor_details_from_wire(
         groups=summary.groups,
         aliases=aliases,
         authentication_method=authentication_method,
-        identity_configured=_boolean(
-            data["identity_configured"], "identity configured"
-        ),
-        certificate_configured=_boolean(
-            data["certificate_configured"], "certificate configured"
-        ),
+        identity_configured=_boolean(data["identity_configured"], "identity configured"),
+        certificate_configured=_boolean(data["certificate_configured"], "certificate configured"),
         x11_forwarding=_boolean(data["x11_forwarding"], "X11 forwarding"),
-        forwarding_rule_count=_integer(
-            data["forwarding_rule_count"], "forwarding rule count"
-        ),
+        forwarding_rule_count=_integer(data["forwarding_rule_count"], "forwarding rule count"),
         proxy_jump=proxy_jump,
         key_select_mode=_integer(data["key_select_mode"], "key_select_mode"),
-        identity_files=tuple(
-            _identifier(f, "identity file") for f in identity_files
-        ),
-        certificate_files=tuple(
-            _identifier(f, "certificate file") for f in certificate_files
-        ),
-        identity_agent=_text(
-            data["identity_agent"], "identity_agent", allow_empty=True
-        ),
-        add_keys_to_agent=_text(
-            data["add_keys_to_agent"], "add_keys_to_agent", allow_empty=True
-        ),
-        pkcs11_provider=_text(
-            data["pkcs11_provider"], "pkcs11_provider", allow_empty=True
-        ),
+        identity_files=tuple(_identifier(f, "identity file") for f in identity_files),
+        certificate_files=tuple(_identifier(f, "certificate file") for f in certificate_files),
+        identity_agent=_text(data["identity_agent"], "identity_agent", allow_empty=True),
+        add_keys_to_agent=_text(data["add_keys_to_agent"], "add_keys_to_agent", allow_empty=True),
+        pkcs11_provider=_text(data["pkcs11_provider"], "pkcs11_provider", allow_empty=True),
         security_key_provider=_text(
             data["security_key_provider"], "security_key_provider", allow_empty=True
         ),
@@ -1964,12 +1898,8 @@ def connection_editor_details_from_wire(
             "forward_agent_target",
             allow_empty=True,
         ),
-        proxy_command=_text(
-            data["proxy_command"], "proxy_command", allow_empty=True
-        ),
-        forwarding_rules=tuple(
-            forwarding_rule_from_wire(r) for r in forwarding_rules
-        ),
+        proxy_command=_text(data["proxy_command"], "proxy_command", allow_empty=True),
+        forwarding_rules=tuple(forwarding_rule_from_wire(r) for r in forwarding_rules),
         x11_forwarding_explicit_no=_boolean(
             data["x11_forwarding_explicit_no"], "x11_forwarding_explicit_no"
         ),
@@ -1977,19 +1907,11 @@ def connection_editor_details_from_wire(
             data["identities_only_explicit_no"], "identities_only_explicit_no"
         ),
         pre_command=_text(data["pre_command"], "pre_command", allow_empty=True),
-        local_command=_text(
-            data["local_command"], "local_command", allow_empty=True
-        ),
-        remote_command=_text(
-            data["remote_command"], "remote_command", allow_empty=True
-        ),
+        local_command=_text(data["local_command"], "local_command", allow_empty=True),
+        remote_command=_text(data["remote_command"], "remote_command", allow_empty=True),
         request_tty=_text(data["request_tty"], "request_tty", allow_empty=True),
-        extra_ssh_config=_text(
-            data["extra_ssh_config"], "extra_ssh_config", allow_empty=True
-        ),
-        identity_file_none=_boolean(
-            data["identity_file_none"], "identity_file_none"
-        ),
+        extra_ssh_config=_text(data["extra_ssh_config"], "extra_ssh_config", allow_empty=True),
+        identity_file_none=_boolean(data["identity_file_none"], "identity_file_none"),
         preferred_authentications=_text(
             data["preferred_authentications"],
             "preferred_authentications",
@@ -2067,9 +1989,7 @@ def connection_validation_result_to_wire(
 ) -> Dict[str, Any]:
     return {
         "valid": result.valid,
-        "errors": [
-            connection_validation_error_to_wire(e) for e in result.errors
-        ],
+        "errors": [connection_validation_error_to_wire(e) for e in result.errors],
     }
 
 
@@ -2086,9 +2006,7 @@ def connection_validation_result_from_wire(
         raise ValueError("validation errors must be an array")
     return ConnectionValidationResult(
         valid=_boolean(data["valid"], "validation valid"),
-        errors=tuple(
-            connection_validation_error_from_wire(e) for e in errors_raw
-        ),
+        errors=tuple(connection_validation_error_from_wire(e) for e in errors_raw),
     )
 
 
@@ -2123,9 +2041,7 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
     if raw_patch is not None:
         if type(raw_patch) is not dict:
             raise ValueError("config_patch must be an object")
-        config_patch = {
-            k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS
-        }
+        config_patch = {k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS}
     raw_plugin_data = data.get("plugin_data", {})
     if type(raw_plugin_data) is not dict:
         raise ValueError("plugin_data must be an object")
@@ -2208,9 +2124,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if raw_patch is not None:
         if type(raw_patch) is not dict:
             raise ValueError("config_patch must be an object")
-        config_patch = {
-            k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS
-        }
+        config_patch = {k: v for k, v in raw_patch.items() if k in EDITABLE_CONFIG_FIELDS}
 
     expected_generation = data.get("expected_generation")
     if expected_generation is not None:
@@ -2300,9 +2214,7 @@ def store_connection_password_request_from_wire(
         context="store connection password request",
     )
     return StoreConnectionPasswordRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         password=_text(data["password"], "connection password"),
         previous_hostname=_text(
             data.get("previous_hostname", ""),
@@ -2349,9 +2261,7 @@ def delete_connection_password_request_from_wire(
         context="delete connection password request",
     )
     return DeleteConnectionPasswordRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         previous_hostname=_text(
             data.get("previous_hostname", ""),
             "previous hostname",
@@ -2390,6 +2300,7 @@ def store_key_passphrase_request_from_wire(
         key_path=_text(data["key_path"], "key path"),
         passphrase=_text(data["passphrase"], "passphrase"),
     )
+
 
 def delete_key_passphrase_request_to_wire(
     request: DeleteKeyPassphraseRequest,
@@ -2455,9 +2366,7 @@ def update_connection_metadata_request_from_wire(
     if type(data.get("meta")) is not dict:
         raise ValueError("meta must be an object")
     return UpdateConnectionMetadataRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         meta=data["meta"],
     )
 
@@ -2483,9 +2392,7 @@ def assign_connection_to_group_request_from_wire(
         context="assign connection to group request",
     )
     return AssignConnectionToGroupRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         group_id=_text(data.get("group_id", ""), "group_id", allow_empty=True),
     )
 
@@ -2582,7 +2489,13 @@ def split_connection_request_to_wire(
 def split_connection_request_from_wire(value: Any) -> SplitConnectionRequest:
     data = _strict_fields(
         value,
-        required={"connection_id", "original_host_token", "source_config_path", "nickname", "config_patch"},
+        required={
+            "connection_id",
+            "original_host_token",
+            "source_config_path",
+            "nickname",
+            "config_patch",
+        },
         optional={"hostname", "username", "port", "expected_generation"},
         context="split connection request",
     )
@@ -2590,7 +2503,7 @@ def split_connection_request_from_wire(value: Any) -> SplitConnectionRequest:
     if expected_generation is not None:
         if type(expected_generation) is not int:
             raise TypeError("expected_generation must be an integer if provided")
-    
+
     port = data.get("port")
     if port is not None:
         if type(port) is not int:
@@ -2652,9 +2565,7 @@ def save_ssh_config_text_request_from_wire(
     )
     return SaveSshConfigTextRequest(
         text=_text(data["text"], "ssh config text", allow_empty=True),
-        expected_revision=_identifier(
-            data["expected_revision"], "expected ssh config revision"
-        ),
+        expected_revision=_identifier(data["expected_revision"], "expected ssh config revision"),
     )
 
 
@@ -2976,9 +2887,7 @@ def resize_terminal_request_from_wire(value: Any) -> ResizeTerminalRequest:
     )
     return ResizeTerminalRequest(
         session_id=_session_id(data["session_id"], "session id"),
-        attachment_id=AttachmentId(
-            _identifier(data["attachment_id"], "attachment id")
-        ),
+        attachment_id=AttachmentId(_identifier(data["attachment_id"], "attachment id")),
         dimensions=terminal_dimensions_from_wire(data["dimensions"]),
     )
 
@@ -3002,9 +2911,7 @@ def claim_terminal_input_request_from_wire(value: Any) -> ClaimTerminalInputRequ
     )
     return ClaimTerminalInputRequest(
         session_id=_session_id(data["session_id"], "session id"),
-        attachment_id=AttachmentId(
-            _identifier(data["attachment_id"], "attachment id")
-        ),
+        attachment_id=AttachmentId(_identifier(data["attachment_id"], "attachment id")),
     )
 
 
@@ -3027,9 +2934,7 @@ def release_terminal_input_request_from_wire(value: Any) -> ReleaseTerminalInput
     )
     return ReleaseTerminalInputRequest(
         session_id=_session_id(data["session_id"], "session id"),
-        attachment_id=AttachmentId(
-            _identifier(data["attachment_id"], "attachment id")
-        ),
+        attachment_id=AttachmentId(_identifier(data["attachment_id"], "attachment id")),
     )
 
 
@@ -3055,9 +2960,7 @@ def replay_request_from_wire(value: Any) -> ReplayRequest:
         after = _integer(after, "terminal replay sequence")
     return ReplayRequest(
         session_id=_session_id(data["session_id"], "session id"),
-        attachment_id=AttachmentId(
-            _identifier(data["attachment_id"], "attachment id")
-        ),
+        attachment_id=AttachmentId(_identifier(data["attachment_id"], "attachment id")),
         after_sequence=after,
         max_bytes=_integer(data["max_bytes"], "terminal replay byte limit"),
     )
@@ -3252,7 +3155,12 @@ def capabilities_from_wire(value: Any) -> Capabilities:
 
 def _interaction_prompt_to_wire(
     interaction_type: InteractionType,
-    prompt: HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt | ConfirmationPrompt,
+    prompt: HostKeyPrompt
+    | PasswordPrompt
+    | PassphrasePrompt
+    | ChallengePrompt
+    | PresencePrompt
+    | ConfirmationPrompt,
 ) -> Dict[str, Any]:
     if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
         if type(prompt) is not HostKeyPrompt:
@@ -3303,7 +3211,14 @@ def _interaction_prompt_to_wire(
 def _interaction_prompt_from_wire(
     interaction_type: InteractionType,
     value: Any,
-) -> HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt | ConfirmationPrompt:
+) -> (
+    HostKeyPrompt
+    | PasswordPrompt
+    | PassphrasePrompt
+    | ChallengePrompt
+    | PresencePrompt
+    | ConfirmationPrompt
+):
     if interaction_type is InteractionType.HOST_KEY_CONFIRMATION:
         data = _strict_fields(
             value,
@@ -3415,16 +3330,12 @@ def interaction_summary_from_wire(value: Any) -> InteractionSummary:
         },
         context="interaction summary",
     )
-    interaction_type = InteractionType(
-        _identifier(data["type"], "interaction type")
-    )
+    interaction_type = InteractionType(_identifier(data["type"], "interaction type"))
     responder = data["responder_client_id"]
     return InteractionSummary(
         id=InteractionId(_identifier(data["id"], "interaction id")),
         session_id=_interaction_scope_id(data["session_id"], "session id"),
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         type=interaction_type,
         state=InteractionState(_identifier(data["state"], "interaction state")),
         created_at=_datetime_from_wire(data["created_at"], "interaction creation time"),
@@ -3462,9 +3373,7 @@ def interaction_claim_from_wire(value: Any) -> InteractionClaim:
         context="interaction claim",
     )
     return InteractionClaim(
-        interaction_id=InteractionId(
-            _identifier(data["interaction_id"], "interaction id")
-        ),
+        interaction_id=InteractionId(_identifier(data["interaction_id"], "interaction id")),
         responder_client_id=ClientId(
             _identifier(data["responder_client_id"], "responder client id")
         ),
@@ -3481,14 +3390,10 @@ def interaction_decision_to_wire(
     return {
         "interaction_id": request.interaction_id,
         "host_key_decision": (
-            request.host_key_decision.value
-            if request.host_key_decision is not None
-            else None
+            request.host_key_decision.value if request.host_key_decision is not None else None
         ),
         "value_action": (
-            request.secret_decision.value
-            if request.secret_decision is not None
-            else None
+            request.secret_decision.value if request.secret_decision is not None else None
         ),
         "remember_policy": request.remember_policy.value,
     }
@@ -3508,22 +3413,16 @@ def interaction_decision_from_wire(value: Any) -> InteractionDecisionRequest:
     host_key = data["host_key_decision"]
     secret = data["value_action"]
     return InteractionDecisionRequest(
-        interaction_id=InteractionId(
-            _identifier(data["interaction_id"], "interaction id")
-        ),
+        interaction_id=InteractionId(_identifier(data["interaction_id"], "interaction id")),
         host_key_decision=(
             HostKeyDecision(_identifier(host_key, "host-key decision"))
             if host_key is not None
             else None
         ),
         secret_decision=(
-            SecretDecision(_identifier(secret, "secret decision"))
-            if secret is not None
-            else None
+            SecretDecision(_identifier(secret, "secret decision")) if secret is not None else None
         ),
-        remember_policy=RememberPolicy(
-            _identifier(data["remember_policy"], "remember policy")
-        ),
+        remember_policy=RememberPolicy(_identifier(data["remember_policy"], "remember policy")),
     )
 
 
@@ -3605,14 +3504,10 @@ def sftp_service_summary_from_wire(value: Any) -> SftpServiceSummary:
         ),
         state=state,
         created_at=_datetime_from_wire(data["created_at"], "SFTP service creation time"),
-        started_at=_optional_datetime_from_wire(
-            data["started_at"], "SFTP service start time"
-        ),
+        started_at=_optional_datetime_from_wire(data["started_at"], "SFTP service start time"),
         closed_at=_optional_datetime_from_wire(data["closed_at"], "SFTP service close time"),
         attachment_count=_integer(data["attachment_count"], "SFTP attachment count"),
-        owner_client_id=_optional_client_id(
-            data["owner_client_id"], "SFTP owner client id"
-        ),
+        owner_client_id=_optional_client_id(data["owner_client_id"], "SFTP owner client id"),
         failure=_service_failure_from_wire(data["failure"]),
     )
 
@@ -3638,9 +3533,7 @@ def close_sftp_request_to_wire(request: CloseSftpRequest) -> Dict[str, Any]:
 
 def close_sftp_request_from_wire(value: Any) -> CloseSftpRequest:
     data = _strict_fields(value, required={"service_id"}, context="close SFTP request")
-    return CloseSftpRequest(
-        service_id=_sftp_service_id(data["service_id"], "SFTP service id")
-    )
+    return CloseSftpRequest(service_id=_sftp_service_id(data["service_id"], "SFTP service id"))
 
 
 def attach_sftp_request_to_wire(request: AttachSftpRequest) -> Dict[str, Any]:
@@ -3651,9 +3544,7 @@ def attach_sftp_request_to_wire(request: AttachSftpRequest) -> Dict[str, Any]:
 
 def attach_sftp_request_from_wire(value: Any) -> AttachSftpRequest:
     data = _strict_fields(value, required={"service_id"}, context="attach SFTP request")
-    return AttachSftpRequest(
-        service_id=_sftp_service_id(data["service_id"], "SFTP service id")
-    )
+    return AttachSftpRequest(service_id=_sftp_service_id(data["service_id"], "SFTP service id"))
 
 
 def remote_file_entry_to_wire(entry: RemoteFileEntry) -> Dict[str, Any]:
@@ -3832,9 +3723,7 @@ def sftp_read_file_request_from_wire(value: Any) -> SftpReadFileRequest:
         target=_sftp_file_target_from_wire(data["target"]),
         path=_text(data["path"], "SFTP file path"),
         service_id=(
-            _sftp_service_id(service_id, "SFTP service id")
-            if service_id is not None
-            else None
+            _sftp_service_id(service_id, "SFTP service id") if service_id is not None else None
         ),
         access=_sftp_file_access_from_wire(access),
     )
@@ -3902,9 +3791,7 @@ def sftp_replace_file_request_from_wire(value: Any) -> SftpReplaceFileRequest:
         expected_revision=_identifier(data["expected_revision"], "expected file revision"),
         backup=_boolean(data["backup"], "SFTP file backup"),
         service_id=(
-            _sftp_service_id(service_id, "SFTP service id")
-            if service_id is not None
-            else None
+            _sftp_service_id(service_id, "SFTP service id") if service_id is not None else None
         ),
         access=_sftp_file_access_from_wire(access),
     )
@@ -3960,9 +3847,7 @@ def sftp_path_request_from_wire(value: Any) -> SftpPathRequest:
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         path=_text(data["path"], "SFTP path"),
         recursive=(
-            _boolean(data["recursive"], "SFTP recursive flag")
-            if "recursive" in data
-            else False
+            _boolean(data["recursive"], "SFTP recursive flag") if "recursive" in data else False
         ),
     )
 
@@ -4042,9 +3927,7 @@ def sftp_directory_size_result_from_wire(value: Any) -> SftpDirectorySizeResult:
         path=_text(data["path"], "SFTP size result path"),
         size_bytes=_integer(data["size_bytes"], "SFTP size result size bytes"),
         file_count=_integer(data["file_count"], "SFTP size result file count"),
-        directory_count=_integer(
-            data["directory_count"], "SFTP size result directory count"
-        ),
+        directory_count=_integer(data["directory_count"], "SFTP size result directory count"),
     )
 
 
@@ -4070,9 +3953,7 @@ def sftp_rename_request_from_wire(value: Any) -> SftpRenameRequest:
     return SftpRenameRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         source_path=_text(data["source_path"], "SFTP rename source path"),
-        destination_path=_text(
-            data["destination_path"], "SFTP rename destination path"
-        ),
+        destination_path=_text(data["destination_path"], "SFTP rename destination path"),
         overwrite=_boolean(overwrite, "SFTP rename overwrite"),
     )
 
@@ -4099,9 +3980,7 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
     return SftpCopyRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         source_path=_text(data["source_path"], "SFTP copy source path"),
-        destination_path=_text(
-            data["destination_path"], "SFTP copy destination path"
-        ),
+        destination_path=_text(data["destination_path"], "SFTP copy destination path"),
         recursive=_boolean(data.get("recursive", False), "SFTP copy recursive"),
         move=_boolean(data.get("move", False), "SFTP copy move"),
     )
@@ -4211,9 +4090,7 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
         bytes_total = _integer(bytes_total, "transfer total bytes")
     return TransferSummary(
         id=_transfer_id(data["id"], "transfer id"),
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "transfer connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "transfer connection id")),
         sftp_service_id=(
             _sftp_service_id(data["sftp_service_id"], "transfer SFTP service id")
             if data.get("sftp_service_id") is not None
@@ -4223,19 +4100,13 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
         direction=direction,
         state=state,
         source_display=_text(data["source_display"], "transfer source display"),
-        destination_display=_text(
-            data["destination_display"], "transfer destination display"
-        ),
+        destination_display=_text(data["destination_display"], "transfer destination display"),
         bytes_total=bytes_total,
         bytes_completed=_integer(data["bytes_completed"], "transfer completed bytes"),
         created_at=_datetime_from_wire(data["created_at"], "transfer creation time"),
         started_at=_optional_datetime_from_wire(data["started_at"], "transfer start time"),
-        completed_at=_optional_datetime_from_wire(
-            data["completed_at"], "transfer completion time"
-        ),
-        owner_client_id=_optional_client_id(
-            data["owner_client_id"], "transfer owner client id"
-        ),
+        completed_at=_optional_datetime_from_wire(data["completed_at"], "transfer completion time"),
+        owner_client_id=_optional_client_id(data["owner_client_id"], "transfer owner client id"),
         failure=_service_failure_from_wire(data["failure"]),
     )
 
@@ -4280,9 +4151,7 @@ def start_transfer_request_from_wire(value: Any) -> StartTransferRequest:
             else TransferConflictPolicy.FAIL
         )
     except ValueError:
-        raise ValueError(
-            "start transfer request contains an unknown conflict policy"
-        ) from None
+        raise ValueError("start transfer request contains an unknown conflict policy") from None
     local_mode = data.get("local_mode")
     try:
         local_mode = (
@@ -4295,9 +4164,7 @@ def start_transfer_request_from_wire(value: Any) -> StartTransferRequest:
     recursive = data.get("recursive", False)
     return StartTransferRequest(
         connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
-        sftp_service_id=_sftp_service_id(
-            data["sftp_service_id"], "transfer SFTP service id"
-        ),
+        sftp_service_id=_sftp_service_id(data["sftp_service_id"], "transfer SFTP service id"),
         direction=direction,
         remote_path=_text(data["remote_path"], "transfer remote path"),
         local_path=_text(data["local_path"], "transfer local path"),
@@ -4364,9 +4231,7 @@ def cancel_transfer_request_from_wire(value: Any) -> CancelTransferRequest:
         required={"transfer_id"},
         context="cancel transfer request",
     )
-    return CancelTransferRequest(
-        transfer_id=_transfer_id(data["transfer_id"], "transfer id")
-    )
+    return CancelTransferRequest(transfer_id=_transfer_id(data["transfer_id"], "transfer id"))
 
 
 def forward_summary_to_wire(summary: ForwardSummary) -> Dict[str, Any]:
@@ -4440,9 +4305,7 @@ def forward_summary_from_wire(value: Any) -> ForwardSummary:
         created_at=_datetime_from_wire(data["created_at"], "forward creation time"),
         active_at=_optional_datetime_from_wire(data["active_at"], "forward active time"),
         closed_at=_optional_datetime_from_wire(data["closed_at"], "forward close time"),
-        owner_client_id=_optional_client_id(
-            data["owner_client_id"], "forward owner client id"
-        ),
+        owner_client_id=_optional_client_id(data["owner_client_id"], "forward owner client id"),
         failure=_service_failure_from_wire(data["failure"]),
         session_id=session_id,
     )
@@ -4566,9 +4429,7 @@ def daemon_resource_counts_from_wire(value: Any) -> DaemonResourceCounts:
         transfers_retained=_integer(data["transfers_retained"], "transfers_retained"),
         forwards_active=_integer(data["forwards_active"], "forwards_active"),
         forwards_retained=_integer(data["forwards_retained"], "forwards_retained"),
-        interactions_pending=_integer(
-            data["interactions_pending"], "interactions_pending"
-        ),
+        interactions_pending=_integer(data["interactions_pending"], "interactions_pending"),
     )
 
 
@@ -4758,9 +4619,7 @@ def daemon_diagnostics_from_wire(value: Any) -> DaemonDiagnostics:
     return DaemonDiagnostics(
         status=daemon_status_from_wire(data["status"]),
         uptime_seconds=float(uptime),
-        executor_queue_depth=_integer(
-            data["executor_queue_depth"], "executor_queue_depth"
-        ),
+        executor_queue_depth=_integer(data["executor_queue_depth"], "executor_queue_depth"),
         thread_counts_by_role=parsed_roles,
         open_descriptor_count=data["open_descriptor_count"],
         rss_bytes=data["rss_bytes"],
@@ -4880,6 +4739,7 @@ def daemon_stop_result_from_wire(value: Any) -> DaemonStopResult:
 # SSH overrides codec
 # ---------------------------------------------------------------------------
 
+
 def global_ssh_overrides_to_wire(
     overrides: Any,
 ) -> Dict[str, Any]:
@@ -4925,15 +4785,9 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
     return GlobalSshOverrides(
         revision=_identifier(data["revision"], "revision"),
         connect_timeout=_integer(data["connect_timeout"], "connect_timeout"),
-        connection_attempts=_integer(
-            data["connection_attempts"], "connection_attempts"
-        ),
-        server_alive_interval=_integer(
-            data["server_alive_interval"], "server_alive_interval"
-        ),
-        server_alive_count_max=_integer(
-            data["server_alive_count_max"], "server_alive_count_max"
-        ),
+        connection_attempts=_integer(data["connection_attempts"], "connection_attempts"),
+        server_alive_interval=_integer(data["server_alive_interval"], "server_alive_interval"),
+        server_alive_count_max=_integer(data["server_alive_count_max"], "server_alive_count_max"),
         strict_host_key_checking=_text(
             data["strict_host_key_checking"],
             "strict_host_key_checking",
@@ -4943,9 +4797,7 @@ def global_ssh_overrides_from_wire(value: Any) -> Any:
         compression=_boolean(data["compression"], "compression"),
         verbosity=_integer(data["verbosity"], "verbosity"),
         debug_enabled=_boolean(data["debug_enabled"], "debug_enabled"),
-        applies_immediately=_boolean(
-            data.get("applies_immediately", True), "applies_immediately"
-        ),
+        applies_immediately=_boolean(data.get("applies_immediately", True), "applies_immediately"),
     )
 
 
@@ -4985,6 +4837,7 @@ def update_global_ssh_overrides_request_from_wire(
 # ---------------------------------------------------------------------------
 # Daemon-owned secret-backend management
 # ---------------------------------------------------------------------------
+
 
 def secret_configuration_to_wire(configuration: Any) -> Dict[str, Any]:
     from ..models.secrets import SecretConfiguration
@@ -5027,7 +4880,9 @@ def secret_configuration_from_wire(value: Any) -> Any:
         remember_in_keyring=_boolean(data["remember_in_keyring"], "remember_in_keyring"),
         bitwarden_profile=_text(data["bitwarden_profile"], "bitwarden_profile", allow_empty=True),
         bitwarden_server=_text(data["bitwarden_server"], "bitwarden_server", allow_empty=True),
-        keepassxc_database=_text(data["keepassxc_database"], "keepassxc_database", allow_empty=True),
+        keepassxc_database=_text(
+            data["keepassxc_database"], "keepassxc_database", allow_empty=True
+        ),
         keepassxc_keyfile=_text(data["keepassxc_keyfile"], "keepassxc_keyfile", allow_empty=True),
     )
 
@@ -5102,9 +4957,7 @@ def secret_backend_descriptor_from_wire(value: Any) -> Any:
         context="secret backend descriptor",
     )
     capabilities = data["capabilities"]
-    if type(capabilities) is not list or not all(
-        type(item) is str for item in capabilities
-    ):
+    if type(capabilities) is not list or not all(type(item) is str for item in capabilities):
         raise ValueError("capabilities must be a list of strings")
     return SecretBackendDescriptor(
         name=_text(data["name"], "name"),
@@ -5145,9 +4998,7 @@ def secret_backend_registry_from_wire(value: Any) -> Any:
     if type(backends) is not list:
         raise ValueError("backends must be a list")
     return SecretBackendRegistry(
-        backends=tuple(
-            secret_backend_descriptor_from_wire(item) for item in backends
-        ),
+        backends=tuple(secret_backend_descriptor_from_wire(item) for item in backends),
         effective_backend=_text(data["effective_backend"], "effective_backend"),
         selected_backend=_text(data["selected_backend"], "selected_backend"),
     )
@@ -5378,9 +5229,7 @@ def identity_provider_descriptor_from_wire(value: Any) -> Any:
         context="identity provider descriptor",
     )
     capabilities = data["capabilities"]
-    if type(capabilities) is not list or not all(
-        type(item) is str for item in capabilities
-    ):
+    if type(capabilities) is not list or not all(type(item) is str for item in capabilities):
         raise ValueError("capabilities must be a list of strings")
     return IdentityProviderDescriptor(
         provider_id=_identifier(data["provider_id"], "provider id"),
@@ -5390,9 +5239,7 @@ def identity_provider_descriptor_from_wire(value: Any) -> Any:
         effective_agent_socket=_text(
             data["effective_agent_socket"], "effective agent socket", allow_empty=True
         ),
-        custom_socket_required=_boolean(
-            data["custom_socket_required"], "custom socket required"
-        ),
+        custom_socket_required=_boolean(data["custom_socket_required"], "custom socket required"),
         capabilities=tuple(capabilities),
         detail=_text(data["detail"], "provider detail", allow_empty=True),
     )
@@ -5405,8 +5252,7 @@ def identity_provider_registry_to_wire(registry: Any) -> Dict[str, Any]:
         raise TypeError("IdentityProviderRegistry is required")
     return {
         "providers": [
-            identity_provider_descriptor_to_wire(provider)
-            for provider in registry.providers
+            identity_provider_descriptor_to_wire(provider) for provider in registry.providers
         ],
         "revision": registry.revision,
     }
@@ -5424,10 +5270,7 @@ def identity_provider_registry_from_wire(value: Any) -> Any:
     if type(providers) is not list:
         raise ValueError("providers must be a list")
     return IdentityProviderRegistry(
-        providers=tuple(
-            identity_provider_descriptor_from_wire(provider)
-            for provider in providers
-        ),
+        providers=tuple(identity_provider_descriptor_from_wire(provider) for provider in providers),
         revision=_identifier(data["revision"], "identity revision"),
     )
 
@@ -5464,16 +5307,12 @@ def identity_state_from_wire(value: Any) -> Any:
     )
     return IdentityState(
         provider=_identifier(data["provider"], "identity provider"),
-        custom_socket=_text(
-            data["custom_socket"], "custom socket", allow_empty=True
-        ),
+        custom_socket=_text(data["custom_socket"], "custom socket", allow_empty=True),
         effective_agent_socket=_text(
             data["effective_agent_socket"], "effective agent socket", allow_empty=True
         ),
         agent_available=_boolean(data["agent_available"], "agent available"),
-        ssh_copy_id_available=_boolean(
-            data["ssh_copy_id_available"], "ssh-copy-id available"
-        ),
+        ssh_copy_id_available=_boolean(data["ssh_copy_id_available"], "ssh-copy-id available"),
         revision=_identifier(data["revision"], "identity revision"),
     )
 
@@ -5622,9 +5461,7 @@ def deploy_key_request_from_wire(value: Any) -> Any:
         context="deploy key request",
     )
     return DeployKeyRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         key_id=_identifier(data["key_id"], "key id"),
         scope=_key_store_scope(data["scope"], "key store scope"),
         force=_boolean(data["force"], "force"),
@@ -5643,12 +5480,8 @@ def operation_summary_to_wire(summary: Any) -> Dict[str, Any]:
         "message": summary.message,
         "connection_id": summary.connection_id,
         "created_at": _datetime_to_wire(summary.created_at, "operation creation time"),
-        "started_at": _optional_datetime_to_wire(
-            summary.started_at, "operation start time"
-        ),
-        "finished_at": _optional_datetime_to_wire(
-            summary.finished_at, "operation finish time"
-        ),
+        "started_at": _optional_datetime_to_wire(summary.started_at, "operation start time"),
+        "finished_at": _optional_datetime_to_wire(summary.finished_at, "operation finish time"),
         "progress": summary.progress,
         "owner_client_id": summary.owner_client_id,
         "failure": _service_failure_to_wire(summary.failure),
@@ -5687,9 +5520,7 @@ def operation_summary_from_wire(value: Any) -> Any:
         raise ValueError("operation summary contains an unknown state") from None
     connection_id = data["connection_id"]
     if connection_id is not None:
-        connection_id = ConnectionId(
-            _identifier(connection_id, "operation connection id")
-        )
+        connection_id = ConnectionId(_identifier(connection_id, "operation connection id"))
     progress = data["progress"]
     if progress is not None:
         if type(progress) is int:
@@ -5706,16 +5537,10 @@ def operation_summary_from_wire(value: Any) -> Any:
         message=_text(data["message"], "operation message", allow_empty=True),
         connection_id=connection_id,
         created_at=_datetime_from_wire(data["created_at"], "operation creation time"),
-        started_at=_optional_datetime_from_wire(
-            data["started_at"], "operation start time"
-        ),
-        finished_at=_optional_datetime_from_wire(
-            data["finished_at"], "operation finish time"
-        ),
+        started_at=_optional_datetime_from_wire(data["started_at"], "operation start time"),
+        finished_at=_optional_datetime_from_wire(data["finished_at"], "operation finish time"),
         progress=progress,
-        owner_client_id=_optional_client_id(
-            data["owner_client_id"], "operation owner client id"
-        ),
+        owner_client_id=_optional_client_id(data["owner_client_id"], "operation owner client id"),
         failure=_service_failure_from_wire(data["failure"]),
         result=result,
     )
@@ -5727,12 +5552,154 @@ def operation_id_request_to_wire(operation_id: Any) -> Dict[str, Any]:
     return {"operation_id": OperationId(_identifier(operation_id, "operation id"))}
 
 
+def broadcast_command_request_to_wire(request: Any) -> Dict[str, Any]:
+    from ..models.broadcast import BroadcastCommandRequest
+
+    if type(request) is not BroadcastCommandRequest:
+        raise TypeError("BroadcastCommandRequest is required")
+    policy = request.policy
+    return {
+        "connection_ids": list(request.connection_ids),
+        "command": request.command,
+        "policy": {
+            "failure_policy": policy.failure_policy.value,
+            "concurrency_limit": policy.concurrency_limit,
+            "timeout_seconds": policy.timeout_seconds,
+            "capture_stdout": policy.capture_stdout,
+            "capture_stderr": policy.capture_stderr,
+            "output_limit_bytes": policy.output_limit_bytes,
+        },
+    }
+
+
+def broadcast_command_request_from_wire(value: Any) -> Any:
+    from ..models.broadcast import (
+        BroadcastCommandRequest,
+        BroadcastExecutionPolicy,
+        BroadcastFailurePolicy,
+    )
+
+    data = _strict_fields(
+        value, required={"connection_ids", "command", "policy"}, context="broadcast command request"
+    )
+    if type(data["connection_ids"]) is not list:
+        raise ValueError("broadcast connection_ids must be an array")
+    policy_data = _strict_fields(
+        data["policy"],
+        required={
+            "failure_policy",
+            "concurrency_limit",
+            "timeout_seconds",
+            "capture_stdout",
+            "capture_stderr",
+            "output_limit_bytes",
+        },
+        context="broadcast execution policy",
+    )
+    try:
+        failure_policy = BroadcastFailurePolicy(policy_data["failure_policy"])
+    except (TypeError, ValueError):
+        raise ValueError("broadcast policy contains an unknown failure policy") from None
+    timeout = policy_data["timeout_seconds"]
+    if timeout is not None and (type(timeout) not in (int, float) or isinstance(timeout, bool)):
+        raise ValueError("broadcast timeout must be a number or null")
+    return BroadcastCommandRequest(
+        tuple(ConnectionId(_identifier(item, "connection id")) for item in data["connection_ids"]),
+        _text(data["command"], "broadcast command"),
+        BroadcastExecutionPolicy(
+            failure_policy=failure_policy,
+            concurrency_limit=_integer(
+                policy_data["concurrency_limit"], "broadcast concurrency limit"
+            ),
+            timeout_seconds=timeout,
+            capture_stdout=_boolean(policy_data["capture_stdout"], "capture stdout"),
+            capture_stderr=_boolean(policy_data["capture_stderr"], "capture stderr"),
+            output_limit_bytes=_integer(
+                policy_data["output_limit_bytes"], "broadcast output limit"
+            ),
+        ),
+    )
+
+
+def host_command_result_to_wire(result: Any) -> Dict[str, Any]:
+    from ..models.broadcast import HostCommandResult
+
+    if type(result) is not HostCommandResult:
+        raise TypeError("HostCommandResult is required")
+    return {
+        "connection_id": result.connection_id,
+        "state": result.state.value,
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "truncated": result.truncated,
+        "failure": _service_failure_to_wire(result.failure),
+    }
+
+
+def host_command_result_from_wire(value: Any) -> Any:
+    from ..models.broadcast import HostCommandResult, HostCommandState
+
+    data = _strict_fields(
+        value,
+        required={
+            "connection_id",
+            "state",
+            "exit_code",
+            "stdout",
+            "stderr",
+            "truncated",
+            "failure",
+        },
+        context="host command result",
+    )
+    try:
+        state = HostCommandState(data["state"])
+    except (TypeError, ValueError):
+        raise ValueError("host command result contains an unknown state") from None
+    exit_code = data["exit_code"]
+    if exit_code is not None:
+        exit_code = _integer(exit_code, "host command exit code")
+    return HostCommandResult(
+        ConnectionId(_identifier(data["connection_id"], "connection id")),
+        state,
+        exit_code,
+        _text(data["stdout"], "stdout", allow_empty=True),
+        _text(data["stderr"], "stderr", allow_empty=True),
+        _boolean(data["truncated"], "truncated"),
+        _service_failure_from_wire(data["failure"]),
+    )
+
+
+def broadcast_command_summary_to_wire(summary: Any) -> Dict[str, Any]:
+    from ..models.broadcast import BroadcastCommandSummary
+
+    if type(summary) is not BroadcastCommandSummary:
+        raise TypeError("BroadcastCommandSummary is required")
+    return {
+        "operation": operation_summary_to_wire(summary.operation),
+        "targets": [host_command_result_to_wire(item) for item in summary.targets],
+    }
+
+
+def broadcast_command_summary_from_wire(value: Any) -> Any:
+    from ..models.broadcast import BroadcastCommandSummary
+
+    data = _strict_fields(
+        value, required={"operation", "targets"}, context="broadcast command summary"
+    )
+    if type(data["targets"]) is not list:
+        raise ValueError("broadcast targets must be an array")
+    return BroadcastCommandSummary(
+        operation_summary_from_wire(data["operation"]),
+        tuple(host_command_result_from_wire(item) for item in data["targets"]),
+    )
+
+
 def operation_id_request_from_wire(value: Any) -> Any:
     from ..models.operations import OperationId
 
-    data = _strict_fields(
-        value, required={"operation_id"}, context="operation id request"
-    )
+    data = _strict_fields(value, required={"operation_id"}, context="operation id request")
     return OperationId(_identifier(data["operation_id"], "operation id"))
 
 
@@ -5777,9 +5744,7 @@ def _authorized_key_entry_from_wire(value: Any) -> Any:
         kind=kind,
         raw_line=_text(data["raw_line"], "authorized key raw line", allow_empty=True),
         key_type=_text(data["key_type"], "authorized key type", allow_empty=True),
-        fingerprint=_text(
-            data["fingerprint"], "authorized key fingerprint", allow_empty=True
-        ),
+        fingerprint=_text(data["fingerprint"], "authorized key fingerprint", allow_empty=True),
         comment=_text(data["comment"], "authorized key comment", allow_empty=True),
         disabled=_boolean(data["disabled"], "authorized key disabled"),
     )
@@ -5792,9 +5757,7 @@ def authorized_key_list_to_wire(key_list: Any) -> Dict[str, Any]:
         raise TypeError("AuthorizedKeyList is required")
     return {
         "connection_id": key_list.connection_id,
-        "entries": [
-            _authorized_key_entry_to_wire(entry) for entry in key_list.entries
-        ],
+        "entries": [_authorized_key_entry_to_wire(entry) for entry in key_list.entries],
         "file_revision": key_list.file_revision,
     }
 
@@ -5811,9 +5774,7 @@ def authorized_key_list_from_wire(value: Any) -> Any:
     if type(entries) is not list:
         raise ValueError("entries must be a list")
     return AuthorizedKeyList(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         entries=tuple(_authorized_key_entry_from_wire(entry) for entry in entries),
         file_revision=_identifier(data["file_revision"], "authorized keys revision"),
     )
@@ -5836,9 +5797,7 @@ def list_authorized_keys_request_from_wire(value: Any) -> Any:
         context="list authorized keys request",
     )
     return ListAuthorizedKeysRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        )
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id"))
     )
 
 
@@ -5863,9 +5822,7 @@ def remove_authorized_key_request_from_wire(value: Any) -> Any:
         context="remove authorized key request",
     )
     return RemoveAuthorizedKeyRequest(
-        connection_id=ConnectionId(
-            _identifier(data["connection_id"], "connection id")
-        ),
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
         line_id=_identifier(data["line_id"], "authorized key line id"),
         file_revision=_identifier(data["file_revision"], "authorized keys revision"),
     )

@@ -21,19 +21,40 @@ class WindowBroadcastMixin:
         """Handle broadcast banner send button click"""
         command = self.broadcast_entry.get_text().strip()
         if command:
-            sent_count, failed_count = self.terminal_manager.broadcast_command(command)
+            self.terminal_manager.broadcast_command(
+                command,
+                on_success=self._on_broadcast_started,
+                on_error=self._on_broadcast_failed,
+            )
 
             # Update banner message with result (we'll need to find the title label)
             # For now, just hide the banner after sending
             self.broadcast_entry_dirty = False
             self._schedule_broadcast_hide_timeout()
         else:
-            # Show error for empty command - could add error styling here
             self.broadcast_entry_dirty = False
             self._schedule_broadcast_hide_timeout()
 
+    def _on_broadcast_started(self, summary):
+        """Remember daemon truth; completion is obtained by typed polling/events."""
+        self._active_broadcast_operation_id = summary.operation.operation_id
+        logger.info("Broadcast command accepted for %d targets", len(summary.targets))
+
+    def _on_broadcast_failed(self, error):
+        self._active_broadcast_operation_id = None
+        logger.warning("Broadcast command request was not accepted: %s", error)
+
     def on_broadcast_cancel_clicked(self, button):
         """Handle broadcast banner cancel button click"""
+        operation_id = getattr(self, "_active_broadcast_operation_id", None)
+        client = getattr(self, "client", None)
+        bridge = getattr(self, "client_bridge", None)
+        if operation_id and client is not None and bridge is not None:
+            bridge.submit(
+                lambda: client.cancel_broadcast_command(operation_id),
+                on_success=lambda _summary: setattr(self, "_active_broadcast_operation_id", None),
+                on_error=self._on_broadcast_failed,
+            )
         self.hide_broadcast_banner()
 
     def on_broadcast_entry_activate(self, entry):
@@ -83,10 +104,12 @@ class WindowBroadcastMixin:
         self._cancel_broadcast_hide_timeout()
         self.broadcast_banner.set_reveal_child(True)
         self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
+
         # Focus the entry after a short delay to ensure banner is visible
         def focus_entry():
             self.broadcast_entry.grab_focus()
             return False
+
         GLib.idle_add(focus_entry)
 
     def on_broadcast_entry_changed(self, entry):
@@ -140,9 +163,7 @@ class WindowBroadcastMixin:
         """Handle broadcast command action - shows banner to input command"""
         try:
             # Check if there are any SSH terminals open
-            ssh_terminals_count = sum(
-                1 for _ in self.terminal_manager.iter_ssh_terminals()
-            )
+            ssh_terminals_count = sum(1 for _ in self.terminal_manager.iter_ssh_terminals())
 
             if ssh_terminals_count == 0:
                 # Show message dialog
@@ -151,9 +172,9 @@ class WindowBroadcastMixin:
                         transient_for=self,
                         modal=True,
                         heading=_("No SSH Terminals Open"),
-                        body=_("Connect to your server first!")
+                        body=_("Connect to your server first!"),
                     )
-                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.add_response("ok", _("OK"))
                     error_dialog.present()
                 except Exception as e:
                     logger.error(f"Failed to show error dialog: {e}")
@@ -170,9 +191,9 @@ class WindowBroadcastMixin:
                     transient_for=self,
                     modal=True,
                     heading=_("Error"),
-                    body=_("Failed to open broadcast command dialog: {error}").format(error=str(e))
+                    body=_("Failed to open broadcast command dialog: {error}").format(error=str(e)),
                 )
-                error_dialog.add_response('ok', _('OK'))
+                error_dialog.add_response("ok", _("OK"))
                 error_dialog.present()
             except Exception:
                 pass

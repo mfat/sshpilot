@@ -145,6 +145,9 @@ from sshpilot.daemon.transfer_runtime import TransferRuntime
 logger = logging.getLogger(__name__)
 
 DAEMON_METHOD_CAPABILITIES = {
+    "broadcast.start": Capability.BROADCAST_WRITE,
+    "broadcast.get": Capability.BROADCAST_READ,
+    "broadcast.cancel": Capability.BROADCAST_WRITE,
     "connections.get": Capability.CONNECTIONS_READ,
     "connections.list": Capability.CONNECTIONS_READ,
     "connections.snapshot": Capability.CONNECTIONS_READ,
@@ -298,6 +301,7 @@ DAEMON_METHOD_CAPABILITIES = {
 # Methods rejected while draining (new work). Close/cancel/status remain.
 DRAIN_REJECTED_METHODS = frozenset(
     {
+        "broadcast.start",
         "connections.create",
         "connections.duplicate",
         "connections.update",
@@ -555,6 +559,7 @@ class RequestDispatcher:
         secrets_service: Any = None,
         identity_service: Any = None,
         operation_runtime: Any = None,
+        broadcast_service: Any = None,
     ) -> None:
         self._connections = connection_service
         self._session_runtime = session_runtime or SessionRuntime(connection_service)
@@ -569,6 +574,7 @@ class RequestDispatcher:
         self._secrets_service = secrets_service
         self._identity_service = identity_service
         self._operation_runtime = operation_runtime
+        self._broadcast_service = broadcast_service
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
@@ -580,21 +586,15 @@ class RequestDispatcher:
             lifecycle_controller, "_server_instance_id"
         ):
             self.server_instance_id = lifecycle_controller._server_instance_id
-        self._daemon_started_at = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        if lifecycle_controller is not None and hasattr(
-            lifecycle_controller, "_started_at"
-        ):
+        self._daemon_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if lifecycle_controller is not None and hasattr(lifecycle_controller, "_started_at"):
             started = lifecycle_controller._started_at
             if isinstance(started, datetime):
                 self._daemon_started_at = started.astimezone(timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%SZ"
                 )
         # Opaque development token only — never a filesystem or git path.
-        self._development_revision = (
-            os.environ.get("SSHPILOT_DEV_REVISION", "").strip()
-        )
+        self._development_revision = os.environ.get("SSHPILOT_DEV_REVISION", "").strip()
         self._shutting_down = False
         self.HANDLERS: Dict[str, Callable[[RequestEnvelope, ClientProtocolState], Any]] = {
             "system.handshake": self._handle_handshake,
@@ -707,6 +707,9 @@ class RequestDispatcher:
             "authorized_keys.remove": self._handle_remove_authorized_key,
             "operations.get": self._handle_get_operation,
             "operations.cancel": self._handle_cancel_operation,
+            "broadcast.start": self._handle_start_broadcast,
+            "broadcast.get": self._handle_get_broadcast,
+            "broadcast.cancel": self._handle_cancel_broadcast,
             "ssh_overrides.get": self._handle_get_ssh_overrides,
             "ssh_overrides.update": self._handle_update_ssh_overrides,
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
@@ -875,8 +878,7 @@ class RequestDispatcher:
                 ),
                 sftp=self._sftp_runtime is not None,
                 privileged_file=bool(
-                    self._sftp_runtime is not None
-                    and self._sftp_runtime.privileged_file_supported
+                    self._sftp_runtime is not None and self._sftp_runtime.privileged_file_supported
                 ),
                 transfers=self._transfer_runtime is not None,
                 scp=self._scp_capability_available(),
@@ -887,6 +889,7 @@ class RequestDispatcher:
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
+                broadcast=self._broadcast_service is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -949,9 +952,7 @@ class RequestDispatcher:
                 ErrorCode.UNSUPPORTED_CAPABILITY,
                 "Daemon control is unavailable",
             )
-        result = self._lifecycle.request_stop(
-            stop_daemon_request_from_wire(dict(request.params))
-        )
+        result = self._lifecycle.request_stop(stop_daemon_request_from_wire(dict(request.params)))
         return daemon_stop_result_to_wire(result)
 
     def _handle_daemon_restart(
@@ -980,10 +981,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> list:
         self._require_empty_params(request)
-        return [
-            connection_summary_to_wire(item)
-            for item in self._connections.list_connections()
-        ]
+        return [connection_summary_to_wire(item) for item in self._connections.list_connections()]
 
     def _handle_connection_snapshot(
         self,
@@ -991,9 +989,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> dict:
         self._require_empty_params(request)
-        return connection_store_snapshot_to_wire(
-            self._connections.snapshot_connection_store()
-        )
+        return connection_store_snapshot_to_wire(self._connections.snapshot_connection_store())
 
     def _handle_get_connection(
         self,
@@ -1043,9 +1039,7 @@ class RequestDispatcher:
         state: ClientProtocolState,
     ) -> DeferredResult:
         if set(request.params) != {"connection_id", "update"}:
-            raise ValueError(
-                "connections.update requires connection_id and update"
-            )
+            raise ValueError("connections.update requires connection_id and update")
         connection_id = request.params["connection_id"]
         if type(connection_id) is not str or not connection_id.strip():
             raise ValueError("connection_id must be a non-empty string")
@@ -1122,13 +1116,9 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> DeferredResult:
         if request.params:
-            raise ValueError(
-                "connections.get_ssh_config_text takes no parameters"
-            )
+            raise ValueError("connections.get_ssh_config_text takes no parameters")
         return DeferredResult(
-            operation=lambda: ssh_config_text_to_wire(
-                self._connections.get_ssh_config_text()
-            ),
+            operation=lambda: ssh_config_text_to_wire(self._connections.get_ssh_config_text()),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
@@ -1196,8 +1186,13 @@ class RequestDispatcher:
         request: RequestEnvelope,
         state: ClientProtocolState,
     ) -> DeferredResult:
-        if state.client_info is None or "binary-secret-v1" not in state.client_info.supported_frame_types:
-            raise SshPilotError(ErrorCode.UNSUPPORTED_CAPABILITY, "Binary secret transport was not negotiated")
+        if (
+            state.client_info is None
+            or "binary-secret-v1" not in state.client_info.supported_frame_types
+        ):
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY, "Binary secret transport was not negotiated"
+            )
         connection_id = self._connection_id_param(request, "connections.reveal_password")
         return DeferredResult(
             operation=lambda: SecretResponseResult(
@@ -1215,9 +1210,7 @@ class RequestDispatcher:
     ) -> DeferredResult:
         typed_request = store_plugin_secret_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._connections.store_plugin_secret_rpc(
-                typed_request
-            ),
+            operation=lambda: self._connections.store_plugin_secret_rpc(typed_request),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
@@ -1251,9 +1244,7 @@ class RequestDispatcher:
     ) -> DeferredResult:
         typed_request = delete_plugin_secret_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: self._connections.delete_plugin_secret_rpc(
-                typed_request
-            ),
+            operation=lambda: self._connections.delete_plugin_secret_rpc(typed_request),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
@@ -1324,8 +1315,13 @@ class RequestDispatcher:
         request: RequestEnvelope,
         state: ClientProtocolState,
     ) -> DeferredResult:
-        if state.client_info is None or "binary-secret-v1" not in state.client_info.supported_frame_types:
-            raise SshPilotError(ErrorCode.UNSUPPORTED_CAPABILITY, "Binary secret transport was not negotiated")
+        if (
+            state.client_info is None
+            or "binary-secret-v1" not in state.client_info.supported_frame_types
+        ):
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY, "Binary secret transport was not negotiated"
+            )
         typed_request = lookup_key_passphrase_request_from_wire(request.params)
         return DeferredResult(
             operation=lambda: SecretResponseResult(
@@ -1537,10 +1533,7 @@ class RequestDispatcher:
         _state: ClientProtocolState,
     ) -> list:
         self._require_empty_params(request)
-        return [
-            session_summary_to_wire(item)
-            for item in self._session_runtime.list_sessions()
-        ]
+        return [session_summary_to_wire(item) for item in self._session_runtime.list_sessions()]
 
     def _handle_list_interactions(
         self,
@@ -1631,9 +1624,7 @@ class RequestDispatcher:
         session_id = request.params["session_id"]
         if type(session_id) is not str or not session_id.strip():
             raise ValueError("session_id must be a non-empty string")
-        return session_summary_to_wire(
-            self._session_runtime.get_session(SessionId(session_id))
-        )
+        return session_summary_to_wire(self._session_runtime.get_session(SessionId(session_id)))
 
     def _handle_open_session(
         self,
@@ -1652,17 +1643,13 @@ class RequestDispatcher:
             operation=lambda: self._session_runtime.start_session(prepared.id),
             command_key=prepared.id,
             session_id=prepared.id,
-            on_rejected=lambda: self._session_runtime.reject_pending_start(
-                prepared.id
-            ),
+            on_rejected=lambda: self._session_runtime.reject_pending_start(prepared.id),
             respond_on_accept=True,
             accepted_result=prepared_wire,
-            on_background_error=lambda error: (
-                self._session_runtime.fail_pending_start(prepared.id, error)
+            on_background_error=lambda error: self._session_runtime.fail_pending_start(
+                prepared.id, error
             ),
-            on_cancel=lambda: self._session_runtime.reject_pending_start(
-                prepared.id
-            ),
+            on_cancel=lambda: self._session_runtime.reject_pending_start(prepared.id),
         )
 
     def _handle_attach_session(
@@ -1672,13 +1659,9 @@ class RequestDispatcher:
     ) -> ImmediateResult:
         client_id = self._required_client_id(state)
         session_request = attach_session_request_from_wire(request.params)
-        if (
-            session_request.want_terminal_output
-            and (
-                state.client_info is None
-                or "binary-terminal-v1"
-                not in state.client_info.supported_frame_types
-            )
+        if session_request.want_terminal_output and (
+            state.client_info is None
+            or "binary-terminal-v1" not in state.client_info.supported_frame_types
         ):
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_CAPABILITY,
@@ -1693,9 +1676,7 @@ class RequestDispatcher:
             attach_session_result_to_wire(result),
             terminal_replay=replay if session_request.want_terminal_output else None,
             terminal_session_id=(
-                session_request.session_id
-                if session_request.want_terminal_output
-                else None
+                session_request.session_id if session_request.want_terminal_output else None
             ),
         )
 
@@ -1838,9 +1819,7 @@ class RequestDispatcher:
             on_rejected=lambda: runtime.reject_pending_start(prepared.id),
             respond_on_accept=True,
             accepted_result=prepared_wire,
-            on_background_error=lambda error: runtime.fail_pending_start(
-                prepared.id, error
-            ),
+            on_background_error=lambda error: runtime.fail_pending_start(prepared.id, error),
             on_cancel=lambda: runtime.reject_pending_start(prepared.id),
         )
 
@@ -1852,9 +1831,7 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         sftp_request = attach_sftp_request_from_wire(request.params)
         return sftp_service_summary_to_wire(
-            self._required_sftp_runtime().attach_service(
-                sftp_request, client_id=client_id
-            )
+            self._required_sftp_runtime().attach_service(sftp_request, client_id=client_id)
         )
 
     def _handle_detach_sftp_service(
@@ -1893,9 +1870,7 @@ class RequestDispatcher:
             operation=_close,
             command_key=close_request.service_id,
             session_id=SessionId(str(close_request.service_id)),
-            on_rejected=lambda: runtime.reject_pending_close(
-                close_request.service_id
-            ),
+            on_rejected=lambda: runtime.reject_pending_close(close_request.service_id),
         )
 
     def _handle_sftp_list_directory(
@@ -1973,9 +1948,7 @@ class RequestDispatcher:
         runtime = self._required_sftp_runtime()
         path_request = sftp_path_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: {
-                "path": runtime.realpath(path_request, client_id=client_id)
-            },
+            operation=lambda: {"path": runtime.realpath(path_request, client_id=client_id)},
             command_key=path_request.service_id,
             on_rejected=lambda: None,
         )
@@ -1989,9 +1962,7 @@ class RequestDispatcher:
         runtime = self._required_sftp_runtime()
         path_request = sftp_path_request_from_wire(request.params)
         return DeferredResult(
-            operation=lambda: {
-                "path": runtime.readlink(path_request, client_id=client_id)
-            },
+            operation=lambda: {"path": runtime.readlink(path_request, client_id=client_id)},
             command_key=path_request.service_id,
             on_rejected=lambda: None,
         )
@@ -2207,9 +2178,7 @@ class RequestDispatcher:
             on_rejected=lambda: runtime.reject_pending_start(prepared.id),
             respond_on_accept=True,
             accepted_result=prepared_wire,
-            on_background_error=lambda error: runtime.fail_pending_start(
-                prepared.id, error
-            ),
+            on_background_error=lambda error: runtime.fail_pending_start(prepared.id, error),
             on_cancel=lambda: runtime.reject_pending_start(prepared.id),
         )
 
@@ -2233,9 +2202,7 @@ class RequestDispatcher:
             on_rejected=lambda: runtime.reject_pending_start(prepared.id),
             respond_on_accept=True,
             accepted_result=prepared_wire,
-            on_background_error=lambda error: runtime.fail_pending_start(
-                prepared.id, error
-            ),
+            on_background_error=lambda error: runtime.fail_pending_start(prepared.id, error),
             on_cancel=lambda: runtime.reject_pending_start(prepared.id),
         )
 
@@ -2301,9 +2268,7 @@ class RequestDispatcher:
             on_rejected=lambda: runtime.reject_pending_start(prepared.id),
             respond_on_accept=True,
             accepted_result=prepared_wire,
-            on_background_error=lambda error: runtime.fail_pending_start(
-                prepared.id, error
-            ),
+            on_background_error=lambda error: runtime.fail_pending_start(prepared.id, error),
             on_cancel=lambda: runtime.reject_pending_start(prepared.id),
         )
 
@@ -2326,9 +2291,7 @@ class RequestDispatcher:
             operation=_close,
             command_key=close_request.forward_id,
             session_id=SessionId(str(close_request.forward_id)),
-            on_rejected=lambda: runtime.reject_pending_close(
-                close_request.forward_id
-            ),
+            on_rejected=lambda: runtime.reject_pending_close(close_request.forward_id),
         )
 
     def _handle_claim_forward(
@@ -2351,9 +2314,7 @@ class RequestDispatcher:
         self._require_empty_params(request)
         service = self._required_known_hosts_service()
         return DeferredResult(
-            operation=lambda: known_hosts_snapshot_to_wire(
-                service.list_known_hosts()
-            ),
+            operation=lambda: known_hosts_snapshot_to_wire(service.list_known_hosts()),
             command_key="known_hosts",
             on_rejected=lambda: None,
         )
@@ -2382,9 +2343,7 @@ class RequestDispatcher:
         typed_request = generate_key_request_from_wire(request.params)
         service = self._required_key_service()
         return DeferredResult(
-            operation=lambda: generate_key_result_to_wire(
-                service.generate_key(typed_request)
-            ),
+            operation=lambda: generate_key_result_to_wire(service.generate_key(typed_request)),
             command_key=("keys", typed_request.scope.value),
             on_rejected=lambda: None,
         )
@@ -2397,9 +2356,7 @@ class RequestDispatcher:
         typed_request = read_public_key_request_from_wire(request.params)
         service = self._required_key_service()
         return DeferredResult(
-            operation=lambda: public_key_result_to_wire(
-                service.read_public_key(typed_request)
-            ),
+            operation=lambda: public_key_result_to_wire(service.read_public_key(typed_request)),
             command_key=("keys", typed_request.scope.value),
             on_rejected=lambda: None,
         )
@@ -2467,9 +2424,7 @@ class RequestDispatcher:
         request: RequestEnvelope,
         _state: ClientProtocolState,
     ) -> dict:
-        typed_request = update_identity_configuration_request_from_wire(
-            request.params
-        )
+        typed_request = update_identity_configuration_request_from_wire(request.params)
         service = self._required_identity_service()
         return identity_state_to_wire(service.update_configuration(typed_request))
 
@@ -2496,9 +2451,7 @@ class RequestDispatcher:
         typed_request = agent_key_mutation_request_from_wire(request.params)
         service = self._required_identity_service()
         return DeferredResult(
-            operation=lambda: agent_key_list_to_wire(
-                service.add_agent_key(typed_request)
-            ),
+            operation=lambda: agent_key_list_to_wire(service.add_agent_key(typed_request)),
             command_key="identity.agent",
             on_rejected=lambda: None,
         )
@@ -2511,9 +2464,7 @@ class RequestDispatcher:
         typed_request = agent_key_mutation_request_from_wire(request.params)
         service = self._required_identity_service()
         return DeferredResult(
-            operation=lambda: agent_key_list_to_wire(
-                service.remove_agent_key(typed_request)
-            ),
+            operation=lambda: agent_key_list_to_wire(service.remove_agent_key(typed_request)),
             command_key="identity.agent",
             on_rejected=lambda: None,
         )
@@ -2561,9 +2512,7 @@ class RequestDispatcher:
         client_id = self._required_client_id(state)
         return DeferredResult(
             operation=lambda: operation_summary_to_wire(
-                service.remove_authorized_key(
-                    typed_request, owner_client_id=client_id
-                )
+                service.remove_authorized_key(typed_request, owner_client_id=client_id)
             ),
             command_key=("identity.authorized_keys", typed_request.connection_id),
             on_rejected=lambda: None,
@@ -2580,6 +2529,49 @@ class RequestDispatcher:
         summary = runtime.get_operation(operation_id)
         self._require_operation_owner(summary, client_id)
         return operation_summary_to_wire(summary)
+
+    def _required_broadcast_service(self):
+        if self._broadcast_service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY, "Broadcast command execution is unavailable"
+            )
+        return self._broadcast_service
+
+    def _handle_start_broadcast(self, request, state):
+        from sshpilot.api.transport.codec import (
+            broadcast_command_request_from_wire,
+            broadcast_command_summary_to_wire,
+        )
+
+        typed = broadcast_command_request_from_wire(request.params)
+        summary = self._required_broadcast_service().start(
+            typed, owner_client_id=self._required_client_id(state)
+        )
+        return broadcast_command_summary_to_wire(summary)
+
+    def _handle_get_broadcast(self, request, state):
+        from sshpilot.api.transport.codec import (
+            broadcast_command_summary_to_wire,
+            operation_id_request_from_wire,
+        )
+
+        summary = self._required_broadcast_service().get(
+            operation_id_request_from_wire(request.params),
+            client_id=self._required_client_id(state),
+        )
+        return broadcast_command_summary_to_wire(summary)
+
+    def _handle_cancel_broadcast(self, request, state):
+        from sshpilot.api.transport.codec import (
+            broadcast_command_summary_to_wire,
+            operation_id_request_from_wire,
+        )
+
+        summary = self._required_broadcast_service().cancel(
+            operation_id_request_from_wire(request.params),
+            client_id=self._required_client_id(state),
+        )
+        return broadcast_command_summary_to_wire(summary)
 
     def _handle_cancel_operation(
         self,
@@ -2643,8 +2635,7 @@ class RequestDispatcher:
                 ),
                 sftp=self._sftp_runtime is not None,
                 privileged_file=bool(
-                    self._sftp_runtime is not None
-                    and self._sftp_runtime.privileged_file_supported
+                    self._sftp_runtime is not None and self._sftp_runtime.privileged_file_supported
                 ),
                 transfers=self._transfer_runtime is not None,
                 scp=self._scp_capability_available(),
@@ -2690,6 +2681,7 @@ class RequestDispatcher:
         secrets: bool = False,
         identity: bool = False,
         operations: bool = False,
+        broadcast: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -2752,9 +2744,7 @@ class RequestDispatcher:
                 }
             )
             if privileged_file:
-                daemon_capabilities |= frozenset(
-                    {Capability.SFTP_PRIVILEGED_FILE}
-                )
+                daemon_capabilities |= frozenset({Capability.SFTP_PRIVILEGED_FILE})
         if transfers:
             daemon_capabilities |= frozenset(
                 {
@@ -2827,6 +2817,10 @@ class RequestDispatcher:
                     Capability.OPERATIONS_READ,
                     Capability.OPERATIONS_CONTROL,
                 }
+            )
+        if broadcast:
+            daemon_capabilities |= frozenset(
+                {Capability.BROADCAST_READ, Capability.BROADCAST_WRITE, Capability.BROADCAST_EVENTS}
             )
         return daemon_capabilities
 
@@ -2928,9 +2922,7 @@ class RequestDispatcher:
             update_global_ssh_overrides_request_from_wire,
         )
 
-        typed_request = update_global_ssh_overrides_request_from_wire(
-            request.params
-        )
+        typed_request = update_global_ssh_overrides_request_from_wire(request.params)
         service = self._required_ssh_overrides_service()
         return global_ssh_overrides_to_wire(service.update(typed_request))
 
@@ -2953,9 +2945,7 @@ class RequestDispatcher:
         ):
             raise ValueError("expected_revision must be a non-empty string or null")
         service = self._required_ssh_overrides_service()
-        return global_ssh_overrides_to_wire(
-            service.reset(expected_revision=expected_revision)
-        )
+        return global_ssh_overrides_to_wire(service.reset(expected_revision=expected_revision))
 
     def _required_ssh_overrides_service(self):
         if not hasattr(self, "_ssh_overrides_service") or self._ssh_overrides_service is None:
@@ -3042,9 +3032,7 @@ class RequestDispatcher:
         service = self._required_secrets_service()
         return self._defer(
             lambda: secret_backend_state_to_wire(
-                service.update_selection(
-                    backend, expected_revision=expected_revision
-                )
+                service.update_selection(backend, expected_revision=expected_revision)
             )
         )
 
@@ -3078,7 +3066,9 @@ class RequestDispatcher:
         from sshpilot.api.transport.codec import bitwarden_status_to_wire
 
         if set(request.params) - {"force_refresh"}:
-            raise ValueError(f"unexpected params: {sorted(set(request.params) - {'force_refresh'})}")
+            raise ValueError(
+                f"unexpected params: {sorted(set(request.params) - {'force_refresh'})}"
+            )
         service = self._required_secrets_service()
         force_refresh = bool(request.params.get("force_refresh", False))
         return self._defer(
@@ -3098,7 +3088,9 @@ class RequestDispatcher:
         if type(url) is not str:
             raise ValueError("url must be a string")
         service = self._required_secrets_service()
-        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_configure_server(url)))
+        return self._defer(
+            lambda: bitwarden_status_to_wire(service.bitwarden_configure_server(url))
+        )
 
     def _handle_bitwarden_login(
         self,
@@ -3230,9 +3222,7 @@ class RequestDispatcher:
         if type(email) is not str or type(base_url) is not str:
             raise ValueError("email and base_url must be strings")
         service = self._required_secrets_service()
-        return self._defer(
-            lambda: rbw_status_to_wire(service.rbw_configure(email, base_url))
-        )
+        return self._defer(lambda: rbw_status_to_wire(service.rbw_configure(email, base_url)))
 
     def _handle_rbw_unlock(
         self,
@@ -3298,9 +3288,7 @@ class RequestDispatcher:
 
         self._require_empty_params(request)
         service = self._required_secrets_service()
-        return self._defer(
-            lambda: secret_operation_result_to_wire(service.keepassxc_unlock())
-        )
+        return self._defer(lambda: secret_operation_result_to_wire(service.keepassxc_unlock()))
 
     def _handle_keepassxc_lock(
         self,
@@ -3311,9 +3299,7 @@ class RequestDispatcher:
 
         self._require_empty_params(request)
         service = self._required_secrets_service()
-        return self._defer(
-            lambda: secret_operation_result_to_wire(service.keepassxc_lock())
-        )
+        return self._defer(lambda: secret_operation_result_to_wire(service.keepassxc_lock()))
 
     def _handle_remember_master_password(
         self,
@@ -3355,9 +3341,7 @@ class RequestDispatcher:
         if type(destination) is not str or not destination.strip():
             raise ValueError("destination must be a non-empty string")
         connection_ids = params["connection_ids"]
-        if not isinstance(connection_ids, list) or any(
-            type(c) is not str for c in connection_ids
-        ):
+        if not isinstance(connection_ids, list) or any(type(c) is not str for c in connection_ids):
             raise ValueError("connection_ids must be a list of strings")
         options = params["options"]
         if not isinstance(options, dict):
@@ -3500,9 +3484,7 @@ class RequestDispatcher:
             raise ValueError("remote_dir must be a non-empty string")
         service = self._required_secrets_service()
         return self._defer(
-            lambda: service.list_ssh_backups(
-                connection_id=connection_id, remote_dir=remote_dir
-            )
+            lambda: service.list_ssh_backups(connection_id=connection_id, remote_dir=remote_dir)
         )
 
     def _handle_import_ssh_backup(

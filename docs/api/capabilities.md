@@ -1,5 +1,13 @@
 # Capabilities
 
+Broadcast execution advertises `broadcast.read`, `broadcast.write`, and
+`broadcast.events` only when the daemon has the operation runtime and canonical
+SSH launch provider. Absence never enables a frontend fallback.
+
+<!-- api-capability: broadcast.read -->
+<!-- api-capability: broadcast.write -->
+<!-- api-capability: broadcast.events -->
+
 Capabilities report implemented runtime support. The existence of a method,
 event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.

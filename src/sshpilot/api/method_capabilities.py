@@ -2,6 +2,9 @@
 from .capabilities import Capability
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
+    "start_broadcast_command": Capability.BROADCAST_WRITE,
+    "get_broadcast_command": Capability.BROADCAST_READ,
+    "cancel_broadcast_command": Capability.BROADCAST_WRITE,
     "attach_session": Capability.SESSIONS_WRITE,
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,

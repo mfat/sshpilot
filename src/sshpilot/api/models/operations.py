@@ -671,6 +671,7 @@ OperationId = NewType("OperationId", str)
 
 
 class OperationKind(str, Enum):
+    BROADCAST_COMMAND = "broadcast_command"
     KEY_DEPLOYMENT = "key_deployment"
     AUTHORIZED_KEY_REMOVAL = "authorized_key_removal"
     SFTP_DIRECTORY_SIZE = "sftp_directory_size"

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.21",
+  "api_implementation_version": "0.22",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -56,6 +56,10 @@
     "bitwarden_unlock": {
       "capability": "secrets.operate",
       "status": "daemon-only"
+    },
+    "cancel_broadcast_command": {
+      "capability": "broadcast.write",
+      "status": "schema-only"
     },
     "cancel_interaction": {
       "capability": "interactions.respond",
@@ -144,6 +148,10 @@
     "forget_master_password": {
       "capability": "secrets.operate",
       "status": "daemon-only"
+    },
+    "get_broadcast_command": {
+      "capability": "broadcast.read",
+      "status": "schema-only"
     },
     "get_capabilities": {
       "capability": null,
@@ -477,6 +485,10 @@
       "capability": "connections.split",
       "status": "implemented"
     },
+    "start_broadcast_command": {
+      "capability": "broadcast.write",
+      "status": "schema-only"
+    },
     "start_scp_transfer": {
       "capability": "transfers.scp",
       "status": "daemon-only"
@@ -544,6 +556,15 @@
     },
     "authorized_keys.remove": {
       "capability": "identity.operate"
+    },
+    "broadcast.cancel": {
+      "capability": "broadcast.write"
+    },
+    "broadcast.get": {
+      "capability": "broadcast.read"
+    },
+    "broadcast.start": {
+      "capability": "broadcast.write"
     },
     "connections.assign_to_group": {
       "capability": "connections.groups"
@@ -1049,6 +1070,9 @@
       "identity.operate",
       "operations.read",
       "operations.control",
+      "broadcast.read",
+      "broadcast.write",
+      "broadcast.events",
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",
@@ -1282,6 +1306,7 @@
       "isolated"
     ],
     "OperationKind": [
+      "broadcast_command",
       "key_deployment",
       "authorized_key_removal",
       "sftp_directory_size",

@@ -13,8 +13,11 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.21",
+  "api_implementation_version": "0.22",
   "capabilities": [
+    "broadcast.events",
+    "broadcast.read",
+    "broadcast.write",
     "connections.config.read",
     "connections.config.write",
     "connections.events",
@@ -140,6 +143,10 @@
       "capability": "secrets.operate",
       "status": "daemon-only"
     },
+    "cancel_broadcast_command": {
+      "capability": "broadcast.write",
+      "status": "schema-only"
+    },
     "cancel_interaction": {
       "capability": "interactions.respond",
       "status": "daemon-only"
@@ -227,6 +234,10 @@
     "forget_master_password": {
       "capability": "secrets.operate",
       "status": "daemon-only"
+    },
+    "get_broadcast_command": {
+      "capability": "broadcast.read",
+      "status": "schema-only"
     },
     "get_capabilities": {
       "capability": null,
@@ -560,6 +571,10 @@
       "capability": "connections.split",
       "status": "implemented"
     },
+    "start_broadcast_command": {
+      "capability": "broadcast.write",
+      "status": "schema-only"
+    },
     "start_scp_transfer": {
       "capability": "transfers.scp",
       "status": "daemon-only"
@@ -636,6 +651,7 @@
     "bitwarden_status",
     "bitwarden_sync",
     "bitwarden_unlock",
+    "cancel_broadcast_command",
     "cancel_interaction",
     "cancel_operation",
     "cancel_transfer",
@@ -660,6 +676,7 @@
     "export_secret_backup",
     "forget_master_password",
     "generate_key",
+    "get_broadcast_command",
     "get_capabilities",
     "get_connection",
     "get_connection_editor",
@@ -752,6 +769,7 @@
     "sftp_stat",
     "sftp_symlink",
     "split_connection",
+    "start_broadcast_command",
     "start_scp_transfer",
     "start_transfer",
     "stop_daemon",
@@ -894,6 +912,16 @@
     "bitwarden_unlock": {
       "parameters": [],
       "return": "BitwardenStatus"
+    },
+    "cancel_broadcast_command": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "operation_id",
+          "type": "untyped"
+        }
+      ],
+      "return": "untyped"
     },
     "cancel_interaction": {
       "parameters": [
@@ -1147,6 +1175,16 @@
         }
       ],
       "return": "GenerateKeyResult"
+    },
+    "get_broadcast_command": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "operation_id",
+          "type": "untyped"
+        }
+      ],
+      "return": "untyped"
     },
     "get_capabilities": {
       "parameters": [],
@@ -1970,6 +2008,16 @@
       ],
       "return": "ConnectionMutationResult"
     },
+    "start_broadcast_command": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "untyped"
+        }
+      ],
+      "return": "untyped"
+    },
     "start_scp_transfer": {
       "parameters": [
         {
@@ -2156,6 +2204,15 @@
     },
     "authorized_keys.remove": {
       "capability": "identity.operate"
+    },
+    "broadcast.cancel": {
+      "capability": "broadcast.write"
+    },
+    "broadcast.get": {
+      "capability": "broadcast.read"
+    },
+    "broadcast.start": {
+      "capability": "broadcast.write"
     },
     "connections.assign_to_group": {
       "capability": "connections.groups"
@@ -2752,6 +2809,10 @@
     "AuthorizedKeyLineKind",
     "AuthorizedKeyList",
     "BitwardenStatus",
+    "BroadcastCommandRequest",
+    "BroadcastCommandSummary",
+    "BroadcastExecutionPolicy",
+    "BroadcastFailurePolicy",
     "CancelTransferRequest",
     "ChallengePrompt",
     "ClaimForwardRequest",
@@ -2811,6 +2872,8 @@
     "GroupId",
     "GroupReference",
     "GroupSummary",
+    "HostCommandResult",
+    "HostCommandState",
     "HostKeyDecision",
     "HostKeyPrompt",
     "HostKeyStatus",
@@ -3924,6 +3987,9 @@
       "identity.operate",
       "operations.read",
       "operations.control",
+      "broadcast.read",
+      "broadcast.write",
+      "broadcast.events",
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",
@@ -4157,6 +4223,7 @@
       "isolated"
     ],
     "OperationKind": [
+      "broadcast_command",
       "key_deployment",
       "authorized_key_removal",
       "sftp_directory_size",

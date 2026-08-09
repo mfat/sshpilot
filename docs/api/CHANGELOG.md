@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.22`; `PROTOCOL_VERSION` stays `1.0`.
+- Added typed daemon-owned broadcast execution (`broadcast.start`,
+  `broadcast.get`, and `broadcast.cancel`) against saved connection IDs.
+
+Broadcast command execution is daemon-owned one-shot native SSH execution
+against saved connection IDs. It does not inject input into existing terminal
+sessions and does not use a local shell.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.21`; `PROTOCOL_VERSION` stays `1.0`.
   Closes out the SFTP operation-lifecycle integration:
   - Recursive `sftp.copy`/`sftp.remove` and `sftp.directory_size` now enforce

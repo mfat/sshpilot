@@ -1,5 +1,20 @@
 # Client methods
 
+API 0.22 adds `broadcast.start` (`broadcast.write`), `broadcast.get`
+(`broadcast.read`), and `broadcast.cancel` (`broadcast.write`). The typed
+request contains saved targets, command, and execution policy—not argv,
+environment, or local-shell settings.
+
+<!-- api-method: start_broadcast_command -->
+<!-- api-method: get_broadcast_command -->
+<!-- api-method: cancel_broadcast_command -->
+<!-- api-method-contract: start_broadcast_command status=schema-only capability=broadcast.write -->
+<!-- api-method-contract: get_broadcast_command status=schema-only capability=broadcast.read -->
+<!-- api-method-contract: cancel_broadcast_command status=schema-only capability=broadcast.write -->
+<!-- api-daemon-method: broadcast.start capability=broadcast.write -->
+<!-- api-daemon-method: broadcast.get capability=broadcast.read -->
+<!-- api-daemon-method: broadcast.cancel capability=broadcast.write -->
+
 `SshPilotClient` is synchronous. Both clients implement connection CRUD.
 Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 `unsupported_capability` for the corresponding `sessions.*` capability.
