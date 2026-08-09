@@ -1540,7 +1540,8 @@ Synthetic representation:
 | `key_type` | `str` | No | `ed25519` | No |
 | `key_size` | `int` | No | `0` | No |
 | `comment` | `str` | No | `` | No |
-| `passphrase` | `str` | No | `` | No |
+| `encrypted` | `bool` | No | `false` | No |
+| `interaction_scope_id` | `SessionId | None` | No | `null` | No |
 | `scope` | `KeyStoreScope` | No | `default` | No |
 
 Synthetic representation:
@@ -1548,10 +1549,11 @@ Synthetic representation:
 ```json
 {
   "comment": "",
+  "encrypted": false,
+  "interaction_scope_id": null,
   "key_size": 0,
   "key_type": "ed25519",
   "name": "example",
-  "passphrase": "",
   "scope": "default"
 }
 ```
@@ -3902,7 +3904,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** Store or update a key passphrase.
+**Purpose:** Store a key passphrase supplied through a protected interaction.
 
 **Related methods:** None
 **Related events:** None
@@ -3910,14 +3912,14 @@ Synthetic representation:
 | Field | Type | Required | Default | Sensitive |
 | --- | --- | ---: | --- | ---: |
 | `key_path` | `str` | Yes | — | No |
-| `passphrase` | `str` | Yes | — | Yes |
+| `interaction_scope_id` | `SessionId` | Yes | — | No |
 
 Synthetic representation:
 
 ```json
 {
-  "key_path": "example",
-  "passphrase": "<sensitive value omitted>"
+  "interaction_scope_id": "session-12",
+  "key_path": "example"
 }
 ```
 
@@ -4175,5 +4177,51 @@ Synthetic representation:
   "plugin_data": {},
   "port": "`UNSET`",
   "username": "`UNSET`"
+}
+```
+
+<!-- api-model: VerifyKeyPassphraseRequest -->
+## `VerifyKeyPassphraseRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Request daemon-owned verification using a protected interaction secret.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_path` | `str` | Yes | — | No |
+| `interaction_scope_id` | `SessionId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "interaction_scope_id": {},
+  "key_path": {}
+}
+```
+
+<!-- api-model: VerifyKeyPassphraseResult -->
+## `VerifyKeyPassphraseResult`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Whether the protected passphrase unlocked the selected private key.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `valid` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "valid": {}
 }
 ```

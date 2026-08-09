@@ -1,6 +1,7 @@
 # SSH-key daemon ownership (M1 — Complete)
 
-M1 moved SSH-key discovery, generation, and public-key reads into the daemon.
+M1 moved SSH-key discovery, generation, public-key reads, and passphrase
+verification into the daemon.
 GTK no longer instantiates `core.keys.KeyService`, never scans key
 directories, never runs `ssh-keygen`, and never directly reads the `.pub`
 file of a daemon-discovered key.
@@ -14,26 +15,34 @@ file of a daemon-discovered key.
 - The **daemon** creates key directories, recursively discovers private keys,
   runs `ssh-keygen`, and reads public-key files for application features.
 - **GTK** renders key metadata, reads public-key text via `keys.get_public`,
-  and requests generation via `keys.generate` — through `KeyManager`, a GObject
-  compatibility adapter over the daemon-backed `SshPilotClient` (via the
-  GTK-free `KeyController`).
+  requests generation via `keys.generate`, and requests passphrase verification
+  via `keys.verify_passphrase` — through `KeyManager`, a GObject compatibility
+  adapter over the daemon-backed `SshPilotClient` (via the GTK-free
+  `KeyController`).
 
 ## Identity and secrets
 
 - Keys are addressed by **deterministic opaque IDs** (scope + relative POSIX
   path, SHA-256 truncated) — never UUIDs, never absolute paths.
 - Private-key contents are never serialized and never cross the API.
-- Passphrases are sent only inside `GenerateKeyRequest` over the local daemon
-  API (the request is worker-local and goes out of scope when it returns);
-  they are excluded from `repr`, logs, events, errors, and retained controller
-  state.
+- `GenerateKeyRequest` expresses only whether encryption is requested. Neither
+  it nor `VerifyKeyPassphraseRequest` contains a passphrase.
+- Generation and verification collect passphrases through the existing
+  `InteractionBroker` and protected secret-frame channel. Native `ssh-keygen`
+  prompting is answered by daemon askpass; non-empty values never appear after
+  `-N`/`-P`, in process environment values, or in temporary files.
+- Saving a verified key passphrase also uses a protected interaction;
+  `StoreKeyPassphraseRequest` carries only the key path and opaque scope.
+- The broker retains a generation secret only long enough to answer native
+  confirmation and clears it on success, failure, cancellation, timeout, or
+  shutdown. GTK clears its password widget/input buffer after submission.
 - Public-key text crosses the API only through `keys.get_public`.
 
 ## Capabilities and RPCs
 
 - `KEYS_READ` (`keys.list`, `keys.get_public`) and `KEYS_WRITE`
-  (`keys.generate`) are advertised only when the daemon key service is
-  installed.
+  (`keys.generate`, `keys.verify_passphrase`) are advertised only when the
+  daemon key service is installed.
 - Generation is unavailable while the daemon is draining; a transport-level
   timeout after send becomes a structured `MUTATION_AMBIGUOUS` error, and the
   UI reloads the key list without an automatic retry.

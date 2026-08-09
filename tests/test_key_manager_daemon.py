@@ -20,6 +20,7 @@ from sshpilot.api.models.keys import (
     KeySummary,
     PublicKeyResult,
 )
+from sshpilot.api.models import SessionId
 from sshpilot.key_manager import KeyManager, SSHKey
 
 _SOURCE = Path(__file__).resolve().parents[1] / "src" / "sshpilot" / "key_manager.py"
@@ -124,7 +125,8 @@ def test_generate_key_sends_daemon_request_and_returns_dto():
         key_type="rsa",
         key_size=3072,
         comment="work",
-        passphrase="secret",
+        encrypted=True,
+        interaction_scope_id=SessionId("key-operation-generate-1"),
     )
     assert key.name == "new_key"
     assert key.key_id == "key-2"
@@ -133,16 +135,19 @@ def test_generate_key_sends_daemon_request_and_returns_dto():
     assert request.key_type == "rsa"
     assert request.key_size == 3072
     assert request.comment == "work"
-    assert request.passphrase == "secret"
+    assert request.encrypted is True
+    assert request.interaction_scope_id == "key-operation-generate-1"
+    assert "passphrase" not in request.__dataclass_fields__
     assert request.scope is KeyStoreScope.DEFAULT
 
 
-def test_generate_key_none_comment_and_passphrase_become_empty():
+def test_generate_key_none_comment_and_unencrypted_defaults():
     manager, client = _manager()
     manager.generate_key(key_name="k")
     request = client.generate_requests[0]
     assert request.comment == ""
-    assert request.passphrase == ""
+    assert request.encrypted is False
+    assert request.interaction_scope_id is None
 
 
 def test_generate_key_rsa_defaults_to_historical_3072():
@@ -202,12 +207,12 @@ def test_daemon_failure_propagates_without_local_fallback():
 # ---------------------------------------------------------------------------
 # Passphrase / path hygiene
 # ---------------------------------------------------------------------------
-def test_passphrase_never_retained():
+def test_generate_request_never_carries_passphrase():
     manager, client = _manager()
-    key = manager.generate_key(key_name="k", passphrase="super-secret")
-    assert "super-secret" not in repr(manager)
-    assert "super-secret" not in repr(key)
-    assert "super-secret" not in repr(client.generate_requests[0])
+    key = manager.generate_key(key_name="k")
+    assert "passphrase" not in client.generate_requests[0].__dataclass_fields__
+    assert "passphrase" not in vars(manager)
+    assert key.name == "new_key"
 
 
 def test_manager_rejects_key_directory_path(tmp_path):

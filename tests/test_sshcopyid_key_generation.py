@@ -1,8 +1,8 @@
 """ssh-copy-id key generation runs off the GTK thread.
 
 Generation guards: one in-flight mutation, controls disabled while running,
-passphrase kept worker-local, completion callbacks ignored after close, no
-sleep or local file-existence checks, and mutation ambiguity reloads without
+no passphrase in the worker request, completion callbacks ignored after close,
+no sleep or local file-existence checks, and mutation ambiguity reloads without
 an automatic retry.
 """
 
@@ -134,7 +134,7 @@ def test_invalid_name_never_starts_worker(monkeypatch, idle):
     window._error.assert_called_once()
 
 
-def test_passphrase_stays_worker_local(monkeypatch, idle):
+def test_encrypted_generation_request_is_secret_free(monkeypatch, idle):
     monkeypatch.setattr(win_mod.threading, "Thread", _ThreadSpy)
     window = _make_window()
     _set_generate_form(window, passphrase=True)
@@ -145,7 +145,11 @@ def test_passphrase_stays_worker_local(monkeypatch, idle):
 
     thread = _ThreadSpy.instances[0]
     request = thread.args[3]
-    assert request["passphrase"] == "s3cret"
+    assert request["encrypted"] is True
+    assert request["interaction_scope_id"].startswith("key-operation-")
+    assert "passphrase" not in request
+    window.pass1.get_text.assert_not_called()
+    window.pass2.get_text.assert_not_called()
     assert "s3cret" not in repr(window)
 
     # After the worker completes, the request is not retained on the window.

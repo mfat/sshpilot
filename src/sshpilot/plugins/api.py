@@ -676,7 +676,8 @@ class PluginContext:
         """Generate an SSH key via the app's key manager and return its
         private-key path (None on failure). Accepts the same keyword args as
         the key manager (``key_type``, ``key_size``, ``comment``,
-        ``passphrase``). Valid after ``app_started``."""
+        ``encrypted``). Protected input is collected by the daemon interaction
+        flow. Valid after ``app_started``."""
         return self._host.generate_key(name, **kwargs) if self._host is not None else None
 
     def list_keys(self) -> List[Dict[str, str]]:

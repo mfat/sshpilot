@@ -90,6 +90,7 @@ class ErrorCode(str, Enum):
     KEY_ALREADY_EXISTS = "key_already_exists"
     KEY_PUBLIC_UNAVAILABLE = "key_public_unavailable"
     KEY_GENERATION_FAILED = "key_generation_failed"
+    KEY_VERIFICATION_FAILED = "key_verification_failed"
     TRANSPORT_CLOSED = "transport_closed"
     TRANSPORT_TIMEOUT = "transport_timeout"
     FRAME_TOO_LARGE = "frame_too_large"

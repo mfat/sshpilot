@@ -11,21 +11,24 @@ import pytest
 
 import sshpilot.daemon.key_service as key_service_module
 from sshpilot.api.errors import ErrorCode as ApiErrorCode, SshPilotError
+from sshpilot.api.models import ClientId, SessionId
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     KeyId,
     KeyStoreScope,
     ListKeysRequest,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
 )
 from sshpilot.core.errors import CoreError, ErrorCode as CoreErrorCode
-from sshpilot.core.keys import KeyService, SSHKeyInfo
+from sshpilot.core.keys import SSHKeyInfo
 from sshpilot.daemon.key_service import DaemonKeyService
 
 PRIVATE_HEADER = (
     b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
     b"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAFzAAAC\n"
 )
+OWNER = ClientId("client-keys-1")
 
 
 def _write_key(root: Path, rel: str, with_pub: bool = True) -> Path:
@@ -451,12 +454,17 @@ class _FakeKeyService:
         self.generate_error = generate_error
         self.generated: list[object] = []
         self.last_spec = None
+        self.prepared_launch = None
 
     def discover_keys(self):
         return []
 
-    def generate_key(self, spec):
+    def generate_key(self, spec, prepare_launch=None):
         self.last_spec = spec
+        if prepare_launch is not None:
+            self.prepared_launch = prepare_launch(
+                ("ssh-keygen", "-t", spec.key_type, "-f", str(self.root / spec.key_name))
+            )
         if self.generate_error is not None:
             raise self.generate_error
         path = self.root / spec.key_name
@@ -467,6 +475,26 @@ class _FakeKeyService:
         )
         self.generated.append(spec)
         return SSHKeyInfo(str(path))
+
+    def verify_key_passphrase(self, path, *, prepare_launch):
+        self.prepared_launch = prepare_launch(
+            ("ssh-keygen", "-y", "-f", str(path))
+        )
+        return True
+
+
+class _FakeBroker:
+    def __init__(self):
+        self.prepared = []
+        self.cancelled = []
+
+    def prepare_operation_launch(self, argv, environment, **kwargs):
+        self.prepared.append((tuple(argv), dict(environment), kwargs))
+        return tuple(argv), {"SAFE_ENV": "1"}
+
+    def cancel_session(self, scope_id):
+        self.cancelled.append(scope_id)
+
 
 
 def _fake_service_factory(root: Path, fake, recorder):
@@ -486,15 +514,15 @@ def test_generate_key_success(tmp_path):
         service_factory=_fake_service_factory(default, fake, calls),
     )
     result = service.generate_key(
-        GenerateKeyRequest(name="id_ed25519", passphrase="a-secret")
+        GenerateKeyRequest(name="id_ed25519"),
+        owner_client_id=OWNER,
     )
     assert calls == [default]
     assert fake.last_spec.key_name == "id_ed25519"
-    assert fake.last_spec.passphrase == "a-secret"
+    assert fake.last_spec.encrypted is False
     assert result.key.name == "id_ed25519"
     assert result.key.public_key_available is True
     assert result.key.private_path == str(default / "id_ed25519")
-    assert "a-secret" not in repr(result)
 
 
 def test_generate_key_maps_exists_error_with_suggestion(tmp_path):
@@ -512,7 +540,7 @@ def test_generate_key_maps_exists_error_with_suggestion(tmp_path):
         service_factory=lambda root: fake,
     )
     with pytest.raises(SshPilotError) as excinfo:
-        service.generate_key(GenerateKeyRequest(name="x"))
+        service.generate_key(GenerateKeyRequest(name="x"), owner_client_id=OWNER)
     assert excinfo.value.code is ApiErrorCode.KEY_ALREADY_EXISTS
     assert excinfo.value.details == {"suggestion": "x_1"}
 
@@ -528,7 +556,7 @@ def test_generate_key_maps_validation_error(tmp_path):
         service_factory=lambda root: fake,
     )
     with pytest.raises(SshPilotError) as excinfo:
-        service.generate_key(GenerateKeyRequest(name="x"))
+        service.generate_key(GenerateKeyRequest(name="x"), owner_client_id=OWNER)
     assert excinfo.value.code is ApiErrorCode.VALIDATION_FAILED
 
 
@@ -543,12 +571,12 @@ def test_generate_key_maps_generation_failure(tmp_path):
         service_factory=lambda root: fake,
     )
     with pytest.raises(SshPilotError) as excinfo:
-        service.generate_key(GenerateKeyRequest(name="x"))
+        service.generate_key(GenerateKeyRequest(name="x"), owner_client_id=OWNER)
     assert excinfo.value.code is ApiErrorCode.KEY_GENERATION_FAILED
     assert "ssh-keygen failed" not in str(excinfo.value)
 
 
-def test_generate_error_messages_never_include_passphrase(tmp_path, caplog):
+def test_generate_error_messages_never_include_request_details(tmp_path, caplog):
     default = tmp_path / "default"
     fake = _FakeKeyService(
         default,
@@ -561,9 +589,10 @@ def test_generate_error_messages_never_include_passphrase(tmp_path, caplog):
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(SshPilotError):
             service.generate_key(
-                GenerateKeyRequest(name="x", passphrase="super-secret-passphrase")
+                GenerateKeyRequest(name="x"),
+                owner_client_id=OWNER,
             )
-    assert "super-secret-passphrase" not in caplog.text
+    assert "GenerateKeyRequest" not in caplog.text
 
 
 def test_generate_key_rejects_result_outside_root(tmp_path):
@@ -571,7 +600,7 @@ def test_generate_key_rejects_result_outside_root(tmp_path):
     outside = tmp_path / "outside"
 
     class _EscapeFake(_FakeKeyService):
-        def generate_key(self, spec):
+        def generate_key(self, spec, prepare_launch=None):
             self.last_spec = spec
             path = outside / spec.key_name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -584,8 +613,72 @@ def test_generate_key_rejects_result_outside_root(tmp_path):
         service_factory=lambda root: fake,
     )
     with pytest.raises(SshPilotError) as excinfo:
-        service.generate_key(GenerateKeyRequest(name="x"))
+        service.generate_key(GenerateKeyRequest(name="x"), owner_client_id=OWNER)
     assert excinfo.value.code is ApiErrorCode.KEY_GENERATION_FAILED
+
+
+def test_encrypted_generation_uses_owned_broker_scope(tmp_path):
+    default = tmp_path / "default"
+    fake = _FakeKeyService(default)
+    broker = _FakeBroker()
+    service = DaemonKeyService(
+        lambda scope: default,
+        service_factory=lambda root: fake,
+    )
+    service.attach_interaction_broker(broker)
+    scope_id = SessionId("key-operation-generate-1")
+
+    result = service.generate_key(
+        GenerateKeyRequest(
+            name="protected",
+            encrypted=True,
+            interaction_scope_id=scope_id,
+        ),
+        owner_client_id=OWNER,
+    )
+
+    assert result.key.name == "protected"
+    assert fake.last_spec.encrypted is True
+    argv, environment, kwargs = broker.prepared[0]
+    assert argv[0] == "ssh-keygen"
+    assert "-N" not in argv
+    assert "-P" not in argv
+    assert kwargs["scope_id"] == scope_id
+    assert kwargs["allow_stored_secrets"] is False
+    assert kwargs["confirm_passphrase"] is True
+    assert service.client_can_interact(scope_id, OWNER) is False
+    assert broker.cancelled == [scope_id]
+    assert all("PASSPHRASE" not in key for key in environment)
+
+
+def test_verify_passphrase_uses_owned_broker_scope(tmp_path):
+    key = _write_key(tmp_path / "default", "id_ed25519")
+    fake = _FakeKeyService(tmp_path / "default")
+    broker = _FakeBroker()
+    service = DaemonKeyService(
+        lambda scope: tmp_path / "default",
+        service_factory=lambda root: fake,
+    )
+    service.attach_interaction_broker(broker)
+    scope_id = SessionId("key-operation-verify-1")
+
+    result = service.verify_key_passphrase(
+        VerifyKeyPassphraseRequest(
+            key_path=str(key),
+            interaction_scope_id=scope_id,
+        ),
+        owner_client_id=OWNER,
+    )
+
+    assert result.valid is True
+    argv, _environment, kwargs = broker.prepared[0]
+    assert argv == ("ssh-keygen", "-y", "-f", str(key))
+    assert "-N" not in argv
+    assert "-P" not in argv
+    assert kwargs["scope_id"] == scope_id
+    assert kwargs["allow_stored_secrets"] is False
+    assert kwargs["confirm_passphrase"] is False
+    assert broker.cancelled == [scope_id]
 
 
 # ---------------------------------------------------------------------------

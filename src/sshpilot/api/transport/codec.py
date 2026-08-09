@@ -56,6 +56,8 @@ from ..models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
 )
 from ..models.connection_store import (
     AddTagToConnectionsRequest,
@@ -931,14 +933,17 @@ def public_key_result_from_wire(value: Any) -> PublicKeyResult:
 def generate_key_request_to_wire(request: GenerateKeyRequest) -> Dict[str, Any]:
     if type(request) is not GenerateKeyRequest:
         raise TypeError("generate key request is required")
-    return {
+    payload: Dict[str, Any] = {
         "name": request.name,
         "key_type": request.key_type,
         "key_size": request.key_size,
         "comment": request.comment,
-        "passphrase": request.passphrase,
+        "encrypted": request.encrypted,
         "scope": request.scope.value,
     }
+    if request.interaction_scope_id is not None:
+        payload["interaction_scope_id"] = request.interaction_scope_id
+    return payload
 
 
 def generate_key_request_from_wire(value: Any) -> GenerateKeyRequest:
@@ -949,17 +954,24 @@ def generate_key_request_from_wire(value: Any) -> GenerateKeyRequest:
             "key_type",
             "key_size",
             "comment",
-            "passphrase",
+            "encrypted",
             "scope",
         },
+        optional={"interaction_scope_id"},
         context="generate key request",
     )
+    interaction_scope_id = data.get("interaction_scope_id")
     return GenerateKeyRequest(
         name=_text(data["name"], "key name"),
         key_type=_text(data["key_type"], "key type"),
         key_size=_integer(data["key_size"], "key size"),
         comment=_text(data["comment"], "key comment", allow_empty=True),
-        passphrase=_text(data["passphrase"], "key passphrase", allow_empty=True),
+        encrypted=_boolean(data["encrypted"], "encrypted key generation"),
+        interaction_scope_id=(
+            SessionId(_identifier(interaction_scope_id, "key interaction scope id"))
+            if interaction_scope_id is not None
+            else None
+        ),
         scope=_key_store_scope(data["scope"], "key store scope"),
     )
 
@@ -973,6 +985,54 @@ def generate_key_result_to_wire(result: GenerateKeyResult) -> Dict[str, Any]:
 def generate_key_result_from_wire(value: Any) -> GenerateKeyResult:
     data = _strict_fields(value, required={"key"}, context="generate key result")
     return GenerateKeyResult(key=key_summary_from_wire(data["key"]))
+
+
+def verify_key_passphrase_request_to_wire(
+    request: VerifyKeyPassphraseRequest,
+) -> Dict[str, Any]:
+    if type(request) is not VerifyKeyPassphraseRequest:
+        raise TypeError("verify key passphrase request is required")
+    return {
+        "key_path": request.key_path,
+        "interaction_scope_id": request.interaction_scope_id,
+    }
+
+
+def verify_key_passphrase_request_from_wire(
+    value: Any,
+) -> VerifyKeyPassphraseRequest:
+    data = _strict_fields(
+        value,
+        required={"key_path", "interaction_scope_id"},
+        context="verify key passphrase request",
+    )
+    return VerifyKeyPassphraseRequest(
+        key_path=_text(data["key_path"], "key path"),
+        interaction_scope_id=SessionId(
+            _identifier(data["interaction_scope_id"], "key interaction scope id")
+        ),
+    )
+
+
+def verify_key_passphrase_result_to_wire(
+    result: VerifyKeyPassphraseResult,
+) -> Dict[str, Any]:
+    if type(result) is not VerifyKeyPassphraseResult:
+        raise TypeError("verify key passphrase result is required")
+    return {"valid": result.valid}
+
+
+def verify_key_passphrase_result_from_wire(
+    value: Any,
+) -> VerifyKeyPassphraseResult:
+    data = _strict_fields(
+        value,
+        required={"valid"},
+        context="verify key passphrase result",
+    )
+    return VerifyKeyPassphraseResult(
+        valid=_boolean(data["valid"], "key passphrase verification result")
+    )
 
 
 def group_summary_to_wire(summary: GroupSummary) -> Dict[str, Any]:
@@ -2288,7 +2348,10 @@ def store_key_passphrase_request_to_wire(
 ) -> Dict[str, Any]:
     if type(request) is not StoreKeyPassphraseRequest:
         raise TypeError("store key passphrase request is required")
-    return {"key_path": request.key_path, "passphrase": request.passphrase}
+    return {
+        "key_path": request.key_path,
+        "interaction_scope_id": request.interaction_scope_id,
+    }
 
 
 def store_key_passphrase_request_from_wire(
@@ -2296,12 +2359,14 @@ def store_key_passphrase_request_from_wire(
 ) -> StoreKeyPassphraseRequest:
     data = _strict_fields(
         value,
-        required={"key_path", "passphrase"},
+        required={"key_path", "interaction_scope_id"},
         context="store key passphrase request",
     )
     return StoreKeyPassphraseRequest(
         key_path=_text(data["key_path"], "key path"),
-        passphrase=_text(data["passphrase"], "passphrase"),
+        interaction_scope_id=SessionId(
+            _identifier(data["interaction_scope_id"], "key interaction scope id")
+        ),
     )
 
 

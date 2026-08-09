@@ -218,25 +218,11 @@ class SshCopyIdWindow(Adw.Window):
                 
                 passphrase_group.add(self.row_pass_toggle)
                 
-                # Passphrase entries (outside revealer)
-                self.pass1 = Gtk.PasswordEntry()
-                self.pass1.set_property("placeholder-text", "Passphrase")
-                self.pass1.set_can_focus(True)  # Make it focusable for tab navigation
-                self.pass2 = Gtk.PasswordEntry()
-                self.pass2.set_property("placeholder-text", "Confirm passphrase")
-                self.pass2.set_can_focus(True)  # Make it focusable for tab navigation
-                
-                # Create a box for passphrase entries
+                # Native ssh-keygen prompts through the daemon's protected
+                # interaction dialog after generation starts. No secret is
+                # collected into the ordinary generation request.
                 self.pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-                self.pass_box.set_margin_start(12)
-                self.pass_box.set_margin_end(12)
-                self.pass_box.set_margin_top(6)
-                self.pass_box.set_margin_bottom(6)
-                self.pass_box.append(self.pass1)
-                self.pass_box.append(self.pass2)
                 self.pass_box.set_visible(False)
-                
-                passphrase_group.add(self.pass_box)
                 
                 content.append(passphrase_group)
                 logger.info("SshCopyIdWindow: Passphrase toggle created successfully")
@@ -551,6 +537,10 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_close_request(self, *_args):
         self._closed = True
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
         return False
 
     def _on_close_clicked(self, *_):
@@ -629,8 +619,8 @@ class SshCopyIdWindow(Adw.Window):
 
         A second click while generation is running is ignored, and nothing
         starts after the window closes (defense in depth: ``_on_ok_clicked``
-        also guards closed/loading/generating). The passphrase lives only in
-        the worker-local request dict and is not retained.
+        also guards closed/loading/generating). Passphrases are collected later
+        by the daemon interaction dialog and never enter this worker request.
         """
         if self._closed or self._generating:
             return
@@ -644,13 +634,7 @@ class SshCopyIdWindow(Adw.Window):
             type_selection = self.type_dropdown.get_selected()
             kt = "ed25519" if type_selection == 0 else "rsa"
 
-            passphrase = None
-            if self.row_pass_toggle.get_active():
-                p1 = self.pass1.get_text() or ""
-                p2 = self.pass2.get_text() or ""
-                if p1 != p2:
-                    raise ValueError(_("Passphrases do not match"))
-                passphrase = p1
+            encrypted = bool(self.row_pass_toggle.get_active())
         except ValueError as exc:
             self._error(_("Key Generation Failed"), str(exc))
             return
@@ -658,12 +642,30 @@ class SshCopyIdWindow(Adw.Window):
         logger.info("SshCopyIdWindow: Starting generate and copy operation")
         self._generating = True
         self._set_generating_state(True)
+        interaction_scope_id = None
+        if encrypted:
+            from .api.models import SessionId
+            from .daemon_interaction_dialogs import DaemonInteractionDialogs
+            from .runtime_identity import new_operation_id
+
+            interaction_scope_id = SessionId(
+                f"key-{new_operation_id()}"
+            )
+            dialogs = DaemonInteractionDialogs(
+                self._parent.client,
+                self._parent.client_bridge,
+                self,
+            )
+            dialogs.set_session(interaction_scope_id)
+            self._key_generation_interactions = dialogs
+
         request = {
             "key_name": key_name,
             "key_type": kt,
             "key_size": 3072 if kt == "rsa" else 0,
             "comment": None,
-            "passphrase": passphrase,
+            "encrypted": encrypted,
+            "interaction_scope_id": interaction_scope_id,
         }
         try:
             thread = threading.Thread(
@@ -677,6 +679,10 @@ class SshCopyIdWindow(Adw.Window):
                 "SshCopyIdWindow: Could not start generation: %s", type(exc).__name__
             )
             self._generating = False
+            dialogs = getattr(self, "_key_generation_interactions", None)
+            if dialogs is not None:
+                dialogs.close()
+                self._key_generation_interactions = None
             self._set_generating_state(False)
             self._error(
                 _("Key Generation Failed"),
@@ -706,6 +712,10 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_generated(self, new_key, conn):
         self._generating = False
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
         if self._closed:
             return
         self._set_generating_state(False)
@@ -730,6 +740,10 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_mutation_ambiguous(self, exc):
         self._generating = False
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
         if self._closed:
             return
         self._set_generating_state(False)
@@ -748,6 +762,10 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_generation_failed(self, exc):
         self._generating = False
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
         if self._closed:
             return
         self._set_generating_state(False)

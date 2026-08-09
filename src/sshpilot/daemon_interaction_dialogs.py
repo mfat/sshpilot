@@ -117,15 +117,28 @@ class DaemonInteractionDialogs:
             return False
         if summary.id in self._dialogs or summary.id in self._claimed:
             return False
-        self._bridge.submit_interaction(
-            lambda: self._client.claim_interaction(summary.id),
-            on_success=lambda claim: self._claimed_and_present(summary, claim),
-            on_error=lambda _error: None,
-        )
+        # Reserve the interaction before the asynchronous claim starts.  The
+        # event stream and set_session() reconciliation can report the same
+        # pending interaction concurrently; waiting until claim completion to
+        # mark it would submit two claim requests.
+        self._claimed.add(summary.id)
+        try:
+            self._bridge.submit_interaction(
+                lambda: self._client.claim_interaction(summary.id),
+                on_success=lambda claim: self._claimed_and_present(summary, claim),
+                on_error=lambda _error: self._claim_failed(summary.id),
+            )
+        except RuntimeError:
+            self._claim_failed(summary.id)
         return False
 
+    def _claim_failed(self, interaction_id) -> None:
+        """Release an in-flight claim reservation after submission failure."""
+        self._claimed.discard(interaction_id)
+        self._claims.pop(interaction_id, None)
+
     def _claimed_and_present(self, summary: InteractionSummary, claim) -> None:
-        if self._closed:
+        if self._closed or summary.id not in self._claimed:
             try:
                 self._bridge.submit_interaction(
                     lambda: self._client.release_interaction(summary.id),
@@ -135,7 +148,6 @@ class DaemonInteractionDialogs:
             except RuntimeError:
                 pass
             return
-        self._claimed.add(summary.id)
         self._claims[summary.id] = claim.nonce
         self._present(summary)
 
@@ -320,9 +332,13 @@ class DaemonInteractionDialogs:
             margin_end=12,
         )
         entry = Gtk.PasswordEntry(show_peek_icon=True)
-        # AlertDialog exposes the response signal and virtual handler, but not
-        # the Adw.MessageDialog-style ``response()`` convenience method.
-        entry.connect("activate", lambda _entry: dialog.do_response("submit"))
+        # AlertDialog exposes a response signal, but no public response()
+        # convenience method.  do_response() is its language-binding virtual
+        # handler and cannot be invoked as the signal emitter.
+        entry.connect(
+            "activate",
+            lambda _entry: self._activate_secret_dialog(dialog),
+        )
         content.append(entry)
         dialog.set_extra_child(content)
         dialog.add_response("cancel", "Cancel")
@@ -357,6 +373,11 @@ class DaemonInteractionDialogs:
             return GLib.SOURCE_REMOVE
 
         GLib.idle_add(_focus_entry)
+
+    @staticmethod
+    def _activate_secret_dialog(dialog) -> None:
+        """Submit the default secret response from the password entry."""
+        dialog.emit("response", "submit")
 
     def _present_shared_password(
         self,

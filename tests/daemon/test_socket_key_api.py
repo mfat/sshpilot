@@ -7,15 +7,27 @@ private-key data returned.
 from __future__ import annotations
 
 import logging
+import shutil
+import threading
 from pathlib import Path
 
 import pytest
 
 from sshpilot.api import DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.events import EventType
+from sshpilot.api.models import (
+    InteractionDecisionRequest,
+    InteractionType,
+    RememberPolicy,
+    SecretDecision,
+    SessionId,
+)
+from sshpilot.api.models.keys import GenerateKeyRequest, KeyStoreScope
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.server import CoreServices
+from sshpilot.gtk.key_controller import KeyController
 from tests.helpers.fake_connection_repository import make_test_connection_service
 
 PRIVATE_HEADER = (
@@ -180,50 +192,148 @@ def test_public_key_text_never_appears_in_logs(tmp_path, key_server, caplog):
         client.close()
 
 
-def _generate_wire(name="new_key", passphrase=""):
+def _generate_wire(name="new_key", key_type="ed25519", key_size=0):
     return {
         "name": name,
-        "key_type": "ed25519",
-        "key_size": 0,
+        "key_type": key_type,
+        "key_size": key_size,
         "comment": "",
-        "passphrase": passphrase,
+        "encrypted": False,
         "scope": "default",
     }
 
 
-def test_generate_key_over_socket(tmp_path, key_server):
+@pytest.mark.parametrize(
+    ("key_type", "key_size"),
+    [("ed25519", 0), ("rsa", 1024)],
+)
+def test_generate_unencrypted_key_over_socket(
+    tmp_path, key_server, key_type, key_size
+):
     keys_dir = tmp_path / "keys"
     server = key_server(keys_dir)
     client = DaemonClient(socket_path=server.socket_path)
     try:
         caps = client.get_capabilities()
         assert caps.supports("keys.write")
-        result = client._request("keys.generate", _generate_wire("brand_new"))
-        assert result["key"]["name"] == "brand_new"
+        name = f"brand_new_{key_type}"
+        result = client._request(
+            "keys.generate",
+            _generate_wire(name, key_type, key_size),
+        )
+        assert result["key"]["name"] == name
         # The generated key is discoverable afterwards.
         key_list = _list_keys(client)
-        assert any(k["name"] == "brand_new" for k in key_list["keys"])
+        assert any(k["name"] == name for k in key_list["keys"])
     finally:
         client.close()
 
 
-def test_generate_key_passphrase_absent_from_logs_and_result(tmp_path, key_server, caplog):
-    import logging
-
+def test_generate_key_rejects_legacy_passphrase_wire_field(tmp_path, key_server):
     keys_dir = tmp_path / "keys"
     server = key_server(keys_dir)
     client = DaemonClient(socket_path=server.socket_path)
     try:
-        with caplog.at_level(logging.DEBUG):
-            result = client._request(
+        with pytest.raises(SshPilotError) as excinfo:
+            client._request(
                 "keys.generate",
-                _generate_wire("new_key", passphrase="super-secret-passphrase"),
+                {
+                    **_generate_wire("new_key"),
+                    "passphrase": "KEY_PASSPHRASE_SENTINEL_8F1C29",
+                },
             )
-        assert "super-secret-passphrase" not in caplog.text
-        assert "super-secret-passphrase" not in repr(result)
-        assert "super-secret-passphrase" not in str(result)
+        assert excinfo.value.code is ErrorCode.INVALID_REQUEST
+        assert "KEY_PASSPHRASE_SENTINEL_8F1C29" not in str(excinfo.value)
     finally:
         client.close()
+
+
+@pytest.mark.parametrize(
+    ("key_type", "key_size"),
+    [("ed25519", 0), ("rsa", 1024)],
+)
+def test_encrypted_generation_and_verification_use_protected_interactions(
+    tmp_path,
+    key_server,
+    caplog,
+    monkeypatch,
+    key_type,
+    key_size,
+):
+    if shutil.which("ssh-keygen") is None:
+        pytest.skip("OpenSSH ssh-keygen is unavailable")
+    from sshpilot import askpass_utils
+
+    askpass_dir = tmp_path / "askpass-log"
+    monkeypatch.setenv("SSHPILOT_ASKPASS_LOG_DIR", str(askpass_dir))
+    askpass_utils._ASKPASS_LOG_PATH = None
+    keys_dir = tmp_path / "keys"
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    scope_id = SessionId(f"key-operation-generate-{key_type}")
+    sentinel = bytearray(b"KEY_PASSPHRASE_SENTINEL_8F1C29")
+    responder_threads = []
+
+    def on_event(event):
+        if event.type is not EventType.INTERACTION_CREATED:
+            return
+        summary = event.payload
+        if (
+            summary.session_id != scope_id
+            or summary.type is not InteractionType.PRIVATE_KEY_PASSPHRASE
+        ):
+            return
+
+        def respond():
+            claim = client.claim_interaction(summary.id)
+            client.respond_to_interaction(
+                InteractionDecisionRequest(
+                    interaction_id=summary.id,
+                    secret_decision=SecretDecision.SUBMIT,
+                    remember_policy=RememberPolicy.DO_NOT_STORE,
+                )
+            )
+            client.send_interaction_secret(summary.id, claim.nonce, sentinel)
+
+        thread = threading.Thread(target=respond, daemon=True)
+        responder_threads.append(thread)
+        thread.start()
+
+    subscription = client.subscribe_events(on_event)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            result = client.generate_key(
+                GenerateKeyRequest(
+                    name=f"protected_{key_type}",
+                    key_type=key_type,
+                    key_size=key_size,
+                    encrypted=True,
+                    interaction_scope_id=scope_id,
+                )
+            )
+        for thread in responder_threads:
+            thread.join(5)
+        assert sentinel == bytearray()
+        assert result.key.name == f"protected_{key_type}"
+        assert KeyController(client, KeyStoreScope.DEFAULT).verify_key_passphrase(
+            result.key.private_path,
+            bytearray(b"KEY_PASSPHRASE_SENTINEL_8F1C29"),
+        ) is True
+        assert KeyController(client, KeyStoreScope.DEFAULT).verify_key_passphrase(
+            result.key.private_path,
+            bytearray(b"wrong-key-passphrase"),
+        ) is False
+        assert "KEY_PASSPHRASE_SENTINEL_8F1C29" not in caplog.text
+        askpass_text = (askpass_dir / "sshpilot-askpass.log").read_text(
+            encoding="utf-8"
+        )
+        assert "KEY_PASSPHRASE_SENTINEL_8F1C29" not in askpass_text
+    finally:
+        subscription.close()
+        sentinel[:] = b"\0" * len(sentinel)
+        sentinel.clear()
+        client.close()
+        askpass_utils._ASKPASS_LOG_PATH = None
 
 
 def test_generate_key_duplicate_mapping(tmp_path, key_server):

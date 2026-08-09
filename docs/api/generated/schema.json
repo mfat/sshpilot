@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.24",
+  "api_implementation_version": "0.25",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -772,6 +772,9 @@
     "keys.list": {
       "capability": "keys.read"
     },
+    "keys.verify_passphrase": {
+      "capability": "keys.write"
+    },
     "known_hosts.list": {
       "capability": "known_hosts.read"
     },
@@ -1210,6 +1213,7 @@
       "key_already_exists",
       "key_public_unavailable",
       "key_generation_failed",
+      "key_verification_failed",
       "transport_closed",
       "transport_timeout",
       "frame_too_large",
@@ -3431,11 +3435,18 @@
           "type": "str"
         },
         {
-          "default": "",
-          "name": "passphrase",
+          "default": false,
+          "name": "encrypted",
           "required": false,
           "sensitive": false,
-          "type": "str"
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "interaction_scope_id",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionId | None"
         },
         {
           "default": "default",
@@ -6194,10 +6205,10 @@
         },
         {
           "default": null,
-          "name": "passphrase",
+          "name": "interaction_scope_id",
           "required": true,
-          "sensitive": true,
-          "type": "str"
+          "sensitive": false,
+          "type": "SessionId"
         }
       ],
       "status": "Implemented"
@@ -6539,6 +6550,37 @@
           "required": false,
           "sensitive": false,
           "type": "int | None"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "VerifyKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "interaction_scope_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "VerifyKeyPassphraseResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "valid",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Schema only"

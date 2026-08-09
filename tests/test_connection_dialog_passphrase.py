@@ -344,6 +344,90 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     assert closed == [True]
 
 
+def test_daemon_key_passphrase_save_uses_protected_key_manager(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    import sshpilot.secret_storage as ss
+    import sshpilot.secret_unlock_dialog as unlock_dialog
+
+    sentinel = "KEY_PASSPHRASE_SENTINEL_8F1C29"
+    received = []
+
+    class KeyManager:
+        def store_key_passphrase(self, key_path, secret):
+            received.append((key_path, bytes(secret)))
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
+            return True
+
+    class Client:
+        def store_connection_password(self, _request):
+            return True
+
+    class Spinner:
+        def connect(self, _signal, callback):
+            self.callback = callback
+
+    spinner = Spinner()
+    monkeypatch.setattr(
+        unlock_dialog,
+        "_spinner_dialog",
+        lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
+    )
+    monkeypatch.setattr(
+        ss.get_secret_manager(),
+        "selected_backend",
+        lambda: types.SimpleNamespace(name="keyring"),
+    )
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: callback(*args),
+    )
+
+    class InlineThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", InlineThread)
+
+    parent = types.SimpleNamespace(
+        client=Client(),
+        client_bridge=object(),
+        key_manager=KeyManager(),
+        _daemon_mode_active=lambda: True,
+    )
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection_manager = DummyConnectionManager()
+    dialog._save_buttons = []
+    closed = []
+    errors = []
+    dialog.emit = (
+        lambda _signal, _data, _metadata, _secrets, completion: completion(True)
+    )
+    dialog.close = lambda: closed.append(True)
+    dialog.show_error = lambda message: errors.append(message)
+
+    dialog._store_secrets_then_save(
+        {"protocol": "ssh", "hostname": "example.test"},
+        {},
+        {
+            "passphrase_operations": [
+                ("store", "/home/user/.ssh/id", sentinel)
+            ]
+        },
+    )
+
+    assert received == [
+        ("/home/user/.ssh/id", sentinel.encode("utf-8"))
+    ]
+    assert errors == []
+    assert closed == [True]
+
+
 def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     # A new connection saved with an empty password queues a delete; nothing
     # stored to delete is the desired end state, not a storage failure.
@@ -712,4 +796,3 @@ def test_local_editor_loads_passphrase_from_manager(monkeypatch):
     callback(value)
     assert entry.get_text() == "local-key-secret"
     assert row._pass_initial == "local-key-secret"
-

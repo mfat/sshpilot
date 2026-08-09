@@ -164,6 +164,26 @@ class _SyncBridge:
         return None
 
 
+class _DeferredBridge:
+    """Hold submitted interaction work to expose in-flight deduplication."""
+
+    def __init__(self):
+        self.pending = []
+
+    def submit_interaction(self, operation, *, on_success, on_error, on_discard=None):
+        self.pending.append((operation, on_success, on_error))
+        return None
+
+    def complete_next(self):
+        operation, on_success, on_error = self.pending.pop(0)
+        try:
+            result = operation()
+        except BaseException as exc:
+            on_error(exc)
+        else:
+            on_success(result)
+
+
 class _RecordingDialogs(DaemonInteractionDialogs):
     """Presenter that records presentation instead of building GTK dialogs.
 
@@ -396,6 +416,38 @@ def test_reconcile_and_event_present_exactly_once(immediate_idle):
     assert dialogs.presented == [summary]
     assert client.claims == [summary.id]
     dialogs.close()
+
+
+def test_duplicate_delivery_while_claim_pending_submits_one_claim():
+    client = _FakeClient()
+    bridge = _DeferredBridge()
+    dialogs = _RecordingDialogs(client, bridge)
+    dialogs._session_id = SessionId("operation-1")
+    summary = _summary(InteractionType.PRIVATE_KEY_PASSPHRASE, "operation-1")
+
+    dialogs._handle_event(summary)
+    dialogs._handle_event(summary)
+
+    assert len(bridge.pending) == 1
+    bridge.complete_next()
+    assert client.claims == [summary.id]
+    assert dialogs.presented == [summary]
+    dialogs.close()
+
+
+def test_secret_entry_activation_emits_submit_response():
+    class Dialog:
+        def __init__(self):
+            self.emitted = []
+
+        def emit(self, signal, response):
+            self.emitted.append((signal, response))
+
+    dialog = Dialog()
+
+    DaemonInteractionDialogs._activate_secret_dialog(dialog)
+
+    assert dialog.emitted == [("response", "submit")]
 
 
 def test_repeated_set_session_does_not_duplicate(immediate_idle):

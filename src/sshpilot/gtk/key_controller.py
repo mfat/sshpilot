@@ -12,6 +12,15 @@ from __future__ import annotations
 import threading
 
 from sshpilot.api.client import SshPilotClient
+from sshpilot.api.events import EventType
+from sshpilot.api.models import (
+    InteractionDecisionRequest,
+    InteractionType,
+    RememberPolicy,
+    SecretDecision,
+    SessionId,
+)
+from sshpilot.api.models.connections import StoreKeyPassphraseRequest
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     GenerateKeyResult,
@@ -22,7 +31,9 @@ from sshpilot.api.models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
 )
+from sshpilot.runtime_identity import new_operation_id
 
 
 class KeyController:
@@ -71,7 +82,8 @@ class KeyController:
         key_type: str = "ed25519",
         key_size: int = 0,
         comment: str = "",
-        passphrase: str = "",
+        encrypted: bool = False,
+        interaction_scope_id: SessionId | None = None,
     ) -> GenerateKeyResult:
         self._enter_operation()
         try:
@@ -80,16 +92,128 @@ class KeyController:
                 key_type=key_type,
                 key_size=key_size,
                 comment=comment,
-                passphrase=passphrase,
+                encrypted=encrypted,
+                interaction_scope_id=interaction_scope_id,
                 scope=self._scope,
             )
             result = self._client.generate_key(request)
             with self._lock:
                 self._upsert_summary(result.key)
-            # The request (and its passphrase) goes out of scope here; the
-            # controller retains only the public summary.
             return result
         finally:
+            with self._lock:
+                self._busy = False
+
+    def verify_key_passphrase(
+        self,
+        key_path: str,
+        secret: bytearray,
+    ) -> bool:
+        """Verify via the daemon, sending *secret* only as a secret frame."""
+        scope_id = SessionId(f"key-{new_operation_id()}")
+        result = self._run_protected_key_secret(
+            scope_id,
+            secret,
+            lambda: self._client.verify_key_passphrase(
+                VerifyKeyPassphraseRequest(
+                    key_path=key_path,
+                    interaction_scope_id=scope_id,
+                )
+            ),
+        )
+        return result.valid
+
+    def store_key_passphrase(
+        self,
+        key_path: str,
+        secret: bytearray,
+    ) -> bool:
+        """Store through a protected interaction, never an ordinary DTO field."""
+        scope_id = SessionId(f"key-{new_operation_id()}")
+        return bool(
+            self._run_protected_key_secret(
+                scope_id,
+                secret,
+                lambda: self._client.store_key_passphrase(
+                    StoreKeyPassphraseRequest(
+                        key_path=key_path,
+                        interaction_scope_id=scope_id,
+                    )
+                ),
+            )
+        )
+
+    def _run_protected_key_secret(
+        self,
+        scope_id: SessionId,
+        secret: bytearray,
+        operation,
+    ):
+        if type(secret) is not bytearray:
+            raise TypeError("key passphrase must be a bytearray")
+        self._enter_operation()
+        responder_lock = threading.Lock()
+        responder: list[threading.Thread] = []
+
+        def _clear() -> None:
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
+
+        def _respond(summary) -> None:
+            try:
+                claim = self._client.claim_interaction(summary.id)
+                self._client.respond_to_interaction(
+                    InteractionDecisionRequest(
+                        interaction_id=summary.id,
+                        secret_decision=SecretDecision.SUBMIT,
+                        remember_policy=RememberPolicy.DO_NOT_STORE,
+                    )
+                )
+                self._client.send_interaction_secret(
+                    summary.id,
+                    claim.nonce,
+                    secret,
+                )
+            except Exception:
+                # The request thread receives the daemon's typed failure. Do
+                # not expose transport exception text from this secret worker.
+                pass
+            finally:
+                _clear()
+
+        def _on_event(event) -> None:
+            if event.type is not EventType.INTERACTION_CREATED:
+                return
+            summary = event.payload
+            if (
+                summary.session_id != scope_id
+                or summary.type is not InteractionType.PRIVATE_KEY_PASSPHRASE
+            ):
+                return
+            with responder_lock:
+                if responder:
+                    return
+                thread = threading.Thread(
+                    target=_respond,
+                    args=(summary,),
+                    name="sshpilot-key-passphrase-response",
+                    daemon=True,
+                )
+                responder.append(thread)
+                thread.start()
+
+        subscription = None
+        try:
+            subscription = self._client.subscribe_events(_on_event)
+            return operation()
+        finally:
+            if subscription is not None:
+                subscription.close()
+            with responder_lock:
+                thread = responder[0] if responder else None
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=5.0)
+            _clear()
             with self._lock:
                 self._busy = False
 

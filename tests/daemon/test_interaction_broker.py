@@ -27,7 +27,7 @@ from sshpilot.api.models import (
     SessionId,
 )
 from sshpilot.api.transport.secret_frames import SecretFrame, SecretFrameKind
-from sshpilot.daemon.interaction_broker import InteractionBroker
+from sshpilot.daemon.interaction_broker import InteractionBroker, InteractionResult
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
 SESSION_ID = SessionId("session-1")
@@ -623,6 +623,147 @@ def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
         assert "passphrase:/home/u/.ssh/id_ed25519" in context.stored_attempted
         second[:] = b"\0" * len(second)
         second.clear()
+    finally:
+        instance.close()
+
+
+def test_keygen_passphrase_confirmation_reuses_and_clears_protected_buffer(
+    monkeypatch,
+) -> None:
+    sentinel = bytearray(b"KEY_PASSPHRASE_SENTINEL_8F1C29")
+    instance = InteractionBroker(secret_timeout=1, host_key_timeout=1)
+    try:
+        _argv, environment = instance.prepare_operation_launch(
+            ("ssh-keygen", "-t", "ed25519", "-f", "/tmp/key"),
+            {},
+            scope_id=SessionId("key-operation-generate-1"),
+            connection_id=ConnectionId("key-operation-1"),
+            hostname="SSH key generation",
+            confirm_passphrase=True,
+        )
+        token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+        waits = []
+
+        def wait_for_result(*_args, **_kwargs):
+            waits.append(True)
+            return InteractionResult(
+                decision=SecretDecision.SUBMIT,
+                remember_policy=RememberPolicy.DO_NOT_STORE,
+                secret=bytearray(sentinel),
+            )
+
+        monkeypatch.setattr(instance, "wait_for_result", wait_for_result)
+        first = instance._resolve_askpass_secret(
+            token,
+            "Enter passphrase (empty for no passphrase):",
+        )
+        second = instance._resolve_askpass_secret(
+            token,
+            "Enter same passphrase again:",
+        )
+
+        assert first == sentinel
+        assert second == sentinel
+        assert first is not second
+        assert waits == [True]
+        assert instance._askpass_contexts[token].confirmation_secret is None
+        first[:] = b"\0" * len(first)
+        first.clear()
+        second[:] = b"\0" * len(second)
+        second.clear()
+    finally:
+        sentinel[:] = b"\0" * len(sentinel)
+        sentinel.clear()
+        instance.close()
+
+
+def test_keygen_confirmation_secret_is_wiped_on_cancellation(monkeypatch) -> None:
+    instance = InteractionBroker(secret_timeout=1, host_key_timeout=1)
+    scope_id = SessionId("key-operation-generate-cancel")
+    try:
+        _argv, environment = instance.prepare_operation_launch(
+            ("ssh-keygen", "-t", "ed25519", "-f", "/tmp/key"),
+            {},
+            scope_id=scope_id,
+            connection_id=ConnectionId("key-operation-cancel"),
+            hostname="SSH key generation",
+            confirm_passphrase=True,
+        )
+        token = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+        monkeypatch.setattr(
+            instance,
+            "wait_for_result",
+            lambda *_args, **_kwargs: InteractionResult(
+                decision=SecretDecision.SUBMIT,
+                remember_policy=RememberPolicy.DO_NOT_STORE,
+                secret=bytearray(b"KEY_PASSPHRASE_SENTINEL_8F1C29"),
+            ),
+        )
+        first = instance._resolve_askpass_secret(
+            token,
+            "Enter passphrase (empty for no passphrase):",
+        )
+        cached = instance._askpass_contexts[token].confirmation_secret
+        assert cached
+
+        instance.cancel_session(scope_id)
+
+        assert cached == bytearray()
+        assert token not in instance._askpass_contexts
+        first[:] = b"\0" * len(first)
+        first.clear()
+    finally:
+        instance.close()
+
+
+def test_concurrent_keygen_confirmation_secrets_do_not_cross_scopes(
+    monkeypatch,
+) -> None:
+    instance = InteractionBroker(secret_timeout=1, host_key_timeout=1)
+    try:
+        tokens = {}
+        for suffix in ("a", "b"):
+            scope_id = SessionId(f"key-operation-generate-{suffix}")
+            _argv, environment = instance.prepare_operation_launch(
+                ("ssh-keygen", "-t", "ed25519", "-f", f"/tmp/key-{suffix}"),
+                {},
+                scope_id=scope_id,
+                connection_id=ConnectionId(f"key-operation-{suffix}"),
+                hostname="SSH key generation",
+                confirm_passphrase=True,
+            )
+            tokens[suffix] = environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+
+        def wait_for_result(interaction_id, **_kwargs):
+            scope_id = instance._records[interaction_id].summary.session_id
+            suffix = str(scope_id).rsplit("-", 1)[-1]
+            return InteractionResult(
+                decision=SecretDecision.SUBMIT,
+                remember_policy=RememberPolicy.DO_NOT_STORE,
+                secret=bytearray(f"secret-{suffix}".encode()),
+            )
+
+        monkeypatch.setattr(instance, "wait_for_result", wait_for_result)
+        first = {
+            suffix: instance._resolve_askpass_secret(
+                token,
+                "Enter passphrase (empty for no passphrase):",
+            )
+            for suffix, token in tokens.items()
+        }
+        confirmed = {
+            suffix: instance._resolve_askpass_secret(
+                token,
+                "Enter same passphrase again:",
+            )
+            for suffix, token in tokens.items()
+        }
+
+        assert first["a"] == confirmed["a"] == bytearray(b"secret-a")
+        assert first["b"] == confirmed["b"] == bytearray(b"secret-b")
+        for secret in (*first.values(), *confirmed.values()):
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
     finally:
         instance.close()
 

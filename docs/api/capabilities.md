@@ -510,10 +510,11 @@ text for an opaque key ID (`keys.get_public`). Gated behind `KEYS_READ`.
 <!-- api-capability: keys.write -->
 ## `keys.write`
 
-Implemented when the daemon key service is installed. Generates keypairs
-through the daemon-owned `ssh-keygen` in the selected key store scope
-(`keys.generate`). Gated behind `KEYS_WRITE`. Generation is unavailable while
-the daemon is draining.
+Implemented when the daemon key service is installed. Generates keypairs and
+verifies private-key passphrases through daemon-owned `ssh-keygen`
+(`keys.generate`, `keys.verify_passphrase`). Protected input uses interaction
+secret frames and never ordinary request JSON or native argv. Gated behind
+`KEYS_WRITE`. Both methods are unavailable while the daemon is draining.
 
 <!-- api-capability: identity.read -->
 ## `identity.read`

@@ -1,14 +1,15 @@
-"""SSH key fingerprint helpers (type · SHA256 · comment).
+"""Pure metadata helpers for public SSH keys.
 
-Extracted verbatim from connection_dialog.py into a leaf module so the parsing
-and fingerprint lookup can be imported and tested without the GTK dialog. These
-use ``ssh-keygen -l`` for *local* key fingerprinting only — they never open an
-SSH connection, so they are unrelated to the single connection/auth path.
+The frontend must not launch ``ssh-keygen``. These compatibility helpers read
+only a public-key line and compute its OpenSSH-style SHA256 fingerprint; they
+never open a private key or handle a passphrase.
 """
 
-import os
+import base64
+import hashlib
 import logging
-import subprocess
+import os
+from pathlib import Path
 from typing import Dict
 
 logger = logging.getLogger(__name__)
@@ -17,44 +18,43 @@ _FINGERPRINT_CACHE: Dict[str, tuple] = {}
 
 
 def _parse_keygen_line(line: str) -> tuple:
-    """Parse an ``ssh-keygen -l`` line into (type_label, "SHA256:…", comment).
-
-    Example line: ``256 SHA256:abc… user@host (ED25519)``.
-    """
+    """Parse a public-key line into ``(type, fingerprint, comment)``."""
     parts = (line or "").strip().split()
     if len(parts) < 2:
         return ("", "", "")
-    fingerprint = parts[1]
-    key_type = parts[-1].strip("()") if parts[-1].startswith("(") else ""
-    comment = " ".join(parts[2:-1]) if len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
-    return (key_type, fingerprint, comment)
+    key_name, encoded = parts[:2]
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        return ("", "", "")
+    fingerprint = (
+        base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+    )
+    key_type = {
+        "ssh-ed25519": "ED25519",
+        "ssh-rsa": "RSA",
+    }.get(key_name, key_name.removeprefix("ecdsa-sha2-").upper())
+    return key_type, f"SHA256:{fingerprint}", " ".join(parts[2:])
 
 
 def _fingerprint_for_path(path: str) -> tuple:
-    """(type_label, fingerprint, comment) for a key file, via ``ssh-keygen -lf``."""
+    """Return public metadata for *path* without opening its private key."""
     expanded = os.path.expanduser(path or "")
     if expanded in _FINGERPRINT_CACHE:
         return _FINGERPRINT_CACHE[expanded]
     result = ("", "", "")
+    public_path = Path(expanded)
+    if public_path.suffix != ".pub":
+        public_path = Path(f"{public_path}.pub")
     try:
-        proc = subprocess.run(["ssh-keygen", "-lf", expanded],
-                              capture_output=True, text=True, timeout=5)
-        if proc.returncode == 0:
-            result = _parse_keygen_line(proc.stdout)
-    except Exception:
-        logger.debug("ssh-keygen fingerprint failed for %s", path, exc_info=True)
+        with public_path.open(encoding="utf-8") as handle:
+            result = _parse_keygen_line(handle.readline(64 * 1024))
+    except (OSError, UnicodeError):
+        logger.debug("Public-key fingerprint unavailable", exc_info=True)
     _FINGERPRINT_CACHE[expanded] = result
     return result
 
 
 def _fingerprint_for_pub_line(pub_line: str) -> tuple:
-    """(type_label, fingerprint, comment) for a public-key line (e.g. ssh-add -L)."""
-    try:
-        proc = subprocess.run(["ssh-keygen", "-lf", "-"],
-                              input=(pub_line or "") + "\n",
-                              capture_output=True, text=True, timeout=5)
-        if proc.returncode == 0:
-            return _parse_keygen_line(proc.stdout)
-    except Exception:
-        logger.debug("ssh-keygen fingerprint (stdin) failed", exc_info=True)
-    return ("", "", "")
+    """Return metadata for one public-key line (for example ``ssh-add -L``)."""
+    return _parse_keygen_line(pub_line)

@@ -3,20 +3,13 @@
 Extracted verbatim from connection_dialog.py into a leaf module so the
 validation logic can be imported and tested without the GTK dialog. These
 validate user-entered fields (connection name, hostname/IP, port, username) and
-verify a key passphrase with a *local* ``ssh-keygen -y`` — they never open an
-SSH connection, so they are unrelated to the single connection/auth path.
+Key-passphrase verification is daemon-owned and deliberately absent here.
 """
 
-import os
-import re
-import logging
 import ipaddress
-import subprocess
+import re
 
 from gettext import gettext as _
-
-logger = logging.getLogger(__name__)
-
 
 class ValidationResult:
     def __init__(self, is_valid: bool = True, message: str = "", severity: str = "info"):
@@ -184,26 +177,3 @@ class SSHConnectionValidator:
         if not username or not username.strip():
             return ValidationResult(False, _("Username is required"), "error")
         return ValidationResult(True, _("Valid username"))
-
-    def verify_key_passphrase(self, key_path: str, passphrase: str) -> bool:
-        """Verify that the passphrase matches the private key using ssh-keygen -y"""
-        if not key_path or not os.path.exists(key_path):
-            return False
-
-        try:
-            # Run ssh-keygen -y to test the passphrase
-            result = subprocess.run([
-                'ssh-keygen', '-y', '-P', passphrase, '-f', key_path
-            ], capture_output=True, text=True, timeout=10)
-
-            # Exit code 0 means the passphrase is valid
-            return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            logger.error(f"Timeout verifying passphrase for key: {key_path}")
-            return False
-        except subprocess.CalledProcessError:
-            # This shouldn't happen since we're capturing output, but handle it
-            return False
-        except Exception as e:
-            logger.error(f"Error verifying passphrase for key {key_path}: {e}")
-            return False

@@ -142,6 +142,9 @@ class _AskpassContext:
     stored_attempted: set[str]
     pending_remember: list[_PendingRemember]
     user_known_hosts_paths: tuple[Path, ...]
+    allow_stored_secrets: bool = True
+    confirm_passphrase: bool = False
+    confirmation_secret: Optional[bytearray] = None
     closed: bool = False
 
 
@@ -183,6 +186,7 @@ class InteractionBroker:
         self._condition = threading.Condition(threading.RLock())
         self._records: Dict[InteractionId, _InteractionRecord] = {}
         self._completed: Deque[InteractionId] = deque()
+        self._direct_scope_owners: Dict[SessionId, ClientId] = {}
         self._closed = False
         self._askpass_contexts: Dict[str, _AskpassContext] = {}
         self._askpass_transports: set[socket.socket] = set()
@@ -227,6 +231,15 @@ class InteractionBroker:
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         return self._publisher.subscribe(callback)
+
+    def client_owns_direct_scope(
+        self,
+        session_id: SessionId,
+        client_id: ClientId,
+    ) -> bool:
+        """Return whether *client_id* owns a direct protected interaction."""
+        with self._condition:
+            return self._direct_scope_owners.get(session_id) == client_id
 
     def prepare_launch(
         self,
@@ -334,6 +347,8 @@ class InteractionBroker:
         hostname: str = "",
         username: str = "",
         port: int = 22,
+        allow_stored_secrets: bool = True,
+        confirm_passphrase: bool = False,
     ) -> tuple[tuple[str, ...], dict[str, str]]:
         """Broker askpass environment for a non-session OpenSSH launch.
 
@@ -383,6 +398,8 @@ class InteractionBroker:
             stored_attempted=set(),
             pending_remember=[],
             user_known_hosts_paths=(),
+            allow_stored_secrets=allow_stored_secrets,
+            confirm_passphrase=confirm_passphrase,
         )
         with self._condition:
             self._require_open_locked()
@@ -734,6 +751,44 @@ class InteractionBroker:
             logger.info("interaction created type=%s", summary.type.value)
         return summary
 
+    def request_client_secret(
+        self,
+        *,
+        owner_client_id: ClientId,
+        session_id: SessionId,
+        connection_id: ConnectionId,
+        interaction_type: InteractionType,
+        prompt: InteractionPrompt,
+    ) -> Optional[bytearray]:
+        """Collect one secret for a daemon-owned non-process operation."""
+        with self._condition:
+            self._require_open_locked()
+            if session_id in self._direct_scope_owners:
+                raise ValueError("protected interaction scope is already active")
+            self._direct_scope_owners[session_id] = owner_client_id
+        result: Optional[InteractionResult] = None
+        secret: Optional[bytearray] = None
+        try:
+            summary = self.create(
+                session_id=session_id,
+                connection_id=connection_id,
+                interaction_type=interaction_type,
+                prompt=prompt,
+                attempt=1,
+            )
+            result = self.wait_for_result(summary.id)
+            if result is None or result.secret is None:
+                return None
+            secret = result.secret
+            result.secret = None
+            return secret
+        finally:
+            if result is not None:
+                result.clear()
+            with self._condition:
+                self._direct_scope_owners.pop(session_id, None)
+            self.cancel_session(session_id)
+
     def list(self, client_id: ClientId) -> List[InteractionSummary]:
         with self._condition:
             return [
@@ -1043,7 +1098,15 @@ class InteractionBroker:
 
     def disconnect_client(self, client_id: ClientId) -> None:
         changed: list[InteractionSummary] = []
+        direct_scopes: tuple[SessionId, ...] = ()
         with self._condition:
+            direct_scopes = tuple(
+                scope
+                for scope, owner in self._direct_scope_owners.items()
+                if owner == client_id
+            )
+            for scope in direct_scopes:
+                self._direct_scope_owners.pop(scope, None)
             for record in self._records.values():
                 if (
                     record.summary.responder_client_id == client_id
@@ -1063,6 +1126,8 @@ class InteractionBroker:
             self._condition.notify_all()
         for summary in changed:
             self._publish(EventType.INTERACTION_STATE_CHANGED, summary)
+        for scope in direct_scopes:
+            self.cancel_session(scope)
 
     def cancel_session(self, session_id: SessionId) -> None:
         changed: list[InteractionSummary] = []
@@ -1086,6 +1151,12 @@ class InteractionBroker:
 
     def _clear_context_locked(self, context: _AskpassContext) -> None:
         context.closed = True
+        if context.confirmation_secret is not None:
+            context.confirmation_secret[:] = b"\0" * len(
+                context.confirmation_secret
+            )
+            context.confirmation_secret.clear()
+            context.confirmation_secret = None
         for pending in context.pending_remember:
             pending.clear()
         context.pending_remember.clear()
@@ -1106,6 +1177,7 @@ class InteractionBroker:
             if self._closed:
                 return
             self._closed = True
+            self._direct_scope_owners.clear()
             contexts = tuple(self._askpass_contexts.values())
             self._askpass_contexts.clear()
             for context in contexts:
@@ -1350,6 +1422,19 @@ class InteractionBroker:
             context = self._askpass_contexts.get(token)
             if context is None or context.closed or self._closed:
                 return None
+            if (
+                prompt_type == "passphrase"
+                and context.confirm_passphrase
+                and context.confirmation_secret is not None
+                and self._is_passphrase_confirmation_prompt(raw_prompt)
+            ):
+                secret = bytearray(context.confirmation_secret)
+                context.confirmation_secret[:] = b"\0" * len(
+                    context.confirmation_secret
+                )
+                context.confirmation_secret.clear()
+                context.confirmation_secret = None
+                return secret
             key_path = self._passphrase_key(raw_prompt) if prompt_type == "passphrase" else ""
             attempt_key = f"{prompt_type}:{key_path}"
             attempt = context.attempts.get(attempt_key, 0) + 1
@@ -1358,7 +1443,10 @@ class InteractionBroker:
             # secret for this prompt. A miss/exception must not burn the only
             # autofill chance — secrets may not be ready on the first askpass
             # call (daemon secret init), and OpenSSH will ask again.
-            try_stored = attempt_key not in context.stored_attempted
+            try_stored = (
+                context.allow_stored_secrets
+                and attempt_key not in context.stored_attempted
+            )
             interaction_type = (
                 InteractionType.PASSWORD
                 if prompt_type == "password"
@@ -1414,7 +1502,7 @@ class InteractionBroker:
                 )
         elif interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
             logger.info(
-                "askpass passphrase: skipping stored (already offered) "
+                "askpass skipped stored passphrase already_offered=true "
                 "prompt=%r key=%s attempt=%s",
                 raw_prompt[:160],
                 key_path or "<none>",
@@ -1493,6 +1581,24 @@ class InteractionBroker:
             return None
         secret = result.secret
         result.secret = None
+        if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
+            with self._condition:
+                current = self._askpass_contexts.get(token)
+                if (
+                    current is not None
+                    and not current.closed
+                    and current.confirm_passphrase
+                ):
+                    if not secret:
+                        result.clear()
+                        secret.clear()
+                        return None
+                    if current.confirmation_secret is not None:
+                        current.confirmation_secret[:] = b"\0" * len(
+                            current.confirmation_secret
+                        )
+                        current.confirmation_secret.clear()
+                    current.confirmation_secret = bytearray(secret)
         append_askpass_log("ASKPASS: Returning secret from user dialog")
         if result.remember_policy in {
             RememberPolicy.STORE_AFTER_SUCCESS,
@@ -1632,6 +1738,11 @@ class InteractionBroker:
             return ""
         return value
 
+    @staticmethod
+    def _is_passphrase_confirmation_prompt(raw_prompt: str) -> bool:
+        value = (raw_prompt or "").strip().lower()
+        return any(marker in value for marker in ("again", "same passphrase", "confirm"))
+
     def _scheduler_main(self) -> None:
         while True:
             expired: list[InteractionSummary] = []
@@ -1730,7 +1841,10 @@ class InteractionBroker:
         record: _InteractionRecord,
         client_id: ClientId,
     ) -> bool:
-        return self._client_is_eligible(record.summary.session_id, client_id)
+        direct_owner = self._direct_scope_owners.get(record.summary.session_id)
+        return direct_owner == client_id if direct_owner is not None else (
+            self._client_is_eligible(record.summary.session_id, client_id)
+        )
 
     def _require_visible_locked(
         self,

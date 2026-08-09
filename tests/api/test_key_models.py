@@ -2,6 +2,7 @@
 
 import pytest
 
+from sshpilot.api.models import SessionId
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     GenerateKeyResult,
@@ -12,6 +13,8 @@ from sshpilot.api.models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
 )
 
 PRIVATE = "/home/user/.ssh/id_ed25519"
@@ -81,8 +84,48 @@ def test_generate_key_request_defaults():
     assert request.key_type == "ed25519"
     assert request.key_size == 0
     assert request.comment == ""
-    assert request.passphrase == ""
+    assert request.encrypted is False
+    assert request.interaction_scope_id is None
     assert request.scope is KeyStoreScope.DEFAULT
+
+
+def test_encrypted_generate_request_requires_key_interaction_scope():
+    scope_id = SessionId("key-operation-1")
+    request = GenerateKeyRequest(
+        name="id_ed25519",
+        encrypted=True,
+        interaction_scope_id=scope_id,
+    )
+    assert request.encrypted is True
+    assert request.interaction_scope_id == scope_id
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"encrypted": True},
+        {"interaction_scope_id": SessionId("key-operation-1")},
+        {
+            "encrypted": True,
+            "interaction_scope_id": SessionId("session-1"),
+        },
+    ],
+)
+def test_generate_request_rejects_invalid_interaction_scope(kwargs):
+    with pytest.raises(ValueError):
+        GenerateKeyRequest(name="id_ed25519", **kwargs)
+
+
+def test_verify_key_passphrase_models_are_secret_free():
+    request = VerifyKeyPassphraseRequest(
+        key_path=PRIVATE,
+        interaction_scope_id=SessionId("key-operation-verify-1"),
+    )
+    assert set(request.__dataclass_fields__) == {
+        "key_path",
+        "interaction_scope_id",
+    }
+    assert VerifyKeyPassphraseResult(valid=True).valid is True
 
 
 def test_generate_key_result_constructs():
@@ -176,11 +219,6 @@ def test_generate_key_request_rejects_nul_in_name():
 def test_generate_key_request_rejects_nul_in_comment():
     with pytest.raises(ValueError):
         GenerateKeyRequest(name="id_ed25519", comment="bad\x00comment")
-
-
-def test_generate_key_request_rejects_nul_in_passphrase():
-    with pytest.raises(ValueError):
-        GenerateKeyRequest(name="id_ed25519", passphrase="bad\x00passphrase")
 
 
 def test_public_key_result_rejects_nul():
@@ -329,12 +367,9 @@ def test_key_summary_rejects_non_boolean_availability():
 # ---------------------------------------------------------------------------
 # repr safety
 # ---------------------------------------------------------------------------
-def test_repr_does_not_expose_passphrase():
-    request = GenerateKeyRequest(
-        name="id_ed25519",
-        passphrase="super-secret-passphrase",
-    )
-    assert "super-secret-passphrase" not in repr(request)
+def test_generate_request_has_no_passphrase_field():
+    request = GenerateKeyRequest(name="id_ed25519")
+    assert "passphrase" not in request.__dataclass_fields__
 
 
 def test_repr_does_not_expose_paths():

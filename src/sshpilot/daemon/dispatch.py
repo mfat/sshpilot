@@ -32,6 +32,7 @@ from sshpilot.api.models.connections import (
     get_plugin_secret_request_from_wire,
     store_plugin_secret_request_from_wire,
 )
+from sshpilot.api.models.interactions import InteractionType, PassphrasePrompt
 from sshpilot.api.models.operations import OperationSummary, SftpFileAccess
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
@@ -56,6 +57,8 @@ from sshpilot.api.transport.codec import (
     remove_known_host_entries_request_from_wire,
     update_identity_configuration_request_from_wire,
     update_identity_selection_request_from_wire,
+    verify_key_passphrase_request_from_wire,
+    verify_key_passphrase_result_to_wire,
     attach_session_request_from_wire,
     attach_session_result_to_wire,
     attach_sftp_request_from_wire,
@@ -247,6 +250,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "keys.list": Capability.KEYS_READ,
     "keys.get_public": Capability.KEYS_READ,
     "keys.generate": Capability.KEYS_WRITE,
+    "keys.verify_passphrase": Capability.KEYS_WRITE,
     "identity.providers.get": Capability.IDENTITY_READ,
     "identity.state.get": Capability.IDENTITY_READ,
     "identity.selection.update": Capability.IDENTITY_WRITE,
@@ -339,6 +343,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "forwards.open",
         "known_hosts.remove",
         "keys.generate",
+        "keys.verify_passphrase",
         "identity.selection.update",
         "identity.configuration.update",
         "identity.agent.key.add",
@@ -447,6 +452,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "keys.list",
         "keys.get_public",
         "keys.generate",
+        "keys.verify_passphrase",
         "identity.agent.keys.get",
         "identity.agent.key.add",
         "identity.agent.key.remove",
@@ -700,6 +706,7 @@ class RequestDispatcher:
             "keys.list": self._handle_list_keys,
             "keys.get_public": self._handle_get_public_key,
             "keys.generate": self._handle_generate_key,
+            "keys.verify_passphrase": self._handle_verify_key_passphrase,
             "identity.providers.get": self._handle_get_identity_providers,
             "identity.state.get": self._handle_get_identity_state,
             "identity.selection.update": self._handle_update_identity_selection,
@@ -1290,17 +1297,61 @@ class RequestDispatcher:
     def _handle_store_key_passphrase(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         typed_request = store_key_passphrase_request_from_wire(request.params)
+        client_id = self._required_client_id(state)
         return DeferredResult(
-            operation=lambda: self._connections.store_daemon_passphrase(
-                typed_request.key_path,
-                typed_request.passphrase,
+            operation=lambda: self._store_protected_key_passphrase(
+                typed_request,
+                owner_client_id=client_id,
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
+
+    def _store_protected_key_passphrase(
+        self,
+        request,
+        *,
+        owner_client_id: ClientId,
+    ) -> bool:
+        broker = self._interaction_broker
+        if broker is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Protected key interaction is unavailable",
+            )
+        secret = broker.request_client_secret(
+            owner_client_id=owner_client_id,
+            session_id=request.interaction_scope_id,
+            connection_id=ConnectionId(
+                f"key-{request.interaction_scope_id[-24:]}"
+            ),
+            interaction_type=InteractionType.PRIVATE_KEY_PASSPHRASE,
+            prompt=PassphrasePrompt(
+                key_display_name=(
+                    os.path.basename(request.key_path) or "SSH private key"
+                ),
+                key_fingerprint=None,
+                attempt=1,
+                can_remember=False,
+                stored_secret_available=False,
+            ),
+        )
+        if not secret:
+            return False
+        try:
+            try:
+                return self._connections.store_daemon_passphrase(
+                    request.key_path,
+                    secret.decode("utf-8"),
+                )
+            except UnicodeError:
+                return False
+        finally:
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
 
     def _handle_delete_key_passphrase(
         self,
@@ -2367,13 +2418,38 @@ class RequestDispatcher:
     def _handle_generate_key(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         typed_request = generate_key_request_from_wire(request.params)
         service = self._required_key_service()
+        client_id = self._required_client_id(state)
         return DeferredResult(
-            operation=lambda: generate_key_result_to_wire(service.generate_key(typed_request)),
+            operation=lambda: generate_key_result_to_wire(
+                service.generate_key(
+                    typed_request,
+                    owner_client_id=client_id,
+                )
+            ),
             command_key=("keys", typed_request.scope.value),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_verify_key_passphrase(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = verify_key_passphrase_request_from_wire(request.params)
+        service = self._required_key_service()
+        client_id = self._required_client_id(state)
+        return DeferredResult(
+            operation=lambda: verify_key_passphrase_result_to_wire(
+                service.verify_key_passphrase(
+                    typed_request,
+                    owner_client_id=client_id,
+                )
+            ),
+            command_key=("keys", "verify", typed_request.interaction_scope_id),
             on_rejected=lambda: None,
         )
 

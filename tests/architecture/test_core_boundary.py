@@ -38,7 +38,6 @@ so the registries cannot silently grow or rot.
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 
@@ -192,8 +191,6 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("sftp_utils.py", "subprocess"): "M7",
     ("ssh_config_utils.py", "subprocess"): "M7",
     ("ssh_config_utils.py", "ssh_binary"): "M7",
-    ("ssh_key_fingerprint.py", "subprocess"): "M7",
-    ("ssh_key_fingerprint.py", "ssh_binary"): "M7",
     ("ssh_multiplex.py", "subprocess"): "M7",
     ("ssh_multiplex.py", "ssh_binary"): "M7",
     ("terminal.py", "subprocess"): "M7",  # pre-connection cmds + SSH subprocesses
@@ -493,7 +490,7 @@ def test_backend_ops_debt_matches_exact_baseline():
     from collections import Counter
 
     debt = Counter(t for t in BACKEND_OPS.values() if t != "frontend")
-    expected = {"M5": 3, "M7": 16, "M8": 1}
+    expected = {"M5": 3, "M7": 14, "M8": 1}
     assert dict(debt) == expected, (
         f"BACKEND_OPS debt changed; expected {expected}, got {dict(debt)}. "
         "Only remove rows as the owning migration lands."

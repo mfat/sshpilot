@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, FrozenSet, Mapping, Optional, Tuple, Union
 
-from .common import ConnectionId, require_identifier
+from .common import ConnectionId, SessionId, require_identifier
 from .connection_store import validate_safe_metadata
 
 
@@ -371,14 +371,22 @@ class DeleteConnectionPasswordRequest:
 
 @dataclass(frozen=True)
 class StoreKeyPassphraseRequest:
-    """Store or update a key passphrase."""
+    """Store a key passphrase supplied through a protected interaction."""
 
     key_path: str
-    passphrase: str = field(repr=False)
+    interaction_scope_id: SessionId
 
     def __post_init__(self) -> None:
         if not self.key_path.strip():
             raise ValueError("key_path must not be empty")
+        require_identifier(
+            self.interaction_scope_id,
+            "key interaction scope id",
+        )
+        if not str(self.interaction_scope_id).startswith("key-operation-"):
+            raise ValueError(
+                "key interaction scope id must start with 'key-operation-'"
+            )
 
 
 @dataclass(frozen=True)

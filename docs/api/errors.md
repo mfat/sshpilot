@@ -633,6 +633,13 @@ passphrases.
 The daemon-owned `ssh-keygen` invocation failed. The message never contains the
 full command line, private-key contents, or passphrases.
 
+<!-- api-error: key_verification_failed -->
+## `key_verification_failed`
+
+The daemon could not complete protected private-key passphrase verification.
+The message never contains the native command, key contents, prompt response,
+or passphrase.
+
 <!-- api-error: server_busy -->
 ## `server_busy`
 

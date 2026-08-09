@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.25`; `PROTOCOL_VERSION` stays
+  `1.0`. `GenerateKeyRequest` now carries only an `encrypted` choice and an
+  opaque interaction scope, never a passphrase. Added the daemon-owned
+  `keys.verify_passphrase` method. Encrypted generation and verification use
+  protected interaction secret frames and native askpass. Key-passphrase
+  storage now uses the same protected frame boundary, so key passphrases are
+  absent from ordinary request JSON, process argv, and process environment.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.24`; `PROTOCOL_VERSION` stays `1.0`.
   Added typed `daemon.set_log_level` control for `warning`, `info`, and `debug`.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.23`; `PROTOCOL_VERSION` stays `1.0`.

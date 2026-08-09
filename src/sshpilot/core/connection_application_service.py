@@ -397,8 +397,7 @@ class ConnectionApplicationService:
 
     def store_key_passphrase_rpc(self, request: Any) -> bool:
         self._assert_command_thread()
-        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
-        return self.store_daemon_passphrase(request.key_path, request.passphrase)
+        raise unsupported_capability(Capability.CONNECTIONS_SECRETS_WRITE)
 
     def delete_key_passphrase_rpc(self, request: Any) -> bool:
         self._assert_command_thread()
@@ -1145,6 +1144,9 @@ class ConnectionApplicationService:
         raise unsupported_capability(Capability.KEYS_READ)
 
     def generate_key(self, request: Any) -> None:
+        raise unsupported_capability(Capability.KEYS_WRITE)
+
+    def verify_key_passphrase(self, request: Any) -> None:
         raise unsupported_capability(Capability.KEYS_WRITE)
 
     # ------------------------------------------------------------------

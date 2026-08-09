@@ -2,6 +2,8 @@
 
 import pytest
 
+from sshpilot.api.models import SessionId
+from sshpilot.api.models.connections import StoreKeyPassphraseRequest
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     GenerateKeyResult,
@@ -12,6 +14,8 @@ from sshpilot.api.models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
 )
 from sshpilot.api.transport.codec import (
     generate_key_request_from_wire,
@@ -28,6 +32,12 @@ from sshpilot.api.transport.codec import (
     public_key_result_to_wire,
     read_public_key_request_from_wire,
     read_public_key_request_to_wire,
+    store_key_passphrase_request_from_wire,
+    store_key_passphrase_request_to_wire,
+    verify_key_passphrase_request_from_wire,
+    verify_key_passphrase_request_to_wire,
+    verify_key_passphrase_result_from_wire,
+    verify_key_passphrase_result_to_wire,
 )
 
 PRIVATE = "/home/user/.ssh/id_ed25519"
@@ -217,7 +227,8 @@ def test_generate_key_request_round_trip():
         key_type="rsa",
         key_size=3072,
         comment="my comment",
-        passphrase="a-secret",
+        encrypted=True,
+        interaction_scope_id=SessionId("key-operation-generate-1"),
         scope=KeyStoreScope.ISOLATED,
     )
     assert (
@@ -231,13 +242,16 @@ def test_generate_key_request_to_wire_rejects_wrong_type():
         generate_key_request_to_wire(object())  # type: ignore[arg-type]
 
 
-def test_generate_key_request_preserves_empty_comment_and_passphrase():
+def test_generate_key_request_preserves_empty_comment_and_unencrypted_mode():
     request = GenerateKeyRequest(name="id_ed25519")
-    assert generate_key_request_to_wire(request)["comment"] == ""
-    assert generate_key_request_to_wire(request)["passphrase"] == ""
-    decoded = generate_key_request_from_wire(generate_key_request_to_wire(request))
+    wire = generate_key_request_to_wire(request)
+    assert wire["comment"] == ""
+    assert wire["encrypted"] is False
+    assert "interaction_scope_id" not in wire
+    assert "passphrase" not in wire
+    decoded = generate_key_request_from_wire(wire)
     assert decoded.comment == ""
-    assert decoded.passphrase == ""
+    assert decoded.encrypted is False
 
 
 def test_generate_key_request_from_wire_does_not_normalize():
@@ -246,7 +260,7 @@ def test_generate_key_request_from_wire_does_not_normalize():
         "key_type": "ed25519",
         "key_size": 0,
         "comment": "  kept  ",
-        "passphrase": "",
+        "encrypted": False,
         "scope": "default",
     }
     decoded = generate_key_request_from_wire(wire)
@@ -262,7 +276,7 @@ def test_generate_key_request_from_wire_rejects_non_integer_size():
                 "key_type": "rsa",
                 "key_size": "3072",
                 "comment": "",
-                "passphrase": "",
+                "encrypted": False,
                 "scope": "default",
             }
         )
@@ -276,7 +290,7 @@ def test_generate_key_request_from_wire_rejects_malformed_scope():
                 "key_type": "ed25519",
                 "key_size": 0,
                 "comment": "",
-                "passphrase": "",
+                "encrypted": False,
                 "scope": "weird",
             }
         )
@@ -290,14 +304,15 @@ def test_generate_key_request_from_wire_rejects_unknown_fields():
                 "key_type": "ed25519",
                 "key_size": 0,
                 "comment": "",
-                "passphrase": "",
+                "encrypted": False,
                 "scope": "default",
                 "extra": 1,
             }
         )
 
 
-def test_generate_key_request_exceptions_never_include_passphrase():
+def test_generate_key_request_rejects_legacy_passphrase_wire_field():
+    sentinel = "KEY_PASSPHRASE_SENTINEL_8F1C29"
     with pytest.raises(ValueError) as excinfo:
         generate_key_request_from_wire(
             {
@@ -305,11 +320,49 @@ def test_generate_key_request_exceptions_never_include_passphrase():
                 "key_type": "ed25519",
                 "key_size": 0,
                 "comment": "",
-                "passphrase": "super-secret-passphrase",
+                "encrypted": False,
+                "passphrase": sentinel,
                 "scope": "default",
             }
         )
-    assert "super-secret-passphrase" not in str(excinfo.value)
+    assert sentinel not in str(excinfo.value)
+
+
+def test_verify_key_passphrase_request_and_result_round_trip_without_secret():
+    sentinel = "KEY_PASSPHRASE_SENTINEL_8F1C29"
+    request = VerifyKeyPassphraseRequest(
+        key_path=PRIVATE,
+        interaction_scope_id=SessionId("key-operation-verify-1"),
+    )
+    wire = verify_key_passphrase_request_to_wire(request)
+    assert verify_key_passphrase_request_from_wire(wire) == request
+    assert "passphrase" not in wire
+    assert sentinel not in repr(wire)
+    result = VerifyKeyPassphraseResult(valid=True)
+    assert verify_key_passphrase_result_from_wire(
+        verify_key_passphrase_result_to_wire(result)
+    ) == result
+
+
+def test_store_key_passphrase_request_round_trip_has_no_secret_field():
+    sentinel = "KEY_PASSPHRASE_SENTINEL_8F1C29"
+    request = StoreKeyPassphraseRequest(
+        key_path=PRIVATE,
+        interaction_scope_id=SessionId("key-operation-store-1"),
+    )
+    wire = store_key_passphrase_request_to_wire(request)
+    assert store_key_passphrase_request_from_wire(wire) == request
+    assert "passphrase" not in wire
+    assert sentinel not in repr(wire)
+
+    with pytest.raises(ValueError) as excinfo:
+        store_key_passphrase_request_from_wire(
+            {
+                **wire,
+                "passphrase": sentinel,
+            }
+        )
+    assert sentinel not in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

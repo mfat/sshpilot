@@ -403,7 +403,7 @@ def test_daemon_groups_place_stale_generation_rejected(daemon_factory, tmp_path)
     client.close()
 
 
-def test_delete_key_passphrase_roundtrips_over_daemon(daemon_factory):
+def test_delete_key_passphrase_roundtrips_over_daemon(daemon_factory, caplog):
     """Regression: ``connections.delete_passphrase`` must be accepted as deferred work.
 
     The handler returns a ``DeferredResult``; while the method was missing from
@@ -413,19 +413,25 @@ def test_delete_key_passphrase_roundtrips_over_daemon(daemon_factory):
     """
     from sshpilot.api.models.connections import (
         DeleteKeyPassphraseRequest,
-        StoreKeyPassphraseRequest,
     )
+    from sshpilot.api.models.keys import KeyStoreScope
+    from sshpilot.gtk.key_controller import KeyController
 
     server, _manager = daemon_factory()
     client = DaemonClient(socket_path=server.socket_path)
 
     key_path = "/tmp/sshpilot-mutation-test-id_ed25519"
-    assert client.store_key_passphrase(
-        StoreKeyPassphraseRequest(key_path=key_path, passphrase="pw")
+    sentinel = "KEY_PASSPHRASE_SENTINEL_8F1C29"
+    secret = bytearray(sentinel.encode("utf-8"))
+    assert KeyController(client, KeyStoreScope.DEFAULT).store_key_passphrase(
+        key_path,
+        secret,
     ) is True
+    assert secret == bytearray()
     assert client.has_key_passphrase(key_path) is True
     assert client.delete_key_passphrase(
         DeleteKeyPassphraseRequest(key_path=key_path)
     ) is True
     assert client.has_key_passphrase(key_path) is False
+    assert sentinel not in caplog.text
     client.close()

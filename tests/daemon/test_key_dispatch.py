@@ -17,6 +17,8 @@ from sshpilot.api.models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, RequestEnvelope
 from sshpilot.core.connection_application_service import ConnectionApplicationService
@@ -74,6 +76,7 @@ class _FakeKeyService:
         self.list_calls: list[KeyStoreScope] = []
         self.read_calls: list[ReadPublicKeyRequest] = []
         self.generate_calls: list[GenerateKeyRequest] = []
+        self.verify_calls: list[VerifyKeyPassphraseRequest] = []
         self.result = KeyList(keys=(_summary(),))
         self.public_result = PublicKeyResult(
             key_id=KeyId("key-1"),
@@ -88,9 +91,13 @@ class _FakeKeyService:
         self.read_calls.append(request)
         return self.public_result
 
-    def generate_key(self, request: GenerateKeyRequest):
-        self.generate_calls.append(request)
+    def generate_key(self, request: GenerateKeyRequest, *, owner_client_id):
+        self.generate_calls.append((request, owner_client_id))
         return GenerateKeyResult(key=_summary())
+
+    def verify_key_passphrase(self, request, *, owner_client_id):
+        self.verify_calls.append((request, owner_client_id))
+        return VerifyKeyPassphraseResult(valid=True)
 
 
 def _dispatcher(with_service=True):
@@ -120,11 +127,18 @@ def test_generate_maps_to_write_capability():
     assert "keys.generate" in DRAIN_REJECTED_METHODS
 
 
+def test_verify_passphrase_maps_to_write_capability():
+    assert DAEMON_METHOD_CAPABILITIES["keys.verify_passphrase"] is Capability.KEYS_WRITE
+    assert "keys.verify_passphrase" in DEFERRED_DAEMON_METHODS
+    assert "keys.verify_passphrase" in DRAIN_REJECTED_METHODS
+
+
 def test_list_handler_is_registered():
     dispatcher, _service = _dispatcher()
     assert "keys.list" in dispatcher.HANDLERS
     assert "keys.get_public" in dispatcher.HANDLERS
     assert "keys.generate" in dispatcher.HANDLERS
+    assert "keys.verify_passphrase" in dispatcher.HANDLERS
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +340,7 @@ def _generate_wire():
         "key_type": "ed25519",
         "key_size": 0,
         "comment": "",
-        "passphrase": "",
+        "encrypted": False,
         "scope": "default",
     }
 
@@ -340,9 +354,10 @@ def test_generate_returns_deferred_execution_with_wire_result():
     assert isinstance(result, DeferredResult)
     assert service.generate_calls == []  # deferred: not executed yet
     wire = result.operation()
-    assert service.generate_calls == [
-        GenerateKeyRequest(name="id_ed25519", scope=KeyStoreScope.DEFAULT)
-    ]
+    assert service.generate_calls == [(
+        GenerateKeyRequest(name="id_ed25519", scope=KeyStoreScope.DEFAULT),
+        ClientId("client-1"),
+    )]
     assert wire == {
         "key": {
             "key_id": "key-1",
@@ -397,6 +412,29 @@ def test_list_and_read_remain_available_during_drain():
         dispatcher.dispatch(_envelope("keys.list", {"scope": "default"}), _state()),
         DeferredResult,
     )
+
+
+def test_verify_passphrase_dispatch_is_secret_free():
+    dispatcher, service = _dispatcher()
+    params = {
+        "key_path": "/home/user/.ssh/id_ed25519",
+        "interaction_scope_id": "key-operation-verify-1",
+    }
+    result = dispatcher.dispatch(
+        _envelope("keys.verify_passphrase", params),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+    assert service.verify_calls == []
+    assert result.operation() == {"valid": True}
+    assert service.verify_calls == [(
+        VerifyKeyPassphraseRequest(
+            key_path="/home/user/.ssh/id_ed25519",
+            interaction_scope_id="key-operation-verify-1",
+        ),
+        ClientId("client-1"),
+    )]
+    assert "passphrase" not in params
     assert isinstance(
         dispatcher.dispatch(
             _envelope("keys.get_public", {"key_id": "key-1", "scope": "default"}),

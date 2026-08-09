@@ -14,6 +14,7 @@ from typing import List, Optional
 from gi.repository import GObject
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models import SessionId
 from sshpilot.api.models.keys import KeyStoreScope, KeySummary
 from sshpilot.gtk.key_controller import KeyController
 
@@ -113,7 +114,8 @@ class KeyManager(GObject.Object):
         key_type: str = "ed25519",
         key_size: int = 0,
         comment: Optional[str] = None,
-        passphrase: Optional[str] = None,
+        encrypted: bool = False,
+        interaction_scope_id: Optional[SessionId] = None,
     ) -> Optional[SSHKey]:
         """Generate a key via the daemon; emit ``key-generated`` on success.
 
@@ -129,7 +131,8 @@ class KeyManager(GObject.Object):
                 key_type=key_type,
                 key_size=key_size,
                 comment=comment or "",
-                passphrase=passphrase or "",
+                encrypted=encrypted,
+                interaction_scope_id=interaction_scope_id,
             )
         except SshPilotError as exc:
             if exc.code == ErrorCode.MUTATION_AMBIGUOUS:
@@ -146,6 +149,22 @@ class KeyManager(GObject.Object):
             logger.debug("key-generated signal emit failed", exc_info=True)
         logger.info("SSH key generated")
         return key
+
+    def verify_key_passphrase(
+        self,
+        key_path: str,
+        secret: bytearray,
+    ) -> bool:
+        """Verify through the daemon's protected interaction channel."""
+        return self._controller.verify_key_passphrase(key_path, secret)
+
+    def store_key_passphrase(
+        self,
+        key_path: str,
+        secret: bytearray,
+    ) -> bool:
+        """Store through the daemon's protected interaction channel."""
+        return self._controller.store_key_passphrase(key_path, secret)
 
     @staticmethod
     def _map_error(exc: SshPilotError) -> BaseException:

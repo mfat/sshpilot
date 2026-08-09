@@ -695,6 +695,12 @@ class DaemonServer:
                 self._identity_service.attach_interaction_broker(
                     self._interaction_broker
                 )
+            if self._key_service is not None and hasattr(
+                self._key_service, "attach_interaction_broker"
+            ):
+                self._key_service.attach_interaction_broker(
+                    self._interaction_broker
+                )
             if gate_terminal_evidence:
                 runtime = self._session_runtime
                 broker = self._interaction_broker
@@ -880,6 +886,12 @@ class DaemonServer:
         return broker.prepare_launch(spec, _wrapped_builder, headless=True)
 
     def _client_can_interact(self, session_id: SessionId, client_id: Any) -> bool:
+        broker = self._interaction_broker
+        if broker is not None and broker.client_owns_direct_scope(
+            session_id,
+            client_id,
+        ):
+            return True
         session_runtime = self._session_runtime
         if session_runtime is not None and session_runtime.client_can_interact(
             session_id, client_id
@@ -907,6 +919,8 @@ class DaemonServer:
             return self._transfer_runtime.client_can_interact(
                 TransferId(text), client_id
             )
+        if text.startswith("key-operation-") and self._key_service is not None:
+            return self._key_service.client_can_interact(session_id, client_id)
         return False
 
     def _accept_client(self) -> None:
@@ -1541,6 +1555,9 @@ class DaemonServer:
         if transfer_runtime is not None:
             transfer_runtime.detach_client(state.protocol.client_id)
         broker = self._interaction_broker
+        key_service = self._key_service
+        if key_service is not None and state.protocol.client_id is not None:
+            key_service.disconnect_client(state.protocol.client_id)
         if broker is not None and state.protocol.client_id is not None:
             broker.disconnect_client(state.protocol.client_id)
         self._note_lifecycle_activity()

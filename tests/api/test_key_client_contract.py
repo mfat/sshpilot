@@ -11,18 +11,21 @@ from sshpilot.api.method_capabilities import UNSUPPORTED_CLIENT_METHOD_CAPABILIT
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     KeyId,
-    KeyList,
-    KeyStoreScope,
-    KeySummary,
     ListKeysRequest,
-    PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
 )
+from sshpilot.api.models import SessionId
 from tests.helpers.fake_connection_repository import make_test_repository
 
 
 def test_protocol_declares_key_methods():
-    for method_name in ("list_keys", "read_public_key", "generate_key"):
+    for method_name in (
+        "list_keys",
+        "read_public_key",
+        "generate_key",
+        "verify_key_passphrase",
+    ):
         assert callable(getattr(SshPilotClient, method_name))
 
 
@@ -39,8 +42,17 @@ def test_daemon_client_registers_key_methods():
         DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["generate_key"]
         is Capability.KEYS_WRITE
     )
+    assert (
+        DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["verify_key_passphrase"]
+        is Capability.KEYS_WRITE
+    )
     # Daemon-only methods leave the unsupported (schema-only) map.
-    for name in ("list_keys", "read_public_key", "generate_key"):
+    for name in (
+        "list_keys",
+        "read_public_key",
+        "generate_key",
+        "verify_key_passphrase",
+    ):
         assert name not in UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 
 
@@ -54,6 +66,15 @@ def _in_process_client():
         ("list_keys", (ListKeysRequest(),)),
         ("read_public_key", (ReadPublicKeyRequest(key_id=KeyId("key-1")),)),
         ("generate_key", (GenerateKeyRequest(name="id_ed25519"),)),
+        (
+            "verify_key_passphrase",
+            (
+                VerifyKeyPassphraseRequest(
+                    key_path="/home/user/.ssh/id_ed25519",
+                    interaction_scope_id=SessionId("key-operation-verify-1"),
+                ),
+            ),
+        ),
     ],
 )
 def test_in_process_client_raises_canonical_unsupported(method, args):

@@ -9,20 +9,26 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from sshpilot.api import DaemonClient, ErrorCode, SshPilotError
+from sshpilot.api.daemon_client import (
+    DEFAULT_REQUEST_TIMEOUT,
+    KEY_GENERATION_REQUEST_TIMEOUT,
+)
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     KeyId,
     KeyList,
     KeyStoreScope,
-    KeySummary,
     ListKeysRequest,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
 )
+from sshpilot.api.models import SessionId
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION
 from sshpilot.api.transport import (
     SuccessResponseEnvelope,
@@ -34,7 +40,7 @@ from sshpilot.api.transport import (
 from sshpilot.daemon import DaemonServer
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.server import CoreServices
-from tests.helpers.fake_connection_repository import make_test_connection_service, make_test_repository
+from tests.helpers.fake_connection_repository import make_test_connection_service
 
 PRIVATE_HEADER = (
     b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
@@ -189,10 +195,9 @@ def test_generate_key_round_trip_over_real_daemon(tmp_path, key_server):
     client = DaemonClient(socket_path=server.socket_path)
     try:
         result = client.generate_key(
-            GenerateKeyRequest(name="generated", passphrase="a-secret")
+            GenerateKeyRequest(name="generated")
         )
         assert result.key.name == "generated"
-        assert "a-secret" not in repr(result)
         # The generated key now appears in a fresh listing.
         assert any(
             k.name == "generated"
@@ -275,7 +280,7 @@ def test_generate_key_sends_exact_payload(tmp_path):
             key_type="ed25519",
             key_size=0,
             comment="",
-            passphrase="secret",
+            encrypted=False,
             scope=KeyStoreScope.DEFAULT,
         )
         with pytest.raises(SshPilotError):
@@ -285,8 +290,110 @@ def test_generate_key_sends_exact_payload(tmp_path):
         thread.join(2)
     assert seen["method"] == "keys.generate"
     assert seen["params"]["name"] == "id_ed25519"
-    assert seen["params"]["passphrase"] == "secret"
+    assert seen["params"]["encrypted"] is False
+    assert "passphrase" not in seen["params"]
     assert seen["params"]["scope"] == "default"
+
+
+def test_generate_key_uses_bounded_interactive_request_timeout(monkeypatch):
+    client = object.__new__(DaemonClient)
+    seen = {}
+
+    monkeypatch.setattr(client, "_require_capability", lambda _capability: None)
+    monkeypatch.setattr(client, "_require_write_compatibility", lambda _action: None)
+
+    class RequestCaptured(Exception):
+        pass
+
+    def _capture(method, params, **kwargs):
+        seen.update(method=method, params=params, kwargs=kwargs)
+        raise RequestCaptured
+
+    monkeypatch.setattr(client, "_request", _capture)
+
+    with pytest.raises(RequestCaptured):
+        client.generate_key(GenerateKeyRequest(name="id_ed25519", encrypted=True,
+                                               interaction_scope_id=SessionId(
+                                                   "key-operation-timeout"
+                                               )))
+
+    assert seen["method"] == "keys.generate"
+    assert seen["kwargs"]["request_timeout"] == KEY_GENERATION_REQUEST_TIMEOUT
+    assert KEY_GENERATION_REQUEST_TIMEOUT > DEFAULT_REQUEST_TIMEOUT
+
+
+def test_generate_key_does_not_use_normal_transport_timeout(tmp_path):
+    def action(peer):
+        request = _drain_request(peer)
+        time.sleep(0.1)
+        peer.sendall(
+            encode_frame(
+                encode_envelope(
+                    SuccessResponseEnvelope(
+                        "1.0",
+                        request.request_id,
+                        {
+                            "key": {
+                                "key_id": "key-delayed",
+                                "name": "id_ed25519",
+                                "private_path": "/tmp/id_ed25519",
+                                "public_path": "/tmp/id_ed25519.pub",
+                                "public_key_available": True,
+                            }
+                        },
+                    )
+                )
+            )
+        )
+
+    thread, release, socket_path = _scripted_server(
+        tmp_path,
+        capabilities=("keys.write",),
+        action=action,
+    )
+    release.set()
+    client = DaemonClient(socket_path=socket_path, timeout=0.05)
+    try:
+        result = client.generate_key(GenerateKeyRequest(name="id_ed25519"))
+        assert result.key.key_id == "key-delayed"
+    finally:
+        client.close()
+        thread.join(2)
+
+
+def test_verify_key_passphrase_sends_secret_free_payload(tmp_path):
+    seen = {}
+
+    def action(peer):
+        request = _drain_request(peer)
+        seen["method"] = request.method
+        seen["params"] = request.params
+        peer.close()
+
+    thread, release, socket_path = _scripted_server(
+        tmp_path,
+        capabilities=("keys.write",),
+        action=action,
+    )
+    client = DaemonClient(socket_path=socket_path)
+    release.set()
+    try:
+        with pytest.raises(SshPilotError):
+            client.verify_key_passphrase(
+                VerifyKeyPassphraseRequest(
+                    key_path="/home/user/.ssh/id_ed25519",
+                    interaction_scope_id=SessionId("key-operation-verify-1"),
+                )
+            )
+    finally:
+        client.close()
+        thread.join(2)
+    assert seen["method"] == "keys.verify_passphrase"
+    assert seen["params"] == {
+        "key_path": "/home/user/.ssh/id_ed25519",
+        "interaction_scope_id": "key-operation-verify-1",
+    }
+    assert "passphrase" not in seen["params"]
 
 
 def test_generate_transport_close_after_send_is_mutation_ambiguous(tmp_path):
@@ -356,15 +463,15 @@ def test_daemon_unavailable_has_no_local_fallback(tmp_path):
     assert excinfo.value.code is ErrorCode.DAEMON_UNAVAILABLE
 
 
-def test_generate_passphrase_absent_from_logs(tmp_path, key_server, caplog):
+def test_generate_request_absent_from_debug_logs(tmp_path, key_server, caplog):
     keys_dir = tmp_path / "keys"
     server = key_server(keys_dir)
     client = DaemonClient(socket_path=server.socket_path)
     try:
         with caplog.at_level(logging.DEBUG):
             client.generate_key(
-                GenerateKeyRequest(name="k", passphrase="top-secret-passphrase")
+                GenerateKeyRequest(name="k")
             )
-        assert "top-secret-passphrase" not in caplog.text
+        assert "GenerateKeyRequest" not in caplog.text
     finally:
         client.close()

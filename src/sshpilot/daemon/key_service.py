@@ -16,9 +16,10 @@ import os
 import stat
 import threading
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models import ClientId, ConnectionId, SessionId
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     GenerateKeyResult,
@@ -29,12 +30,17 @@ from sshpilot.api.models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
     contains_private_key_material,
 )
 from sshpilot.core.errors import CoreError, ErrorCode as CoreErrorCode
 from sshpilot.core.keys import KeyGenerateSpec, KeyService, SSHKeyInfo
 
 _MAX_PUBLIC_KEY_BYTES = 1024 * 1024
+
+if TYPE_CHECKING:
+    from sshpilot.daemon.interaction_broker import InteractionBroker
 
 
 class DaemonKeyService:
@@ -49,6 +55,37 @@ class DaemonKeyService:
         self._path_resolver = path_resolver
         self._service_factory = service_factory
         self._lock = threading.RLock()
+        self._scope_lock = threading.RLock()
+        self._interaction_broker: Optional[InteractionBroker] = None
+        self._active_scopes: dict[SessionId, ClientId] = {}
+
+    def attach_interaction_broker(self, broker: InteractionBroker) -> None:
+        """Attach the daemon's sole protected interaction broker."""
+        self._interaction_broker = broker
+
+    def client_can_interact(
+        self,
+        scope_id: SessionId,
+        client_id: ClientId,
+    ) -> bool:
+        with self._scope_lock:
+            return self._active_scopes.get(scope_id) == client_id
+
+    def disconnect_client(self, client_id: ClientId) -> None:
+        """Cancel protected key work whose owning client disappeared."""
+        broker = self._interaction_broker
+        if broker is None:
+            return
+        with self._scope_lock:
+            scopes = tuple(
+                scope
+                for scope, owner in self._active_scopes.items()
+                if owner == client_id
+            )
+            for scope in scopes:
+                self._active_scopes.pop(scope, None)
+        for scope in scopes:
+            broker.cancel_session(scope)
 
     # -- listing ---------------------------------------------------------
     def list_keys(self, request: ListKeysRequest) -> KeyList:
@@ -81,36 +118,148 @@ class DaemonKeyService:
             return PublicKeyResult(key_id=request.key_id, text=text)
 
     # -- generation --------------------------------------------------------
-    def generate_key(self, request: GenerateKeyRequest) -> GenerateKeyResult:
+    def generate_key(
+        self,
+        request: GenerateKeyRequest,
+        *,
+        owner_client_id: ClientId,
+    ) -> GenerateKeyResult:
+        scope_id = request.interaction_scope_id
+        if request.encrypted:
+            assert scope_id is not None
+            self._register_scope(scope_id, owner_client_id)
         with self._lock:
-            root = Path(self._path_resolver(request.scope))
-            service = self._service_factory(root)
-            spec = KeyGenerateSpec(
-                key_name=request.name,
-                key_type=request.key_type,
-                key_size=request.key_size,
-                comment=request.comment or None,
-                passphrase=request.passphrase,
-            )
             try:
-                info = service.generate_key(spec)
-            except CoreError as exc:
-                raise self._map_generate_error(exc) from exc
-            except OSError as exc:
-                raise SshPilotError(
-                    ErrorCode.KEY_GENERATION_FAILED,
-                    "The daemon could not generate the key",
-                ) from exc
-            if not self._is_within(Path(info.private_path), root):
-                raise SshPilotError(
-                    ErrorCode.KEY_GENERATION_FAILED,
-                    "The daemon could not generate the key",
+                root = Path(self._path_resolver(request.scope))
+                service = self._service_factory(root)
+                spec = KeyGenerateSpec(
+                    key_name=request.name,
+                    key_type=request.key_type,
+                    key_size=request.key_size,
+                    comment=request.comment or None,
+                    encrypted=request.encrypted,
                 )
-            return GenerateKeyResult(
-                key=self._summary_for(info, request.scope, root)
-            )
+                try:
+                    info = service.generate_key(
+                        spec,
+                        prepare_launch=(
+                            None
+                            if scope_id is None
+                            else lambda argv: self._prepare_key_launch(
+                                argv,
+                                scope_id=scope_id,
+                                label="SSH key generation",
+                                confirm_passphrase=True,
+                            )
+                        ),
+                    )
+                except CoreError as exc:
+                    raise self._map_generate_error(exc) from exc
+                except OSError as exc:
+                    raise SshPilotError(
+                        ErrorCode.KEY_GENERATION_FAILED,
+                        "The daemon could not generate the key",
+                    ) from exc
+                if not self._is_within(Path(info.private_path), root):
+                    raise SshPilotError(
+                        ErrorCode.KEY_GENERATION_FAILED,
+                        "The daemon could not generate the key",
+                    )
+                return GenerateKeyResult(
+                    key=self._summary_for(info, request.scope, root)
+                )
+            finally:
+                if scope_id is not None:
+                    self._release_scope(scope_id)
+
+    def verify_key_passphrase(
+        self,
+        request: VerifyKeyPassphraseRequest,
+        *,
+        owner_client_id: ClientId,
+    ) -> VerifyKeyPassphraseResult:
+        scope_id = request.interaction_scope_id
+        self._register_scope(scope_id, owner_client_id)
+        try:
+            path = Path(request.key_path).expanduser()
+            if not path.is_file():
+                return VerifyKeyPassphraseResult(valid=False)
+            service = self._service_factory(path.parent)
+            try:
+                valid = service.verify_key_passphrase(
+                    path,
+                    prepare_launch=lambda argv: self._prepare_key_launch(
+                        argv,
+                        scope_id=scope_id,
+                        label="SSH key verification",
+                        confirm_passphrase=False,
+                    ),
+                )
+            except CoreError as exc:
+                raise SshPilotError(
+                    ErrorCode.KEY_VERIFICATION_FAILED,
+                    "The daemon could not verify the key passphrase",
+                ) from exc
+            return VerifyKeyPassphraseResult(valid=valid)
+        finally:
+            self._release_scope(scope_id)
 
     # -- helpers -----------------------------------------------------------
+    def _register_scope(
+        self,
+        scope_id: SessionId,
+        owner_client_id: ClientId,
+    ) -> None:
+        if self._interaction_broker is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Protected key interaction is unavailable",
+            )
+        with self._scope_lock:
+            if scope_id in self._active_scopes:
+                raise SshPilotError(
+                    ErrorCode.INVALID_REQUEST,
+                    "The key interaction scope is already active",
+                )
+            self._active_scopes[scope_id] = owner_client_id
+
+    def _release_scope(self, scope_id: SessionId) -> None:
+        broker = self._interaction_broker
+        if broker is not None:
+            broker.cancel_session(scope_id)
+        with self._scope_lock:
+            self._active_scopes.pop(scope_id, None)
+
+    def _prepare_key_launch(
+        self,
+        argv,
+        *,
+        scope_id: SessionId,
+        label: str,
+        confirm_passphrase: bool,
+    ):
+        broker = self._interaction_broker
+        if broker is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Protected key interaction is unavailable",
+            )
+        with self._scope_lock:
+            if scope_id not in self._active_scopes:
+                raise SshPilotError(
+                    ErrorCode.TRANSPORT_CLOSED,
+                    "The protected key operation owner disconnected",
+                )
+        return broker.prepare_operation_launch(
+            argv,
+            os.environ,
+            scope_id=scope_id,
+            connection_id=ConnectionId(f"key-{scope_id[-24:]}"),
+            hostname=label,
+            allow_stored_secrets=False,
+            confirm_passphrase=confirm_passphrase,
+        )
+
     def _find_key(
         self,
         key_id: KeyId,
@@ -146,7 +295,7 @@ class DaemonKeyService:
             relative = Path(private_path).relative_to(root).as_posix()
         except ValueError:
             relative = Path(private_path).name
-        payload = f"{scope.value}\x00{relative}".encode("utf-8")
+        payload = f"{scope.value}\x00{relative}".encode()
         digest = hashlib.sha256(payload).hexdigest()[:32]
         return KeyId(f"key-{digest}")
 

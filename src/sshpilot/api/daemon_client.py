@@ -82,6 +82,8 @@ from .models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
 )
 from .models.known_hosts import (
     KnownHostsMutationResult,
@@ -180,6 +182,8 @@ from .transport.codec import (
     forward_summary_from_wire,
     generate_key_request_to_wire,
     generate_key_result_from_wire,
+    verify_key_passphrase_request_to_wire,
+    verify_key_passphrase_result_from_wire,
     handshake_request_to_wire,
     handshake_result_from_wire,
     interaction_claim_from_wire,
@@ -268,6 +272,10 @@ from .version import PROTOCOL_VERSION
 logger = logging.getLogger(__name__)
 
 DEFAULT_REQUEST_TIMEOUT = 5.0
+# Key generation can wait for the broker's protected human interaction and
+# then run native ssh-keygen.  Keep this narrower than a global timeout change
+# while allowing the daemon's bounded operation to finish normally.
+KEY_GENERATION_REQUEST_TIMEOUT = 185.0
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
 receive_frame = receive_multiplexed_frame
@@ -351,6 +359,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_keys": Capability.KEYS_READ,
     "read_public_key": Capability.KEYS_READ,
     "generate_key": Capability.KEYS_WRITE,
+    "verify_key_passphrase": Capability.KEYS_WRITE,
     "get_global_ssh_overrides": Capability.SSH_OVERRIDES_READ,
     "update_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
@@ -1503,11 +1512,29 @@ class DaemonClient:
             "keys.generate",
             generate_key_request_to_wire(request),
             mutation_description="SSH key generation",
+            request_timeout=KEY_GENERATION_REQUEST_TIMEOUT,
         )
         try:
             return generate_key_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid key generation result")
+
+    def verify_key_passphrase(
+        self,
+        request: VerifyKeyPassphraseRequest,
+    ) -> VerifyKeyPassphraseResult:
+        self._require_capability(Capability.KEYS_WRITE)
+        self._require_write_compatibility("verify SSH key passphrase")
+        result = self._request(
+            "keys.verify_passphrase",
+            verify_key_passphrase_request_to_wire(request),
+        )
+        try:
+            return verify_key_passphrase_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned an invalid key passphrase verification result"
+            )
 
     # -- SSH overrides ----------------------------------------------------
 
@@ -2589,7 +2616,13 @@ class DaemonClient:
         mutation_session_id: Optional[SessionId] = None,
         session_mutation: bool = False,
         mutation_description: Optional[str] = None,
+        request_timeout: Optional[float] = None,
     ):
+        effective_timeout = (
+            self._timeout if request_timeout is None else float(request_timeout)
+        )
+        if effective_timeout <= 0:
+            raise ValueError("daemon request timeout must be positive")
         with self._request_lock:
             with self._state_lock:
                 if self._closed:
@@ -2657,7 +2690,7 @@ class DaemonClient:
                     )
                 )
 
-            if not pending.completed.wait(self._timeout):
+            if not pending.completed.wait(effective_timeout):
                 with self._state_lock:
                     response_arrived = pending.response is not None or pending.error is not None
                 if not response_arrived:
@@ -2732,7 +2765,7 @@ class DaemonClient:
                     if stale is not None and stale.frame is not None:
                         stale.frame.clear()
                     return bytearray()
-                if not secret_pending.completed.wait(self._timeout):
+                if not secret_pending.completed.wait(effective_timeout):
                     self._fail_transport(
                         SshPilotError(
                             ErrorCode.TRANSPORT_TIMEOUT,

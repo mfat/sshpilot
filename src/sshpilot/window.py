@@ -4498,19 +4498,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pass_switch.set_active(False)
             form.add(pass_switch)
 
-            pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            pass1 = Gtk.PasswordEntry()
-            pass1.set_property("placeholder-text", _("Passphrase"))
-            pass2 = Gtk.PasswordEntry()
-            pass2.set_property("placeholder-text", _("Confirm passphrase"))
-            pass_box.append(pass1); pass_box.append(pass2)
-            pass_box.set_visible(False)
-
-
-            def on_pass_toggle(*_):
-                pass_box.set_visible(pass_switch.get_active())
-            pass_switch.connect("notify::active", on_pass_toggle)
-
             # Buttons
             btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             btn_box.set_halign(Gtk.Align.END)
@@ -4524,7 +4511,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             # Compose
             content.append(form)
-            content.append(pass_box)
             content.append(btn_box)
             tv.set_content(content)
             dlg.set_child(tv)
@@ -4538,6 +4524,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             btn_cancel.connect("clicked", close_dialog)
 
             def do_generate(*args):
+                dialogs = None
                 try:
                     key_name = (name_row.get_text() or "").strip()
                     if not key_name:
@@ -4560,41 +4547,69 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                     kt = "ed25519" if type_row.get_selected() == 0 else "rsa"
 
-                    passphrase = None
-                    if pass_switch.get_active():
-                        p1 = pass1.get_text() or ""
-                        p2 = pass2.get_text() or ""
-                        logger.debug(f"SshCopyIdWindow: Passphrase lengths - p1: {len(p1)}, p2: {len(p2)}")
-                        if p1 != p2:
-                            logger.debug("SshCopyIdWindow: Passphrases do not match")
-                            raise ValueError("Passphrases do not match")
-                        passphrase = p1
-                        logger.info("SshCopyIdWindow: Passphrase enabled")
-                        logger.debug("SshCopyIdWindow: Passphrase validation successful")
+                    encrypted = bool(pass_switch.get_active())
+                    interaction_scope_id = None
+                    if encrypted:
+                        from .api.models import SessionId
+                        from .daemon_interaction_dialogs import DaemonInteractionDialogs
+                        from .runtime_identity import new_operation_id
 
-                    logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
-                    logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
-                               f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
+                        interaction_scope_id = SessionId(
+                            f"key-{new_operation_id()}"
+                        )
+                        dialogs = DaemonInteractionDialogs(
+                            self.client,
+                            self.client_bridge,
+                            self,
+                        )
+                        dialogs.set_session(interaction_scope_id)
 
-                    new_key = self.key_manager.generate_key(
-                        key_name=key_name,
-                        key_type=kt,
-                        key_size=3072 if kt == "rsa" else 0,
-                        comment=None,
-                        passphrase=passphrase,
+                    btn_primary.set_sensitive(False)
+
+                    def _generate():
+                        return self.key_manager.generate_key(
+                            key_name=key_name,
+                            key_type=kt,
+                            key_size=3072 if kt == "rsa" else 0,
+                            comment=None,
+                            encrypted=encrypted,
+                            interaction_scope_id=interaction_scope_id,
+                        )
+
+                    def _generated(new_key):
+                        if dialogs is not None:
+                            dialogs.close()
+                        btn_primary.set_sensitive(True)
+                        if not new_key:
+                            _failed(RuntimeError("Key generation failed"))
+                            return
+                        logger.info("SSH key generated")
+                        if on_success:
+                            on_success(new_key)
+                        close_dialog()
+
+                    def _failed(error):
+                        if dialogs is not None:
+                            dialogs.close()
+                        btn_primary.set_sensitive(True)
+                        logger.error(
+                            "Key generation failed type=%s",
+                            type(error).__name__,
+                        )
+                        self._error_dialog(
+                            _("Key Generation Failed"),
+                            str(error) or _("Could not generate the SSH key."),
+                        )
+
+                    self.client_bridge.submit(
+                        _generate,
+                        on_success=_generated,
+                        on_error=_failed,
                     )
 
-                    if not new_key:
-                        logger.debug("Key generation returned None")
-                        raise RuntimeError("Key generation failed. See logs for details.")
-
-                    logger.info("SSH key generated")
-
-                    if on_success:
-                        on_success(new_key)
-                    close_dialog()
-
                 except Exception as e:
+                    if dialogs is not None:
+                        dialogs.close()
                     logger.error("Key generation failed: %s", type(e).__name__)
                     try:
                         self._error_dialog(

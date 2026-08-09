@@ -64,6 +64,8 @@ from .models.keys import (
     ListKeysRequest,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseRequest,
+    VerifyKeyPassphraseResult,
 )
 from .models.secrets import (
     BitwardenStatus,
@@ -490,6 +492,12 @@ class SshPilotClient(Protocol):
         ...
 
     def generate_key(self, request: GenerateKeyRequest) -> GenerateKeyResult:
+        ...
+
+    def verify_key_passphrase(
+        self,
+        request: VerifyKeyPassphraseRequest,
+    ) -> VerifyKeyPassphraseResult:
         ...
 
     def get_identity_providers(self) -> IdentityProviderRegistry:

@@ -3,9 +3,12 @@
 import ast
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from sshpilot.api.events import EventType
+from sshpilot.api.models import InteractionId, InteractionType, SessionId
 from sshpilot.api.models.keys import (
     GenerateKeyRequest,
     GenerateKeyResult,
@@ -15,6 +18,7 @@ from sshpilot.api.models.keys import (
     KeySummary,
     PublicKeyResult,
     ReadPublicKeyRequest,
+    VerifyKeyPassphraseResult,
 )
 from sshpilot.gtk.key_controller import KeyController
 
@@ -34,6 +38,8 @@ class _FakeClient:
         self.list_scopes: list[KeyStoreScope] = []
         self.read_requests: list[ReadPublicKeyRequest] = []
         self.generate_requests: list[GenerateKeyRequest] = []
+        self.verify_requests = []
+        self.store_requests = []
         self.key_list = KeyList(keys=(_summary(),))
         self.read_result = PublicKeyResult(
             key_id=KeyId("key-1"),
@@ -44,6 +50,10 @@ class _FakeClient:
         self.fail_read = False
         self.fail_generate = False
         self.blocked = None  # threading.Event to hold an RPC open
+        self._event_callback = None
+        self.sent_secrets = []
+        self.fail_subscribe = False
+        self.fail_verify = False
 
     def list_keys(self, request):
         self.list_scopes.append(request.scope)
@@ -68,6 +78,53 @@ class _FakeClient:
         if self.fail_generate:
             raise RuntimeError("generate boom")
         return self.generate_result
+
+    def subscribe_events(self, callback):
+        if self.fail_subscribe:
+            raise RuntimeError("subscription failed")
+        self._event_callback = callback
+        return SimpleNamespace(close=lambda: None)
+
+    def verify_key_passphrase(self, request):
+        self.verify_requests.append(request)
+        self._publish_passphrase_interaction(request.interaction_scope_id)
+        for _ in range(100):
+            if self.sent_secrets:
+                break
+            threading.Event().wait(0.01)
+        if self.fail_verify:
+            raise RuntimeError("verification failed")
+        return VerifyKeyPassphraseResult(valid=bool(self.sent_secrets))
+
+    def store_key_passphrase(self, request):
+        self.store_requests.append(request)
+        self._publish_passphrase_interaction(request.interaction_scope_id)
+        for _ in range(100):
+            if self.sent_secrets:
+                break
+            threading.Event().wait(0.01)
+        return bool(self.sent_secrets)
+
+    def _publish_passphrase_interaction(self, scope_id):
+        summary = SimpleNamespace(
+            id=InteractionId("interaction-key-1"),
+            session_id=scope_id,
+            type=InteractionType.PRIVATE_KEY_PASSPHRASE,
+        )
+        self._event_callback(
+            SimpleNamespace(type=EventType.INTERACTION_CREATED, payload=summary)
+        )
+
+    def claim_interaction(self, interaction_id):
+        return SimpleNamespace(nonce="nonce-key-1")
+
+    def respond_to_interaction(self, request):
+        return None
+
+    def send_interaction_secret(self, interaction_id, nonce, secret):
+        self.sent_secrets.append(bytes(secret))
+        secret[:] = b"\0" * len(secret)
+        secret.clear()
 
 
 def _controller(client, scope=KeyStoreScope.DEFAULT):
@@ -110,7 +167,8 @@ def test_generate_key_request_fields():
         key_type="rsa",
         key_size=3072,
         comment="work",
-        passphrase="secret",
+        encrypted=True,
+        interaction_scope_id=SessionId("key-operation-generate-1"),
     )
     assert client.generate_requests == [
         GenerateKeyRequest(
@@ -118,7 +176,8 @@ def test_generate_key_request_fields():
             key_type="rsa",
             key_size=3072,
             comment="work",
-            passphrase="secret",
+            encrypted=True,
+            interaction_scope_id=SessionId("key-operation-generate-1"),
             scope=KeyStoreScope.DEFAULT,
         )
     ]
@@ -286,22 +345,56 @@ def test_bad_returned_generation_dto_does_not_poison_busy():
 # ---------------------------------------------------------------------------
 # Passphrase handling
 # ---------------------------------------------------------------------------
-def test_passphrase_not_retained_on_controller():
+def test_generate_request_carries_no_passphrase_field():
     client = _FakeClient()
     controller = _controller(client)
-    controller.generate_key(name="my_key", passphrase="super-secret")
-    assert "super-secret" not in repr(controller)
+    controller.generate_key(name="my_key")
+    assert "passphrase" not in client.generate_requests[0].__dataclass_fields__
     assert "passphrase" not in vars(controller)
-    # The GenerateKeyRequest is not stored on the controller either.
-    assert not any("request" in key for key in vars(controller))
 
 
-def test_result_repr_has_no_secret():
+def test_verify_sends_bytearray_only_through_secret_frame_and_clears_it():
     client = _FakeClient()
     controller = _controller(client)
-    result = controller.generate_key(name="my_key", passphrase="super-secret")
-    assert "super-secret" not in repr(result)
-    assert "super-secret" not in str(result)
+    secret = bytearray(b"KEY_PASSPHRASE_SENTINEL_8F1C29")
+
+    assert controller.verify_key_passphrase("/home/user/.ssh/id", secret) is True
+
+    assert secret == bytearray()
+    assert client.sent_secrets == [b"KEY_PASSPHRASE_SENTINEL_8F1C29"]
+    assert len(client.verify_requests) == 1
+    request = client.verify_requests[0]
+    assert "passphrase" not in request.__dataclass_fields__
+    assert request.interaction_scope_id.startswith("key-operation-")
+
+
+def test_store_sends_bytearray_only_through_secret_frame_and_clears_it():
+    client = _FakeClient()
+    controller = _controller(client)
+    secret = bytearray(b"KEY_PASSPHRASE_SENTINEL_8F1C29")
+
+    assert controller.store_key_passphrase("/home/user/.ssh/id", secret) is True
+
+    assert secret == bytearray()
+    assert client.sent_secrets == [b"KEY_PASSPHRASE_SENTINEL_8F1C29"]
+    request = client.store_requests[0]
+    assert "passphrase" not in request.__dataclass_fields__
+    assert request.interaction_scope_id.startswith("key-operation-")
+
+
+@pytest.mark.parametrize("failure", ["subscribe", "verify"])
+def test_verify_clears_secret_and_busy_state_on_transport_failures(failure):
+    client = _FakeClient()
+    client.fail_subscribe = failure == "subscribe"
+    client.fail_verify = failure == "verify"
+    controller = _controller(client)
+    secret = bytearray(b"KEY_PASSPHRASE_SENTINEL_8F1C29")
+
+    with pytest.raises(RuntimeError):
+        controller.verify_key_passphrase("/home/user/.ssh/id", secret)
+
+    assert secret == bytearray()
+    assert controller.list_keys().keys
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.24",
+  "api_implementation_version": "0.25",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -794,7 +794,8 @@
     "update_identity_configuration",
     "update_identity_selection",
     "update_secret_configuration",
-    "update_secret_selection"
+    "update_secret_selection",
+    "verify_key_passphrase"
   ],
   "client_signatures": {
     "add_agent_key": {
@@ -2226,6 +2227,16 @@
         }
       ],
       "return": "SecretBackendState"
+    },
+    "verify_key_passphrase": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "VerifyKeyPassphraseRequest"
+        }
+      ],
+      "return": "VerifyKeyPassphraseResult"
     }
   },
   "daemon_method_contract": {
@@ -2441,6 +2452,9 @@
     },
     "keys.list": {
       "capability": "keys.read"
+    },
+    "keys.verify_passphrase": {
+      "capability": "keys.write"
     },
     "known_hosts.list": {
       "capability": "known_hosts.read"
@@ -2729,6 +2743,7 @@
     "key_generation_failed",
     "key_not_found",
     "key_public_unavailable",
+    "key_verification_failed",
     "mutation_ambiguous",
     "operation_cancelled",
     "operation_not_found",
@@ -3045,6 +3060,8 @@
     "UpdateIdentityConfigurationRequest",
     "UpdateIdentitySelectionRequest",
     "UpdateSecretConfigurationRequest",
+    "VerifyKeyPassphraseRequest",
+    "VerifyKeyPassphraseResult",
     "default_idle_shutdown_seconds",
     "forwarding_rule_from_dict",
     "forwarding_rule_to_dict",
@@ -3404,7 +3421,8 @@
       "key_type",
       "key_size",
       "comment",
-      "passphrase",
+      "encrypted",
+      "interaction_scope_id",
       "scope"
     ],
     "GenerateKeyResult": [
@@ -3905,7 +3923,7 @@
     ],
     "StoreKeyPassphraseRequest": [
       "key_path",
-      "passphrase"
+      "interaction_scope_id"
     ],
     "StorePluginSecretRequest": [
       "plugin_id",
@@ -3965,6 +3983,13 @@
       "config_patch",
       "plugin_data",
       "expected_generation"
+    ],
+    "VerifyKeyPassphraseRequest": [
+      "key_path",
+      "interaction_scope_id"
+    ],
+    "VerifyKeyPassphraseResult": [
+      "valid"
     ]
   },
   "protocol_version": "1.0",
@@ -4159,6 +4184,7 @@
       "key_already_exists",
       "key_public_unavailable",
       "key_generation_failed",
+      "key_verification_failed",
       "transport_closed",
       "transport_timeout",
       "frame_too_large",

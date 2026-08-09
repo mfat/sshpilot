@@ -79,7 +79,8 @@ discovery/generation is daemon.
 - The daemon creates key directories, recursively discovers private keys,
   runs `ssh-keygen`, and reads public-key files for application features
   (`DaemonKeyService` over `core.keys.KeyService`, keyed by stable opaque IDs).
-- `keys.list` / `keys.get_public` / `keys.generate` RPCs with
+- `keys.list` / `keys.get_public` / `keys.generate` /
+  `keys.verify_passphrase` RPCs with
   `KEYS_READ` / `KEYS_WRITE` capabilities advertised only when the daemon key
   service is installed.
 - `KeyManager` is a GObject compatibility adapter over `SshPilotClient`;
@@ -91,9 +92,10 @@ discovery/generation is daemon.
 - Path metadata on `KeySummary` is temporary compatibility data for the M7
   `ssh-copy-id` subprocess adapter; GTK does not derive or scan those paths,
   and user-browsed arbitrary public-key files remain explicit frontend input.
-- Private-key contents never cross the API. Passphrases are sent only inside
-  `GenerateKeyRequest` over the local daemon API; they are excluded from
-  logs, `repr`, events, errors, and retained controller state.
+- Private-key contents never cross the API. Key-generation and verification
+  passphrases use `InteractionBroker` secret frames and daemon askpass; they
+  are absent from ordinary requests, native argv/environment values, logs,
+  events, errors, and retained controller state.
 - No deletion API was added because no existing GTK key-deletion workflow
   exists.
 

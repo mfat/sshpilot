@@ -1,5 +1,10 @@
 # Client methods
 
+API 0.25 removes plaintext passphrases from `GenerateKeyRequest` and adds
+`verify_key_passphrase` / `keys.verify_passphrase`. Both encrypted generation
+and verification collect protected input through interaction secret frames;
+ordinary request JSON contains only non-secret metadata.
+
 API 0.24 adds the daemon-control method set_daemon_log_level. It accepts
 warning, info, or debug and updates only the daemon process handlers. The
 protocol remains v1.0.
@@ -326,6 +331,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `keys.list` | `keys.read` | Implemented |
 | `keys.get_public` | `keys.read` | Implemented |
 | `keys.generate` | `keys.write` | Implemented |
+| `keys.verify_passphrase` | `keys.write` | Implemented |
 | `sessions.list` | `sessions.read` | Implemented |
 | `sessions.get` | `sessions.read` | Implemented |
 | `sessions.open` | `sessions.write` | Implemented |
@@ -441,6 +447,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: keys.generate capability=keys.write -->
 <!-- api-daemon-method: keys.get_public capability=keys.read -->
 <!-- api-daemon-method: keys.list capability=keys.read -->
+<!-- api-daemon-method: keys.verify_passphrase capability=keys.write -->
 <!-- api-daemon-method: sessions.attach capability=sessions.write -->
 <!-- api-daemon-method: sessions.close capability=sessions.write -->
 <!-- api-daemon-method: sessions.detach capability=sessions.write -->
@@ -950,15 +957,19 @@ client.delete_connection_password(
 - **Status / introduced:** Implemented / Protocol v1
 - **Capability / purpose:** `connections.secrets.write`; store or update a
   key passphrase.
-- **Parameters / return:** `StoreKeyPassphraseRequest` (key_path, passphrase);
-  returns `bool`.
+- **Parameters / return:** `StoreKeyPassphraseRequest` (key_path,
+  interaction_scope_id); returns `bool`.
 - **Errors:** Transport/protocol errors only.
-- **Side effects / security:** Delegates to the daemon-owned secret provider;
-  passphrases are protected input and never appear in ordinary API responses.
+- **Side effects / security:** The request carries only metadata. The frontend
+  supplies the value through the protected interaction secret-frame channel;
+  the daemon then delegates to its secret provider.
 
 ```python
 client.store_key_passphrase(
-    StoreKeyPassphraseRequest(key_path="/home/user/.ssh/id_rsa", passphrase="s3cret")
+    StoreKeyPassphraseRequest(
+        key_path="/home/user/.ssh/id_rsa",
+        interaction_scope_id="key-operation-store-1",
+    )
 )
 ```
 
@@ -1259,9 +1270,21 @@ Requests bounded closure of one runtime forward.
 <!-- api-method: generate_key -->
 ## `generate_key`
 
-- **Status / introduced:** Daemon only / Protocol v1, API 0.15.
+- **Status / introduced:** Daemon only / Protocol v1, API 0.15; protected
+  passphrase contract revised in API 0.25.
 - **Capability / purpose:** `keys.write`; generate a keypair in the
-  daemon-owned selected key store scope. Daemon RPC `keys.generate`.
+  daemon-owned selected key store scope. An encrypted request contains only an
+  opaque interaction scope; the passphrase uses a protected secret frame and
+  native askpass. Daemon RPC `keys.generate`.
+
+<!-- api-method: verify_key_passphrase -->
+## `verify_key_passphrase`
+
+- **Status / introduced:** Daemon only / Protocol v1, API 0.25.
+- **Capability / purpose:** `keys.write`; verify a selected private key through
+  daemon-owned `ssh-keygen` prompting. The ordinary request contains the key
+  path and opaque interaction scope only; the passphrase uses the protected
+  secret-frame channel. Daemon RPC `keys.verify_passphrase`.
 
 <!-- api-method: get_daemon_status -->
 ## `get_daemon_status`

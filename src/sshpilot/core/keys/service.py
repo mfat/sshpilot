@@ -6,12 +6,19 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
 from ..errors import CoreError, ErrorCode
 from .utils import SKIPPED_FILENAMES, is_private_key
 
 logger = logging.getLogger(__name__)
+
+KeyLaunchPreparer = Callable[
+    [Sequence[str]],
+    tuple[Sequence[str], Mapping[str, str]],
+]
+_KEYGEN_TIMEOUT_SECONDS = 180
+_KEY_VERIFY_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -31,13 +38,13 @@ class SSHKeyInfo:
 
 @dataclass(frozen=True)
 class KeyGenerateSpec:
-    """Specification for an ``ssh-keygen`` invocation (no spawning here)."""
+    """Non-secret specification for an ``ssh-keygen`` invocation."""
 
     key_name: str
     key_type: str = "ed25519"
     key_size: int = 3072
     comment: Optional[str] = None
-    passphrase: Optional[str] = None
+    encrypted: bool = False
 
 
 class KeyService:
@@ -99,6 +106,11 @@ class KeyService:
 
     def validate_generate_spec(self, spec: KeyGenerateSpec) -> None:
         """Raise :class:`CoreError` when *spec* cannot be used."""
+        if type(spec.encrypted) is not bool:
+            raise CoreError(
+                ErrorCode.VALIDATION_ERROR,
+                "Encrypted key selection must be boolean.",
+            )
         if not spec.key_name or not spec.key_name.strip():
             raise CoreError(ErrorCode.VALIDATION_ERROR, "Key file name is required.")
         if "/" in spec.key_name or spec.key_name.startswith("."):
@@ -142,17 +154,54 @@ class KeyService:
                 comment = f"{user}@{host}"
             except OSError:
                 comment = "generated-by-sshpilot"
-        cmd += ["-C", comment, "-f", str(key_path), "-N", spec.passphrase or ""]
+        cmd += ["-C", comment, "-f", str(key_path)]
+        if not spec.encrypted:
+            # An empty literal is not protected input and keeps unencrypted
+            # generation non-interactive. Encrypted generation is prompted by
+            # native ssh-keygen through the daemon askpass broker instead.
+            cmd += ["-N", ""]
         return cmd
 
-    def generate_key(self, spec: KeyGenerateSpec) -> SSHKeyInfo:
+    def generate_key(
+        self,
+        spec: KeyGenerateSpec,
+        *,
+        prepare_launch: Optional[KeyLaunchPreparer] = None,
+    ) -> SSHKeyInfo:
         """Run ``ssh-keygen`` for *spec* and return the resulting key info."""
         cmd = list(self.build_keygen_argv(spec))
+        environment: Optional[Mapping[str, str]] = None
+        if spec.encrypted:
+            if prepare_launch is None:
+                raise CoreError(
+                    ErrorCode.KEY_INVALID,
+                    "Protected key generation is unavailable.",
+                )
+            prepared_argv, environment = prepare_launch(cmd)
+            cmd = list(prepared_argv)
         key_path = self.ssh_dir / spec.key_name
-        completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        try:
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=None if environment is None else dict(environment),
+                timeout=_KEYGEN_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CoreError(
+                ErrorCode.KEY_INVALID,
+                "ssh-keygen timed out.",
+            ) from exc
+        except OSError as exc:
+            raise CoreError(
+                ErrorCode.KEY_INVALID,
+                "ssh-keygen could not be started.",
+            ) from exc
         if completed.returncode != 0:
-            stderr = completed.stderr.strip() or "ssh-keygen failed"
-            raise CoreError(ErrorCode.KEY_INVALID, stderr)
+            raise CoreError(ErrorCode.KEY_INVALID, "ssh-keygen failed.")
         try:
             os.chmod(key_path, 0o600)
             pub_path = f"{key_path}.pub"
@@ -165,6 +214,40 @@ class KeyService:
                 type(perm_err).__name__,
             )
         return SSHKeyInfo(str(key_path))
+
+    def verify_key_passphrase(
+        self,
+        key_path: Path | str,
+        *,
+        prepare_launch: KeyLaunchPreparer,
+    ) -> bool:
+        """Verify a key through native prompting without ``-P`` or secret env."""
+        path = Path(key_path).expanduser()
+        if not path.is_file():
+            return False
+        cmd: Sequence[str] = ("ssh-keygen", "-y", "-f", str(path))
+        prepared_argv, environment = prepare_launch(cmd)
+        try:
+            completed = subprocess.run(
+                list(prepared_argv),
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=dict(environment),
+                timeout=_KEY_VERIFY_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CoreError(
+                ErrorCode.KEY_INVALID,
+                "SSH key verification timed out.",
+            ) from exc
+        except OSError as exc:
+            raise CoreError(
+                ErrorCode.KEY_INVALID,
+                "SSH key verification could not start.",
+            ) from exc
+        return completed.returncode == 0
 
     def fingerprint(self, public_or_private_path: str) -> Optional[str]:
         """Return ``ssh-keygen -lf`` fingerprint, or None on failure."""

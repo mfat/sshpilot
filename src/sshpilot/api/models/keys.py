@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import NewType, Tuple
 
-from .common import require_identifier
+from .common import SessionId, require_identifier
 
 KeyId = NewType("KeyId", str)
 
@@ -150,7 +150,8 @@ class GenerateKeyRequest:
     key_type: str = "ed25519"
     key_size: int = 0
     comment: str = ""
-    passphrase: str = field(default="", repr=False)
+    encrypted: bool = False
+    interaction_scope_id: SessionId | None = None
     scope: KeyStoreScope = KeyStoreScope.DEFAULT
 
     def __post_init__(self) -> None:
@@ -179,12 +180,25 @@ class GenerateKeyRequest:
             raise ValueError("ed25519 keys do not accept a key size")
         if self.key_type == "rsa" and self.key_size < _MIN_RSA_BITS:
             raise ValueError("rsa key size must be at least 1024 bits")
-        for field_name in ("comment", "passphrase"):
-            value = getattr(self, field_name)
-            if type(value) is not str:
-                raise TypeError(f"{field_name} must be a string")
-            if "\x00" in value:
-                raise ValueError(f"{field_name} must not contain NUL")
+        if type(self.comment) is not str:
+            raise TypeError("comment must be a string")
+        if "\x00" in self.comment:
+            raise ValueError("comment must not contain NUL")
+        if type(self.encrypted) is not bool:
+            raise TypeError("encrypted must be a boolean")
+        if self.interaction_scope_id is not None:
+            require_identifier(
+                self.interaction_scope_id,
+                "key interaction scope id",
+            )
+            if not str(self.interaction_scope_id).startswith("key-operation-"):
+                raise ValueError(
+                    "key interaction scope id must start with 'key-operation-'"
+                )
+        if self.encrypted != (self.interaction_scope_id is not None):
+            raise ValueError(
+                "encrypted key generation requires exactly one interaction scope"
+            )
         if type(self.scope) is not KeyStoreScope:
             raise TypeError("key store scope must be a KeyStoreScope")
 
@@ -198,3 +212,36 @@ class GenerateKeyResult:
     def __post_init__(self) -> None:
         if type(self.key) is not KeySummary:
             raise TypeError("generate key result requires a KeySummary")
+
+
+@dataclass(frozen=True)
+class VerifyKeyPassphraseRequest:
+    """Request daemon-owned verification using a protected interaction secret."""
+
+    key_path: str = field(repr=False)
+    interaction_scope_id: SessionId
+
+    def __post_init__(self) -> None:
+        if type(self.key_path) is not str:
+            raise TypeError("key path must be a string")
+        if not self.key_path or "\x00" in self.key_path:
+            raise ValueError("key path must be a non-empty NUL-free string")
+        require_identifier(
+            self.interaction_scope_id,
+            "key interaction scope id",
+        )
+        if not str(self.interaction_scope_id).startswith("key-operation-"):
+            raise ValueError(
+                "key interaction scope id must start with 'key-operation-'"
+            )
+
+
+@dataclass(frozen=True)
+class VerifyKeyPassphraseResult:
+    """Whether the protected passphrase unlocked the selected private key."""
+
+    valid: bool
+
+    def __post_init__(self) -> None:
+        if type(self.valid) is not bool:
+            raise TypeError("key passphrase verification result must be a boolean")

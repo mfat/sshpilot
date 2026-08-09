@@ -1274,10 +1274,14 @@ class FileListEditor(Adw.PreferencesGroup):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
         text = pass_entry.get_text()
         if text and callable(self._verify):
+            secret = bytearray(text.encode("utf-8"))
             try:
-                ok = bool(self._verify(path, text))
+                ok = bool(self._verify(path, secret))
             except Exception:
                 ok = False
+            finally:
+                secret[:] = b"\0" * len(secret)
+                secret.clear()
             if not ok:
                 pass_entry.add_css_class('error')
                 return False
@@ -2606,8 +2610,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             }],
             add_at_bottom=True,
             reorderable=True,
-            verify=lambda path, passphrase: self.validator.verify_key_passphrase(
-                os.path.expanduser(path), passphrase
+            verify=lambda path, secret: self.parent_window.key_manager.verify_key_passphrase(
+                os.path.expanduser(path), secret
             ),
         )
 
@@ -3716,9 +3720,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 ok = True
                     elif action == 'store':
                         if use_daemon:
-                            from .api.models.connections import StoreKeyPassphraseRequest
-                            req = StoreKeyPassphraseRequest(key_path=key, passphrase=value)
-                            ok = client.store_key_passphrase(req)
+                            key_manager = getattr(parent, 'key_manager', None)
+                            if key_manager is None:
+                                raise RuntimeError(
+                                    "Daemon key passphrase storage is unavailable"
+                                )
+                            secret = bytearray(value.encode('utf-8'))
+                            try:
+                                ok = key_manager.store_key_passphrase(key, secret)
+                            finally:
+                                secret[:] = b'\0' * len(secret)
+                                secret.clear()
                         else:
                             ok = bool(manager.store_key_passphrase(key, value))
                     else:
