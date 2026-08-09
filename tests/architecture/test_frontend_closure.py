@@ -19,9 +19,9 @@ AUDIT = Path(__file__).resolve().parents[2] / "docs" / "architecture" / "fronten
 INTERNAL = {"api", "core", "daemon", "locale", "platform", "vendor"}
 
 # These are compatibility implementations already covered by the Phase 5
-# identity registries.  They are not active GTK operation entry points.  Any
-# new direct operation in the active surface below is rejected instead of
-# being added here casually.
+# identity registries.  ``plugins/api.py`` is intentionally absent: it has
+# active and dead operations mixed in one public SDK module, so it is checked
+# below by function identity rather than hidden by a module exemption.
 COMPATIBILITY_MODULES = frozenset(
     {
         "agent_client.py",
@@ -32,7 +32,6 @@ COMPATIBILITY_MODULES = frozenset(
         "credential_manager.py",
         "credential_model.py",
         "file_manager/openssh_backend.py",
-        "plugins/api.py",
         "providers/system_agent.py",
         "scp_utils.py",
         "secret_storage.py",
@@ -58,6 +57,29 @@ FRONTEND_LOCAL_SUBPROCESS = frozenset(
 KNOWN_PLUGIN_GAPS = (
     ("plugins/api.py", "run_command"),
     ("plugins/api.py", "run_command_stream"),
+    ("plugins/api.py", "release_multiplex"),
+)
+
+# Every backend-owning function in the plugin SDK is classified explicitly.
+# The three active entries are semantic closure blockers. The dead entries are
+# retained public compatibility methods with no current production caller;
+# they must not silently become active again. ``ensure_local_forward`` is
+# daemon-owned on its active route, but its legacy subprocess branch is kept as
+# a separate, explicitly dead identity until the public plugin surface is
+# retired or migrated.
+PLUGIN_API_BACKEND_IDENTITIES = frozenset(
+    {
+        "run_command",
+        "run_command_stream",
+        "_spawn_stream",
+        "release_multiplex",
+        "copy_key_to_host",
+        "get_effective_ssh_config",
+        "ensure_local_forward",
+    }
+)
+PLUGIN_API_LOCAL_FUNCTIONS = frozenset(
+    {"run_local_command", "run_local_command_stream"}
 )
 
 
@@ -85,10 +107,41 @@ def _function_names(tree: ast.AST):
     }
 
 
+def _plugin_backend_functions(tree: ast.Module) -> set[str]:
+    """Return plugin SDK functions containing direct backend/process edges."""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_process = False
+        has_legacy_ssh_edge = False
+        for child in ast.walk(node):
+            if isinstance(child, ast.Import):
+                if any(alias.name == "subprocess" for alias in child.names):
+                    has_process = True
+            elif isinstance(child, ast.ImportFrom):
+                module = child.module or ""
+                if module.endswith(("ssh_connection_builder", "ssh_config_utils")):
+                    has_legacy_ssh_edge = True
+                if module.endswith("ssh_multiplex") or module == "sshpilot.ssh_multiplex":
+                    has_legacy_ssh_edge = True
+            elif isinstance(child, ast.Call):
+                if (
+                    isinstance(child.func, ast.Attribute)
+                    and isinstance(child.func.value, ast.Name)
+                    and child.func.value.id == "subprocess"
+                    and child.func.attr in {"run", "Popen", "check_call", "check_output"}
+                ):
+                    has_process = True
+        if has_process or has_legacy_ssh_edge:
+            found.add(node.name)
+    return found
+
+
 def test_phase7_audit_documents_deferred_plugin_identities():
     text = AUDIT.read_text(encoding="utf-8")
-    for module, function in KNOWN_PLUGIN_GAPS:
-        assert module in text
+    assert "plugins/api.py" in text
+    for function in PLUGIN_API_BACKEND_IDENTITIES:
         assert function in text
 
 
@@ -98,6 +151,15 @@ def test_active_frontend_has_no_direct_backend_process_or_secret_ownership():
         if rel in COMPATIBILITY_MODULES:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if rel == "plugins/api.py":
+            unexpected = _plugin_backend_functions(tree) - (
+                PLUGIN_API_BACKEND_IDENTITIES | PLUGIN_API_LOCAL_FUNCTIONS
+            )
+            violations.extend(
+                f"{rel}: unclassified backend function {name}"
+                for name in sorted(unexpected)
+            )
+            continue
         local_subprocess = rel in FRONTEND_LOCAL_SUBPROCESS
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -125,7 +187,14 @@ def test_active_frontend_has_no_direct_backend_process_or_secret_ownership():
 
 
 def test_plugin_gap_identities_are_still_exactly_deferred():
+    path = SOURCE / "plugins/api.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names = _function_names(tree)
     for module, function in KNOWN_PLUGIN_GAPS:
-        path = SOURCE / module
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        assert function in _function_names(tree)
+        assert module == "plugins/api.py"
+        assert function in names
+    observed = _plugin_backend_functions(tree)
+    assert observed == PLUGIN_API_BACKEND_IDENTITIES | PLUGIN_API_LOCAL_FUNCTIONS - {
+        "run_local_command_stream"
+    }
+    assert not PLUGIN_API_BACKEND_IDENTITIES & PLUGIN_API_LOCAL_FUNCTIONS

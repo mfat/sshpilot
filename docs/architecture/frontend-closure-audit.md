@@ -41,6 +41,11 @@ no current product path.
 | External system terminal | `WindowActions`, `MainWindow.open_in_system_terminal` | None | OS terminal application | `tests/test_terminal_*`, external-terminal action tests | legitimate frontend-only | This explicitly hands presentation to the OS; in-app SSH sessions remain daemon-owned. |
 | Plugin remote command execution (captured) | `PluginContext.run_command`, Docker plugin actions | No typed `SshPilotClient` method | No daemon owner; `PluginContext` builds/owns the process | plugin compatibility tests only; no headless client proof | migration required | Active Docker/plugin actions reach `plugins/api.py` and its OpenSSH subprocess adapter. This is blocker P7-PLUGIN-COMMAND. |
 | Plugin remote command streams/log follow | `DockerConsolePage`, `LogsTabMixin` via `run_command_stream` | No typed streaming command method | No daemon owner; `_spawn_stream` owns the process | plugin stream tests are not daemon/headless proof | migration required | This is blocker P7-PLUGIN-STREAM and cannot be classified as terminal presentation because the plugin owns captured remote command execution. |
+| Plugin multiplex lifecycle | `DockerConsolePage._acquire_multiplex`, `_release_multiplex` | No typed multiplex lifecycle method | No daemon owner; `PluginContext.release_multiplex` runs `ssh -O exit` | `tests/test_ssh_multiplex.py` covers the local helper only | migration required | `release_multiplex()` is actively reached on Docker page map/unmap/host changes and is blocker P7-PLUGIN-MUX. |
+| Plugin local forward active route | `DockerManager` service links via `PluginContext.ensure_local_forward` | `open_forward`, `get_forward` / `forwards.*` | daemon forward runtime | `tests/daemon/test_forward_*`, `tests/integration/test_forward_phase10.py` | API/daemon owned | The active route requires `DaemonClient`; the policy rejects legacy local processes. |
+| Plugin legacy local-forward branch | legacy branch inside `PluginContext.ensure_local_forward` | None | None | `tests/test_extended_service_policy.py` | dead/unreachable code | `allow_legacy_local_forward()` is hardcoded false and daemon routing is preferred; the ControlMaster/`ssh -N` branch has no current production route. |
+| Plugin key deployment compatibility method | `PluginContext.copy_key_to_host` | `deploy_key` exists, but this method does not use it | None in current production graph | no current production caller; daemon deploy tests cover the replacement API | dead/unreachable code | Retained public plugin compatibility surface; direct `ssh-copy-id` must not be reactivated. |
+| Plugin effective-config compatibility method | `PluginContext.get_effective_ssh_config` | No typed plugin-facing method | None in current production graph | no current production caller; SSH config service tests cover authoritative config paths | dead/unreachable code | It delegates to the legacy local `ssh -G` helper and is not an active GTK operation. |
 | Legacy `OpenSSHSFTPManager` | `file_manager/openssh_backend.py` | None | None in the current in-app route | daemon SFTP routing tests prove the active route | dead/unreachable code | No graph inbound path from the current file-manager route; retain only until compatibility removal is separately verified. |
 | Legacy direct SSH terminal helpers | `TerminalWidget._connect_ssh*`, `_setup_ssh_terminal` | None | None in the current daemon activation route | `tests/test_daemon_terminal_activation_ownership.py` | dead/unreachable code | The normal route is daemon-only; these compatibility helpers are not a valid fallback. |
 
@@ -64,7 +69,7 @@ following are the individually audited identities at this base.
 |---|---|---|
 | M5 | `secret_storage.py: subprocess`, `secret_storage.py: SecretManager`, `bitwarden_setup.py: subprocess` | The first two are shared daemon/askpass compatibility; Bitwarden installation is a narrow platform installer. No active GTK vault owner remains. |
 | M7 | `agent_client.py: subprocess`; `askpass_utils.py: subprocess, ssh_binary`; `autocomplete.py: subprocess`; `file_manager/openssh_backend.py: subprocess`; `providers/system_agent.py: subprocess, ssh_binary`; `scp_utils.py: subprocess`; `sftp_utils.py: subprocess`; `ssh_config_utils.py: subprocess, ssh_binary`; `ssh_multiplex.py: subprocess, ssh_binary`; `terminal.py: subprocess` | These are respectively local helper, daemon askpass/identity compatibility, dead legacy routes, external OS presentation, or shared native-process compatibility. ControlMaster teardown was removed from GTK and moved behind `SshOverridesService`; the remaining helper identity is compatibility debt. |
-| M8 | `plugins/api.py: subprocess` | Reachable from active plugin remote commands and streams. This is the two P7 plugin blockers above and remains closure-blocking. |
+| M8 | `plugins/api.py: subprocess` | Function-level identities are now audited by the final guard: active `run_command`, `run_command_stream`/`_spawn_stream`, and `release_multiplex` remain closure blockers; `copy_key_to_host`, `get_effective_ssh_config`, and the legacy branch of `ensure_local_forward` are explicitly dead compatibility identities. |
 
 ### `DAEMON_DEBT` (16 identities)
 
@@ -83,12 +88,14 @@ prevents silently broadening the exception. `CORE_DEBT` is empty.
 
 ## Closure blockers and next semantic APIs
 
-Remaining blockers: **2**.
+Remaining blockers: **3**.
 
 * `P7-PLUGIN-COMMAND`: add a typed daemon-owned semantic for plugin remote
   command execution, including captured output and exit status.
 * `P7-PLUGIN-STREAM`: add the daemon operation/event lifecycle needed for
   long-lived plugin command output and cancellation.
+* `P7-PLUGIN-MUX`: move plugin multiplex reference release/ControlMaster
+  teardown behind daemon-owned session/forward runtime semantics.
 
 These are intentionally not replaced with a generic `run_command` escape
 hatch: that would move the bypass behind another frontend-owned abstraction.
