@@ -882,7 +882,15 @@ class VTETerminalBackend:
         pattern = term if regex else _re.escape(term)
         if not case_sensitive and not pattern.startswith("(?i)"):
             pattern = "(?i)" + pattern
-        self.vte.search_set_regex(Vte.Regex.new_for_search(pattern, -1, 0), 0)
+        # VTE's regex wrapper expects PCRE2 compile flags here.  In particular,
+        # search_set_regex() checks for PCRE2_MULTILINE (0x400); GLib's
+        # RegexCompileFlags.MULTILINE value (0x2) is not interchangeable.
+        self.vte.search_set_regex(
+            Vte.Regex.new_for_search(
+                pattern, -1, 0x00000400
+            ),
+            0,
+        )
         if hasattr(self.vte, "search_set_wrap_around"):
             self.vte.search_set_wrap_around(True)
 
