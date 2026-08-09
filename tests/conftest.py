@@ -161,6 +161,11 @@ def _make_dummy_gi_type(name: str):
 
 class _DummyGIModule(types.ModuleType):
     def __getattr__(self, name):
+        # Module/introspection tooling probes attributes such as ``__file__``.
+        # Pretending those are GI types breaks inspect (and therefore coverage)
+        # because it expects the metadata attributes to have standard values.
+        if name.startswith('__'):
+            raise AttributeError(name)
         value = _make_dummy_gi_type(name)
         setattr(self, name, value)
         return value
@@ -333,7 +338,6 @@ def _gui_app_session(tmp_path_factory):
     # Sanity: the session app must not be holding a live daemon client against
     # the developer's socket (contamination would make timeouts non-deterministic).
     from sshpilot.api.daemon_client import DaemonClient
-    from sshpilot.api.client_factory import ClientMode
 
     selection = getattr(app.app, '_api_client_selection', None)
     assert selection is None or selection.mode is None, (

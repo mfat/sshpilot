@@ -75,6 +75,7 @@ EXTRA_ENUMS = (Capability, EventType, ErrorCode)
 UNION_ORIGINS = (Union,)
 if hasattr(types, "UnionType"):
     UNION_ORIGINS += (types.UnionType,)
+MISSING_ANNOTATION = object()
 
 IMPLEMENTED_MODELS = {
     "Capabilities",
@@ -415,7 +416,13 @@ def client_signatures() -> Dict[str, Dict[str, Any]]:
 
     result = {}
     for name in client_methods():
-        signature = inspect.signature(getattr(SshPilotClient, name))
+        method = getattr(SshPilotClient, name)
+        signature = inspect.signature(method)
+        # Read annotations without evaluating or rendering them through
+        # inspect.Signature. Their source spelling is stable across supported
+        # interpreters, including Python 3.9 where inspect.get_annotations is
+        # unavailable; _type_name normalizes evaluated annotations as well.
+        annotations = getattr(method, "__annotations__", {})
         result[name] = {
             "parameters": [
                 {
@@ -423,8 +430,14 @@ def client_signatures() -> Dict[str, Dict[str, Any]]:
                     "kind": parameter.kind.name.lower(),
                     "type": (
                         "untyped"
-                        if parameter.annotation is inspect.Signature.empty
-                        else _type_name(parameter.annotation)
+                        if (
+                            annotation := annotations.get(
+                                parameter.name,
+                                MISSING_ANNOTATION,
+                            )
+                        )
+                        is MISSING_ANNOTATION
+                        else _type_name(annotation)
                     ),
                 }
                 for parameter in signature.parameters.values()
@@ -432,8 +445,14 @@ def client_signatures() -> Dict[str, Dict[str, Any]]:
             ],
             "return": (
                 "untyped"
-                if signature.return_annotation is inspect.Signature.empty
-                else _type_name(signature.return_annotation)
+                if (
+                    return_annotation := annotations.get(
+                        "return",
+                        MISSING_ANNOTATION,
+                    )
+                )
+                is MISSING_ANNOTATION
+                else _type_name(return_annotation)
             ),
         }
     return result
@@ -467,8 +486,14 @@ def _type_name(annotation: Any) -> str:
 def _normalize(value: Any) -> Any:
     if isinstance(value, enum.Enum):
         return value.value
-    if isinstance(value, (tuple, list, frozenset, set)):
+    if isinstance(value, (tuple, list)):
         return [_normalize(item) for item in value]
+    if isinstance(value, (frozenset, set)):
+        normalized = [_normalize(item) for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+        )
     if dataclasses.is_dataclass(value):
         return {
             item.name: _normalize(getattr(value, item.name))
@@ -629,6 +654,20 @@ def _markdown_value(value: Any) -> str:
     return f"`{json.dumps(value, sort_keys=True)}`"
 
 
+def _model_purpose(model: type) -> str:
+    """Return explicit model documentation, never a dataclass signature."""
+
+    purpose = model.__dict__.get("__doc__")
+    if not purpose:
+        return f"Frontend-neutral `{model.__name__}` record."
+    purpose = inspect.cleandoc(purpose)
+    # dataclasses supplies ``ClassName(field: type, ...)`` as __doc__ when the
+    # class body has no docstring.  Its type rendering varies by interpreter.
+    if purpose.startswith(f"{model.__name__}("):
+        return f"Frontend-neutral `{model.__name__}` record."
+    return purpose
+
+
 def build_model_index() -> str:
     """Build the generated per-model structural reference."""
 
@@ -645,7 +684,7 @@ def build_model_index() -> str:
     ]
     for model in public_models():
         name = model.__name__
-        purpose = inspect.getdoc(model) or f"Frontend-neutral `{name}` record."
+        purpose = _model_purpose(model)
         lines.extend(
             [
                 f"<!-- api-model: {name} -->",

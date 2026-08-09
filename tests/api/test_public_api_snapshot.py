@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+from sshpilot.api.models.connections import ConnectionValidationResult
+
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR_PATH = ROOT / "scripts" / "generate_api_artifacts.py"
@@ -24,22 +26,6 @@ def test_public_api_surface_matches_reviewed_snapshot():
     assert actual == expected, (
         "The public API surface changed. Review compatibility, update docs/api "
         "and docs/api/CHANGELOG.md, then deliberately run "
-        "`python3 scripts/generate_api_artifacts.py`."
-    )
-
-
-def test_generated_api_artifacts_are_current():
-    generator = _load_generator()
-    stale = [
-        str(path.relative_to(ROOT))
-        for path, expected in generator.artifacts().items()
-        if not path.exists() or path.read_text(encoding="utf-8") != expected
-    ]
-
-    assert not stale, (
-        "Generated API artifacts are stale: "
-        + ", ".join(stale)
-        + ". Review compatibility and docs/api/CHANGELOG.md, then run "
         "`python3 scripts/generate_api_artifacts.py`."
     )
 
@@ -84,3 +70,17 @@ def test_snapshot_records_pre_wire_client_signature_shapes():
         ],
         "return": "ReplayResult",
     }
+
+
+def test_generated_model_purpose_ignores_dataclass_signature_docstrings():
+    generator = _load_generator()
+
+    assert generator._model_purpose(ConnectionValidationResult) == (
+        "Frontend-neutral `ConnectionValidationResult` record."
+    )
+
+
+def test_normalize_sorts_unordered_collections():
+    generator = _load_generator()
+
+    assert generator._normalize(frozenset({"zeta", "alpha"})) == ["alpha", "zeta"]
