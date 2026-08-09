@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import threading
 import time
 from dataclasses import dataclass
@@ -563,15 +564,29 @@ class TransferRuntime:
     def _run_recursive_upload(self, record: _TransferRecord, client) -> None:
         """Copy a local directory tree to a remote destination directory.
 
-        Symlinked directories are not descended into (``os.walk`` default) and
-        symlinked files are transferred by content, so a link can never pull an
-        unrelated tree or a cycle into the upload.
+        The root is ``lstat``-checked so a symlink root is rejected instead of
+        being walked as a real tree. Nested symlinked directories are not
+        descended into (``os.walk`` default) and symlinked files are
+        transferred by content, so a link can never pull an unrelated tree or a
+        cycle into the upload.
         """
         local_root = record.local_path
-        if not os.path.isdir(local_root):
+        try:
+            local_info = os.lstat(local_root)
+        except OSError:
             raise SshPilotError(
                 ErrorCode.TRANSFER_IO_FAILED,
                 "The local source directory was not found",
+            )
+        if stat.S_ISLNK(local_info.st_mode):
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                "Recursive upload requires a real directory path, not a symbolic link",
+            )
+        if not stat.S_ISDIR(local_info.st_mode):
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                "The local source is not a directory",
             )
         remote_root = record.remote_path
         self._check_cancel(record)
@@ -617,19 +632,26 @@ class TransferRuntime:
     def _run_recursive_download(self, record: _TransferRecord, client) -> None:
         """Copy a remote directory tree to a local destination directory.
 
-        Symlinked entries are never descended into: a link to a directory is
+        The root is ``lstat``-checked so a symlink root is rejected instead of
+        being classified as a directory and walked into its target. Nested
+        symlinked entries are never descended into: a link to a directory is
         treated as a file (dereferenced by the read), so the walk cannot follow
         a cycle or escape the requested tree.
         """
         remote_root = record.remote_path
         local_root = record.local_path
         try:
-            source_attr = client.stat(remote_root)
+            source_attr = client.lstat(remote_root)
         except Exception as exc:
             raise SshPilotError(
                 ErrorCode.TRANSFER_IO_FAILED,
                 "The remote source directory could not be read",
             ) from exc
+        if source_attr.is_symlink():
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                "Recursive download requires a real directory path, not a symbolic link",
+            )
         if not source_attr.is_dir():
             raise SshPilotError(
                 ErrorCode.TRANSFER_IO_FAILED,

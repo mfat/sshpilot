@@ -144,6 +144,15 @@ class _RecursiveSftpClient(_FakeSftpClient):
             )
         raise OSError(errno.ENOENT, path)
 
+    def lstat(self, path):
+        if path in self.links:
+            return SimpleNamespace(
+                st_size=0,
+                is_dir=lambda: True,
+                is_symlink=lambda: True,
+            )
+        return self.stat(path)
+
     def listdir_attr(self, path):
         entries = []
         self.listdir_paths.append(path)
@@ -907,6 +916,53 @@ def test_recursive_download_never_descends_into_symlinked_dirs(tmp_path):
     assert not (local_dst / "secret").exists()
     assert not (local_dst / "s.txt").exists()
     assert client.listdir_paths == ["/home/user/docs"]
+
+
+def test_recursive_upload_rejects_symlink_root(tmp_path):
+    owner = ClientId("client:owner")
+    client = _RecursiveSftpClient()
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    target = _tree_source(None, {"secret.txt": b"secret"})
+    link = tmp_path / "upload-link"
+    link.symlink_to(target, target_is_directory=True)
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        _tree_request(service_id, str(link), "/remote/dst", TransferDirection.UPLOAD,
+                      TransferConflictPolicy.OVERWRITE),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.FAILED
+    assert summary.failure.code == ErrorCode.TRANSFER_IO_FAILED.value
+    assert client.files == {}
+
+
+def test_recursive_download_rejects_symlink_root(tmp_path):
+    owner = ClientId("client:owner")
+    client = _RecursiveSftpClient()
+    client.files.update({
+        "/home/user/secret/s.txt": b"secret",
+    })
+    client.dirs.update({"/home/user/secret", "/home/user"})
+    client.links["/home/user/download-link"] = "/home/user/secret"
+    sftp_runtime, service_id, _ = _make_ready_sftp_service(owner, client=client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    local_dst = tmp_path / "dst"
+
+    prepared = transfer_runtime.prepare_start_transfer(
+        _tree_request(service_id, str(local_dst), "/home/user/download-link",
+                      TransferDirection.DOWNLOAD, TransferConflictPolicy.OVERWRITE),
+        client_id=owner,
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.FAILED
+    assert summary.failure.code == ErrorCode.TRANSFER_IO_FAILED.value
+    assert not local_dst.exists()
 
 
 def test_ensure_remote_dir_handles_real_sftp_missing_code():
