@@ -21,6 +21,7 @@ LOG_BACKUP_COUNT = 5
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOG_FILE_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_CONSOLE_FORMAT = "%(asctime)s %(levelname)-5s %(short_name)s: %(message)s"
+DAEMON_FORWARD_MAX_BYTES = 64 * 1024
 
 # Keep the policy module independent from ``sshpilot.api`` as well as GTK/GI.
 # The public enum uses these same wire spellings, but importing the API package
@@ -89,6 +90,12 @@ def is_frontend_app_category(name: str) -> bool:
     return not is_ssh_category(name)
 
 
+_SENSITIVE_MAPPING = re.compile(
+    r"(?i)([\"'](?:password|passphrase|passwd|secret|credential|otp|mfa|pin|"
+    r"api[_-]?key|token|access[_-]?token|refresh[_-]?token|session[_-]?token|"
+    r"askpass[_-]?token|kdbx[_-]?(?:password|key)|private[_-]?key)[\"']\s*:\s*)"
+    r"(?:\"[^\"]*\"|'[^']*')"
+)
 _SENSITIVE_KEY = re.compile(
     r"(?i)((?:password|passphrase|passwd|secret|credential|otp|mfa|pin|"
     r"api[_-]?key|token|access[_-]?token|refresh[_-]?token|session[_-]?token|"
@@ -125,6 +132,7 @@ def sanitize_log_text(text: str) -> str:
     value = _AUTHORIZATION.sub(r"\1***REDACTED***", value)
     value = _TOKEN_ENV.sub(r"\1***REDACTED***", value)
     value = _SECRET_FRAME.sub(r"\1***REDACTED***", value)
+    value = _SENSITIVE_MAPPING.sub(r'\1"***REDACTED***"', value)
     return _SENSITIVE_KEY.sub(r"\1***REDACTED***", value)
 
 
@@ -307,6 +315,7 @@ class DaemonLogTailForwarder:
         self._offset = 0
         self._inode: Optional[tuple[int, int]] = None
         self._buffer = ""
+        self._waiting_for_file = False
         self._logger = logging.getLogger("daemon.forwarded")
 
     def start(self) -> None:
@@ -319,6 +328,9 @@ class DaemonLogTailForwarder:
         except OSError:
             self._offset = 0
             self._inode = None
+            self._waiting_for_file = True
+        else:
+            self._waiting_for_file = False
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="DaemonLogForwarder", daemon=True)
         self._thread.start()
@@ -338,7 +350,13 @@ class DaemonLogTailForwarder:
         try:
             stat = self.path.stat()
             identity = (stat.st_dev, stat.st_ino)
-            if self._inode is not None and identity != self._inode:
+            if self._waiting_for_file:
+                # A verbose launcher may start the tailer before daemon.log
+                # exists. The first file is new startup output, not history.
+                self._offset = 0
+                self._buffer = ""
+                self._waiting_for_file = False
+            elif self._inode is not None and identity != self._inode:
                 self._offset = 0
                 self._buffer = ""
             if stat.st_size < self._offset:
@@ -348,10 +366,15 @@ class DaemonLogTailForwarder:
             if stat.st_size == self._offset:
                 return
             with self.path.open("r", encoding="utf-8", errors="replace") as stream:
-                stream.seek(self._offset)
+                if stat.st_size - self._offset > DAEMON_FORWARD_MAX_BYTES:
+                    stream.seek(stat.st_size - DAEMON_FORWARD_MAX_BYTES)
+                    stream.readline()
+                else:
+                    stream.seek(self._offset)
                 data = stream.read()
                 self._offset = stream.tell()
         except OSError:
+            self._waiting_for_file = True
             return
         self._buffer += data
         lines = self._buffer.splitlines(keepends=True)

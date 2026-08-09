@@ -92,6 +92,7 @@ from sshpilot.api.remote_path import (
 from sshpilot.api.sftp_identity import new_sftp_id
 from sshpilot.sftp import protocol as sftp_proto
 from sshpilot.sftp.client import OpenSSHSFTPClient
+from sshpilot.logging_support import log_context
 
 from .operation_runtime import OperationCancelled
 from .session_runtime import SessionLaunchSpec
@@ -1932,12 +1933,23 @@ class SftpServiceRuntime:
             raise RuntimeError(
                 f"invalid SFTP transition {record.state.value}->{new_state.value}"
             )
+        previous_state = record.state
         now = self._clock()
         record.state = new_state
         if new_state is SftpServiceState.CLOSED:
             record.closed_at = now
             record.attached_clients.clear()
             self._evict_closed_locked()
+        with log_context(
+            sftp_service=record.service_id,
+            client=record.owner_client_id,
+            connection=record.connection_id,
+        ):
+            logger.info(
+                "sftp service state changed from=%s to=%s",
+                previous_state.value,
+                new_state.value,
+            )
         event_type = EventType.SFTP_STATE_CHANGED
         if new_state is SftpServiceState.CLOSED:
             event_type = EventType.SFTP_CLOSED

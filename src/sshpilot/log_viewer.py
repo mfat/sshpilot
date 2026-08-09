@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # rotated log has grown to its 10 MB cap. The user can ask for the full file
 # from the menu — they almost never need to.
 _DEFAULT_TAIL_LINES = 500
+_DIAGNOSTICS_LOG_MAX_BYTES = 1024 * 1024
 
 
 # (display label, filename in state-dir or absolute) — drives the category
@@ -250,7 +251,9 @@ def build_report_bundle(crash_path: Optional[str] = None, tail_lines: int = 400)
     ]
     try:
         from .askpass_utils import get_askpass_log_path
-        sources.append(("Askpass diagnostics", get_askpass_log_path(), 200, False))
+        askpass_path = get_askpass_log_path()
+        if askpass_path and os.path.isfile(askpass_path) and os.path.getsize(askpass_path) > 0:
+            sources.append(("Askpass diagnostics", askpass_path, 200, False))
     except Exception:
         pass
     crash = _resolve_crash_path(crash_path)
@@ -345,6 +348,29 @@ def _collect_daemon_diagnostics_snapshot() -> dict:
     }
 
 
+def _sanitized_log_tail_for_export(path: str) -> str:
+    """Read a bounded tail and sanitize it before it crosses the ZIP boundary."""
+
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            start = max(0, size - _DIAGNOSTICS_LOG_MAX_BYTES)
+            handle.seek(start)
+            if start:
+                handle.readline()
+            content = handle.read(_DIAGNOSTICS_LOG_MAX_BYTES + 1)
+        text = content.decode("utf-8", errors="replace")
+        if start:
+            text = (
+                f"[diagnostics export: showing final {_DIAGNOSTICS_LOG_MAX_BYTES} bytes]\n"
+                + text
+            )
+        return sanitize_log_text(text)
+    except OSError as exc:
+        return f"(could not read log: {type(exc).__name__})"
+
+
 def build_diagnostics_zip(dest_path: str) -> str:
     """Write a self-contained diagnostics ZIP to dest_path and return it.
 
@@ -363,28 +389,25 @@ def build_diagnostics_zip(dest_path: str) -> str:
                      'crash.log', 'crash.log.previous'):
             path = os.path.join(state, name)
             if os.path.isfile(path):
-                with open(path, encoding='utf-8', errors='replace') as handle:
-                    zf.writestr('logs/' + name, sanitize_log_text(handle.read()))
+                zf.writestr('logs/' + name, _sanitized_log_tail_for_export(path))
                 seen.add(path)
         try:
             from .askpass_utils import get_askpass_log_path
             askpass_path = get_askpass_log_path()
             if askpass_path and os.path.isfile(askpass_path):
-                with open(askpass_path, encoding='utf-8', errors='replace') as handle:
-                    zf.writestr(
-                        'logs/sshpilot-askpass.log',
-                        sanitize_log_text(handle.read()),
-                    )
+                zf.writestr(
+                    'logs/sshpilot-askpass.log',
+                    _sanitized_log_tail_for_export(askpass_path),
+                )
                 seen.add(askpass_path)
         except Exception:
             pass
         for path in sorted(glob.glob(os.path.join(state, '*.log.*'))):
             if path not in seen and os.path.isfile(path):
-                with open(path, encoding='utf-8', errors='replace') as handle:
-                    zf.writestr(
-                        'logs/' + os.path.basename(path),
-                        sanitize_log_text(handle.read()),
-                    )
+                zf.writestr(
+                    'logs/' + os.path.basename(path),
+                    _sanitized_log_tail_for_export(path),
+                )
 
         # System / runtime info. verbose=True for full storage/tool probing.
         try:

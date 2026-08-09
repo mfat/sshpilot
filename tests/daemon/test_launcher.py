@@ -147,6 +147,8 @@ def test_real_on_demand_process_is_ready_via_handshake_and_owned(tmp_path):
                 Capability.TERMINAL_INPUT,
                 Capability.TERMINAL_RESIZE,
                 Capability.TERMINAL_REPLAY,
+                Capability.BROADCAST_READ,
+                Capability.BROADCAST_WRITE,
                 Capability.INTERACTIONS_READ,
                 Capability.INTERACTIONS_RESPOND,
                 Capability.INTERACTIONS_EVENTS,
@@ -295,6 +297,66 @@ def test_verbose_launch_passes_flag_and_starts_askpass_forwarder(tmp_path, monke
     assert result.client is client
     assert captured["argv"][-1] == "--verbose"
     assert forwarder_calls == [True]
+
+
+def test_verbose_failed_start_forwards_startup_daemon_log(tmp_path, monkeypatch):
+    from sshpilot import platform_utils
+    from sshpilot.logging_support import (
+        close_managed_handlers,
+        configure_frontend_logging,
+        stop_daemon_log_forwarder,
+    )
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(platform_utils, "get_state_dir", lambda: str(state))
+    close_managed_handlers()
+    configure_frontend_logging(state, "debug")
+
+    class _Process:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def kill(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 1
+
+    def _popen(_argv, **_kwargs):
+        (state / "daemon.log").write_text(
+            "2026-08-09 12:00:04 - sshpilot.daemon.startup - ERROR - handshake failed\n"
+        )
+        return _Process()
+
+    launcher = DaemonLauncher(
+        socket_path=tmp_path / "runtime" / "sshpilotd.sock",
+        startup_timeout=0.2,
+        poll_interval=0.02,
+        verbose=True,
+        popen=_popen,
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_wait_until_ready",
+        lambda _process: (_ for _ in ()).throw(
+            DaemonLaunchError(DaemonStartupFailure.HANDSHAKE_FAILED)
+        ),
+    )
+    try:
+        with pytest.raises(DaemonLaunchError):
+            launcher.connect_or_start()
+        master = state / "sshpilot.log"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and "handshake failed" not in master.read_text():
+            time.sleep(0.02)
+        assert "handshake failed" in master.read_text()
+    finally:
+        stop_daemon_log_forwarder()
+        close_managed_handlers()
 
 
 def test_early_process_exit_is_bounded_and_classified(tmp_path):

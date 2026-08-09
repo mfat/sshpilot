@@ -181,6 +181,7 @@ class DaemonLauncher:
             else:
                 self._ensure_gtk_askpass_log_forwarder()
                 self._ensure_daemon_log_forwarder()
+                self._synchronize_explicit_log_level(client)
                 return DaemonLaunchResult(client=client, process=None)
 
             command = (
@@ -192,6 +193,9 @@ class DaemonLauncher:
                 *(("--verbose",) if self._verbose else ()),
                 *(("--quiet",) if self._quiet else ()),
             )
+            # Begin verbose forwarding before the child exists so startup
+            # failures still contribute their daemon diagnostics.
+            self._ensure_daemon_log_forwarder()
             try:
                 process = self._popen(
                     list(command),
@@ -220,6 +224,7 @@ class DaemonLauncher:
                 raise
             self._ensure_gtk_askpass_log_forwarder()
             self._ensure_daemon_log_forwarder()
+            self._synchronize_explicit_log_level(client)
             return DaemonLaunchResult(client=client, process=handle)
 
     def _connect(self, timeout: float) -> DaemonClient:
@@ -289,6 +294,21 @@ class DaemonLauncher:
             )
         except Exception:
             logger.debug("Could not start daemon log forwarder", exc_info=True)
+
+    def _synchronize_explicit_log_level(self, client: DaemonClient) -> None:
+        """Apply only an explicit launcher verbosity override to the daemon."""
+
+        if not (self._verbose or self._quiet):
+            return
+        setter = getattr(client, "set_daemon_log_level", None)
+        if not callable(setter):
+            # Lightweight launcher test doubles and older compatible clients
+            # need not expose the additive control method.
+            return
+        from sshpilot.api.models.daemon import DaemonLogLevel, SetDaemonLogLevelRequest
+
+        level = DaemonLogLevel.DEBUG if self._verbose else DaemonLogLevel.WARNING
+        setter(SetDaemonLogLevelRequest(level=level))
 
     def _wait_until_ready(self, process: subprocess.Popen) -> DaemonClient:
         deadline = time.monotonic() + self.startup_timeout

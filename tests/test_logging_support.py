@@ -123,6 +123,29 @@ def test_daemon_forwarder_starts_at_end_and_handles_rotation(tmp_path):
         stop_daemon_log_forwarder()
 
 
+def test_daemon_forwarder_reads_new_file_created_after_start(tmp_path):
+    path = tmp_path / "daemon.log"
+    forwarder = ensure_daemon_log_forwarder(path, enabled=True)
+    assert forwarder is not None
+    logger = logging.getLogger("daemon.forwarded.sshpilot.startup")
+    logger.setLevel(logging.DEBUG)
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger.addHandler(handler)
+    try:
+        path.write_text(
+            "2026-08-09 12:00:03 - sshpilot.startup - ERROR - startup failed\n"
+        )
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not records:
+            time.sleep(0.02)
+        assert [item.getMessage() for item in records] == ["startup failed"]
+    finally:
+        logger.removeHandler(handler)
+        stop_daemon_log_forwarder()
+
+
 def test_sanitizer_targets_credentials_without_removing_hosts():
     text = (
         "host=example.test user=alice password=PASSWORD_SENTINEL_49291 "
@@ -136,3 +159,20 @@ def test_sanitizer_targets_credentials_without_removing_hosts():
     assert "PASSWORD_SENTINEL_49291" not in safe
     assert "TOKEN_SENTINEL_49293" not in safe
     assert "PRIVATE_KEY_SENTINEL_49295" not in safe
+
+
+def test_sanitizer_redacts_mapping_and_exception_representations():
+    text = (
+        'password=PASSWORD_SENTINEL_49291 password: PASSWORD_SENTINEL_49291 '
+        '"password": "PASSWORD_SENTINEL_49291" '
+        "'token': 'TOKEN_SENTINEL_49293' "
+        '{"api_key": "TOKEN_SENTINEL_49293"} '
+        "{'kdbx_password': 'PASSWORD_SENTINEL_49291'}"
+    )
+    safe = sanitize_log_text(text)
+    assert "PASSWORD_SENTINEL_49291" not in safe
+    assert "TOKEN_SENTINEL_49293" not in safe
+    assert '"password": "***REDACTED***"' in safe
+    assert "'token': \"***REDACTED***\"" in safe
+    assert "api_key" in safe
+    assert "password" in safe

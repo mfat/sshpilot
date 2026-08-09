@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -54,6 +55,7 @@ from sshpilot.api.models.terminal import (
 )
 from sshpilot.api.session_identity import new_session_id
 from sshpilot.core.connection_evidence import classify_connection_evidence
+from sshpilot.logging_support import log_context
 
 from .terminal_stream import (
     DEFAULT_GLOBAL_REPLAY_BYTES,
@@ -66,6 +68,8 @@ from .terminal_stream import (
 DEFAULT_CLOSE_GRACE_SECONDS = 0.5
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 2.0
 DEFAULT_MAX_RETAINED_CLOSED_SESSIONS = 100
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -1629,6 +1633,7 @@ class SessionRuntime:
             raise RuntimeError(
                 f"invalid session transition {record.state.value}->{new_state.value}"
             )
+        previous_state = record.state
         now = self._clock()
         record.state = new_state
         record.updated_at = now
@@ -1641,6 +1646,16 @@ class SessionRuntime:
             record.output_clients.clear()
             record.input_owner_attachment_id = None
             self._evict_closed_locked()
+        with log_context(
+            session=record.session_id,
+            client=record.originating_client_id,
+            connection=record.connection_id,
+        ):
+            logger.info(
+                "session state changed from=%s to=%s",
+                previous_state.value,
+                new_state.value,
+            )
         event_type = EventType.SESSION_STATE_CHANGED
         payload = self._summary_locked(record)
         if new_state is SessionState.EXITED:

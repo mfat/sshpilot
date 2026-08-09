@@ -87,6 +87,28 @@ def test_sensitive_transport_payloads_are_not_logged_directly():
                         raise AssertionError(
                             f"sensitive logging value {node.id!r} in {path}"
                         )
+
+
+def test_frontend_terminal_and_broadcast_boundaries_do_not_log_payload_fields():
+    """Keep the known GTK operational entry points free of raw input logs."""
+
+    sensitive_attrs = {"command", "data", "frame", "payload", "content"}
+    for relative in ("terminal_manager.py", "window_broadcast.py"):
+        path = SOURCE / relative
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                continue
+            if call.func.attr not in {
+                "debug", "info", "warning", "error", "exception", "critical", "log"
+            }:
+                continue
+            for argument in call.args[1:]:
+                for node in ast.walk(argument):
+                    if isinstance(node, ast.Attribute) and node.attr in sensitive_attrs:
+                        raise AssertionError(
+                            f"sensitive logging field {node.attr!r} in {path}"
+                        )
     for path in (SOURCE / "daemon").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "logger.debug(request.params)" not in text

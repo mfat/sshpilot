@@ -61,6 +61,7 @@ from sshpilot.askpass_utils import (
     classify_prompt,
 )
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
+from sshpilot.logging_support import log_context
 
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
 DEFAULT_HOST_KEY_INTERACTION_TIMEOUT = 180.0
@@ -725,6 +726,12 @@ class InteractionBroker:
             )
             self._condition.notify_all()
         self._publish(EventType.INTERACTION_CREATED, summary)
+        with log_context(
+            interaction=summary.id,
+            session=summary.session_id,
+            connection=summary.connection_id,
+        ):
+            logger.info("interaction created type=%s", summary.type.value)
         return summary
 
     def list(self, client_id: ClientId) -> List[InteractionSummary]:
@@ -779,6 +786,13 @@ class InteractionBroker:
             )
         if changed is not None:
             self._publish(EventType.INTERACTION_STATE_CHANGED, changed)
+            with log_context(
+                interaction=changed.id,
+                session=changed.session_id,
+                connection=changed.connection_id,
+                client=client_id,
+            ):
+                logger.info("interaction claimed")
         return claim
 
     def release(self, interaction_id: InteractionId, client_id: ClientId) -> None:
@@ -1654,6 +1668,12 @@ class InteractionBroker:
         record.awaiting_secret = False
         record.claim_nonce = None
         summary = self._replace_summary(record, state=state)
+        with log_context(
+            interaction=summary.id,
+            session=summary.session_id,
+            connection=summary.connection_id,
+        ):
+            logger.info("interaction state changed to=%s", state.value)
         self._completed.append(summary.id)
         self._evict_completed_locked()
         return summary

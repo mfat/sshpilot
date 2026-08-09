@@ -46,6 +46,7 @@ from sshpilot.api.models.operations import (
     ServiceFailure,
 )
 from sshpilot.api.forward_identity import new_forward_id
+from sshpilot.logging_support import log_context
 
 from .session_runtime import SessionLaunchSpec
 
@@ -755,10 +756,21 @@ class ForwardRuntime:
             raise RuntimeError(
                 f"invalid forward transition {record.state.value}->{new_state.value}"
             )
+        previous_state = record.state
         record.state = new_state
         if new_state is ForwardState.CLOSED:
             record.closed_at = self._clock()
             self._evict_closed_locked()
+        with log_context(
+            forward=record.forward_id,
+            client=record.owner_client_id,
+            connection=record.connection_id,
+        ):
+            logger.info(
+                "forward state changed from=%s to=%s",
+                previous_state.value,
+                new_state.value,
+            )
         event_type = _TRANSITION_EVENT_TYPES.get(new_state)
         if event_type is None:
             return None

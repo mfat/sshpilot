@@ -122,3 +122,16 @@ def test_report_bundle_contains_labelled_process_sections_and_redacts_logs(
         askpass_text = archive.read("logs/sshpilot-askpass.log").decode()
         assert "TOKEN_SENTINEL_49293" not in daemon_text
         assert "OTP_SENTINEL_49294" not in askpass_text
+
+
+def test_report_bundle_omits_missing_or_empty_askpass(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "sshpilot.log").write_text("frontend\n")
+    (state / "daemon.log").write_text("daemon\n")
+    askpass = state / "sshpilot-askpass.log"
+    askpass.write_text("")
+    monkeypatch.setattr(log_viewer, "get_state_dir", lambda: str(state))
+    monkeypatch.setattr(askpass_utils, "get_askpass_log_path", lambda: str(askpass))
+    report = log_viewer.build_report_bundle(tail_lines=10)
+    assert "=== Askpass diagnostics ===" not in report

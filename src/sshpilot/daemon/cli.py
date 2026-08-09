@@ -177,8 +177,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="override the Unix socket path",
     )
-    parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--quiet", action="store_true")
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument("--verbose", action="store_true")
+    verbosity.add_argument("--quiet", action="store_true")
     parser.add_argument(
         "--force",
         action="store_true",
