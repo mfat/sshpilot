@@ -149,7 +149,7 @@ class RemoteFileEditorWindow(Adw.Window):
         daemon_file_service: Optional[Any] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
         pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
-        on_local_saved: Optional[Callable[[], None]] = None,
+        on_saved: Optional[Callable[[], None]] = None,
         language_id: Optional[str] = None,
         show_outline: bool = False,
     ) -> None:
@@ -169,10 +169,11 @@ class RemoteFileEditorWindow(Adw.Window):
         # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
         # error string to block the save, or None to allow it.
         self._pre_save_validator = pre_save_validator
-        # Optional owner notification after an atomic local save. File monitors
-        # are not sufficient here: replacing a file can detach an inode-based
-        # monitor before it reports the new file.
-        self._on_local_saved = on_local_saved
+        # Optional owner notification after a successful save (local atomic
+        # write or daemon-backed write). File monitors are not sufficient for
+        # the local case: replacing a file can detach an inode-based monitor
+        # before it reports the new file.
+        self._on_saved = on_saved
         # Optional GtkSourceView language id (e.g. 'sshconfig') + a Host/Match
         # outline sidebar — used by the SSH config editor only.
         self._language_id = language_id
@@ -1057,11 +1058,11 @@ class RemoteFileEditorWindow(Adw.Window):
                 self._update_title(False)
                 self._show_toast("Saved", timeout=2)
                 self._save_button.set_sensitive(False)
-                if self._on_local_saved is not None:
+                if self._on_saved is not None:
                     try:
-                        self._on_local_saved()
+                        self._on_saved()
                     except Exception:
-                        logger.debug("local-save callback failed", exc_info=True)
+                        logger.debug("save callback failed", exc_info=True)
                 if self._file_manager_window:
                     pane = self._file_manager_window._left_pane
                     if pane:
@@ -1112,6 +1113,12 @@ class RemoteFileEditorWindow(Adw.Window):
         self._update_title(False)
         self._show_toast("Saved successfully", timeout=2)
         self._buffer.set_modified(False)
+        on_saved = getattr(self, '_on_saved', None)
+        if on_saved is not None:
+            try:
+                on_saved()
+            except Exception:
+                logger.debug("save callback failed", exc_info=True)
 
         if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             _clear_undo_history(self._buffer)

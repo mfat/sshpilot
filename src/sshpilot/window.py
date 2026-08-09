@@ -4351,6 +4351,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 file_manager_window=None,
                 language_id="sshconfig",
                 show_outline=True,
+                on_saved=self._on_ssh_config_editor_saved,
             )
 
             # Window/taskbar title; the header title shows the daemon-resolved
@@ -4363,6 +4364,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
             self.show_toast(_("Could not open the SSH config editor."))
+
+    def _on_ssh_config_editor_saved(self):
+        """SSH config editor wrote the config: refresh effective-config warnings.
+
+        A global-scope edit (e.g. removing a ``Host *`` block) can change every
+        connection's effective config, so drop ALL cached checker results and
+        recompute — fresh results reach sidebar rows via the checker callback.
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None:
+            return
+        try:
+            checker.invalidate()
+            for connection in self.connection_manager.get_connections():
+                checker.schedule(connection)
+        except Exception:
+            logger.debug("effective-config refresh after config save failed",
+                         exc_info=True)
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its

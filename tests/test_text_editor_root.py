@@ -46,7 +46,7 @@ def test_local_save_notifies_owner(tmp_path):
     ed._gtksource_enabled = False
     ed._is_local = True
     ed._daemon_file_service = None
-    ed._on_local_saved = lambda: saved.append(True)
+    ed._on_saved = lambda: saved.append(True)
     ed._update_title = lambda _modified: None
     ed._show_toast = lambda *_args, **_kwargs: None
     ed._save_button = types.SimpleNamespace(set_sensitive=lambda _value: None)
@@ -127,6 +127,24 @@ def test_daemon_save_failure_preserves_dirty_state_and_uses_save_error(
     assert save_button.values[-1] is True
     assert "upload" not in ed.toast.lower()
     assert ed.error == "Failed to save file: daemon disconnected"
+
+
+def test_daemon_save_success_notifies_owner(monkeypatch, tmp_path):
+    """The SSH config editor relies on this hook to invalidate cached
+    effective-config warnings after the daemon writes ~/.ssh/config."""
+    future = Future()
+    future.set_result(types.SimpleNamespace(revision="new-revision"))
+    monkeypatch.setattr(text_editor.GLib, "idle_add", lambda fn, *args: fn(*args))
+    ed, buffer, save_button, service, uploads = _daemon_save_editor(tmp_path, future)
+    saved = []
+    ed._on_saved = lambda: saved.append(True)
+
+    ed._perform_save("new")
+
+    assert service.text == "new"
+    assert ed._daemon_file_revision == "new-revision"
+    assert saved == [True]
+    assert uploads == []
     assert uploads == []
 
 
