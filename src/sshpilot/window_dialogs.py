@@ -2113,6 +2113,11 @@ class WindowConfigDialogsMixin:
         dialog disables all controls while the callback is running so that
         the user cannot re-submit; the callback re-enables them by calling
         ``set_busy(False)`` on failure.
+
+        The *on_confirm* callback may also accept a ``close_dialog`` keyword
+        argument ``(close_dialog: Callable[[], None])``.  When provided it
+        lets an asynchronous callback dismiss the dialog once the operation
+        has actually completed.
         """
         dialog = Adw.Dialog()
         dialog.set_title(title)
@@ -2224,9 +2229,21 @@ class WindowConfigDialogsMixin:
                 if color_selected and rgba_value.alpha > 0:
                     color = rgba_value.to_string()
             try:
-                result = on_confirm(name, color, set_busy=lambda busy: _set_controls_enabled(not busy))
+                result = on_confirm(
+                    name,
+                    color,
+                    set_busy=lambda busy: _set_controls_enabled(not busy),
+                    close_dialog=dialog.close,
+                )
             except TypeError:
-                result = on_confirm(name, color)
+                try:
+                    result = on_confirm(
+                        name,
+                        color,
+                        set_busy=lambda busy: _set_controls_enabled(not busy),
+                    )
+                except TypeError:
+                    result = on_confirm(name, color)
             if result is True:
                 dialog.close()
 
@@ -2246,7 +2263,7 @@ class WindowConfigDialogsMixin:
     def on_create_group_action(self, action, param=None):
         """Handle create group action."""
         try:
-            def create(name, color, set_busy=None):
+            def create(name, color, set_busy=None, close_dialog=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
@@ -2267,6 +2284,8 @@ class WindowConfigDialogsMixin:
                     self.rebuild_connection_list()
                     if set_busy is not None:
                         set_busy(False)
+                    if close_dialog is not None:
+                        close_dialog()
                     return True
                 def _on_error(error):
                     if set_busy is not None:
@@ -2315,7 +2334,7 @@ class WindowConfigDialogsMixin:
                 logger.debug(f"Group info not found for ID: {group_id}")
                 return
 
-            def save(name, color, set_busy=None):
+            def save(name, color, set_busy=None, close_dialog=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
@@ -2348,6 +2367,8 @@ class WindowConfigDialogsMixin:
                     self.rebuild_connection_list()
                     if set_busy is not None:
                         set_busy(False)
+                    if close_dialog is not None:
+                        close_dialog()
                 def _on_error(error):
                     if set_busy is not None:
                         set_busy(False)
@@ -2386,7 +2407,7 @@ class WindowConfigDialogsMixin:
             old_name = str(tag_row.group_info.get('name', ''))
             old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
 
-            def save(name, _color, set_busy=None):
+            def save(name, _color, set_busy=None, close_dialog=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a tag name."))
                     return False
@@ -2421,6 +2442,8 @@ class WindowConfigDialogsMixin:
                         self.rebuild_connection_list()
                         if set_busy is not None:
                             set_busy(False)
+                        if close_dialog is not None:
+                            close_dialog()
                     def _on_error(error):
                         if set_busy is not None:
                             set_busy(False)
