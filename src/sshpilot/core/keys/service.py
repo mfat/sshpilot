@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,6 +104,63 @@ class KeyService:
             # Type-only message: the exception text may embed full paths.
             logger.error("SSH key discovery failed (%s)", type(exc).__name__)
         return keys
+
+    def delete_key(self, private_path: Path | str) -> bool:
+        """Delete one already-resolved managed key pair safely.
+
+        The daemon resolves the opaque key id before calling this method. This
+        second boundary check keeps the core service from following a symlink,
+        traversing outside its configured store, or deleting a non-regular
+        file if the store changes between discovery and deletion.
+        """
+        candidate = Path(private_path)
+        lexical_root = self.ssh_dir.absolute()
+        try:
+            relative = candidate.relative_to(lexical_root)
+            resolved_root = lexical_root.resolve(strict=True)
+            candidate.resolve(strict=False).relative_to(resolved_root)
+        except (OSError, ValueError):
+            return False
+
+        current = lexical_root
+        for part in relative.parts:
+            current = current / part
+            try:
+                if current.is_symlink():
+                    return False
+            except OSError:
+                return False
+
+        public_path = Path(f"{candidate}.pub")
+        if not self._safe_deletion_file(candidate, lexical_root):
+            return False
+        if public_path.exists() and not self._safe_deletion_file(
+            public_path, lexical_root
+        ):
+            return False
+
+        try:
+            candidate.unlink()
+            if public_path.exists():
+                public_path.unlink()
+        except OSError:
+            return False
+        self._key_validation_cache.pop(str(candidate), None)
+        return True
+
+    @staticmethod
+    def _safe_deletion_file(path: Path, root: Path) -> bool:
+        try:
+            relative = path.relative_to(root)
+            current = root
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    return False
+            mode = os.lstat(path).st_mode
+        except (OSError, ValueError):
+            return False
+        return stat.S_ISREG(mode)
 
     def validate_generate_spec(self, spec: KeyGenerateSpec) -> None:
         """Raise :class:`CoreError` when *spec* cannot be used."""

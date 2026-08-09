@@ -5,6 +5,8 @@ import pytest
 from sshpilot.api.models import SessionId
 from sshpilot.api.models.connections import StoreKeyPassphraseRequest
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyId,
@@ -18,6 +20,10 @@ from sshpilot.api.models.keys import (
     VerifyKeyPassphraseResult,
 )
 from sshpilot.api.transport.codec import (
+    delete_key_request_from_wire,
+    delete_key_request_to_wire,
+    delete_key_result_from_wire,
+    delete_key_result_to_wire,
     generate_key_request_from_wire,
     generate_key_request_to_wire,
     generate_key_result_from_wire,
@@ -70,6 +76,22 @@ def _summary_wire(key_id="key-1", name="id_ed25519", available=True):
 def test_key_summary_round_trip():
     summary = _summary()
     assert key_summary_from_wire(key_summary_to_wire(summary)) == summary
+
+
+def test_delete_key_round_trip_has_no_path_field():
+    request = DeleteKeyRequest(key_id=KeyId("key-1"), scope=KeyStoreScope.DEFAULT)
+    wire = delete_key_request_to_wire(request)
+    assert wire == {"key_id": "key-1", "scope": "default"}
+    assert delete_key_request_from_wire(wire) == request
+    result = DeleteKeyResult(key_id=KeyId("key-1"))
+    assert delete_key_result_from_wire(delete_key_result_to_wire(result)) == result
+
+
+def test_delete_key_codec_rejects_path_and_unknown_fields():
+    with pytest.raises(ValueError):
+        delete_key_request_from_wire(
+            {"key_id": "key-1", "scope": "default", "private_path": "/tmp/x"}
+        )
 
 
 def test_key_summary_to_wire_rejects_wrong_type():

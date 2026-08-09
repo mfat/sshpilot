@@ -1295,6 +1295,54 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: DeleteKeyRequest -->
+## `DeleteKeyRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Request deletion of one daemon-known key by opaque identity.
+
+**Related methods:** `delete_key`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_id` | `KeyId` | Yes | — | No |
+| `scope` | `KeyStoreScope` | No | `default` | No |
+
+Synthetic representation:
+
+```json
+{
+  "key_id": {},
+  "scope": "default"
+}
+```
+
+<!-- api-model: DeleteKeyResult -->
+## `DeleteKeyResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Stable result for daemon-owned key-pair deletion.
+
+**Related methods:** `delete_key`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key_id` | `KeyId` | Yes | — | No |
+| `deleted` | `bool` | No | `true` | No |
+
+Synthetic representation:
+
+```json
+{
+  "deleted": true,
+  "key_id": {}
+}
+```
+
 <!-- api-model: DeletePluginSecretRequest -->
 ## `DeletePluginSecretRequest`
 

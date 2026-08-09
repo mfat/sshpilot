@@ -567,30 +567,25 @@ class PluginHost:
         return out
 
     def delete_key(self, private_path: str) -> bool:
-        """Delete a key pair, but only if it lives inside the KeyManager's key
-        directory (guards against deleting arbitrary files)."""
-        import os
+        """Delete a daemon-discovered key matching the legacy path argument."""
         window = self._window
         km = getattr(window, "key_manager", None) if window is not None else None
         if km is None or not private_path:
             return False
-        key_dir = getattr(km, "key_dir", None) or getattr(km, "ssh_dir", None)
-        if not key_dir:
+        try:
+            keys = km.discover_keys()
+            key = next(
+                (
+                    item
+                    for item in keys or []
+                    if str(getattr(item, "private_path", "")) == str(private_path)
+                ),
+                None,
+            )
+            return bool(key is not None and km.delete_key(key))
+        except Exception:
+            logger.exception("delete_key failed")
             return False
-        key_dir = os.path.realpath(str(key_dir))
-        target = os.path.realpath(str(private_path))
-        if target != key_dir and not target.startswith(key_dir + os.sep):
-            logger.warning("delete_key refused outside key dir: %r", private_path)
-            return False
-        ok = False
-        for path in (target, f"{target}.pub"):
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                    ok = True
-            except OSError:
-                logger.exception("delete_key failed for %r", path)
-        return ok
 
     # --- terminals / sessions -----------------------------------------
     def list_sessions(self) -> List[SessionInfo]:

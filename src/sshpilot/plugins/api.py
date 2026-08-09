@@ -687,9 +687,12 @@ class PluginContext:
         return self._host.list_keys() if self._host is not None else []
 
     def delete_key(self, private_path: str) -> bool:
-        """Delete an SSH key pair (private + ``.pub``) managed by the app. Only
-        keys inside the app's key directory may be deleted; returns False
-        otherwise or if the UI isn't ready. Valid after ``app_started``."""
+        """Delete a daemon-managed key using the legacy path signature.
+
+        The path is compatibility input only; the host resolves it against
+        daemon-listed key metadata and delegates deletion by opaque key id.
+        Valid after ``app_started``.
+        """
         return (self._host.delete_key(private_path)
                 if self._host is not None else False)
 

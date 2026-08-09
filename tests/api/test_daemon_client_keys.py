@@ -20,6 +20,7 @@ from sshpilot.api.daemon_client import (
     KEY_GENERATION_REQUEST_TIMEOUT,
 )
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
     GenerateKeyRequest,
     KeyId,
     KeyList,
@@ -185,6 +186,22 @@ def test_read_public_key_round_trip_over_real_daemon(tmp_path, key_server):
             ReadPublicKeyRequest(key_id=key_list.keys[0].key_id)
         )
         assert result.text == "ssh-ed25519 AAAA-exact\n"
+    finally:
+        client.close()
+
+
+def test_delete_key_round_trip_over_real_daemon(tmp_path, key_server):
+    keys_dir = tmp_path / "keys"
+    private = keys_dir / "id_ed25519"
+    _write_key(keys_dir, "id_ed25519", "ssh-ed25519 AAAA-delete\n")
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        key = client.list_keys(ListKeysRequest()).keys[0]
+        result = client.delete_key(DeleteKeyRequest(key_id=key.key_id))
+        assert result.deleted is True
+        assert not private.exists()
+        assert not Path(f"{private}.pub").exists()
     finally:
         client.close()
 

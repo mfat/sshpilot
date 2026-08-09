@@ -4,6 +4,8 @@ import pytest
 
 from sshpilot.api.models import SessionId
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyId,
@@ -56,6 +58,21 @@ def test_list_keys_request_defaults_to_default_scope():
 def test_list_keys_request_accepts_isolated_scope():
     request = ListKeysRequest(scope=KeyStoreScope.ISOLATED)
     assert request.scope is KeyStoreScope.ISOLATED
+
+
+def test_delete_key_request_and_result_use_opaque_id_and_scope():
+    request = DeleteKeyRequest(
+        key_id=KeyId("key-1"),
+        scope=KeyStoreScope.ISOLATED,
+    )
+    assert request.scope is KeyStoreScope.ISOLATED
+    result = DeleteKeyResult(key_id=request.key_id)
+    assert result.deleted is True
+
+
+def test_delete_key_request_rejects_empty_id():
+    with pytest.raises((TypeError, ValueError)):
+        DeleteKeyRequest(key_id=KeyId(""))
 
 
 def test_key_list_constructs_with_tuple():

@@ -5,6 +5,9 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.26`; `PROTOCOL_VERSION` stays
+  `1.0`. Added typed daemon-owned SSH key deletion by opaque `KeyId` and
+  `KeyStoreScope` through `Capability.KEYS_WRITE`.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.25`; `PROTOCOL_VERSION` stays
   `1.0`. `GenerateKeyRequest` now carries only an `encrypted` choice and an
   opaque interaction scope, never a passphrase. Added the daemon-owned

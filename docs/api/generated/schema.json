@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.25",
+  "api_implementation_version": "0.26",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -763,6 +763,9 @@
     "interactions.respond": {
       "capability": "interactions.respond"
     },
+    "keys.delete": {
+      "capability": "keys.write"
+    },
     "keys.generate": {
       "capability": "keys.write"
     },
@@ -1213,6 +1216,7 @@
       "key_already_exists",
       "key_public_unavailable",
       "key_generation_failed",
+      "key_deletion_failed",
       "key_verification_failed",
       "transport_closed",
       "transport_timeout",
@@ -3078,6 +3082,44 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteKeyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteKeyResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": true,
+          "name": "deleted",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"

@@ -106,7 +106,7 @@ PLUGIN_FACADE_SURFACE = {
     "PluginContext.add_connection_group": "API/daemon owned",
     "PluginContext.generate_key": "API/daemon owned",
     "PluginContext.list_keys": "API/daemon owned",
-    "PluginContext.delete_key": "migration required",
+    "PluginContext.delete_key": "API/daemon owned",
     "PluginContext.run_command": "migration required",
     "PluginContext.run_local_command": "legitimate frontend/platform-local",
     "PluginContext.run_command_stream": "migration required",
@@ -157,7 +157,6 @@ PLUGIN_FACADE_CLASSES = frozenset(
 # facade identities.  They are still closure blockers and must remain visible
 # to the guard until the corresponding facade capability is migrated.
 PLUGIN_SUPPORTING_IMPLEMENTATIONS = {
-    "PluginHost.delete_key": "migration required",
     "PluginHost.list_sessions": "migration required",
     "PluginHost.read_terminal": "migration required",
     "PluginHost.send_terminal": "migration required",
@@ -177,7 +176,6 @@ SEMANTIC_BLOCKER_GROUPS = {
         "_IdentityView.list",
         "_IdentityView.is_agent_available",
     },
-    "P7-PLUGIN-KEY-DELETE": {"PluginContext.delete_key"},
     "P7-PLUGIN-SESSION-VIEW": {
         "PluginContext.list_sessions",
         "PluginContext.read_terminal",
@@ -242,6 +240,30 @@ def _attribute_names(node: ast.AST) -> set[str]:
         for child in ast.walk(node)
         if isinstance(child, ast.Attribute)
     }
+
+
+def _has_key_filesystem_edge(node: ast.AST) -> bool:
+    """Detect direct key-file deletion edges in a PluginHost method."""
+    for child in ast.walk(node):
+        if isinstance(child, ast.Import) and any(
+            alias.name == "os" for alias in child.names
+        ):
+            return True
+        if isinstance(child, ast.ImportFrom) and child.module == "os":
+            return True
+        if isinstance(child, ast.Call):
+            function = child.func
+            if isinstance(function, ast.Name) and function.id in {
+                "remove",
+                "unlink",
+            }:
+                return True
+            if isinstance(function, ast.Attribute) and function.attr in {
+                "remove",
+                "unlink",
+            }:
+                return True
+    return False
 
 
 def _audit_block(text: str, start: str, end: str) -> list[str]:
@@ -407,10 +429,15 @@ def test_plugin_supporting_implementations_keep_explicit_ownership_edges():
         )
     }
     assert host_edges == {
-        "PluginHost.delete_key",
         "PluginHost.read_terminal",
         "PluginHost.send_terminal",
     }
+    key_filesystem_edges = {
+        identity
+        for identity, node in host_nodes.items()
+        if _has_key_filesystem_edge(node)
+    }
+    assert key_filesystem_edges == set()
     session_bookkeeping_edges = {
         identity
         for identity, node in host_nodes.items()

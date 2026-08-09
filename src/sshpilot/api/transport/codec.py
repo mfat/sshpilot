@@ -47,6 +47,8 @@ from ..models.known_hosts import (
     RemoveKnownHostEntriesRequest,
 )
 from ..models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyId,
@@ -878,6 +880,42 @@ def list_keys_request_to_wire(request: ListKeysRequest) -> Dict[str, Any]:
 def list_keys_request_from_wire(value: Any) -> ListKeysRequest:
     data = _strict_fields(value, required={"scope"}, context="list keys request")
     return ListKeysRequest(scope=_key_store_scope(data["scope"], "key store scope"))
+
+
+def delete_key_request_to_wire(request: DeleteKeyRequest) -> Dict[str, Any]:
+    if type(request) is not DeleteKeyRequest:
+        raise TypeError("delete key request is required")
+    return {"key_id": request.key_id, "scope": request.scope.value}
+
+
+def delete_key_request_from_wire(value: Any) -> DeleteKeyRequest:
+    data = _strict_fields(
+        value,
+        required={"key_id", "scope"},
+        context="delete key request",
+    )
+    return DeleteKeyRequest(
+        key_id=KeyId(_identifier(data["key_id"], "key id")),
+        scope=_key_store_scope(data["scope"], "key store scope"),
+    )
+
+
+def delete_key_result_to_wire(result: DeleteKeyResult) -> Dict[str, Any]:
+    if type(result) is not DeleteKeyResult:
+        raise TypeError("delete key result is required")
+    return {"key_id": result.key_id, "deleted": result.deleted}
+
+
+def delete_key_result_from_wire(value: Any) -> DeleteKeyResult:
+    data = _strict_fields(
+        value,
+        required={"key_id", "deleted"},
+        context="delete key result",
+    )
+    return DeleteKeyResult(
+        key_id=KeyId(_identifier(data["key_id"], "key id")),
+        deleted=_boolean(data["deleted"], "key deletion result"),
+    )
 
 
 def key_list_to_wire(key_list: KeyList) -> Dict[str, Any]:

@@ -1140,6 +1140,9 @@ class ConnectionApplicationService:
     def list_keys(self, request: Any) -> None:
         raise unsupported_capability(Capability.KEYS_READ)
 
+    def delete_key(self, request: Any) -> None:
+        raise unsupported_capability(Capability.KEYS_WRITE)
+
     def read_public_key(self, request: Any) -> None:
         raise unsupported_capability(Capability.KEYS_READ)
 

@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Callable, Optional
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models import ClientId, ConnectionId, SessionId
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyId,
@@ -116,6 +118,25 @@ class DaemonKeyService:
                     "The key's public file is unavailable",
                 )
             return PublicKeyResult(key_id=request.key_id, text=text)
+
+    # -- deletion ----------------------------------------------------------
+    def delete_key(self, request: DeleteKeyRequest) -> DeleteKeyResult:
+        """Delete a managed key pair resolved from an opaque key id."""
+        with self._lock:
+            root = Path(self._path_resolver(request.scope))
+            info = self._find_key(request.key_id, request.scope, root)
+            if info is None:
+                raise SshPilotError(
+                    ErrorCode.KEY_NOT_FOUND,
+                    "The requested SSH key was not found",
+                )
+            service = self._service_factory(root)
+            if not service.delete_key(info.private_path):
+                raise SshPilotError(
+                    ErrorCode.KEY_DELETION_FAILED,
+                    "The daemon could not delete the SSH key",
+                )
+            return DeleteKeyResult(key_id=request.key_id)
 
     # -- generation --------------------------------------------------------
     def generate_key(

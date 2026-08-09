@@ -40,6 +40,8 @@ from sshpilot.api.transport.codec import (
     agent_key_mutation_request_from_wire,
     authorized_key_list_to_wire,
     deploy_key_request_from_wire,
+    delete_key_request_from_wire,
+    delete_key_result_to_wire,
     generate_key_request_from_wire,
     generate_key_result_to_wire,
     identity_provider_registry_to_wire,
@@ -250,6 +252,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "keys.list": Capability.KEYS_READ,
     "keys.get_public": Capability.KEYS_READ,
     "keys.generate": Capability.KEYS_WRITE,
+    "keys.delete": Capability.KEYS_WRITE,
     "keys.verify_passphrase": Capability.KEYS_WRITE,
     "identity.providers.get": Capability.IDENTITY_READ,
     "identity.state.get": Capability.IDENTITY_READ,
@@ -343,6 +346,7 @@ DRAIN_REJECTED_METHODS = frozenset(
         "forwards.open",
         "known_hosts.remove",
         "keys.generate",
+        "keys.delete",
         "keys.verify_passphrase",
         "identity.selection.update",
         "identity.configuration.update",
@@ -452,6 +456,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "keys.list",
         "keys.get_public",
         "keys.generate",
+        "keys.delete",
         "keys.verify_passphrase",
         "identity.agent.keys.get",
         "identity.agent.key.add",
@@ -706,6 +711,7 @@ class RequestDispatcher:
             "keys.list": self._handle_list_keys,
             "keys.get_public": self._handle_get_public_key,
             "keys.generate": self._handle_generate_key,
+            "keys.delete": self._handle_delete_key,
             "keys.verify_passphrase": self._handle_verify_key_passphrase,
             "identity.providers.get": self._handle_get_identity_providers,
             "identity.state.get": self._handle_get_identity_state,
@@ -2450,6 +2456,21 @@ class RequestDispatcher:
                 )
             ),
             command_key=("keys", "verify", typed_request.interaction_scope_id),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_delete_key(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = delete_key_request_from_wire(request.params)
+        service = self._required_key_service()
+        return DeferredResult(
+            operation=lambda: delete_key_result_to_wire(
+                service.delete_key(typed_request)
+            ),
+            command_key=("keys", typed_request.scope.value),
             on_rejected=lambda: None,
         )
 

@@ -1,6 +1,7 @@
 # Client methods
 
-API 0.25 removes plaintext passphrases from `GenerateKeyRequest` and adds
+API 0.26 adds daemon-owned opaque-identity SSH key deletion. API 0.25
+removed plaintext passphrases from `GenerateKeyRequest` and added
 `verify_key_passphrase` / `keys.verify_passphrase`. Both encrypted generation
 and verification collect protected input through interaction secret frames;
 ordinary request JSON contains only non-secret metadata.
@@ -56,6 +57,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `list_known_hosts` | Daemon only | `known_hosts.read` |
 | `remove_known_host_entries` | Daemon only | `known_hosts.write` |
 | `list_keys` | Daemon only | `keys.read` |
+| `delete_key` | Daemon only | `keys.write` |
 | `read_public_key` | Daemon only | `keys.read` |
 | `generate_key` | Daemon only | `keys.write` |
 | `list_sessions` | Daemon only | `sessions.read` |
@@ -447,6 +449,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: keys.generate capability=keys.write -->
 <!-- api-daemon-method: keys.get_public capability=keys.read -->
 <!-- api-daemon-method: keys.list capability=keys.read -->
+<!-- api-daemon-method: keys.delete capability=keys.write -->
 <!-- api-daemon-method: keys.verify_passphrase capability=keys.write -->
 <!-- api-daemon-method: sessions.attach capability=sessions.write -->
 <!-- api-daemon-method: sessions.close capability=sessions.write -->
@@ -1259,6 +1262,17 @@ Requests bounded closure of one runtime forward.
 - **Status / introduced:** Daemon only / Protocol v1, API 0.15.
 - **Capability / purpose:** `keys.read`; list key metadata from the
   daemon-owned selected key store scope. Daemon RPC `keys.list`.
+
+<!-- api-method: delete_key -->
+## `delete_key`
+
+- **Status / introduced:** Daemon only / Protocol v1, API 0.26.
+- **Capability / purpose:** `keys.write`; delete a daemon-known key pair by
+  opaque `KeyId` and semantic `KeyStoreScope`. The request accepts no caller-
+  supplied filesystem path. Daemon RPC `keys.delete`.
+- **Result:** `DeleteKeyResult` confirms the deleted opaque key ID.
+- **Errors:** `key_not_found`, `key_deletion_failed`, or transport/protocol
+  errors.
 
 <!-- api-method: read_public_key -->
 ## `read_public_key`

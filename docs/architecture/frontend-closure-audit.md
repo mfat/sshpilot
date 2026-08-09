@@ -69,7 +69,7 @@ update both this audit and `tests/architecture/test_frontend_closure.py`.
 | Plugin settings, operational state | Docker, EasyEnv, and Mock VPS plugin actions | `_SettingStore.get`, `_SettingStore.set` | No typed daemon settings owner for plugin operational state | built-in plugin tests only; no headless daemon proof | migration required | Active examples include Docker `runtime:<nickname>`, `runtime_mode:<nickname>`, `sudo:<nickname>`, and `controlmaster`, EasyEnv `account_uuid`/`base_url`, and Mock VPS `region`. The exact ownership blocker is `_SettingStore.set` (with `_SettingStore.get` required to read the same state); it is not frontend-only merely because it is namespaced under `plugins.*`. |
 | Identity listing and agent availability | plugin identity-aware actions and protocol spawn context | `_IdentityView.list`, `_IdentityView.is_agent_available` | No daemon identity API route; process-wide `IdentityManager` and system-agent provider | `tests/daemon/test_identity_service.py`, `tests/test_agent_preload.py` cover daemon identity behavior, not this facade route | migration required | The public `ctx.identities` surface is usable and therefore is not dead compatibility. Its provider can execute local `ssh-add -l`; both exact facade identities remain blockers until routed through the daemon identity API. |
 | Key generate/list | plugin key panels | `PluginContext.generate_key`, `PluginContext.list_keys` | daemon-backed `KeyManager`/`KeyController` | `tests/test_key_manager_daemon.py`, `tests/daemon/test_key_dispatch.py` | API/daemon owned | Existing KeyManager calls use the daemon-backed key service; GTK does not invoke `ssh-keygen` for these operations. |
-| Key deletion | plugin key panels | `PluginContext.delete_key`, `PluginHost.delete_key` | None; `PluginHost.delete_key` directly removes the private and `.pub` files | key listing/generation tests; no daemon delete-key API proof | migration required | The path guard limits deletion to the key directory but does not transfer ownership. This is an active blocker, not a safe frontend exception. |
+| Key deletion | plugin key panels | `PluginContext.delete_key` → `delete_key` / `keys.delete` (`KEYS_WRITE`) | `DaemonKeyService` → GTK-free `KeyService.delete_key` | `tests/daemon/test_key_service.py`, `tests/daemon/test_key_dispatch.py`, `tests/daemon/test_socket_key_api.py`, plugin compatibility tests | API/daemon owned | The legacy private-path signature is compatibility-only: the host matches it against daemon-listed metadata and deletes by opaque `KeyId`; no frontend file operation remains. |
 | Key deployment compatibility method | legacy plugin callers | `PluginContext.copy_key_to_host` | None in current production graph; `deploy_key` is the authoritative API | daemon key-deployment tests; no production caller for this method | dead/unreachable code | This is the known direct `ssh-copy-id` compatibility path. It is not a replacement for the existing daemon deploy route and must not be reactivated. |
 | Session open and command terminal | plugin actions | `PluginContext.open_connection`, `PluginContext.open_command_terminal` | daemon session runtime and terminal launch provider | `tests/test_daemon_terminal_activation_ownership.py` | API/daemon owned | The opening operation is daemon-owned even though GTK creates/selects the terminal tab. |
 | Session list/read/input | plugin session observers and terminal actions | `PluginContext.list_sessions`, `PluginContext.read_terminal`, `PluginContext.send_terminal`; `PluginHost.list_sessions`, `PluginHost.read_terminal`, `PluginHost.send_terminal` | No typed client route; GTK terminal-session bookkeeping and widget methods | `tests/test_plugin_send_terminal.py` and plugin host tests cover the widget path only | migration required | These methods are supported and active. They read VTE/widget content or call `feed_child_data`; they are not legitimate presentation-only behavior when exposed as backend session APIs. |
@@ -101,7 +101,7 @@ identity; the prose matrix above remains the human-readable operation audit.
 `PluginContext.add_connection_group` | `API/daemon owned`
 `PluginContext.generate_key` | `API/daemon owned`
 `PluginContext.list_keys` | `API/daemon owned`
-`PluginContext.delete_key` | `migration required`
+`PluginContext.delete_key` | `API/daemon owned`
 `PluginContext.run_command` | `migration required`
 `PluginContext.run_local_command` | `legitimate frontend/platform-local`
 `PluginContext.run_command_stream` | `migration required`
@@ -147,7 +147,6 @@ Supporting implementation identities are synchronized separately because they
 are not part of the 53 public facade count:
 
 <!-- plugin-supporting-classification:start -->
-`PluginHost.delete_key` | `migration required`
 `PluginHost.list_sessions` | `migration required`
 `PluginHost.read_terminal` | `migration required`
 `PluginHost.send_terminal` | `migration required`
@@ -175,7 +174,7 @@ following are the individually audited identities at this base.
 |---|---|---|
 | M5 | `secret_storage.py: subprocess`, `secret_storage.py: SecretManager`, `bitwarden_setup.py: subprocess` | The first two are shared daemon/askpass compatibility; Bitwarden installation is a narrow platform installer. No active GTK vault owner remains. |
 | M7 | `agent_client.py: subprocess`; `askpass_utils.py: subprocess, ssh_binary`; `autocomplete.py: subprocess`; `file_manager/openssh_backend.py: subprocess`; `providers/system_agent.py: subprocess, ssh_binary`; `scp_utils.py: subprocess`; `sftp_utils.py: subprocess`; `ssh_config_utils.py: subprocess, ssh_binary`; `ssh_multiplex.py: subprocess, ssh_binary`; `terminal.py: subprocess` | These are respectively local helper, daemon askpass/identity compatibility, dead legacy routes, external OS presentation, or shared native-process compatibility. ControlMaster teardown was removed from GTK and moved behind `SshOverridesService`; the remaining helper identity is compatibility debt. |
-| M8 | `plugins/api.py: subprocess` | Function-level identities are now audited by the final guard: active `run_command`, `run_command_stream`/`_spawn_stream`, and both `acquire_multiplex` and `release_multiplex` remain closure blockers; `copy_key_to_host`, `get_effective_ssh_config`, and the legacy branch of `ensure_local_forward` are explicitly dead compatibility identities. The separate facade inventory also records settings, identity, key-delete, and widget-backed session blockers that do not contain subprocess calls. |
+| M8 | `plugins/api.py: subprocess` | Function-level identities are now audited by the final guard: active `run_command`, `run_command_stream`/`_spawn_stream`, and both `acquire_multiplex` and `release_multiplex` remain closure blockers; `copy_key_to_host`, `get_effective_ssh_config`, and the legacy branch of `ensure_local_forward` are explicitly dead compatibility identities. The separate facade inventory also records settings, identity, and widget-backed session blockers that do not contain subprocess calls; key deletion is now daemon-owned. |
 
 ### `DAEMON_DEBT` (16 identities)
 
@@ -194,7 +193,7 @@ prevents silently broadening the exception. `CORE_DEBT` is empty.
 
 ## Closure blockers and next semantic APIs
 
-Remaining migration blockers: **7 semantic capabilities** (**12 public facade
+Remaining migration blockers: **6 semantic capabilities** (**11 public facade
 identities**, plus the supporting `PluginHost`/stream implementation
 identities listed below).
 
@@ -217,9 +216,6 @@ identities listed below).
   daemon identity API. Exact identities: `_IdentityView.list` and
   `_IdentityView.is_agent_available`; the current system-agent provider can
   execute local `ssh-add -l`.
-* `P7-PLUGIN-KEY-DELETE`: move key-pair deletion from the GTK host into the
-  daemon key service. Exact identities: `PluginContext.delete_key` and
-  `PluginHost.delete_key`.
 * `P7-PLUGIN-SESSION-VIEW`: replace widget-backed plugin session inspection
   and input with typed session/terminal API operations. Exact identities:
   `PluginContext.list_sessions`, `PluginContext.read_terminal`,
@@ -235,21 +231,22 @@ contract is designed and tested headlessly.
 
 <!-- phase7-plugin-report:start -->
 plugin capabilities audited: 53
-api/daemon owned: 19
+api/daemon owned: 20
 legitimate frontend/platform-local: 20
 dead/unreachable compatibility: 2
-migration-required public identities: 12
-semantic migration capabilities: 7
+migration-required public identities: 11
+semantic migration capabilities: 6
 <!-- phase7-plugin-report:end -->
 
 These counts are derived from the classification registry by the closure
 guard.  They are identity-based and deliberately include the mixed settings
 facade as migration-required because it is used for operational state. No
-final plugin migration is implemented in this correction.
+other plugin migration is implemented in this correction; this slice closes
+only `P7-PLUGIN-KEY-DELETE`, and the other six semantic blockers remain.
 
 ## Version and evidence
 
-Public API implementation: `0.25`  
+Public API implementation: `0.26`
 Protocol: `1.0`  
 
 The API/daemon routes are proven by the headless daemon/core/API tests named in

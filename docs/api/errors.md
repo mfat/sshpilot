@@ -640,6 +640,12 @@ The daemon could not complete protected private-key passphrase verification.
 The message never contains the native command, key contents, prompt response,
 or passphrase.
 
+<!-- api-error: key_deletion_failed -->
+## `key_deletion_failed`
+
+The daemon could not safely delete the requested managed key pair. The
+message never contains filesystem paths, private-key contents, or passphrases.
+
 <!-- api-error: server_busy -->
 ## `server_busy`
 

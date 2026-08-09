@@ -109,6 +109,8 @@ from .interactions import (
     SecretDecision,
 )
 from .keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyId,
@@ -321,6 +323,8 @@ __all__ = [
     "DeleteConnectionResult",
     "DeleteGroupRequest",
     "DeleteKeyPassphraseRequest",
+    "DeleteKeyRequest",
+    "DeleteKeyResult",
     "DeletePluginSecretRequest",
     "DeployKeyRequest",
     "DetachSessionRequest",

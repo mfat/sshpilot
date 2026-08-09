@@ -58,6 +58,8 @@ from .models.interactions import (
     InteractionSummary,
 )
 from .models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyList,
@@ -486,6 +488,9 @@ class SshPilotClient(Protocol):
         ...
 
     def list_keys(self, request: ListKeysRequest) -> KeyList:
+        ...
+
+    def delete_key(self, request: DeleteKeyRequest) -> DeleteKeyResult:
         ...
 
     def read_public_key(self, request: ReadPublicKeyRequest) -> PublicKeyResult:

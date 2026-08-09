@@ -392,6 +392,29 @@ def test_generate_key_returns_path():
     assert host.generate_key("k1") == "/keys/k1"
 
 
+def test_delete_key_resolves_legacy_path_to_daemon_key_identity():
+    host, _, window = _host_with_window()
+    key = types.SimpleNamespace(
+        key_id="key-1",
+        private_path="/daemon/keys/id_ed25519",
+    )
+    deleted = []
+
+    class _DaemonKeyManager:
+        def discover_keys(self):
+            return [key]
+
+        def delete_key(self, value):
+            deleted.append(value)
+            return True
+
+    window.key_manager = _DaemonKeyManager()
+
+    assert host.delete_key("/daemon/keys/id_ed25519") is True
+    assert deleted == [key]
+    assert host.delete_key("/outside/unmanaged") is False
+
+
 def test_run_on_ui_thread_runs_inline_on_main_thread():
     host, _, _ = _host_with_window()
     result = []

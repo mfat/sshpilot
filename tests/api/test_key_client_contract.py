@@ -9,6 +9,7 @@ from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.daemon_client import DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES
 from sshpilot.api.method_capabilities import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
     GenerateKeyRequest,
     KeyId,
     ListKeysRequest,
@@ -22,6 +23,7 @@ from tests.helpers.fake_connection_repository import make_test_repository
 def test_protocol_declares_key_methods():
     for method_name in (
         "list_keys",
+        "delete_key",
         "read_public_key",
         "generate_key",
         "verify_key_passphrase",
@@ -33,6 +35,10 @@ def test_daemon_client_registers_key_methods():
     assert (
         DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["list_keys"]
         is Capability.KEYS_READ
+    )
+    assert (
+        DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["delete_key"]
+        is Capability.KEYS_WRITE
     )
     assert (
         DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES["read_public_key"]
@@ -49,6 +55,7 @@ def test_daemon_client_registers_key_methods():
     # Daemon-only methods leave the unsupported (schema-only) map.
     for name in (
         "list_keys",
+        "delete_key",
         "read_public_key",
         "generate_key",
         "verify_key_passphrase",
@@ -64,6 +71,7 @@ def _in_process_client():
     "method,args",
     [
         ("list_keys", (ListKeysRequest(),)),
+        ("delete_key", (DeleteKeyRequest(key_id=KeyId("key-1")),)),
         ("read_public_key", (ReadPublicKeyRequest(key_id=KeyId("key-1")),)),
         ("generate_key", (GenerateKeyRequest(name="id_ed25519"),)),
         (

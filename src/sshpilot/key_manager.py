@@ -108,6 +108,16 @@ class KeyManager(GObject.Object):
         result = self._controller.read_public_key(key.key_id)
         return result.text
 
+    def delete_key(self, key: SSHKey) -> bool:
+        """Delete a daemon-discovered key by its opaque daemon identity."""
+        if not key.key_id:
+            return False
+        try:
+            result = self._controller.delete_key(key.key_id)
+        except SshPilotError as exc:
+            raise self._map_error(exc) from exc
+        return result.deleted
+
     def generate_key(
         self,
         key_name: str,

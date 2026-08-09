@@ -8,6 +8,8 @@ from sshpilot.api.capabilities import Capability
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ClientId, RequestId
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyId,
@@ -76,6 +78,7 @@ class _FakeKeyService:
         self.list_calls: list[KeyStoreScope] = []
         self.read_calls: list[ReadPublicKeyRequest] = []
         self.generate_calls: list[GenerateKeyRequest] = []
+        self.delete_calls: list[DeleteKeyRequest] = []
         self.verify_calls: list[VerifyKeyPassphraseRequest] = []
         self.result = KeyList(keys=(_summary(),))
         self.public_result = PublicKeyResult(
@@ -94,6 +97,10 @@ class _FakeKeyService:
     def generate_key(self, request: GenerateKeyRequest, *, owner_client_id):
         self.generate_calls.append((request, owner_client_id))
         return GenerateKeyResult(key=_summary())
+
+    def delete_key(self, request: DeleteKeyRequest):
+        self.delete_calls.append(request)
+        return DeleteKeyResult(key_id=request.key_id)
 
     def verify_key_passphrase(self, request, *, owner_client_id):
         self.verify_calls.append((request, owner_client_id))
@@ -127,6 +134,12 @@ def test_generate_maps_to_write_capability():
     assert "keys.generate" in DRAIN_REJECTED_METHODS
 
 
+def test_delete_maps_to_write_capability():
+    assert DAEMON_METHOD_CAPABILITIES["keys.delete"] is Capability.KEYS_WRITE
+    assert "keys.delete" in DEFERRED_DAEMON_METHODS
+    assert "keys.delete" in DRAIN_REJECTED_METHODS
+
+
 def test_verify_passphrase_maps_to_write_capability():
     assert DAEMON_METHOD_CAPABILITIES["keys.verify_passphrase"] is Capability.KEYS_WRITE
     assert "keys.verify_passphrase" in DEFERRED_DAEMON_METHODS
@@ -138,6 +151,7 @@ def test_list_handler_is_registered():
     assert "keys.list" in dispatcher.HANDLERS
     assert "keys.get_public" in dispatcher.HANDLERS
     assert "keys.generate" in dispatcher.HANDLERS
+    assert "keys.delete" in dispatcher.HANDLERS
     assert "keys.verify_passphrase" in dispatcher.HANDLERS
 
 
@@ -166,6 +180,22 @@ def test_list_rejects_empty_params_with_malformed_scope():
     with pytest.raises(SshPilotError) as excinfo:
         dispatcher.dispatch(_envelope("keys.list", {}), _state())
     assert excinfo.value.code is ErrorCode.INVALID_REQUEST
+
+
+def test_delete_dispatches_typed_request():
+    dispatcher, service = _dispatcher()
+    result = dispatcher.dispatch(
+        _envelope(
+            "keys.delete",
+            {"key_id": "key-1", "scope": "default"},
+        ),
+        _state(),
+    )
+    assert isinstance(result, DeferredResult)
+    assert result.operation() == {"key_id": "key-1", "deleted": True}
+    assert service.delete_calls == [
+        DeleteKeyRequest(key_id=KeyId("key-1"), scope=KeyStoreScope.DEFAULT)
+    ]
 
 
 def test_list_rejects_extra_fields():

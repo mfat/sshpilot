@@ -13,6 +13,7 @@ import sshpilot.daemon.key_service as key_service_module
 from sshpilot.api.errors import ErrorCode as ApiErrorCode, SshPilotError
 from sshpilot.api.models import ClientId, SessionId
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
     GenerateKeyRequest,
     KeyId,
     KeyStoreScope,
@@ -148,6 +149,60 @@ def test_public_key_availability_flag(tmp_path):
     by_name = {k.name: k.public_key_available for k in key_list.keys}
     assert by_name["with_pub"] is True
     assert by_name["no_pub"] is False
+
+
+# ---------------------------------------------------------------------------
+# Deletion: opaque identity, managed store, and pair cleanup
+# ---------------------------------------------------------------------------
+def test_delete_key_removes_private_and_public_files(tmp_path):
+    service = _service(tmp_path)
+    private = _write_key(tmp_path / "default", "id_ed25519")
+    key_id = service.list_keys(ListKeysRequest()).keys[0].key_id
+
+    result = service.delete_key(DeleteKeyRequest(key_id=key_id))
+
+    assert result.deleted is True
+    assert not private.exists()
+    assert not private.with_name(private.name + ".pub").exists()
+    assert service.list_keys(ListKeysRequest()).keys == ()
+
+
+def test_delete_key_supports_private_only_keys(tmp_path):
+    service = _service(tmp_path)
+    private = _write_key(tmp_path / "default", "private_only", with_pub=False)
+    key_id = service.list_keys(ListKeysRequest()).keys[0].key_id
+
+    service.delete_key(DeleteKeyRequest(key_id=key_id))
+
+    assert not private.exists()
+
+
+def test_delete_key_unknown_id_does_not_touch_external_file(tmp_path):
+    service = _service(tmp_path)
+    outside = tmp_path / "outside"
+    outside.write_text("must remain")
+
+    with pytest.raises(SshPilotError) as excinfo:
+        service.delete_key(DeleteKeyRequest(key_id=KeyId("key-unknown")))
+
+    assert excinfo.value.code is ApiErrorCode.KEY_NOT_FOUND
+    assert outside.read_text() == "must remain"
+
+
+def test_delete_key_rejects_symlink_escape(tmp_path):
+    service = _service(tmp_path)
+    outside = _write_key(tmp_path / "outside", "external")
+    link = tmp_path / "default" / "linked"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+    key_id = service.list_keys(ListKeysRequest()).keys[0].key_id
+
+    with pytest.raises(SshPilotError) as excinfo:
+        service.delete_key(DeleteKeyRequest(key_id=key_id))
+
+    assert excinfo.value.code is ApiErrorCode.KEY_DELETION_FAILED
+    assert outside.exists()
+    assert link.is_symlink()
 
 
 # ---------------------------------------------------------------------------

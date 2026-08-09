@@ -92,6 +92,32 @@ class ListKeysRequest:
 
 
 @dataclass(frozen=True)
+class DeleteKeyRequest:
+    """Request deletion of one daemon-known key by opaque identity."""
+
+    key_id: KeyId
+    scope: KeyStoreScope = KeyStoreScope.DEFAULT
+
+    def __post_init__(self) -> None:
+        require_identifier(self.key_id, "key id")
+        if type(self.scope) is not KeyStoreScope:
+            raise TypeError("key store scope must be a KeyStoreScope")
+
+
+@dataclass(frozen=True)
+class DeleteKeyResult:
+    """Stable result for daemon-owned key-pair deletion."""
+
+    key_id: KeyId
+    deleted: bool = True
+
+    def __post_init__(self) -> None:
+        require_identifier(self.key_id, "key id")
+        if type(self.deleted) is not bool:
+            raise TypeError("deleted must be a boolean")
+
+
+@dataclass(frozen=True)
 class KeyList:
     """Ordered key metadata from the daemon (duplicate ids rejected)."""
 

@@ -22,6 +22,8 @@ from sshpilot.api.models import (
 )
 from sshpilot.api.models.connections import StoreKeyPassphraseRequest
 from sshpilot.api.models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyId,
@@ -71,6 +73,26 @@ class KeyController:
             result = self._client.read_public_key(
                 ReadPublicKeyRequest(key_id=key_id, scope=self._scope)
             )
+            return result
+        finally:
+            with self._lock:
+                self._busy = False
+
+    def delete_key(self, key_id: KeyId) -> DeleteKeyResult:
+        self._enter_operation()
+        try:
+            result = self._client.delete_key(
+                DeleteKeyRequest(key_id=key_id, scope=self._scope)
+            )
+            with self._lock:
+                if self._cached is not None:
+                    self._cached = KeyList(
+                        keys=tuple(
+                            key
+                            for key in self._cached.keys
+                            if key.key_id != result.key_id
+                        )
+                    )
             return result
         finally:
             with self._lock:

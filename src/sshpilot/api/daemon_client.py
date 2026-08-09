@@ -76,6 +76,8 @@ from .models.interactions import (
     InteractionSummary,
 )
 from .models.keys import (
+    DeleteKeyRequest,
+    DeleteKeyResult,
     GenerateKeyRequest,
     GenerateKeyResult,
     KeyList,
@@ -262,6 +264,10 @@ from .transport.terminal_frames import (
     TerminalFrameKind,
     encode_terminal_payload,
 )
+from .transport.codec import (
+    delete_key_request_to_wire,
+    delete_key_result_from_wire,
+)
 from .transport.secret_frames import (
     SecretFrame,
     SecretFrameKind,
@@ -357,6 +363,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_known_hosts": Capability.KNOWN_HOSTS_READ,
     "remove_known_host_entries": Capability.KNOWN_HOSTS_WRITE,
     "list_keys": Capability.KEYS_READ,
+    "delete_key": Capability.KEYS_WRITE,
     "read_public_key": Capability.KEYS_READ,
     "generate_key": Capability.KEYS_WRITE,
     "verify_key_passphrase": Capability.KEYS_WRITE,
@@ -1493,6 +1500,19 @@ class DaemonClient:
             return key_list_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid key list")
+
+    def delete_key(self, request: DeleteKeyRequest) -> DeleteKeyResult:
+        self._require_capability(Capability.KEYS_WRITE)
+        self._require_write_compatibility("delete SSH key")
+        result = self._request(
+            "keys.delete",
+            delete_key_request_to_wire(request),
+            mutation_description="SSH key deletion",
+        )
+        try:
+            return delete_key_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid key deletion result")
 
     def read_public_key(self, request: ReadPublicKeyRequest) -> PublicKeyResult:
         self._require_capability(Capability.KEYS_READ)

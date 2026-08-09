@@ -87,6 +87,12 @@ def _get_public(client, key_id, scope="default"):
     return client._request("keys.get_public", {"key_id": key_id, "scope": scope})
 
 
+def _delete_key(client, key_id, scope="default"):
+    return client._request(
+        "keys.delete", {"key_id": key_id, "scope": scope}
+    )
+
+
 def test_list_and_get_public_over_socket_return_exact_text(tmp_path, key_server):
     keys_dir = tmp_path / "keys"
     _write_key(
@@ -105,6 +111,21 @@ def test_list_and_get_public_over_socket_return_exact_text(tmp_path, key_server)
             "key_id": key_id,
             "text": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI exact-comment\n",
         }
+    finally:
+        client.close()
+
+
+def test_delete_key_over_socket_removes_pair(tmp_path, key_server):
+    keys_dir = tmp_path / "keys"
+    private = keys_dir / "id_ed25519"
+    _write_key(keys_dir, "id_ed25519", "ssh-ed25519 AAAA-delete\n")
+    server = key_server(keys_dir)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        key_id = _list_keys(client)["keys"][0]["key_id"]
+        assert _delete_key(client, key_id) == {"key_id": key_id, "deleted": True}
+        assert not private.exists()
+        assert not Path(f"{private}.pub").exists()
     finally:
         client.close()
 
