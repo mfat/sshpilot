@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.22",
+  "api_implementation_version": "0.23",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -141,6 +141,10 @@
     },
     "bitwarden_unlock": {
       "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "broadcast_terminal_input": {
+      "capability": "terminal.input",
       "status": "daemon-only"
     },
     "cancel_broadcast_command": {
@@ -651,6 +655,7 @@
     "bitwarden_status",
     "bitwarden_sync",
     "bitwarden_unlock",
+    "broadcast_terminal_input",
     "cancel_broadcast_command",
     "cancel_interaction",
     "cancel_operation",
@@ -912,6 +917,16 @@
     "bitwarden_unlock": {
       "parameters": [],
       "return": "BitwardenStatus"
+    },
+    "broadcast_terminal_input": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "BroadcastTerminalInputRequest"
+        }
+      ],
+      "return": "None"
     },
     "cancel_broadcast_command": {
       "parameters": [
@@ -2625,6 +2640,9 @@
     "system.handshake": {
       "capability": null
     },
+    "terminal.broadcast_input": {
+      "capability": "terminal.input"
+    },
     "terminal.claim_input": {
       "capability": "terminal.input"
     },
@@ -2813,6 +2831,7 @@
     "BroadcastCommandSummary",
     "BroadcastExecutionPolicy",
     "BroadcastFailurePolicy",
+    "BroadcastTerminalInputRequest",
     "CancelTransferRequest",
     "ChallengePrompt",
     "ClaimForwardRequest",
@@ -3046,6 +3065,10 @@
       "session_id",
       "client_id",
       "input_owner"
+    ],
+    "BroadcastTerminalInputRequest": [
+      "session_ids",
+      "command"
     ],
     "CancelTransferRequest": [
       "transfer_id"

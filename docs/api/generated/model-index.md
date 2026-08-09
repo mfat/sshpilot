@@ -184,6 +184,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: BroadcastTerminalInputRequest -->
+## `BroadcastTerminalInputRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Write one command to the existing interactive terminal sessions.
+
+**Related methods:** `broadcast_terminal_input`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `session_ids` | `tuple[SessionId, ...]` | Yes | — | No |
+| `command` | `str` | Yes | — | Yes |
+
+Synthetic representation:
+
+```json
+{
+  "command": "<sensitive value omitted>",
+  "session_ids": []
+}
+```
+
 <!-- api-model: CancelTransferRequest -->
 ## `CancelTransferRequest`
 

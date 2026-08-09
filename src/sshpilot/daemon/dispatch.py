@@ -62,6 +62,7 @@ from sshpilot.api.transport.codec import (
     capabilities_to_wire,
     claim_forward_request_from_wire,
     claim_terminal_input_request_from_wire,
+    broadcast_terminal_input_request_from_wire,
     close_forward_request_from_wire,
     close_session_request_from_wire,
     close_sftp_request_from_wire,
@@ -205,6 +206,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "sessions.close": Capability.SESSIONS_WRITE,
     "terminal.replay": Capability.TERMINAL_REPLAY,
     "terminal.resize": Capability.TERMINAL_RESIZE,
+    "terminal.broadcast_input": Capability.TERMINAL_INPUT,
     "terminal.claim_input": Capability.TERMINAL_INPUT,
     "terminal.release_input": Capability.TERMINAL_INPUT,
     "sftp.list_services": Capability.SFTP_READ,
@@ -656,6 +658,7 @@ class RequestDispatcher:
             "sessions.close": self._handle_close_session,
             "terminal.replay": self._handle_replay_terminal,
             "terminal.resize": self._handle_resize_terminal,
+            "terminal.broadcast_input": self._handle_broadcast_terminal_input,
             "terminal.claim_input": self._handle_claim_terminal_input,
             "terminal.release_input": self._handle_release_terminal_input,
             "sftp.list_services": self._handle_list_sftp_services,
@@ -1722,6 +1725,17 @@ class RequestDispatcher:
     ) -> None:
         self._session_runtime.resize_terminal(
             resize_terminal_request_from_wire(request.params),
+            client_id=self._required_client_id(state),
+        )
+        return None
+
+    def _handle_broadcast_terminal_input(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> None:
+        self._session_runtime.broadcast_terminal_input(
+            broadcast_terminal_input_request_from_wire(request.params),
             client_id=self._required_client_id(state),
         )
         return None

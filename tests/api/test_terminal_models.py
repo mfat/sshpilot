@@ -2,12 +2,17 @@ import pytest
 
 from sshpilot.api.models.common import AttachmentId, SessionId
 from sshpilot.api.models.terminal import (
+    BroadcastTerminalInputRequest,
     ReplayBounds,
     ReplayRequest,
     ReplayResult,
     TerminalDimensions,
     TerminalInput,
     TerminalOutput,
+)
+from sshpilot.api.transport.codec import (
+    broadcast_terminal_input_request_from_wire,
+    broadcast_terminal_input_request_to_wire,
 )
 
 
@@ -28,6 +33,25 @@ def test_terminal_input_and_output_preserve_arbitrary_bytes():
     assert output_record.data is raw
     assert raw.hex() not in repr(output_record)
     assert repr(raw) not in repr(output_record)
+
+
+def test_terminal_broadcast_request_round_trips_session_targets_and_command():
+    request = BroadcastTerminalInputRequest(
+        session_ids=(SessionId("session-a"), SessionId("session-b")),
+        command="cd /tmp",
+    )
+
+    assert broadcast_terminal_input_request_from_wire(
+        broadcast_terminal_input_request_to_wire(request)
+    ) == request
+
+
+def test_terminal_broadcast_request_rejects_duplicate_sessions():
+    with pytest.raises(ValueError, match="duplicate"):
+        BroadcastTerminalInputRequest(
+            session_ids=(SessionId("session-a"), SessionId("session-a")),
+            command="true",
+        )
 
 
 def test_replay_bytes_are_excluded_from_repr():

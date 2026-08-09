@@ -216,7 +216,9 @@ queue.
 ## `terminal.input`
 
 Daemon-only raw-byte input from the single daemon-authoritative input owner.
-Input is bounded, ordered, never decoded, and never logged.
+Input is bounded, ordered, never decoded, and never logged. The typed
+`terminal.broadcast_input` method uses the same capability to fan out one
+command to existing owned sessions; it never starts a new SSH process.
 
 <!-- api-capability: terminal.resize -->
 ## `terminal.resize`

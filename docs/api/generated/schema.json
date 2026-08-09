@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.22",
+  "api_implementation_version": "0.23",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -55,6 +55,10 @@
     },
     "bitwarden_unlock": {
       "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "broadcast_terminal_input": {
+      "capability": "terminal.input",
       "status": "daemon-only"
     },
     "cancel_broadcast_command": {
@@ -977,6 +981,9 @@
     "system.handshake": {
       "capability": null
     },
+    "terminal.broadcast_input": {
+      "capability": "terminal.input"
+    },
     "terminal.claim_input": {
       "capability": "terminal.input"
     },
@@ -1573,6 +1580,25 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "BroadcastTerminalInputRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[SessionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "command",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
         }
       ],
       "status": "Implemented"

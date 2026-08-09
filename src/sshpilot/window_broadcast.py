@@ -1,16 +1,15 @@
 """Broadcast banner behavior for MainWindow.
 
-Extracted verbatim from window.py as a mixin (matching the existing
-WindowActions pattern) to shrink the window.py god-object. MainWindow inherits
-this; every method keeps its original signature and `self.` state access, so
-this is a pure code move with no behavior change.
+Extracted from window.py as a mixin (matching the existing WindowActions
+pattern) to keep banner presentation separate from daemon session behavior.
+MainWindow inherits this; the banner submits typed input to existing daemon
+terminal sessions and does not own a backend operation.
 """
 
 import logging
 
 from gi.repository import Adw, GLib, Gdk
 from gettext import gettext as _
-from .api.models.operations import OperationState
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +19,7 @@ class WindowBroadcastMixin:
 
     def on_broadcast_send_clicked(self, button):
         """Handle broadcast banner send button click"""
-        if getattr(self, "_broadcast_submission_pending", False) or getattr(
-            self, "_active_broadcast_operation_id", None
-        ):
+        if getattr(self, "_broadcast_submission_pending", False):
             logger.info("Ignored overlapping broadcast submission")
             return
         command = self.broadcast_entry.get_text().strip()
@@ -32,7 +29,7 @@ class WindowBroadcastMixin:
             try:
                 submitted = self.terminal_manager.broadcast_command(
                     command,
-                    on_success=self._on_broadcast_started,
+                    on_success=self._on_broadcast_sent,
                     on_error=self._on_broadcast_failed,
                 )
             except Exception as error:
@@ -50,80 +47,19 @@ class WindowBroadcastMixin:
             self.broadcast_entry_dirty = False
             self._schedule_broadcast_hide_timeout()
 
-    def _on_broadcast_started(self, summary):
-        """Poll retained daemon truth until the operation becomes terminal."""
+    def _on_broadcast_sent(self, _result):
+        """Handle the immediate session-input mutation acknowledgement."""
         self._broadcast_submission_pending = False
-        self._active_broadcast_operation_id = summary.operation.operation_id
-        self.broadcast_send_button.set_sensitive(False)
-        logger.info("Broadcast command accepted for %d targets", len(summary.targets))
-        self._broadcast_poll_pending = False
-        self._broadcast_poll_source = GLib.timeout_add(250, self._poll_broadcast)
-
-    def _poll_broadcast(self):
-        operation_id = getattr(self, "_active_broadcast_operation_id", None)
-        if not operation_id or getattr(self, "_broadcast_poll_pending", False):
-            return bool(operation_id)
-        client = getattr(self, "client", None)
-        bridge = getattr(self, "client_bridge", None)
-        if client is None or bridge is None:
-            self._on_broadcast_failed(RuntimeError("Daemon broadcast unavailable"))
-            return False
-        self._broadcast_poll_pending = True
-        bridge.submit(
-            lambda: client.get_broadcast_command(operation_id),
-            on_success=self._on_broadcast_polled,
-            on_error=self._on_broadcast_failed,
-        )
-        return True
-
-    def _on_broadcast_polled(self, summary):
-        self._broadcast_poll_pending = False
-        operation = summary.operation
-        if operation.state not in (
-            OperationState.SUCCEEDED,
-            OperationState.FAILED,
-            OperationState.CANCELLED,
-        ):
-            return
-        self._active_broadcast_operation_id = None
         self.broadcast_send_button.set_sensitive(True)
-        succeeded = sum(target.state.value == "succeeded" for target in summary.targets)
-        failed = sum(target.state.value == "failed" for target in summary.targets)
-        cancelled = sum(target.state.value == "cancelled" for target in summary.targets)
-        message = _("Broadcast complete: {} succeeded, {} failed, {} cancelled").format(
-            succeeded, failed, cancelled
-        )
-        logger.info("%s", message)
-        overlay = getattr(self, "toast_overlay", None)
-        if overlay is not None:
-            toast = Adw.Toast.new(message)
-            toast.set_timeout(5)
-            overlay.add_toast(toast)
+        logger.info("Broadcast command sent to existing terminal sessions")
 
     def _on_broadcast_failed(self, error):
         self._broadcast_submission_pending = False
-        self._broadcast_poll_pending = False
-        self._active_broadcast_operation_id = None
         self.broadcast_send_button.set_sensitive(True)
-        logger.warning("Broadcast command request was not accepted: %s", error)
-
-    def _on_broadcast_cancelled(self, _summary):
-        self._broadcast_submission_pending = False
-        self._active_broadcast_operation_id = None
-        self._broadcast_poll_pending = False
-        self.broadcast_send_button.set_sensitive(True)
+        logger.warning("Terminal broadcast command was not accepted: %s", error)
 
     def on_broadcast_cancel_clicked(self, button):
         """Handle broadcast banner cancel button click"""
-        operation_id = getattr(self, "_active_broadcast_operation_id", None)
-        client = getattr(self, "client", None)
-        bridge = getattr(self, "client_bridge", None)
-        if operation_id and client is not None and bridge is not None:
-            bridge.submit(
-                lambda: client.cancel_broadcast_command(operation_id),
-                on_success=self._on_broadcast_cancelled,
-                on_error=self._on_broadcast_failed,
-            )
         self.hide_broadcast_banner()
 
     def on_broadcast_entry_activate(self, entry):

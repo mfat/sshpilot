@@ -1606,7 +1606,7 @@ class CommandBlocksPanel(Gtk.Box):
                 # Usage means the daemon accepted a runnable saved-target operation.
                 self.store.record_use(cmd_id)
 
-        terminal_manager.broadcast_command(
+        terminal_manager.run_command_on_connections(
             command,
             on_success=accepted,
             on_error=lambda _error: self._show_toast(

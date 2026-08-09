@@ -130,6 +130,7 @@ from ..models.sessions import (
     SessionSummary,
 )
 from ..models.terminal import (
+    BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
     ReleaseTerminalInputRequest,
     ReplayBounds,
@@ -2889,6 +2890,33 @@ def resize_terminal_request_from_wire(value: Any) -> ResizeTerminalRequest:
         session_id=_session_id(data["session_id"], "session id"),
         attachment_id=AttachmentId(_identifier(data["attachment_id"], "attachment id")),
         dimensions=terminal_dimensions_from_wire(data["dimensions"]),
+    )
+
+
+def broadcast_terminal_input_request_to_wire(
+    request: BroadcastTerminalInputRequest,
+) -> Dict[str, Any]:
+    if type(request) is not BroadcastTerminalInputRequest:
+        raise TypeError("BroadcastTerminalInputRequest is required")
+    return {
+        "session_ids": list(request.session_ids),
+        "command": request.command,
+    }
+
+
+def broadcast_terminal_input_request_from_wire(
+    value: Any,
+) -> BroadcastTerminalInputRequest:
+    data = _strict_fields(
+        value,
+        required={"session_ids", "command"},
+        context="terminal broadcast input request",
+    )
+    if type(data["session_ids"]) is not list:
+        raise ValueError("terminal broadcast session_ids must be an array")
+    return BroadcastTerminalInputRequest(
+        session_ids=tuple(_session_id(item, "session id") for item in data["session_ids"]),
+        command=data["command"],
     )
 
 

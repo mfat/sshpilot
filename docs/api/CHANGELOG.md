@@ -5,7 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
-- Bumped `API_IMPLEMENTATION_VERSION` to `0.22`; `PROTOCOL_VERSION` stays `1.0`.
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.23`; `PROTOCOL_VERSION` stays `1.0`.
+- Added `terminal.broadcast_input` and `BroadcastTerminalInputRequest` for
+  writing a command to the existing daemon-owned interactive sessions. The
+  daemon validates session/input ownership and appends the command newline;
+  this is separate from `broadcast.*`, which runs one-shot commands against
+  saved connection IDs.
 - Added typed daemon-owned broadcast execution (`broadcast.start`,
   `broadcast.get`, and `broadcast.cancel`) against saved connection IDs.
 

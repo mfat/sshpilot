@@ -18,7 +18,10 @@ Phase 9 extends session runtime to support multiple GTK attachments per session:
 - **Input ownership**: Exactly one attachment owns input and resize authority per session
 - **Ownership tracking**: Session records track which attachment currently owns input
 - **Claim/release API**: Attachments can explicitly claim or release input ownership
-- **Broadcast integration**: Only input-owning attachments receive broadcast commands
+- **Interactive broadcast integration**: `terminal.broadcast_input` targets
+  existing session IDs and writes through their input-owning PTYs. It is
+  distinct from `broadcast.*`, which runs one-shot commands against saved
+  connection IDs.
 
 ## Ownership
 

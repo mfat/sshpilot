@@ -2,13 +2,15 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
 from .common import AttachmentId, SessionId, require_identifier, utc_now
 
 
 MAX_TERMINAL_DIMENSION = 1_000
 MAX_REPLAY_BYTES = 16 * 1024 * 1024
+MAX_TERMINAL_BROADCAST_TARGETS = 256
+MAX_TERMINAL_BROADCAST_COMMAND_BYTES = 65_536
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,30 @@ class TerminalInput:
         require_identifier(self.attachment_id, "attachment id")
         if not isinstance(self.data, bytes):
             raise TypeError("terminal input must be bytes")
+
+
+@dataclass(frozen=True)
+class BroadcastTerminalInputRequest:
+    """Write one command to the existing interactive terminal sessions."""
+
+    session_ids: Tuple[SessionId, ...]
+    command: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.session_ids) is not tuple or not self.session_ids:
+            raise ValueError("terminal broadcast requires at least one session id")
+        if len(self.session_ids) > MAX_TERMINAL_BROADCAST_TARGETS:
+            raise ValueError("terminal broadcast target limit exceeded")
+        seen: set[str] = set()
+        for session_id in self.session_ids:
+            require_identifier(session_id, "session id")
+            if session_id in seen:
+                raise ValueError("duplicate terminal broadcast session id")
+            seen.add(session_id)
+        if type(self.command) is not str or not self.command.strip() or "\x00" in self.command:
+            raise ValueError("terminal broadcast command must be non-empty and contain no NUL")
+        if len(self.command.encode("utf-8")) > MAX_TERMINAL_BROADCAST_COMMAND_BYTES:
+            raise ValueError("terminal broadcast command size limit exceeded")
 
 
 @dataclass(frozen=True)

@@ -2,15 +2,15 @@
 
 from unittest.mock import Mock, patch
 
-from sshpilot.api.models.broadcast import BroadcastCommandRequest
+from sshpilot.api.models.terminal import BroadcastTerminalInputRequest
 from sshpilot.terminal_manager import TerminalManager
 
 
-def _terminal(name):
+def _terminal(name, session_id=None):
     terminal = Mock()
     terminal.connection.nickname = name
-    terminal.feed_child_data = Mock()
-    terminal._daemon_controller = Mock()
+    terminal.is_daemon_backed = True
+    terminal.daemon_tab_state = Mock(session_id=session_id or f"session-{name}")
     return terminal
 
 
@@ -28,19 +28,26 @@ def test_collects_unique_saved_connection_ids_in_display_order():
         assert manager.broadcast_connection_ids() == ("one", "two")
 
 
-def test_submits_one_typed_daemon_request_without_terminal_injection():
-    first, second = _terminal("one"), _terminal("two")
+def test_submits_one_typed_session_request_without_terminal_injection():
+    first, second = _terminal("one", "session-one"), _terminal("two", "session-two")
     window, manager, terminals = _manager([first, second])
     with terminals:
         manager.broadcast_command("uptime")
     operation = window.client_bridge.submit.call_args.args[0]
     operation()
-    request = window.client.start_broadcast_command.call_args.args[0]
-    assert isinstance(request, BroadcastCommandRequest)
-    assert request.connection_ids == ("one", "two")
+    request = window.client.broadcast_terminal_input.call_args.args[0]
+    assert isinstance(request, BroadcastTerminalInputRequest)
+    assert request.session_ids == ("session-one", "session-two")
     assert request.command == "uptime"
-    first.feed_child_data.assert_not_called()
-    second._daemon_controller.send_input.assert_not_called()
+    window.client.start_broadcast_command.assert_not_called()
+
+
+def test_session_targets_are_deduplicated():
+    window, manager, terminals = _manager(
+        [_terminal("one", "session-one"), _terminal("duplicate", "session-one")]
+    )
+    with terminals:
+        assert manager.broadcast_session_ids() == ("session-one",)
 
 
 def test_empty_target_set_does_not_submit():

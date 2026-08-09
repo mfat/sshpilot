@@ -1,6 +1,7 @@
 # Client methods
 
-API 0.22 adds `broadcast.start` (`broadcast.write`), `broadcast.get`
+API 0.23 adds `terminal.broadcast_input` (`terminal.input`) alongside the
+existing `broadcast.start` (`broadcast.write`), `broadcast.get`
 (`broadcast.read`), and `broadcast.cancel` (`broadcast.write`). The typed
 request contains saved targets, command, and execution policy—not argv,
 environment, or local-shell settings.
@@ -8,12 +9,15 @@ environment, or local-shell settings.
 <!-- api-method: start_broadcast_command -->
 <!-- api-method: get_broadcast_command -->
 <!-- api-method: cancel_broadcast_command -->
+<!-- api-method: broadcast_terminal_input -->
 <!-- api-method-contract: start_broadcast_command status=schema-only capability=broadcast.write -->
 <!-- api-method-contract: get_broadcast_command status=schema-only capability=broadcast.read -->
 <!-- api-method-contract: cancel_broadcast_command status=schema-only capability=broadcast.write -->
+<!-- api-method-contract: broadcast_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-daemon-method: broadcast.start capability=broadcast.write -->
 <!-- api-daemon-method: broadcast.get capability=broadcast.read -->
 <!-- api-daemon-method: broadcast.cancel capability=broadcast.write -->
+<!-- api-daemon-method: terminal.broadcast_input capability=terminal.input -->
 
 `SshPilotClient` is synchronous. Both clients implement connection CRUD.
 Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
@@ -51,6 +55,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `detach_session` | Daemon only | `sessions.write` |
 | `close_session` | Daemon only | `sessions.write` |
 | `send_terminal_input` | Daemon only | `terminal.input` |
+| `broadcast_terminal_input` | Daemon only | `terminal.input` |
 | `resize_terminal` | Daemon only | `terminal.resize` |
 | `replay_terminal` | Daemon only | `terminal.replay` |
 | `claim_terminal_input` | Daemon only | `terminal.input` |
@@ -321,6 +326,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sessions.close` | `sessions.write` | Implemented |
 | `terminal.replay` | `terminal.replay` | Implemented |
 | `terminal.resize` | `terminal.resize` | Implemented |
+| `terminal.broadcast_input` | `terminal.input` | Implemented |
 | `terminal.claim_input` | `terminal.input` | Implemented |
 | `terminal.release_input` | `terminal.input` | Implemented |
 | `sftp.list_services` | `sftp.read` | Implemented |
@@ -1397,6 +1403,34 @@ assert session.state is SessionState.STARTING
 
 ```python
 client.send_terminal_input(TerminalInput(session_id, attachment_id, b"ls\r"))
+```
+
+<!-- api-method: broadcast_terminal_input -->
+## `broadcast_terminal_input`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.23.
+- **Capability / purpose:** `terminal.input`; write one command to the
+  existing interactive sessions identified by `session_ids`.
+- **Parameters / return:** `BroadcastTerminalInputRequest`; returns `None`
+  after all eligible PTY writes are accepted.
+- **Errors:** `session_not_found`, `terminal_input_owner_required`,
+  `terminal_attachment_required`, session-state, PTY availability, input
+  backpressure, and transport errors. Validation happens in the daemon for
+  the calling client; there is no one-shot SSH launch or output polling.
+- **Ordering / threading:** The daemon validates every target against its
+  current input owner, then writes `command.encode("utf-8") + b"\n"` to each
+  existing session PTY in request order.
+- **Side effects / security:** This mutates the existing shell session, so
+  stateful commands such as `cd` and `export` persist there. The command is
+  not logged or returned as command output.
+
+```python
+client.broadcast_terminal_input(
+    BroadcastTerminalInputRequest(
+        session_ids=(session_id_a, session_id_b),
+        command="uptime",
+    )
+)
 ```
 
 <!-- api-method: claim_terminal_input -->

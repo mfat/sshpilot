@@ -1057,8 +1057,43 @@ class TerminalManager:
                 result.append(connection_id)
         return tuple(result)
 
+    def broadcast_session_ids(self):
+        """Return unique daemon session IDs from open SSH terminals."""
+        result = []
+        seen = set()
+        for terminal_widget in self.iter_ssh_terminals():
+            if not getattr(terminal_widget, "is_daemon_backed", False):
+                continue
+            tab_state = getattr(terminal_widget, "daemon_tab_state", None)
+            session_id = getattr(tab_state, "session_id", None)
+            if session_id is not None and session_id not in seen:
+                seen.add(session_id)
+                result.append(session_id)
+        return tuple(result)
+
     def broadcast_command(self, command: str, *, on_success=None, on_error=None):
-        """Submit one typed daemon broadcast; never inject terminal input."""
+        """Write a command to the existing daemon-backed terminal sessions."""
+        from .api.models.terminal import BroadcastTerminalInputRequest
+
+        session_ids = self.broadcast_session_ids()
+        if not command.strip() or not session_ids:
+            return None
+        client = getattr(self.window, "client", None)
+        bridge = getattr(self.window, "client_bridge", None)
+        if client is None or bridge is None:
+            if on_error:
+                on_error(RuntimeError("Daemon broadcast capability unavailable"))
+            return None
+        request = BroadcastTerminalInputRequest(session_ids, command)
+        return bridge.submit(
+            lambda: client.broadcast_terminal_input(request),
+            on_success=on_success or (lambda _result: None),
+            on_error=on_error
+            or (lambda error: logger.error("Broadcast request failed: %s", error)),
+        )
+
+    def run_command_on_connections(self, command: str, *, on_success=None, on_error=None):
+        """Submit one-shot command execution for saved connection targets."""
         from .api.models.broadcast import BroadcastCommandRequest
 
         connection_ids = self.broadcast_connection_ids()
@@ -1075,7 +1110,7 @@ class TerminalManager:
             lambda: client.start_broadcast_command(request),
             on_success=on_success or (lambda _summary: None),
             on_error=on_error
-            or (lambda error: logger.error("Broadcast request failed: %s", error)),
+            or (lambda error: logger.error("Broadcast command request failed: %s", error)),
         )
 
     def _show_daemon_error_dialog(self, window, message):

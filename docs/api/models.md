@@ -107,6 +107,7 @@ returns `input_owner=False`: logical attachment does not imply terminal input.
 | --- | --- | --- |
 | `TerminalDimensions` | PTY rows and columns | Daemon implemented |
 | `TerminalInput` | Attachment-scoped input bytes | Daemon implemented over binary frames |
+| `BroadcastTerminalInputRequest` | Command for existing interactive sessions | Daemon implemented over `terminal.broadcast_input` |
 | `TerminalOutput` | Sequenced session output bytes | Daemon implemented over binary frames |
 | `ResizeTerminalRequest` | Attachment-scoped dimension update | Daemon implemented |
 | `ReplayRequest` | Retained-byte query after a sequence | Daemon implemented |

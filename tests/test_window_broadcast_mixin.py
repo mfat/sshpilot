@@ -11,6 +11,7 @@ WindowActions in the MRO so its on_broadcast_command_action wins over the
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _window_module():
@@ -73,20 +74,20 @@ def test_send_ignores_overlapping_active_broadcast():
     from sshpilot.window_broadcast import WindowBroadcastMixin
 
     window = Mock()
-    window._active_broadcast_operation_id = "operation-active"
+    window._broadcast_submission_pending = True
     WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
     window.terminal_manager.broadcast_command.assert_not_called()
 
 
-def test_cancel_completion_reenables_send_action():
+def test_successful_session_broadcast_reenables_send_action():
     from unittest.mock import Mock
     from sshpilot.window_broadcast import WindowBroadcastMixin
 
     window = Mock()
-    window._active_broadcast_operation_id = "operation-active"
     window.broadcast_send_button = Mock()
-    WindowBroadcastMixin._on_broadcast_cancelled(window, Mock())
-    assert window._active_broadcast_operation_id is None
+    window._broadcast_submission_pending = True
+    WindowBroadcastMixin._on_broadcast_sent(window, None)
+    assert window._broadcast_submission_pending is False
     window.broadcast_send_button.set_sensitive.assert_called_once_with(True)
 
 
@@ -96,7 +97,6 @@ def test_second_send_is_ignored_while_first_submission_callback_is_pending():
 
     window = Mock()
     window._broadcast_submission_pending = False
-    window._active_broadcast_operation_id = None
     window.broadcast_entry.get_text.return_value = "uptime"
     window.terminal_manager.broadcast_command.return_value = Mock()
     WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())

@@ -100,6 +100,7 @@ IMPLEMENTED_MODELS = {
     "AttachSessionRequest",
     "AttachSessionResult",
     "AttachmentInfo",
+    "BroadcastTerminalInputRequest",
     "CloseSessionRequest",
     "DetachSessionRequest",
     "OpenSessionRequest",
@@ -163,6 +164,7 @@ SENSITIVE_FIELDS = {
     "SshConfigText": {"text"},
     "SuccessResponseEnvelope": {"result"},
     "TerminalInput": {"data"},
+    "BroadcastTerminalInputRequest": {"command"},
     "TerminalOutput": {"data"},
 }
 
@@ -191,6 +193,7 @@ RELATED_METHODS = {
     "DetachSessionRequest": ("detach_session",),
     "CloseSessionRequest": ("close_session",),
     "TerminalInput": ("send_terminal_input",),
+    "BroadcastTerminalInputRequest": ("broadcast_terminal_input",),
     "ResizeTerminalRequest": ("resize_terminal",),
     "ReplayRequest": ("replay_terminal",),
     "ReplayResult": ("replay_terminal",),

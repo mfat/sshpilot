@@ -223,6 +223,7 @@ from .secrets import (
     UpdateSecretConfigurationRequest,
 )
 from .terminal import (
+    BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
     ReleaseTerminalInputRequest,
     ReplayBounds,
@@ -279,6 +280,7 @@ __all__ = [
     "ChallengePrompt",
     "ClaimForwardRequest",
     "ClaimTerminalInputRequest",
+    "BroadcastTerminalInputRequest",
     "ClientId",
     "ClientInfo",
     "CloseForwardRequest",

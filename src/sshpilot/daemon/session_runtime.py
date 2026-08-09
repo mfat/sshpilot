@@ -43,6 +43,7 @@ from sshpilot.api.models.sessions import (
     SessionSummary,
 )
 from sshpilot.api.models.terminal import (
+    BroadcastTerminalInputRequest,
     ReplayBounds,
     ReplayRequest,
     ReplayResult,
@@ -912,41 +913,14 @@ class SessionRuntime:
         with self._lock:
             self._require_accepting_commands_locked()
             record = self._record_locked(request.session_id)
-            attachment_record = record.attachments.get(request.attachment_id)
-            if attachment_record is None or attachment_record.client_id != client_id:
-                raise SshPilotError(
-                    ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
-                    "A matching terminal attachment is required",
-                    session_id=request.session_id,
-                )
-            if record.input_owner_attachment_id != request.attachment_id:
-                raise SshPilotError(
-                    ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
-                    "The attachment does not own terminal input",
-                    session_id=request.session_id,
-                )
-            # A blocking auth gate has not assigned its handle yet, so early
-            # input cannot be delivered. The output-driven evidence gate does
-            # assign it while STARTING and permits native PTY authentication.
-            if record.state is SessionState.STARTING:
-                if not (
-                    self._connection_evidence_gate
-                    and record.process_handle is not None
-                ):
-                    return
-            elif record.state is not SessionState.RUNNING:
-                raise SshPilotError(
-                    ErrorCode.SESSION_INVALID_STATE,
-                    "The session is not accepting terminal input",
-                    session_id=request.session_id,
-                )
-            if record.process_handle is None:
-                raise SshPilotError(
-                    ErrorCode.SESSION_INVALID_STATE,
-                    "The session is not accepting terminal input",
-                    session_id=request.session_id,
-                )
-            handle = record.process_handle
+            handle = self._terminal_input_handle_locked(
+                record,
+                session_id=request.session_id,
+                attachment_id=request.attachment_id,
+                client_id=client_id,
+            )
+            if handle is None:
+                return
         write = getattr(handle, "write", None)
         if not callable(write):
             raise SshPilotError(
@@ -961,6 +935,103 @@ class SessionRuntime:
                 retryable=True,
                 session_id=request.session_id,
             )
+
+    def broadcast_terminal_input(
+        self,
+        request: BroadcastTerminalInputRequest,
+        *,
+        client_id: ClientId,
+    ) -> None:
+        """Write one command to the PTY of each existing owned session."""
+        if type(request) is not BroadcastTerminalInputRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "Terminal broadcast input is invalid",
+            )
+        data = (request.command + "\n").encode("utf-8")
+        with self._lock:
+            self._require_accepting_commands_locked()
+            handles = []
+            for session_id in request.session_ids:
+                record = self._record_locked(session_id)
+                if record.state not in {SessionState.STARTING, SessionState.RUNNING}:
+                    raise SshPilotError(
+                        ErrorCode.SESSION_INVALID_STATE,
+                        "The session is not accepting terminal input",
+                        session_id=session_id,
+                    )
+                attachment_id = record.input_owner_attachment_id
+                if attachment_id is None:
+                    raise SshPilotError(
+                        ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+                        "An input-owning terminal attachment is required",
+                        session_id=session_id,
+                    )
+                handle = self._terminal_input_handle_locked(
+                    record,
+                    session_id=session_id,
+                    attachment_id=attachment_id,
+                    client_id=client_id,
+                )
+                if handle is not None:
+                    handles.append((session_id, handle))
+
+        for session_id, handle in handles:
+            write = getattr(handle, "write", None)
+            if not callable(write):
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_UNAVAILABLE,
+                    "The session does not own a writable terminal",
+                    session_id=session_id,
+                )
+            if not write(data):
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                    "The terminal input queue is full",
+                    retryable=True,
+                    session_id=session_id,
+                )
+
+    def _terminal_input_handle_locked(
+        self,
+        record: _SessionRecord,
+        *,
+        session_id: SessionId,
+        attachment_id: AttachmentId,
+        client_id: ClientId,
+    ):
+        attachment_record = record.attachments.get(attachment_id)
+        if attachment_record is None or attachment_record.client_id != client_id:
+            raise SshPilotError(
+                ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                "A matching terminal attachment is required",
+                session_id=session_id,
+            )
+        if record.input_owner_attachment_id != attachment_id:
+            raise SshPilotError(
+                ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+                "The attachment does not own terminal input",
+                session_id=session_id,
+            )
+        # A blocking auth gate has not assigned its handle yet, so early
+        # input cannot be delivered. The output-driven evidence gate does
+        # assign it while STARTING and permits native PTY authentication.
+        if record.state is SessionState.STARTING:
+            if not (self._connection_evidence_gate and record.process_handle is not None):
+                return None
+        elif record.state is not SessionState.RUNNING:
+            raise SshPilotError(
+                ErrorCode.SESSION_INVALID_STATE,
+                "The session is not accepting terminal input",
+                session_id=session_id,
+            )
+        if record.process_handle is None:
+            raise SshPilotError(
+                ErrorCode.SESSION_INVALID_STATE,
+                "The session is not accepting terminal input",
+                session_id=session_id,
+            )
+        return record.process_handle
 
     def resize_terminal(
         self,

@@ -7,8 +7,17 @@ import pytest
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId
-from sshpilot.api.models.sessions import AttachSessionRequest, OpenSessionRequest, SessionExitInfo, SessionState
-from sshpilot.api.models.terminal import TerminalDimensions
+from sshpilot.api.models.sessions import (
+    AttachSessionRequest,
+    CloseSessionRequest,
+    OpenSessionRequest,
+    SessionExitInfo,
+    SessionState,
+)
+from sshpilot.api.models.terminal import (
+    BroadcastTerminalInputRequest,
+    TerminalDimensions,
+)
 from sshpilot.daemon.session_runtime import SessionRuntime
 from tests.helpers.fake_connection_repository import make_test_repository
 
@@ -20,7 +29,12 @@ class ControlledHandle:
         self._exit_info = None
         self.terminated = 0
         self.killed = 0
+        self.writes = []
         self._lock = threading.Lock()
+
+    def write(self, data):
+        self.writes.append(data)
+        return True
 
     def terminate(self):
         self.terminated += 1
@@ -144,21 +158,111 @@ def test_claim_input_success(session_with_attachment):
     summary = runtime.get_session(session_id)
     assert summary.input_owner is not None
     assert summary.input_owner.attachment_id == attachment_id
-    
+
     # Release input first
     runtime.release_input(session_id, attachment_id, client_id)
-    
+
     # Verify input is released
     summary = runtime.get_session(session_id)
     assert summary.input_owner is None
-    
+
     # Claim input back
     runtime.claim_input(session_id, attachment_id, client_id)
-    
+
     # Verify input is claimed
     summary = runtime.get_session(session_id)
     assert summary.input_owner is not None
     assert summary.input_owner.attachment_id == attachment_id
+
+
+def test_broadcast_terminal_input_writes_existing_pty(session_with_attachment):
+    session_id = session_with_attachment["session_id"]
+    client_id = session_with_attachment["client_id"]
+    runtime = session_with_attachment["runtime"]
+    handle = runtime._records[session_id].process_handle
+    process_count = len(runtime._runner.handles)
+
+    runtime.broadcast_terminal_input(
+        BroadcastTerminalInputRequest((session_id,), "pwd"),
+        client_id=client_id,
+    )
+
+    assert handle.writes == [b"pwd\n"]
+    assert len(runtime._runner.handles) == process_count
+
+
+def test_broadcast_terminal_input_fans_out_to_multiple_existing_ptys(session_with_attachment):
+    session_id = session_with_attachment["session_id"]
+    client_id = session_with_attachment["client_id"]
+    runtime = session_with_attachment["runtime"]
+
+    connection_id = runtime.get_session(session_id).connection_id
+    second = runtime.open_session(
+        OpenSessionRequest(
+            connection_id=connection_id,
+            dimensions=TerminalDimensions(rows=24, columns=80),
+        ),
+        client_id=client_id,
+    )
+    second_attachment = runtime.attach_session(
+        AttachSessionRequest(
+            session_id=second.id,
+            request_input=True,
+            want_terminal_output=True,
+            from_sequence=0,
+        ),
+        client_id=client_id,
+    )
+    first_handle = runtime._records[session_id].process_handle
+    second_handle = runtime._records[second.id].process_handle
+
+    runtime.broadcast_terminal_input(
+        BroadcastTerminalInputRequest((session_id, second.id), "echo ready"),
+        client_id=client_id,
+    )
+
+    assert first_handle.writes == [b"echo ready\n"]
+    assert second_handle.writes == [b"echo ready\n"]
+    assert second_attachment.attachment.input_owner
+
+
+def test_broadcast_terminal_input_rejects_stale_session(session_with_attachment, client_id):
+    runtime = session_with_attachment["runtime"]
+    with pytest.raises(SshPilotError) as exc_info:
+        runtime.broadcast_terminal_input(
+            BroadcastTerminalInputRequest(("session-stale",), "true"),
+            client_id=client_id,
+        )
+    assert exc_info.value.code == ErrorCode.SESSION_NOT_FOUND
+
+
+def test_broadcast_terminal_input_rejects_session_without_input_owner(session_with_attachment):
+    session_id = session_with_attachment["session_id"]
+    client_id = session_with_attachment["client_id"]
+    runtime = session_with_attachment["runtime"]
+    attachment_id = session_with_attachment["attachment_id"]
+    runtime.release_input(session_id, attachment_id, client_id)
+
+    with pytest.raises(SshPilotError) as exc_info:
+        runtime.broadcast_terminal_input(
+            BroadcastTerminalInputRequest((session_id,), "true"),
+            client_id=client_id,
+        )
+    assert exc_info.value.code == ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED
+
+
+def test_broadcast_terminal_input_rejects_closed_session(session_with_attachment):
+    session_id = session_with_attachment["session_id"]
+    client_id = session_with_attachment["client_id"]
+    runtime = session_with_attachment["runtime"]
+    runtime.close_session(CloseSessionRequest(session_id=session_id))
+
+    with pytest.raises(SshPilotError) as exc_info:
+        runtime.broadcast_terminal_input(
+            BroadcastTerminalInputRequest((session_id,), "true"),
+            client_id=client_id,
+        )
+    assert exc_info.value.code == ErrorCode.SESSION_INVALID_STATE
 
 
 def test_claim_input_already_owned(session_with_attachment):

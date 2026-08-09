@@ -90,6 +90,7 @@ from .models.sessions import (
     SessionSummary,
 )
 from .models.terminal import (
+    BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
     ReleaseTerminalInputRequest,
     ReplayRequest,
@@ -315,6 +316,9 @@ class SshPilotClient(Protocol):
         ...
 
     def send_terminal_input(self, request: TerminalInput) -> None:
+        ...
+
+    def broadcast_terminal_input(self, request: BroadcastTerminalInputRequest) -> None:
         ...
 
     def claim_terminal_input(self, request: ClaimTerminalInputRequest) -> None:

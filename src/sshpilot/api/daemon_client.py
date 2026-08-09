@@ -121,6 +121,7 @@ from .models.sessions import (
     SessionSummary,
 )
 from .models.terminal import (
+    BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
     ReleaseTerminalInputRequest,
     ReplayRequest,
@@ -151,6 +152,7 @@ from .transport.codec import (
     capabilities_from_wire,
     claim_forward_request_to_wire,
     claim_terminal_input_request_to_wire,
+    broadcast_terminal_input_request_to_wire,
     close_forward_request_to_wire,
     close_session_request_to_wire,
     close_sftp_request_to_wire,
@@ -269,6 +271,7 @@ receive_frame = receive_multiplexed_frame
 
 DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "attach_session": Capability.SESSIONS_WRITE,
+    "broadcast_terminal_input": Capability.TERMINAL_INPUT,
     "claim_terminal_input": Capability.TERMINAL_INPUT,
     "close_session": Capability.SESSIONS_WRITE,
     "detach_session": Capability.SESSIONS_WRITE,
@@ -1987,6 +1990,17 @@ class DaemonClient:
                     )
                 )
                 raise self._closed_error() from None
+
+    def broadcast_terminal_input(self, request: BroadcastTerminalInputRequest) -> None:
+        self._require_capability(Capability.TERMINAL_INPUT)
+        if type(request) is not BroadcastTerminalInputRequest:
+            raise TypeError("a BroadcastTerminalInputRequest is required")
+        result = self._request(
+            "terminal.broadcast_input",
+            broadcast_terminal_input_request_to_wire(request),
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid terminal broadcast result")
 
     def resize_terminal(self, request: ResizeTerminalRequest) -> None:
         self._require_capability(Capability.TERMINAL_RESIZE)
