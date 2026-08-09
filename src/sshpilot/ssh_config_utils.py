@@ -360,6 +360,24 @@ def _effective_config_lines(cfg: Dict[str, Union[str, List[str]]]) -> List[str]:
     return lines
 
 
+def _authored_directives(block_text: str) -> Set[str]:
+    """Directive names explicitly written in a Host block (lowercased).
+
+    ssh_config accepts both ``Keyword value`` and ``Keyword=value`` forms;
+    ``Host``/``Match`` stanza headers and comments are not directives.
+    """
+    names: Set[str] = set()
+    for raw_line in block_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        token = re.split(r'[\s=]', line, maxsplit=1)[0].lower()
+        if token in ('host', 'match'):
+            continue
+        names.add(token)
+    return names
+
+
 def diff_effective_config(
     host: str,
     config_file: Optional[str],
@@ -367,10 +385,14 @@ def diff_effective_config(
 ) -> Optional[Dict[str, object]]:
     """Compare what a host's OWN block resolves to vs. the full effective config.
 
-    Both sides go through ``ssh -G`` so ssh's own defaults and the system-wide
-    ``/etc/ssh/ssh_config`` appear on both sides and cancel out — the remaining
-    delta is exactly what global/wildcard blocks (e.g. ``Host *``) and includes
-    add or override for *host*.
+    Both sides go through ``ssh -G`` with an explicit ``-F``, so ssh's compiled-in
+    defaults appear on both sides and cancel out — the remaining delta is exactly
+    what global/wildcard blocks (e.g. ``Host *``) and includes add or override
+    for *host*. The system-wide ``/etc/ssh/ssh_config`` is excluded from BOTH
+    sides on purpose: an explicit ``-F`` makes ssh ignore it, and resolving the
+    own block with ``-F`` while the full side used plain ``ssh -G`` (which reads
+    it) leaked distro defaults such as ``GSSAPIAuthentication``,
+    ``HashKnownHosts`` and ``SendEnv`` into the diff as phantom "added" entries.
 
     - *config_file*: the real config ssh will use for this connection (the app's
       isolated ``ssh_config`` or ``None`` for the default ``~/.ssh/config``).
@@ -378,26 +400,47 @@ def diff_effective_config(
 
     Returns ``None`` when the comparison can't run (no ssh / timeout — never
     block on a best-effort check), otherwise a dict with ``has_diff`` (bool),
-    ``own`` / ``full`` (line lists) and ``diff`` (unified-diff lines).
+    ``changes`` (classified rows), and ``own`` / ``full`` line lists for
+    display. The displayed ``full`` side is always what a REAL ssh invocation
+    resolves — in default mode (config_file=None) the app launches ssh without
+    ``-F``, so plain ``ssh -G`` (including the system-wide config) is the
+    truthful display even though change detection excludes it.
     """
     if not host:
         return None
-    full = get_effective_ssh_config(host, config_file=config_file)
-    if not full:
-        return None  # couldn't resolve the real effective config — say nothing
 
     fd, tmp_path = tempfile.mkstemp(prefix='.sshpilot-own-', suffix='.conf')
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(own_block_text)
         own = get_effective_ssh_config(host, config_file=tmp_path)
+
+        if config_file is None:
+            # Default mode. Change detection compares against the per-user
+            # config via -F, so /etc/ssh/ssh_config stays out of BOTH sides
+            # (see docstring). When no user config exists nothing can override
+            # the block — resolve it against itself (a clean "no diff").
+            user_config = os.path.expanduser('~/.ssh/config')
+            compare_file = user_config if os.path.isfile(user_config) else tmp_path
+            full = get_effective_ssh_config(host, config_file=compare_file)
+            # The display side is resolved the way the app actually connects:
+            # plain ssh, no -F, system-wide config included.
+            display = get_effective_ssh_config(host)
+        else:
+            full = get_effective_ssh_config(host, config_file=config_file)
+            display = full
     finally:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+    if not full:
+        return None  # couldn't resolve the real effective config — say nothing
     if not own:
         return None
+    if not display:
+        display = full
 
     # Normalise leading ``~`` ONLY for path-valued directives, so a stored-expanded
     # path (identity_files keeps the absolute form) doesn't read as a difference
@@ -419,17 +462,34 @@ def diff_effective_config(
 
     full = _expand(full)
     own = _expand(own)
+    display = _expand(display)
 
     def _as_list(value) -> List[str]:
         if value is None:
             return []
         return list(value) if isinstance(value, list) else [value]
 
+    authored = _authored_directives(own_block_text)
     changes: List[Dict[str, object]] = []
     for key in sorted(set(full) | set(own)):
         own_vals = _as_list(own.get(key))
         full_vals = _as_list(full.get(key))
         if own_vals == full_vals:
+            continue
+        if key not in authored:
+            # The block never set this key, so the own side merely shows ssh's
+            # compiled default; a difference here is a global adding (or
+            # changing) a setting the connection never authored. Report it as
+            # a pure addition rather than a misleading "overridden: default →
+            # value".
+            changes.append({
+                'key': key,
+                'own': [],
+                'effective': full_vals,
+                'added': full_vals,
+                'removed': [],
+                'kind': 'added',
+            })
             continue
         # Multiset difference: preserves duplicate counts, and a pure reorder
         # (same values, different order) yields empty added/removed but is still
@@ -459,5 +519,5 @@ def diff_effective_config(
         'has_diff': bool(changes),
         'changes': changes,
         'own': _effective_config_lines(own),
-        'full': _effective_config_lines(full),
+        'full': _effective_config_lines(display),
     }
