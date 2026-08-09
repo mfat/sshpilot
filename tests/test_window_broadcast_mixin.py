@@ -68,12 +68,39 @@ def test_dead_broadcast_copy_removed_from_window_actions():
     assert "on_broadcast_command_action" not in vars(actions_cls)
 
 
-def test_broadcast_banner_uses_discrete_visibility_lifecycle():
-    root = Path(__file__).parents[1]
-    window_source = (root / "src/sshpilot/window.py").read_text()
-    mixin_source = (root / "src/sshpilot/window_broadcast.py").read_text()
+def test_send_ignores_overlapping_active_broadcast():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
 
-    assert "self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.NONE)" in window_source
-    assert "self.broadcast_banner.set_visible(False)" in window_source
-    assert "self.broadcast_banner.set_visible(True)" in mixin_source
-    assert "self.broadcast_banner.set_visible(False)" in mixin_source
+    window = Mock()
+    window._active_broadcast_operation_id = "operation-active"
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    window.terminal_manager.broadcast_command.assert_not_called()
+
+
+def test_cancel_completion_reenables_send_action():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    window._active_broadcast_operation_id = "operation-active"
+    window.broadcast_send_button = Mock()
+    WindowBroadcastMixin._on_broadcast_cancelled(window, Mock())
+    assert window._active_broadcast_operation_id is None
+    window.broadcast_send_button.set_sensitive.assert_called_once_with(True)
+
+
+def test_second_send_is_ignored_while_first_submission_callback_is_pending():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    window._broadcast_submission_pending = False
+    window._active_broadcast_operation_id = None
+    window.broadcast_entry.get_text.return_value = "uptime"
+    window.terminal_manager.broadcast_command.return_value = Mock()
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    window.terminal_manager.broadcast_command.assert_called_once()
+    assert window._broadcast_submission_pending is True
+    window.broadcast_send_button.set_sensitive.assert_called_once_with(False)

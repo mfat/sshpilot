@@ -1064,3 +1064,34 @@ def test_prepare_launch_does_not_invoke_keyscan(
         or item.startswith("GlobalKnownHostsFile=")
         for item in argv
     )
+
+
+def test_two_broadcast_targets_receive_independent_operation_askpass_contexts(broker):
+    scope = SessionId("operation-broadcast")
+    argv_a, env_a = broker.prepare_operation_launch(
+        ("ssh", "host-a", "sensitive command"),
+        {},
+        scope_id=scope,
+        connection_id=ConnectionId("host-a"),
+        hostname="host-a",
+    )
+    argv_b, env_b = broker.prepare_operation_launch(
+        ("ssh", "host-b", "sensitive command"),
+        {},
+        scope_id=scope,
+        connection_id=ConnectionId("host-b"),
+        hostname="host-b",
+    )
+    assert argv_a[-1] == argv_b[-1] == "sensitive command"
+    assert env_a["SSHPILOT_DAEMON_ASKPASS_TOKEN"] != env_b[
+        "SSHPILOT_DAEMON_ASKPASS_TOKEN"
+    ]
+    contexts = tuple(broker._askpass_contexts.values())
+    assert {context.connection_id for context in contexts} == {
+        ConnectionId("host-a"),
+        ConnectionId("host-b"),
+    }
+    assert all(context.session_id == scope for context in contexts)
+    assert all(context.hostname != "sensitive command" for context in contexts)
+    broker.cancel_session(scope)
+    assert not broker._askpass_contexts

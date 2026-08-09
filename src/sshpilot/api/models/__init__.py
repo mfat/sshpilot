@@ -186,6 +186,14 @@ from .operations import (
     is_terminal_operation_state,
     is_valid_operation_transition,
 )
+from .broadcast import (
+    BroadcastCommandRequest,
+    BroadcastCommandSummary,
+    BroadcastExecutionPolicy,
+    BroadcastFailurePolicy,
+    HostCommandResult,
+    HostCommandState,
+)
 from .sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -263,6 +271,10 @@ __all__ = [
     "AuthorizedKeyLineKind",
     "AuthorizedKeyList",
     "BitwardenStatus",
+    "BroadcastCommandRequest",
+    "BroadcastCommandSummary",
+    "BroadcastExecutionPolicy",
+    "BroadcastFailurePolicy",
     "CancelTransferRequest",
     "ChallengePrompt",
     "ClaimForwardRequest",
@@ -319,6 +331,8 @@ __all__ = [
     "GroupId",
     "GroupReference",
     "GroupSummary",
+    "HostCommandResult",
+    "HostCommandState",
     "HostKeyDecision",
     "HostKeyPrompt",
     "HostKeyStatus",

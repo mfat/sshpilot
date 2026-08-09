@@ -589,7 +589,7 @@ class DaemonClient:
     def _require_write_compatibility(self, operation: str) -> None:
         """Reject write operations if the daemon is running an incompatible API."""
         from .version import API_IMPLEMENTATION_VERSION
-        
+
         incompatible = False
         caps = self._capabilities
         if caps is not None and caps.api_implementation_version != API_IMPLEMENTATION_VERSION:
@@ -599,9 +599,10 @@ class DaemonClient:
             and self._daemon_api_implementation_version != API_IMPLEMENTATION_VERSION
         ):
             incompatible = True
-            
+
         if incompatible:
             from .errors import DaemonRestartRequiredError
+
             raise DaemonRestartRequiredError(
                 f"Cannot {operation} because the background daemon is running an "
                 "older or incompatible version. Please restart the application."
@@ -610,15 +611,10 @@ class DaemonClient:
     def threads_alive(self) -> dict:
         """Return reader/event/terminal thread liveness for watchdog assertions."""
         return {
-            "reader": bool(
-                self._reader_thread is not None and self._reader_thread.is_alive()
-            ),
-            "event": bool(
-                self._event_thread is not None and self._event_thread.is_alive()
-            ),
+            "reader": bool(self._reader_thread is not None and self._reader_thread.is_alive()),
+            "event": bool(self._event_thread is not None and self._event_thread.is_alive()),
             "terminal": bool(
-                self._terminal_thread is not None
-                and self._terminal_thread.is_alive()
+                self._terminal_thread is not None and self._terminal_thread.is_alive()
             ),
         }
 
@@ -655,9 +651,7 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
 
-    def get_connection_editor(
-        self, connection_id: ConnectionId
-    ) -> ConnectionEditorDetails:
+    def get_connection_editor(self, connection_id: ConnectionId) -> ConnectionEditorDetails:
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
         result = self._request(
             "connections.get_editor",
@@ -666,9 +660,7 @@ class DaemonClient:
         try:
             return connection_editor_details_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned invalid connection editor details"
-            )
+            self._fail_protocol("The daemon returned invalid connection editor details")
 
     def get_ssh_config_text(self) -> SshConfigText:
         """Load the daemon-selected active SSH config text for the raw editor."""
@@ -678,20 +670,14 @@ class DaemonClient:
         try:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned invalid SSH config text"
-            )
+            self._fail_protocol("The daemon returned invalid SSH config text")
 
-    def save_ssh_config_text(
-        self, request: SaveSshConfigTextRequest
-    ) -> SshConfigText:
+    def save_ssh_config_text(self, request: SaveSshConfigTextRequest) -> SshConfigText:
         """Save raw SSH config text through the daemon's hardened write path."""
 
         self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
         if type(request) is not SaveSshConfigTextRequest:
-            raise TypeError(
-                "request must be a SaveSshConfigTextRequest instance"
-            )
+            raise TypeError("request must be a SaveSshConfigTextRequest instance")
         result = self._request(
             "connections.save_ssh_config_text",
             {
@@ -702,9 +688,7 @@ class DaemonClient:
         try:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned invalid SSH config text"
-            )
+            self._fail_protocol("The daemon returned invalid SSH config text")
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:
         self._require_write_compatibility("create connection")
@@ -718,6 +702,7 @@ class DaemonClient:
         )
         try:
             from .transport.codec import connection_mutation_result_from_wire
+
             return connection_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
@@ -741,13 +726,12 @@ class DaemonClient:
         )
         try:
             from .transport.codec import connection_mutation_result_from_wire
+
             return connection_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
 
-    def duplicate_connection(
-        self, connection_id: ConnectionId
-    ) -> ConnectionMutationResult:
+    def duplicate_connection(self, connection_id: ConnectionId) -> ConnectionMutationResult:
         self._require_write_compatibility("duplicate connection")
         self._require_capability(Capability.CONNECTIONS_WRITE)
         result = self._request(
@@ -757,6 +741,7 @@ class DaemonClient:
         )
         try:
             from .transport.codec import connection_mutation_result_from_wire
+
             return connection_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
@@ -838,9 +823,7 @@ class DaemonClient:
             delete_key_passphrase_request_to_wire(request),
         )
         if type(result) is not bool:
-            self._fail_protocol(
-                "The daemon returned an invalid passphrase delete result"
-            )
+            self._fail_protocol("The daemon returned an invalid passphrase delete result")
         return result
 
     def has_key_passphrase(self, key_path: str) -> bool:
@@ -864,12 +847,11 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid passphrase reveal")
         return result
 
-    def update_connection_metadata(
-        self, connection_id: ConnectionId, meta: Dict[str, Any]
-    ) -> bool:
+    def update_connection_metadata(self, connection_id: ConnectionId, meta: Dict[str, Any]) -> bool:
         self._require_capability(Capability.CONNECTIONS_METADATA_WRITE)
         self._require_write_compatibility("update connection metadata")
         from .models.connections import UpdateConnectionMetadataRequest
+
         request = UpdateConnectionMetadataRequest(connection_id=connection_id, meta=meta)
         result = self._request(
             "connections.update_metadata",
@@ -916,9 +898,7 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid group change result")
         return result
 
-    def remove_connection_from_group(
-        self, request: RemoveConnectionFromGroupRequest
-    ) -> bool:
+    def remove_connection_from_group(self, request: RemoveConnectionFromGroupRequest) -> bool:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
         self._require_write_compatibility("group change")
         result = self._request(
@@ -978,15 +958,12 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid tag add result")
         return result
 
-    def assign_connection_to_group(
-        self, connection_id: ConnectionId, group_id: str
-    ) -> bool:
+    def assign_connection_to_group(self, connection_id: ConnectionId, group_id: str) -> bool:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
         self._require_write_compatibility("assign connection to group")
         from .models.connections import AssignConnectionToGroupRequest
-        request = AssignConnectionToGroupRequest(
-            connection_id=connection_id, group_id=group_id
-        )
+
+        request = AssignConnectionToGroupRequest(connection_id=connection_id, group_id=group_id)
         result = self._request(
             "connections.assign_to_group",
             assign_connection_to_group_request_to_wire(request),
@@ -996,12 +973,11 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid group assignment result")
         return result
 
-    def create_group(
-        self, name: str, parent_id: str = "", color: str = ""
-    ) -> Optional[str]:
+    def create_group(self, name: str, parent_id: str = "", color: str = "") -> Optional[str]:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
         self._require_write_compatibility("create group")
         from .models.connections import CreateGroupRequest
+
         request = CreateGroupRequest(name=name, parent_id=parent_id, color=color)
         result = self._request(
             "connections.create_group",
@@ -1015,6 +991,7 @@ class DaemonClient:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
         self._require_write_compatibility("delete group")
         from .models.connections import DeleteGroupRequest
+
         request = DeleteGroupRequest(group_id=group_id)
         result = self._request(
             "connections.delete_group",
@@ -1028,6 +1005,7 @@ class DaemonClient:
         self._require_capability(Capability.CONNECTIONS_GROUPS)
         self._require_write_compatibility("rename group")
         from .models.connections import RenameGroupRequest
+
         request = RenameGroupRequest(group_id=group_id, new_name=new_name)
         result = self._request(
             "connections.rename_group",
@@ -1046,6 +1024,7 @@ class DaemonClient:
         )
         try:
             from .transport.codec import connection_mutation_result_from_wire
+
             return connection_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid split result")
@@ -1481,9 +1460,7 @@ class DaemonClient:
         try:
             return known_hosts_mutation_result_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned an invalid known-hosts mutation result"
-            )
+            self._fail_protocol("The daemon returned an invalid known-hosts mutation result")
 
     # -- SSH keys ------------------------------------------------------
     def list_keys(self, request: ListKeysRequest) -> KeyList:
@@ -1503,9 +1480,7 @@ class DaemonClient:
         try:
             return public_key_result_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned an invalid public key result"
-            )
+            self._fail_protocol("The daemon returned an invalid public key result")
 
     def generate_key(self, request: GenerateKeyRequest) -> GenerateKeyResult:
         self._require_capability(Capability.KEYS_WRITE)
@@ -1518,9 +1493,7 @@ class DaemonClient:
         try:
             return generate_key_result_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned an invalid key generation result"
-            )
+            self._fail_protocol("The daemon returned an invalid key generation result")
 
     # -- SSH overrides ----------------------------------------------------
 
@@ -1530,11 +1503,10 @@ class DaemonClient:
         result = self._request("ssh_overrides.get", {})
         try:
             from sshpilot.api.transport.codec import global_ssh_overrides_from_wire
+
             return global_ssh_overrides_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned invalid SSH overrides"
-            )
+            self._fail_protocol("The daemon returned invalid SSH overrides")
 
     def update_global_ssh_overrides(self, request):
         from sshpilot.api.models.settings import UpdateGlobalSshOverridesRequest
@@ -1546,6 +1518,7 @@ class DaemonClient:
             update_global_ssh_overrides_request_to_wire,
             global_ssh_overrides_from_wire,
         )
+
         result = self._request(
             "ssh_overrides.update",
             update_global_ssh_overrides_request_to_wire(request),
@@ -1553,9 +1526,7 @@ class DaemonClient:
         try:
             return global_ssh_overrides_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned invalid SSH overrides"
-            )
+            self._fail_protocol("The daemon returned invalid SSH overrides")
 
     def reset_global_ssh_overrides(self, expected_revision=None):
         self._require_capability(Capability.SSH_OVERRIDES_WRITE)
@@ -1565,11 +1536,10 @@ class DaemonClient:
         result = self._request("ssh_overrides.reset", params)
         try:
             from sshpilot.api.transport.codec import global_ssh_overrides_from_wire
+
             return global_ssh_overrides_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned invalid SSH overrides"
-            )
+            self._fail_protocol("The daemon returned invalid SSH overrides")
 
     # ------------------------------------------------------------------
     # Secret backend management (daemon-owned)
@@ -1581,6 +1551,7 @@ class DaemonClient:
         result = self._request("secrets.configuration.get", {})
         try:
             from sshpilot.api.transport.codec import secret_configuration_from_wire
+
             return secret_configuration_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret configuration")
@@ -1595,6 +1566,7 @@ class DaemonClient:
             update_secret_configuration_request_to_wire,
             secret_configuration_from_wire,
         )
+
         result = self._request(
             "secrets.configuration.update",
             update_secret_configuration_request_to_wire(request),
@@ -1610,6 +1582,7 @@ class DaemonClient:
         result = self._request("secrets.backends.get", {})
         try:
             from sshpilot.api.transport.codec import secret_backend_registry_from_wire
+
             return secret_backend_registry_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret backend registry")
@@ -1620,6 +1593,7 @@ class DaemonClient:
         result = self._request("secrets.state.get", {})
         try:
             from sshpilot.api.transport.codec import secret_backend_state_from_wire
+
             return secret_backend_state_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret backend state")
@@ -1632,6 +1606,7 @@ class DaemonClient:
         result = self._request("secrets.selection.update", params)
         try:
             from sshpilot.api.transport.codec import secret_backend_state_from_wire
+
             return secret_backend_state_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret backend state")
@@ -1641,6 +1616,7 @@ class DaemonClient:
         result = self._request("secrets.unlock", {})
         try:
             from sshpilot.api.transport.codec import secret_unlock_result_from_wire
+
             return secret_unlock_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret unlock result")
@@ -1650,17 +1626,17 @@ class DaemonClient:
         result = self._request("secrets.lock", {})
         try:
             from sshpilot.api.transport.codec import secret_backend_state_from_wire
+
             return secret_backend_state_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret backend state")
 
     def bitwarden_status(self, *, force_refresh: bool = False):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request(
-            "secrets.bitwarden.status", {"force_refresh": bool(force_refresh)}
-        )
+        result = self._request("secrets.bitwarden.status", {"force_refresh": bool(force_refresh)})
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1670,6 +1646,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.configure_server", {"url": url or ""})
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1682,6 +1659,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.login", params)
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1691,6 +1669,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.api_key_login", {"client_id": client_id or ""})
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1703,6 +1682,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.sso_login", params)
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1712,6 +1692,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.unlock", {})
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1721,6 +1702,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.sync", {})
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1730,6 +1712,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.lock", {})
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1739,6 +1722,7 @@ class DaemonClient:
         result = self._request("secrets.bitwarden.logout", {})
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
+
             return bitwarden_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid Bitwarden status")
@@ -1748,6 +1732,7 @@ class DaemonClient:
         result = self._request("secrets.rbw.status", {})
         try:
             from sshpilot.api.transport.codec import rbw_status_from_wire
+
             return rbw_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid rbw status")
@@ -1759,6 +1744,7 @@ class DaemonClient:
         )
         try:
             from sshpilot.api.transport.codec import rbw_status_from_wire
+
             return rbw_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid rbw status")
@@ -1768,6 +1754,7 @@ class DaemonClient:
         result = self._request("secrets.rbw.unlock", {})
         try:
             from sshpilot.api.transport.codec import rbw_status_from_wire
+
             return rbw_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid rbw status")
@@ -1777,6 +1764,7 @@ class DaemonClient:
         result = self._request("secrets.rbw.sync", {})
         try:
             from sshpilot.api.transport.codec import rbw_status_from_wire
+
             return rbw_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid rbw status")
@@ -1786,6 +1774,7 @@ class DaemonClient:
         result = self._request("secrets.rbw.lock", {})
         try:
             from sshpilot.api.transport.codec import rbw_status_from_wire
+
             return rbw_status_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid rbw status")
@@ -1799,6 +1788,7 @@ class DaemonClient:
         result = self._request("secrets.keepassxc.create_database", params)
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
+
             return secret_operation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid KeePass result")
@@ -1809,6 +1799,7 @@ class DaemonClient:
         result = self._request("secrets.keepassxc.unlock", {})
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
+
             return secret_operation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid KeePass result")
@@ -1818,6 +1809,7 @@ class DaemonClient:
         result = self._request("secrets.keepassxc.lock", {})
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
+
             return secret_operation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid KeePass result")
@@ -1828,6 +1820,7 @@ class DaemonClient:
         result = self._request("secrets.remember_master_password", {})
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
+
             return secret_operation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret operation result")
@@ -1838,12 +1831,14 @@ class DaemonClient:
         result = self._request("secrets.forget_master_password", {})
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
+
             return secret_operation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret operation result")
 
-    def export_secret_backup(self, *, destination: str, connection_ids=None,
-                             options=None, mirror_logins: bool = False):
+    def export_secret_backup(
+        self, *, destination: str, connection_ids=None, options=None, mirror_logins: bool = False
+    ):
         """Export a secret backup. Runs inside the daemon; returns counts/warnings only."""
         self._require_capability(Capability.SECRETS_TRANSFER)
         params = {
@@ -1855,6 +1850,7 @@ class DaemonClient:
         result = self._request("secrets.transfer.export", params)
         try:
             from sshpilot.api.transport.codec import secret_transfer_result_from_wire
+
             return secret_transfer_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret transfer result")
@@ -1867,6 +1863,7 @@ class DaemonClient:
         )
         try:
             from sshpilot.api.transport.codec import secret_transfer_result_from_wire
+
             return secret_transfer_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret transfer result")
@@ -1884,15 +1881,12 @@ class DaemonClient:
     def preview_bitwarden_backup(self, *, entry_id: str):
         """Inspect one Bitwarden backup note: included categories (metadata only)."""
         self._require_capability(Capability.SECRETS_TRANSFER)
-        result = self._request(
-            "secrets.transfer.preview_bitwarden", {"entry_id": entry_id}
-        )
+        result = self._request("secrets.transfer.preview_bitwarden", {"entry_id": entry_id})
         if not isinstance(result, dict):
             self._fail_protocol("The daemon returned an invalid Bitwarden preview")
         return result
 
-    def preview_ssh_backup(self, *, connection_id: str, remote_dir: str,
-                           entry_id: str):
+    def preview_ssh_backup(self, *, connection_id: str, remote_dir: str, entry_id: str):
         """Inspect one SSH-stored backup: included categories (metadata only)."""
         self._require_capability(Capability.SECRETS_TRANSFER)
         result = self._request(
@@ -1924,6 +1918,7 @@ class DaemonClient:
         )
         try:
             from sshpilot.api.transport.codec import secret_transfer_result_from_wire
+
             return secret_transfer_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret transfer result")
@@ -1939,8 +1934,9 @@ class DaemonClient:
             self._fail_protocol("The daemon returned an invalid SSH backup list")
         return result
 
-    def import_ssh_backup(self, *, connection_id: str, remote_dir: str,
-                          entry_id: str, options=None):
+    def import_ssh_backup(
+        self, *, connection_id: str, remote_dir: str, entry_id: str, options=None
+    ):
         """Import one SSH-stored backup. Runs inside the daemon."""
         self._require_capability(Capability.SECRETS_TRANSFER)
         result = self._request(
@@ -1954,6 +1950,7 @@ class DaemonClient:
         )
         try:
             from sshpilot.api.transport.codec import secret_transfer_result_from_wire
+
             return secret_transfer_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid secret transfer result")
@@ -2045,13 +2042,11 @@ class DaemonClient:
                 raise self._closed_error()
             token = self._next_terminal_subscription
             self._next_terminal_subscription += 1
-            self._terminal_subscribers.setdefault(session_id, {})[token] = (
-                _TerminalCallbacks(
-                    on_output,
-                    on_continuity_lost,
-                    on_eof,
-                    on_error,
-                )
+            self._terminal_subscribers.setdefault(session_id, {})[token] = _TerminalCallbacks(
+                on_output,
+                on_continuity_lost,
+                on_eof,
+                on_error,
             )
 
         def _cancel() -> None:
@@ -2175,6 +2170,7 @@ class DaemonClient:
             from sshpilot.api.transport.codec import (
                 identity_provider_registry_from_wire,
             )
+
             return identity_provider_registry_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid identity registry")
@@ -2185,6 +2181,7 @@ class DaemonClient:
         result = self._request("identity.state.get", {})
         try:
             from sshpilot.api.transport.codec import identity_state_from_wire
+
             return identity_state_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid identity state")
@@ -2199,6 +2196,7 @@ class DaemonClient:
             identity_state_from_wire,
             update_identity_selection_request_to_wire,
         )
+
         result = self._request(
             "identity.selection.update",
             update_identity_selection_request_to_wire(request),
@@ -2218,6 +2216,7 @@ class DaemonClient:
             identity_state_from_wire,
             update_identity_configuration_request_to_wire,
         )
+
         result = self._request(
             "identity.configuration.update",
             update_identity_configuration_request_to_wire(request),
@@ -2233,6 +2232,7 @@ class DaemonClient:
         result = self._request("identity.agent.keys.get", {})
         try:
             from sshpilot.api.transport.codec import agent_key_list_from_wire
+
             return agent_key_list_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid agent key list")
@@ -2247,6 +2247,7 @@ class DaemonClient:
             agent_key_list_from_wire,
             agent_key_mutation_request_to_wire,
         )
+
         result = self._request(
             "identity.agent.key.add",
             agent_key_mutation_request_to_wire(request),
@@ -2266,6 +2267,7 @@ class DaemonClient:
             agent_key_list_from_wire,
             agent_key_mutation_request_to_wire,
         )
+
         result = self._request(
             "identity.agent.key.remove",
             agent_key_mutation_request_to_wire(request),
@@ -2286,6 +2288,7 @@ class DaemonClient:
             deploy_key_request_to_wire,
             operation_summary_from_wire,
         )
+
         result = self._request(
             "identity.deploy_key",
             deploy_key_request_to_wire(request),
@@ -2306,6 +2309,7 @@ class DaemonClient:
             authorized_key_list_from_wire,
             list_authorized_keys_request_to_wire,
         )
+
         result = self._request(
             "authorized_keys.list",
             list_authorized_keys_request_to_wire(request),
@@ -2313,9 +2317,7 @@ class DaemonClient:
         try:
             return authorized_key_list_from_wire(result)
         except (TypeError, ValueError):
-            self._fail_protocol(
-                "The daemon returned an invalid authorized key list"
-            )
+            self._fail_protocol("The daemon returned an invalid authorized key list")
 
     def remove_authorized_key(self, request):
         from sshpilot.api.models.identity import RemoveAuthorizedKeyRequest
@@ -2327,6 +2329,7 @@ class DaemonClient:
             operation_summary_from_wire,
             remove_authorized_key_request_to_wire,
         )
+
         result = self._request(
             "authorized_keys.remove",
             remove_authorized_key_request_to_wire(request),
@@ -2345,6 +2348,7 @@ class DaemonClient:
             operation_id_request_to_wire,
             operation_summary_from_wire,
         )
+
         result = self._request(
             "operations.get",
             operation_id_request_to_wire(OperationId(str(operation_id))),
@@ -2354,6 +2358,49 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid operation")
 
+    def start_broadcast_command(self, request):
+        from sshpilot.api.models.broadcast import BroadcastCommandRequest
+        from sshpilot.api.transport.codec import (
+            broadcast_command_request_to_wire,
+            broadcast_command_summary_from_wire,
+        )
+
+        self._require_capability(Capability.BROADCAST_WRITE)
+        if type(request) is not BroadcastCommandRequest:
+            raise TypeError("a BroadcastCommandRequest is required")
+        result = self._request(
+            "broadcast.start",
+            broadcast_command_request_to_wire(request),
+            mutation_description="broadcast command start",
+        )
+        return broadcast_command_summary_from_wire(result)
+
+    def get_broadcast_command(self, operation_id):
+        from sshpilot.api.transport.codec import (
+            broadcast_command_summary_from_wire,
+            operation_id_request_to_wire,
+        )
+
+        self._require_capability(Capability.BROADCAST_READ)
+        return broadcast_command_summary_from_wire(
+            self._request("broadcast.get", operation_id_request_to_wire(operation_id))
+        )
+
+    def cancel_broadcast_command(self, operation_id):
+        from sshpilot.api.transport.codec import (
+            broadcast_command_summary_from_wire,
+            operation_id_request_to_wire,
+        )
+
+        self._require_capability(Capability.BROADCAST_WRITE)
+        return broadcast_command_summary_from_wire(
+            self._request(
+                "broadcast.cancel",
+                operation_id_request_to_wire(operation_id),
+                mutation_description="broadcast command cancellation",
+            )
+        )
+
     def cancel_operation(self, operation_id):
         from sshpilot.api.models.operations import OperationId
 
@@ -2362,6 +2409,7 @@ class DaemonClient:
             operation_id_request_to_wire,
             operation_summary_from_wire,
         )
+
         result = self._request(
             "operations.cancel",
             operation_id_request_to_wire(OperationId(str(operation_id))),
@@ -2394,9 +2442,7 @@ class DaemonClient:
         with self._state_lock:
             return self._transport_failed
 
-    def set_on_transport_lost(
-        self, callback: Optional[Callable[[SshPilotError], None]]
-    ) -> None:
+    def set_on_transport_lost(self, callback: Optional[Callable[[SshPilotError], None]]) -> None:
         """Register a best-effort callback for unexpected transport failure.
 
         The callback must not block and must not call back into this client
@@ -2478,9 +2524,7 @@ class DaemonClient:
                 }
             ),
             frontend_type=self._frontend_type,
-            supported_frame_types=frozenset(
-                {"binary-secret-v1", "binary-terminal-v1"}
-            ),
+            supported_frame_types=frozenset({"binary-secret-v1", "binary-terminal-v1"}),
         )
         result = self._request(
             "system.handshake",
@@ -2501,9 +2545,7 @@ class DaemonClient:
         self._daemon_version = handshake.daemon_version
         self._daemon_started_at = handshake.daemon_started_at
         self._development_revision = handshake.development_revision
-        self._daemon_api_implementation_version = (
-            handshake.api_implementation_version
-        )
+        self._daemon_api_implementation_version = handshake.api_implementation_version
         capabilities = self._request("system.get_capabilities", {})
         try:
             self._capabilities = capabilities_from_wire(capabilities)
@@ -2533,9 +2575,7 @@ class DaemonClient:
                 request_id = new_request_id()
             request = RequestEnvelope(
                 protocol_version=(
-                    protocol_version
-                    or self._selected_protocol_version
-                    or PROTOCOL_VERSION
+                    protocol_version or self._selected_protocol_version or PROTOCOL_VERSION
                 ),
                 request_id=request_id,
                 method=method,
@@ -2554,9 +2594,7 @@ class DaemonClient:
                     raise self._closed_error()
                 self._pending_requests[request_id] = pending
                 if secret_response:
-                    secret_pending = _PendingSecretResponse(
-                        completed=threading.Event()
-                    )
+                    secret_pending = _PendingSecretResponse(completed=threading.Event())
                     self._pending_secret_responses[request_id] = secret_pending
             try:
                 frame = encode_frame(encode_envelope(request))
@@ -2590,9 +2628,7 @@ class DaemonClient:
 
             if not pending.completed.wait(self._timeout):
                 with self._state_lock:
-                    response_arrived = (
-                        pending.response is not None or pending.error is not None
-                    )
+                    response_arrived = pending.response is not None or pending.error is not None
                 if not response_arrived:
                     elapsed = time.monotonic() - pending.started_at
                     diagnostics = self._transport_diagnostics(
@@ -2616,14 +2652,10 @@ class DaemonClient:
                     pending.completed.wait()
 
             if pending.error is not None:
-                if (
-                    mutation_may_have_been_sent
-                    and pending.error.code
-                    in {
-                        ErrorCode.TRANSPORT_CLOSED,
-                        ErrorCode.TRANSPORT_TIMEOUT,
-                    }
-                ):
+                if mutation_may_have_been_sent and pending.error.code in {
+                    ErrorCode.TRANSPORT_CLOSED,
+                    ErrorCode.TRANSPORT_TIMEOUT,
+                }:
                     if mutation_description is not None:
                         raise SshPilotError(
                             ErrorCode.MUTATION_AMBIGUOUS,
@@ -2765,9 +2797,7 @@ class DaemonClient:
             try:
                 envelope = decode_envelope(incoming)
             except (TypeError, ValueError):
-                self._fail_protocol_from_reader(
-                    "The daemon sent an invalid protocol envelope"
-                )
+                self._fail_protocol_from_reader("The daemon sent an invalid protocol envelope")
                 return
             if isinstance(envelope, EventEnvelope):
                 if not self._receive_event(envelope):
@@ -2777,15 +2807,11 @@ class DaemonClient:
                 envelope,
                 (SuccessResponseEnvelope, ErrorResponseEnvelope),
             ):
-                self._fail_protocol_from_reader(
-                    "The daemon sent an unexpected envelope type"
-                )
+                self._fail_protocol_from_reader("The daemon sent an unexpected envelope type")
                 return
             expected_version = self._selected_protocol_version or PROTOCOL_VERSION
             if envelope.protocol_version != expected_version:
-                self._fail_protocol_from_reader(
-                    "The daemon response uses an unexpected protocol"
-                )
+                self._fail_protocol_from_reader("The daemon response uses an unexpected protocol")
                 return
             with self._state_lock:
                 pending = self._pending_requests.pop(
@@ -2797,9 +2823,7 @@ class DaemonClient:
                     "Late or unknown daemon response for cleared request id %s",
                     envelope.request_id,
                 )
-                self._fail_protocol_from_reader(
-                    "The daemon response has an unknown request ID"
-                )
+                self._fail_protocol_from_reader("The daemon response has an unknown request ID")
                 return
             pending.response = envelope
             pending.completed.set()
@@ -2807,41 +2831,31 @@ class DaemonClient:
     def _receive_secret(self, frame: SecretFrame) -> bool:
         try:
             if frame.kind is not SecretFrameKind.REVEAL_RESPONSE:
-                self._fail_protocol_from_reader(
-                    "The daemon sent an unexpected secret frame"
-                )
+                self._fail_protocol_from_reader("The daemon sent an unexpected secret frame")
                 return False
             request_id = RequestId(str(frame.interaction_id))
             with self._state_lock:
                 pending = self._pending_secret_responses.get(request_id)
                 if pending is None or pending.frame is not None:
-                    self._fail_protocol_from_reader(
-                        "The daemon sent an unknown reveal response"
-                    )
+                    self._fail_protocol_from_reader("The daemon sent an unknown reveal response")
                     return False
                 pending.frame = frame
                 pending.completed.set()
             return True
         except Exception:
             frame.clear()
-            self._fail_protocol_from_reader(
-                "The daemon sent an invalid reveal response"
-            )
+            self._fail_protocol_from_reader("The daemon sent an invalid reveal response")
             return False
 
     def _receive_event(self, envelope: EventEnvelope) -> bool:
         expected_version = self._selected_protocol_version or PROTOCOL_VERSION
         if envelope.protocol_version != expected_version:
-            self._fail_protocol_from_reader(
-                "The daemon event uses an unexpected protocol"
-            )
+            self._fail_protocol_from_reader("The daemon event uses an unexpected protocol")
             return False
         try:
             event = public_event_from_envelope(envelope)
         except (TypeError, ValueError):
-            self._fail_protocol_from_reader(
-                "The daemon sent an invalid lifecycle event"
-            )
+            self._fail_protocol_from_reader("The daemon sent an invalid lifecycle event")
             return False
         with self._state_lock:
             previous = self._last_event_sequence
@@ -2851,16 +2865,12 @@ class DaemonClient:
                 invalid_sequence = False
                 self._last_event_sequence = event.sequence
         if invalid_sequence:
-            self._fail_protocol_from_reader(
-                "The daemon event sequence lost continuity"
-            )
+            self._fail_protocol_from_reader("The daemon event sequence lost continuity")
             return False
         try:
             self._event_queue.put_nowait(event)
         except queue.Full:
-            self._fail_protocol_from_reader(
-                "The daemon client event queue lost continuity"
-            )
+            self._fail_protocol_from_reader("The daemon client event queue lost continuity")
             return False
         return True
 
@@ -2871,17 +2881,13 @@ class DaemonClient:
                     frame.session_id,
                     frame.sequence,
                 )
-            self._queue_terminal_item(
-                ("continuity", frame.session_id, expected, frame.sequence)
-            )
+            self._queue_terminal_item(("continuity", frame.session_id, expected, frame.sequence))
             return True
         if frame.kind is TerminalFrameKind.INPUT_ERROR:
             try:
                 code = ErrorCode(frame.data.decode("ascii"))
             except (UnicodeDecodeError, ValueError):
-                self._fail_protocol_from_reader(
-                    "The daemon sent an invalid terminal input error"
-                )
+                self._fail_protocol_from_reader("The daemon sent an invalid terminal input error")
                 return False
             self._queue_terminal_item(
                 SshPilotError(
@@ -2893,9 +2899,7 @@ class DaemonClient:
             )
             return True
         if frame.kind is not TerminalFrameKind.OUTPUT:
-            self._fail_protocol_from_reader(
-                "The daemon sent an unexpected terminal frame"
-            )
+            self._fail_protocol_from_reader("The daemon sent an unexpected terminal frame")
             return False
         with self._state_lock:
             expected = self._terminal_sequences.get(
@@ -2905,9 +2909,7 @@ class DaemonClient:
         data = frame.data
         sequence = frame.sequence
         if sequence > expected:
-            self._queue_terminal_item(
-                ("continuity", frame.session_id, expected, sequence)
-            )
+            self._queue_terminal_item(("continuity", frame.session_id, expected, sequence))
             expected = sequence
         elif sequence < expected:
             overlap = expected - sequence
@@ -2934,9 +2936,7 @@ class DaemonClient:
                 )
             )
         if frame.flags & TerminalFrameFlags.TRUNCATED:
-            self._queue_terminal_item(
-                ("continuity", frame.session_id, frame.sequence, sequence)
-            )
+            self._queue_terminal_item(("continuity", frame.session_id, frame.sequence, sequence))
         return True
 
     def _queue_terminal_item(self, item: object) -> None:
@@ -3007,9 +3007,7 @@ class DaemonClient:
         available: int,
     ) -> None:
         with self._state_lock:
-            callbacks = tuple(
-                self._terminal_subscribers.get(session_id, {}).values()
-            )
+            callbacks = tuple(self._terminal_subscribers.get(session_id, {}).values())
         for callback in callbacks:
             if callback.on_continuity_lost is None:
                 continue
@@ -3100,10 +3098,7 @@ class DaemonClient:
             if error.code is ErrorCode.TRANSPORT_TIMEOUT:
                 timed_out: Optional[_PendingRequest] = None
                 for request_id, request in self._pending_requests.items():
-                    if (
-                        error.request_id is not None
-                        and request_id == error.request_id
-                    ):
+                    if error.request_id is not None and request_id == error.request_id:
                         timed_out = request
                         break
                 elapsed = None
@@ -3252,12 +3247,14 @@ class DaemonClient:
 
     @staticmethod
     def _unsupported(method_name: str) -> SshPilotError:
-        return unsupported_capability(
-            UNSUPPORTED_CLIENT_METHOD_CAPABILITIES[method_name]
-        )
+        return unsupported_capability(UNSUPPORTED_CLIENT_METHOD_CAPABILITIES[method_name])
 
     def store_plugin_secret(self, plugin_id: str, key: str, value: str) -> bool:
-        from .models.connections import store_plugin_secret_request_to_wire, StorePluginSecretRequest
+        from .models.connections import (
+            store_plugin_secret_request_to_wire,
+            StorePluginSecretRequest,
+        )
+
         self._require_write_compatibility("store plugin secret")
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         req = StorePluginSecretRequest(plugin_id=plugin_id, key=key, value=value)
@@ -3289,7 +3286,11 @@ class DaemonClient:
             secret.clear()
 
     def delete_plugin_secret(self, plugin_id: str, key: str) -> bool:
-        from .models.connections import delete_plugin_secret_request_to_wire, DeletePluginSecretRequest
+        from .models.connections import (
+            delete_plugin_secret_request_to_wire,
+            DeletePluginSecretRequest,
+        )
+
         self._require_write_compatibility("delete plugin secret")
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
         req = DeletePluginSecretRequest(plugin_id=plugin_id, key=key)

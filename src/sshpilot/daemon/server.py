@@ -700,6 +700,17 @@ class DaemonServer:
                 runtime._auth_failure_classifier = broker.classify_startup_failure
                 runtime.enable_connection_evidence_gate()
                 runtime.set_authenticated_callback(broker.mark_authenticated)
+            from .broadcast_service import BroadcastCommandService
+            launch_provider = getattr(self._connection_service, "_launch_provider", None)
+            self._broadcast_service = None
+            if self._operation_runtime is not None and callable(
+                getattr(launch_provider, "prepare_remote_command_launch", None)
+            ):
+                self._broadcast_service = BroadcastCommandService(
+                    self._operation_runtime,
+                    launch_provider,
+                    interaction_broker=self._interaction_broker,
+                )
             self._dispatcher = RequestDispatcher(
                 self._connection_service,
                 self._session_runtime,
@@ -713,6 +724,7 @@ class DaemonServer:
                 secrets_service=self._secrets_service,
                 identity_service=self._identity_service,
                 operation_runtime=self._operation_runtime,
+                broadcast_service=self._broadcast_service,
                 lifecycle_controller=self._lifecycle,
                 diagnostics_provider=self.build_diagnostics,
             )
