@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Union
 
 from sshpilot import __version__ as sshpilot_version
+from sshpilot.logging_support import log_context
 
 from .capabilities import Capabilities, Capability
 from .errors import ErrorCode, SshPilotError, unsupported_capability
@@ -65,6 +66,7 @@ from .models.daemon import (
     DaemonStatus,
     DaemonStopResult,
     RestartDaemonRequest,
+    SetDaemonLogLevelRequest,
     StopDaemonRequest,
 )
 from .models.interactions import (
@@ -204,6 +206,7 @@ from .transport.codec import (
     replay_result_from_wire,
     resize_terminal_request_to_wire,
     restart_daemon_request_to_wire,
+    set_daemon_log_level_request_to_wire,
     session_summary_from_wire,
     sftp_chmod_request_to_wire,
     sftp_copy_request_to_wire,
@@ -297,6 +300,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "open_session": Capability.SESSIONS_WRITE,
     "release_terminal_input": Capability.TERMINAL_INPUT,
     "restart_daemon": Capability.DAEMON_CONTROL,
+    "set_daemon_log_level": Capability.DAEMON_CONTROL,
     "send_terminal_input": Capability.TERMINAL_INPUT,
     "stop_daemon": Capability.DAEMON_CONTROL,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
@@ -1069,6 +1073,13 @@ class DaemonClient:
             return daemon_diagnostics_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid diagnostics")
+
+    def set_daemon_log_level(self, request: SetDaemonLogLevelRequest) -> None:
+        self._require_capability(Capability.DAEMON_CONTROL)
+        self._request(
+            "daemon.set_log_level",
+            set_daemon_log_level_request_to_wire(request),
+        )
 
     def stop_daemon(
         self,
@@ -2596,6 +2607,12 @@ class DaemonClient:
                 params=params,
                 client_id=self._client_id,
             )
+            with log_context(
+                request=request_id,
+                client=self._client_id,
+                method=method,
+            ):
+                logger.debug("daemon request started")
             pending = _PendingRequest(
                 completed=threading.Event(),
                 method=method,
@@ -2747,6 +2764,12 @@ class DaemonClient:
                     frame.clear()
                     with self._state_lock:
                         self._pending_secret_responses.pop(request_id, None)
+            with log_context(
+                request=request_id,
+                client=self._client_id,
+                method=method,
+            ):
+                logger.debug("daemon request completed")
             return response.result
 
     def _reader_main(self) -> None:

@@ -14,6 +14,10 @@ Capabilities report implemented runtime support. The existence of a method,
 event identifier, or schema does not imply support. Clients must check optional
 capabilities and handle `unsupported_capability`.
 
+The existing `daemon.control` capability also covers the additive
+`daemon.set_log_level` method. It changes the daemon's managed handler levels;
+it does not expose daemon log files over the API.
+
 `InProcessClient` advertises exactly the three connection capabilities. The
 daemon additionally advertises session lifecycle, narrow terminal/interaction
 capabilities, and Phase 10 SFTP/transfer/forward capabilities when the

@@ -3219,6 +3219,28 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SetDaemonLogLevelRequest -->
+## `SetDaemonLogLevelRequest`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Typed control request for the daemon's managed logging handlers.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `level` | `DaemonLogLevel` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "level": {}
+}
+```
+
 <!-- api-model: SetGroupColorRequest -->
 ## `SetGroupColorRequest`
 

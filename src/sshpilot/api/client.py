@@ -140,6 +140,7 @@ from .models.daemon import (
     DaemonDiagnostics,
     DaemonStatus,
     DaemonStopResult,
+    SetDaemonLogLevelRequest,
     RestartDaemonRequest,
     StopDaemonRequest,
 )
@@ -287,6 +288,9 @@ class SshPilotClient(Protocol):
         ...
 
     def get_daemon_diagnostics(self) -> DaemonDiagnostics:
+        ...
+
+    def set_daemon_log_level(self, request: SetDaemonLogLevelRequest) -> None:
         ...
 
     def stop_daemon(self, request: Optional[StopDaemonRequest] = None) -> DaemonStopResult:

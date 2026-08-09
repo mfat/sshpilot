@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional, Sequence
 from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.daemon import RestartDaemonRequest, StopDaemonRequest
+from sshpilot.logging_support import configure_daemon_logging
 from sshpilot.api.transport.codec import (
     daemon_diagnostics_to_wire,
     daemon_status_to_wire,
@@ -36,54 +37,24 @@ def _resolve_ssh_root(isolated: bool) -> Path:
     return get_ssh_dir() / "config"
 
 
-def _configure_logging(verbose: bool) -> None:
+def _configure_logging(verbose: bool, quiet: bool = False) -> None:
     """Configure daemon logging.
 
-    App-launched daemons have stdout/stderr pointed at ``DEVNULL``, so we
-    always attach a rotating file under the XDG state dir. Console basicConfig
-    still helps when the daemon is started by hand from a terminal.
+    App-launched daemons have stdout/stderr pointed at ``DEVNULL``, so the
+    shared policy always attaches a rotating file under the XDG state dir and
+    a managed console handler for directly started daemons.
     """
-
-    level = logging.DEBUG if verbose else logging.INFO
-    root = logging.getLogger()
-    root.setLevel(level)
-    if not root.handlers:
-        logging.basicConfig(level=level)
 
     try:
         from sshpilot.platform_utils import get_state_dir
+        from .bootstrap_settings import DaemonBootstrapSettings
 
         log_dir = get_state_dir()
-        os.makedirs(log_dir, exist_ok=True)
-        log_path = os.path.join(log_dir, "daemon.log")
+        configured = DaemonBootstrapSettings().get_setting("logging.level", "info")
     except Exception:
         return
-
-    for handler in root.handlers:
-        if getattr(handler, "_sshpilot_daemon_file", False):
-            handler.setLevel(level)
-            return
-
-    try:
-        from logging.handlers import RotatingFileHandler
-
-        file_handler = RotatingFileHandler(
-            log_path,
-            maxBytes=10 * 1024 * 1024,
-            backupCount=5,
-            encoding="utf-8",
-        )
-        file_handler.setLevel(level)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        )
-        file_handler._sshpilot_daemon_file = True  # type: ignore[attr-defined]
-        root.addHandler(file_handler)
-    except Exception:
-        pass
+    effective = "warning" if quiet else "debug" if verbose else configured
+    configure_daemon_logging(log_dir, effective)
 
 
 def _print_json(payload: Any) -> None:
@@ -173,12 +144,13 @@ def run_server(
     *,
     socket_path: Optional[Path] = None,
     verbose: bool = False,
+    quiet: bool = False,
     serve_forever: Callable[..., None],
     shutdown: Callable[[], None],
     startup_error: Optional[BaseException],
     restart_requested: Optional[Callable[[], bool]] = None,
 ) -> int:
-    _configure_logging(verbose)
+    _configure_logging(verbose, quiet)
 
     def _stop(_signum, _frame) -> None:
         shutdown()
@@ -206,6 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="override the Unix socket path",
     )
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -223,7 +196,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.command is None:
         from .server import DaemonServer
 
-        _configure_logging(args.verbose)
+        _configure_logging(args.verbose, args.quiet)
         from .lifecycle_policy import _IDLE_SHUTDOWN_UNSET
 
         # Unset means "use environment default" (dev 300s / packaged 120s).
@@ -259,6 +232,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_server(
             socket_path=args.socket,
             verbose=args.verbose,
+            quiet=args.quiet,
             serve_forever=server.serve_forever,
             shutdown=_shutdown,
             startup_error=server._startup_error,

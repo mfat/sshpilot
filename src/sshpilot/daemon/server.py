@@ -78,6 +78,7 @@ from sshpilot.api.transport.secret_frames import (
     encode_secret_payload,
 )
 from sshpilot.api.version import PROTOCOL_VERSION
+from sshpilot.logging_support import copy_log_context, log_context
 
 from .command_executor import (
     DEFAULT_SESSION_COMMAND_QUEUE_LIMIT,
@@ -1069,9 +1070,16 @@ class DaemonServer:
                     retryable=True,
                     request_id=envelope.request_id,
                 )
-            result = dispatcher.dispatch(envelope, state.protocol)
+            with log_context(
+                request=envelope.request_id,
+                client=state.protocol.client_id or envelope.client_id,
+                method=envelope.method,
+            ):
+                logger.debug("daemon request dispatch")
+                request_context = copy_log_context()
+                result = dispatcher.dispatch(envelope, state.protocol)
             if isinstance(result, DeferredResult):
-                self._submit_deferred(state, envelope, result)
+                self._submit_deferred(state, envelope, result, context=request_context)
                 return
             if not isinstance(result, ImmediateResult):
                 raise RuntimeError("dispatcher returned an unknown result type")
@@ -1110,6 +1118,8 @@ class DaemonServer:
         state: _ClientConnection,
         request: RequestEnvelope,
         result: DeferredResult,
+        *,
+        context=None,
     ) -> None:
         executor = self._session_executor
         protocol_version = (
@@ -1203,17 +1213,22 @@ class DaemonServer:
                     type(callback_error).__name__,
                 )
 
+        request_context = context or copy_log_context()
+
+        def _operation():
+            return request_context.run(result.operation)
+
         if respond_on_accept:
             accepted = executor.submit_background(
                 key=result.command_key,
-                operation=result.operation,
+                operation=_operation,
                 on_error=_error,
                 on_cancel=_cancel,
             )
         else:
             command = DeferredCommand(
                 key=result.command_key,
-                operation=result.operation,
+                operation=_operation,
                 on_complete=_complete,
                 on_error=_error,
                 on_cancel=lambda: None,

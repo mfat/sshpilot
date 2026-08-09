@@ -23,6 +23,7 @@ from collections import OrderedDict, deque
 from typing import Callable, Deque, Dict, Optional, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.logging_support import log_context
 from sshpilot.api.events import CoreEventCallback, EventPublisher, EventType, Subscription
 from sshpilot.api.models.common import ClientId, ConnectionId, utc_now
 from sshpilot.api.models.operations import (
@@ -406,7 +407,13 @@ class OperationRuntime:
             return
         handle = OperationHandle(self, operation_id)
         try:
-            final_message = body(handle)
+            with log_context(
+                operation=operation_id,
+                client=summary.owner_client_id,
+                connection=summary.connection_id,
+            ):
+                logger.debug("operation started")
+                final_message = body(handle)
             with self._condition:
                 summary = self._records.get(operation_id)
                 if summary is None or is_terminal_operation_state(summary.state):
@@ -436,7 +443,12 @@ class OperationRuntime:
                 "The operation was cancelled",
             )
         except SshPilotError as error:
-            logger.info("Operation %s failed: %s", operation_id, error.code.value)
+            with log_context(
+                operation=operation_id,
+                client=summary.owner_client_id,
+                connection=summary.connection_id,
+            ):
+                logger.info("operation failed code=%s", error.code.value)
             if self.cancel_requested(operation_id):
                 self._finish_from_worker(
                     operation_id,
@@ -454,7 +466,12 @@ class OperationRuntime:
                     ),
                 )
         except Exception:
-            logger.exception("Operation %s crashed", operation_id)
+            with log_context(
+                operation=operation_id,
+                client=summary.owner_client_id,
+                connection=summary.connection_id,
+            ):
+                logger.exception("operation crashed")
             if self.cancel_requested(operation_id):
                 self._finish_from_worker(
                     operation_id,

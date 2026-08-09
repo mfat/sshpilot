@@ -10,7 +10,6 @@ import faulthandler
 import resource
 import logging
 import threading
-from logging.handlers import RotatingFileHandler
 
 
 def _clamp_thirdparty_loggers() -> None:
@@ -198,6 +197,10 @@ class SshPilotApplication(Adw.Application):
             os.environ["SSHPILOT_DAEMON_VERBOSE"] = "1"
         else:
             os.environ.pop("SSHPILOT_DAEMON_VERBOSE", None)
+        if self.quiet_override:
+            os.environ["SSHPILOT_DAEMON_QUIET"] = "1"
+        else:
+            os.environ.pop("SSHPILOT_DAEMON_QUIET", None)
 
         # Session-scoped dismissals for the post-connect save prompt
         from .unsaved_host import SavePromptDismissals
@@ -630,6 +633,7 @@ class SshPilotApplication(Adw.Application):
         if launcher is None:
             launcher = DaemonLauncher(
                 verbose=bool(getattr(self, "verbose_override", False)),
+                quiet=bool(getattr(self, "quiet_override", False)),
             )
             self._api_daemon_launcher = launcher
         helper = DaemonReconnectHelper(launcher=launcher)
@@ -980,6 +984,12 @@ class SshPilotApplication(Adw.Application):
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
+        try:
+            from .logging_support import stop_daemon_log_forwarder
+
+            stop_daemon_log_forwarder()
+        except Exception:
+            logger.debug("Failed to stop daemon log forwarder", exc_info=True)
 
         # Mark every window quitting before any teardown. This path (direct app
         # shutdown) bypasses cleanup_and_quit, which is the only other place
@@ -1247,130 +1257,12 @@ class SshPilotApplication(Adw.Application):
             # Migration is best-effort; never block startup over it.
             pass
 
-        # Default log level is INFO for cleaner logs
-        log_level = logging.INFO
+        # The process-specific policy is shared with the daemon.  It removes
+        # only handlers owned by sshPilot, preserving embedding applications'
+        # handlers and closing every replaced rotating file.
+        from .logging_support import configure_frontend_logging, normalize_log_level
 
-        # Full timestamp + fully-qualified logger name on the file handler —
-        # we want detail in bug-report logs. Console gets a shorter format
-        # that's easier to scan.
-        file_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-        )
-        console_formatter = logging.Formatter(
-            '%(asctime)s %(levelname)-5s %(short_name)s: %(message)s',
-            datefmt='%H:%M:%S',
-        )
-
-        class _ShortNameFilter(logging.Filter):
-            """Strip the leading ``sshpilot.`` from logger names for the console."""
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                name = record.name or ''
-                if name.startswith('sshpilot.'):
-                    record.short_name = name[len('sshpilot.'):]
-                else:
-                    record.short_name = name or '-'
-                return True
-
-        # --- Category filters for the per-feature log files. -------------
-        # Master ``sshpilot.log`` always receives everything (it's what bug
-        # reports cite). The category files are filtered convenience views.
-        _SSH_CATEGORY_NAMES: tuple = (
-            'sshpilot.connection_manager',
-            'sshpilot.terminal',
-            'sshpilot.terminal_manager',
-            'sshpilot.terminal_backends',
-            'sshpilot.ssh_utils',
-            'sshpilot.ssh_config_utils',
-            'sshpilot.ssh_connection_builder',
-            'sshpilot.sshcopyid_window',
-            'sshpilot.sshpilot_agent',
-            'sshpilot.scp_utils',
-            'sshpilot.sftp_utils',
-            'sshpilot.known_hosts_editor',
-        )
-
-        def _matches_any(name: str, prefixes: tuple) -> bool:
-            for p in prefixes:
-                if name == p or name.startswith(p + '.'):
-                    return True
-            return False
-
-        class _SshCategoryFilter(logging.Filter):
-            """Pass our SSH/connection/terminal modules."""
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                return _matches_any(record.name or '', _SSH_CATEGORY_NAMES)
-
-        class _AppCategoryFilter(logging.Filter):
-            """Pass our own loggers EXCEPT the SSH-category ones.
-
-            We deliberately don't let arbitrary third-party loggers leak into
-            the app log — they'd just add noise no one can act on. Paramiko
-            already goes to ssh.log via the filter above.
-            """
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                name = record.name or ''
-                if not (name == 'sshpilot' or name.startswith('sshpilot.') or name == 'root'):
-                    return False
-                return not _matches_any(name, _SSH_CATEGORY_NAMES)
-
-        # Clear any existing handlers
-        logging.getLogger().handlers.clear()
-
-        # --- Master file (everything) ------------------------------------
-        # ``sshpilot.log`` is the authoritative log used by bug reports.
-        file_handler = RotatingFileHandler(
-            os.path.join(log_dir, 'sshpilot.log'),
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5,
-            encoding='utf-8'
-        )
-        file_handler.setLevel(log_level)
-        file_handler.setFormatter(file_formatter)
-
-        # --- App-only file -----------------------------------------------
-        app_file_handler = RotatingFileHandler(
-            os.path.join(log_dir, 'app.log'),
-            maxBytes=10*1024*1024, backupCount=5, encoding='utf-8',
-        )
-        app_file_handler.setLevel(log_level)
-        app_file_handler.setFormatter(file_formatter)
-        app_file_handler.addFilter(_AppCategoryFilter())
-
-        # --- SSH-only file ------------------------------------------------
-        ssh_file_handler = RotatingFileHandler(
-            os.path.join(log_dir, 'ssh.log'),
-            maxBytes=10*1024*1024, backupCount=5, encoding='utf-8',
-        )
-        ssh_file_handler.setLevel(log_level)
-        ssh_file_handler.setFormatter(file_formatter)
-        ssh_file_handler.addFilter(_SshCategoryFilter())
-
-        # Console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(log_level)
-        console_handler.setFormatter(console_formatter)
-        console_handler.addFilter(_ShortNameFilter())
-
-        # Add handlers to root logger
-        root_logger = logging.getLogger()
-        root_logger.setLevel(log_level)
-        root_logger.addHandler(file_handler)
-        root_logger.addHandler(app_file_handler)
-        root_logger.addHandler(ssh_file_handler)
-        root_logger.addHandler(console_handler)
-        # Track the per-category handlers so subsequent level changes
-        # (verbose / quiet) can be applied uniformly below.
-        self._category_handlers = (file_handler, app_file_handler, ssh_file_handler)
-
-        # Determine verbosity. Precedence (highest first):
-        #   CLI --quiet  →  WARNING (ERROR-and-up only)
-        #   CLI --verbose → DEBUG
-        #   logging.level config key ('info' | 'debug')
-        #   legacy ssh.debug_enabled (already migrated in config validator)
+        # Determine verbosity. Explicit CLI flags take precedence over config.
         quiet = bool(getattr(self, 'quiet_override', False))
         verbose = bool(getattr(self, 'verbose_override', False))
         if not (quiet or verbose):
@@ -1378,20 +1270,20 @@ class SshPilotApplication(Adw.Application):
                 from .config import Config
                 cfg = Config()
                 level_setting = cfg.get_setting('logging.level', 'info')
-                verbose = str(level_setting).lower() == 'debug'
+                configured_level = str(level_setting).lower()
             except Exception:
-                verbose = False
+                configured_level = 'info'
+        else:
+            configured_level = 'warning' if quiet else 'debug'
 
         if quiet:
-            effective_level = logging.WARNING
+            effective_level = 'warning'
         elif verbose:
-            effective_level = logging.DEBUG
+            effective_level = 'debug'
         else:
-            effective_level = logging.INFO
-        for h in self._category_handlers:
-            h.setLevel(effective_level)
-        console_handler.setLevel(effective_level)
-        root_logger.setLevel(effective_level)
+            effective_level = configured_level
+        self._category_handlers = configure_frontend_logging(log_dir, effective_level)
+        numeric_level = normalize_log_level(effective_level)
 
         # Reapply third-party clamp. At default level they stay at WARNING
         # (so we don't drown the user in keyring/PIL chatter). In verbose mode
@@ -1402,7 +1294,7 @@ class SshPilotApplication(Adw.Application):
             for noisy in ('keyring', 'gi', 'PIL', 'urllib3', 'asyncio'):
                 logging.getLogger(noisy).setLevel(logging.INFO)
 
-        app_level = logging.DEBUG if verbose else logging.INFO
+        app_level = numeric_level
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
 

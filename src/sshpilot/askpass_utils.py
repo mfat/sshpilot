@@ -19,6 +19,7 @@ from .secret_storage import (
     normalize_key_path_for_storage as _normalize_key_path_for_storage,
     key_path_lookup_candidates as _get_key_path_lookup_candidates,
 )
+from .logging_support import sanitize_log_text
 
 # libsecret / keyring are imported lazily (and only for a diagnostic log line
 # here) — the real passphrase lookups delegate to secret_storage. Keeping these
@@ -282,8 +283,10 @@ def append_askpass_log(message: str) -> None:
     """
 
     try:
-        with open(get_askpass_log_path(), "a", encoding="utf-8") as handle:
-            handle.write(f"{message}\n")
+        safe_message = sanitize_log_text(message)
+        with _ASKPASS_LOG_IO_LOCK:
+            with open(get_askpass_log_path(), "a", encoding="utf-8") as handle:
+                handle.write(f"{safe_message}\n")
     except Exception:
         pass
 
@@ -344,7 +347,10 @@ def forward_askpass_log_to_logger(log, include_existing: bool = False) -> None:
         return
 
     for line in lines:
-        log.info(f"ASKPASS: {line}")
+        # Broker/helper call sites historically include this label. Keep one
+        # stable prefix in the file and when forwarding, never duplicate it.
+        display = line if line.startswith("ASKPASS:") else f"ASKPASS: {line}"
+        log.info("%s", sanitize_log_text(display))
 
 
 def _askpass_log_forwarder_loop() -> None:

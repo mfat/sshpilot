@@ -192,6 +192,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "daemon.diagnostics": Capability.DAEMON_STATUS,
     "daemon.stop": Capability.DAEMON_CONTROL,
     "daemon.restart": Capability.DAEMON_CONTROL,
+    "daemon.set_log_level": Capability.DAEMON_CONTROL,
     "interactions.cancel": Capability.INTERACTIONS_RESPOND,
     "interactions.claim": Capability.INTERACTIONS_RESPOND,
     "interactions.get": Capability.INTERACTIONS_READ,
@@ -605,6 +606,7 @@ class RequestDispatcher:
             "daemon.diagnostics": self._handle_daemon_diagnostics,
             "daemon.stop": self._handle_daemon_stop,
             "daemon.restart": self._handle_daemon_restart,
+            "daemon.set_log_level": self._handle_daemon_set_log_level,
             "connections.list": self._handle_list_connections,
             "connections.snapshot": self._handle_connection_snapshot,
             "connections.get": self._handle_get_connection,
@@ -977,6 +979,19 @@ class RequestDispatcher:
             restart_daemon_request_from_wire(dict(request.params))
         )
         return daemon_stop_result_to_wire(result)
+
+    def _handle_daemon_set_log_level(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> dict:
+        from sshpilot.api.transport.codec import set_daemon_log_level_request_from_wire
+        from sshpilot.logging_support import set_managed_handler_level
+
+        typed = set_daemon_log_level_request_from_wire(dict(request.params))
+        set_managed_handler_level(typed.level.value)
+        logger.info("Daemon log level changed level=%s", typed.level.value)
+        return {}
 
     def _handle_list_connections(
         self,

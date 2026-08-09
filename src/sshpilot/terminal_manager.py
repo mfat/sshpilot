@@ -395,7 +395,8 @@ class TerminalManager:
         launcher = getattr(app, "_api_daemon_launcher", None) if app else None
         if launcher is None:
             verbose = bool(getattr(app, "verbose_override", False)) if app else False
-            launcher = DaemonLauncher(verbose=verbose)
+            quiet = bool(getattr(app, "quiet_override", False)) if app else False
+            launcher = DaemonLauncher(verbose=verbose, quiet=quiet)
             if app is not None:
                 app._api_daemon_launcher = launcher
 

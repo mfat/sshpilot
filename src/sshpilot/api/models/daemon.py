@@ -10,6 +10,25 @@ from typing import Mapping, Optional, Tuple
 from .common import require_identifier, utc_now
 
 
+class DaemonLogLevel(str, Enum):
+    """Supported public daemon logging levels."""
+
+    WARNING = "warning"
+    INFO = "info"
+    DEBUG = "debug"
+
+
+@dataclass(frozen=True)
+class SetDaemonLogLevelRequest:
+    """Typed control request for the daemon's managed logging handlers."""
+
+    level: DaemonLogLevel
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.level, DaemonLogLevel):
+            raise TypeError("daemon log level must be a DaemonLogLevel")
+
+
 class DaemonLifecycleState(str, Enum):
     """Explicit production lifecycle for the local daemon process."""
 

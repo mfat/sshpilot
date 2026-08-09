@@ -109,10 +109,12 @@ from ..models.daemon import (
     DaemonDiagnostics,
     DaemonIdleInfo,
     DaemonLifecycleState,
+    DaemonLogLevel,
     DaemonResourceCounts,
     DaemonStatus,
     DaemonStopResult,
     RestartDaemonRequest,
+    SetDaemonLogLevelRequest,
     StopDaemonRequest,
 )
 from ..models.sessions import (
@@ -4704,6 +4706,28 @@ def restart_daemon_request_from_wire(value: Any) -> RestartDaemonRequest:
     if token is not None and (type(token) is not str or not token.strip()):
         raise ValueError("confirmation must be a non-empty string or null")
     return RestartDaemonRequest(force=force, confirmation=token)
+
+
+def set_daemon_log_level_request_to_wire(
+    request: SetDaemonLogLevelRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SetDaemonLogLevelRequest:
+        raise TypeError("set daemon log level request is required")
+    return {"level": request.level.value}
+
+
+def set_daemon_log_level_request_from_wire(value: Any) -> SetDaemonLogLevelRequest:
+    data = _strict_fields(
+        value,
+        required={"level"},
+        optional=set(),
+        context="set daemon log level request",
+    )
+    try:
+        level = DaemonLogLevel(data["level"])
+    except (TypeError, ValueError):
+        raise ValueError("daemon log level must be warning, info, or debug") from None
+    return SetDaemonLogLevelRequest(level=level)
 
 
 def daemon_stop_result_to_wire(result: DaemonStopResult) -> Dict[str, Any]:

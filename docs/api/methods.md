@@ -1,5 +1,9 @@
 # Client methods
 
+API 0.24 adds the daemon-control method set_daemon_log_level. It accepts
+warning, info, or debug and updates only the daemon process handlers. The
+protocol remains v1.0.
+
 API 0.23 adds `terminal.broadcast_input` (`terminal.input`) alongside the
 existing `broadcast.start` (`broadcast.write`), `broadcast.get`
 (`broadcast.read`), and `broadcast.cancel` (`broadcast.write`). The typed
@@ -9,6 +13,7 @@ environment, or local-shell settings.
 <!-- api-method: start_broadcast_command -->
 <!-- api-method: get_broadcast_command -->
 <!-- api-method: cancel_broadcast_command -->
+<!-- api-method: set_daemon_log_level -->
 <!-- api-method: broadcast_terminal_input -->
 <!-- api-method-contract: start_broadcast_command status=schema-only capability=broadcast.write -->
 <!-- api-method-contract: get_broadcast_command status=schema-only capability=broadcast.read -->
@@ -101,6 +106,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `get_daemon_diagnostics` | Daemon only | `daemon.status` |
 | `stop_daemon` | Daemon only | `daemon.control` |
 | `restart_daemon` | Daemon only | `daemon.control` |
+| `set_daemon_log_level` | Daemon only | `daemon.control` |
 | `subscribe_events` | Implemented | Bootstrap; event availability follows capabilities |
 | `close` | Implemented | None |
 
@@ -108,6 +114,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: get_daemon_status status=daemon-only capability=daemon.status -->
 <!-- api-method-contract: restart_daemon status=daemon-only capability=daemon.control -->
 <!-- api-method-contract: stop_daemon status=daemon-only capability=daemon.control -->
+<!-- api-method-contract: set_daemon_log_level status=daemon-only capability=daemon.control -->
 <!-- api-method-contract: attach_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: attach_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: cancel_interaction status=daemon-only capability=interactions.respond -->
@@ -178,6 +185,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: claim_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: release_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: subscribe_terminal status=daemon-only capability=terminal.output -->
+<!-- api-daemon-method: daemon.set_log_level capability=daemon.control -->
 <!-- api-method-contract: subscribe_events status=implemented capability=connections.events -->
 <!-- api-method-contract: update_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: update_connection_metadata status=implemented capability=connections.metadata.write -->

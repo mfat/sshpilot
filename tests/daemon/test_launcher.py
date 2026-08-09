@@ -1,4 +1,3 @@
-import logging
 import os
 import subprocess
 import sys
@@ -279,6 +278,10 @@ def test_verbose_launch_passes_flag_and_starts_askpass_forwarder(tmp_path, monke
         "sshpilot.askpass_utils.ensure_askpass_log_forwarder",
         lambda: forwarder_calls.append(True),
     )
+    monkeypatch.setattr(
+        "sshpilot.logging_support.ensure_daemon_log_forwarder",
+        lambda *_args, **_kwargs: None,
+    )
     launcher = DaemonLauncher(
         socket_path=tmp_path / "runtime" / "sshpilotd.sock",
         environment={"PATH": "/usr/bin"},
@@ -340,21 +343,19 @@ def test_socket_readiness_timeout_is_bounded_and_stops_exact_child(tmp_path):
     assert process.terminated is True
 
 
-def test_failed_verbose_launch_forwards_only_new_daemon_log(
-    tmp_path,
-    caplog,
-):
-    log_path = tmp_path / "daemon.log"
-    log_path.write_text("old daemon line\n", encoding="utf-8")
-    marker = (log_path, log_path.stat().st_size)
-    with log_path.open("a", encoding="utf-8") as stream:
-        stream.write("new startup failure type=RuntimeError\n")
-
-    with caplog.at_level(logging.DEBUG, logger="sshpilot.daemon.launcher"):
-        DaemonLauncher._forward_daemon_log(marker)
-
-    assert "new startup failure type=RuntimeError" in caplog.text
-    assert "old daemon line" not in caplog.text
+def test_verbose_launcher_uses_shared_daemon_log_forwarder(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "sshpilot.platform_utils.get_state_dir",
+        lambda: str(tmp_path),
+    )
+    monkeypatch.setattr(
+        "sshpilot.logging_support.ensure_daemon_log_forwarder",
+        lambda path, *, enabled: calls.append((Path(path), enabled)),
+    )
+    launcher = DaemonLauncher(verbose=True)
+    launcher._ensure_daemon_log_forwarder()
+    assert calls == [(tmp_path / "daemon.log", True)]
 
 
 @pytest.mark.parametrize(

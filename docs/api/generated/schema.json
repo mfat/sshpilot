@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.23",
+  "api_implementation_version": "0.24",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -421,6 +421,10 @@
       "capability": "terminal.input",
       "status": "daemon-only"
     },
+    "set_daemon_log_level": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
     "sftp_chmod": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
@@ -667,6 +671,9 @@
       "capability": "daemon.status"
     },
     "daemon.restart": {
+      "capability": "daemon.control"
+    },
+    "daemon.set_log_level": {
       "capability": "daemon.control"
     },
     "daemon.status": {
@@ -1118,6 +1125,11 @@
       "stopping",
       "stopped",
       "failed"
+    ],
+    "DaemonLogLevel": [
+      "warning",
+      "info",
+      "debug"
     ],
     "ErrorCode": [
       "unsupported_capability",
@@ -5348,6 +5360,18 @@
         }
       ],
       "status": "Implemented"
+    },
+    "SetDaemonLogLevelRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "level",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonLogLevel"
+        }
+      ],
+      "status": "Schema only"
     },
     "SetGroupColorRequest": {
       "fields": [

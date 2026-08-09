@@ -246,3 +246,13 @@ and the legacy settings documented in the service architecture notes.
 Terminal PTY transport is unchanged. Config-static Host forwards remain
 bound to the interactive terminal process. Ordinary SCP UI is gated behind
 `file_manager.legacy_scp` until migrated.
+
+## Logging ownership
+
+Frontend and daemon processes use the same GTK-free logging policy for level
+normalization, format, redaction, managed-handler lifecycle, and correlation
+context. Their rotating files remain process-specific: `sshpilot.log`,
+`app.log`, and `ssh.log` belong to the frontend; `daemon.log` belongs to the
+daemon. The frontend may tail and forward new daemon records in explicit
+verbose mode, but it never opens `daemon.log` for writing. The local Log Viewer
+reads each source directly and does not create a merged RPC log stream.

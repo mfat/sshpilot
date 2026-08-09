@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Mapping, Optional, Sequence, Tuple
+from typing import Callable, Mapping, Optional, Sequence
 
 from sshpilot.api.capabilities import Capability
 from sshpilot.api.daemon_client import DEFAULT_REQUEST_TIMEOUT, DaemonClient
@@ -119,6 +119,7 @@ class DaemonLauncher:
         environment: Optional[Mapping[str, str]] = None,
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
         verbose: Optional[bool] = None,
+        quiet: Optional[bool] = None,
     ) -> None:
         if startup_timeout <= 0 or poll_interval <= 0 or probe_timeout <= 0:
             raise ValueError("daemon launcher timeouts must be positive")
@@ -138,6 +139,12 @@ class DaemonLauncher:
                 "yes",
             }
         self._verbose = bool(verbose)
+        if quiet is None:
+            env = environment if environment is not None else os.environ
+            quiet = str(env.get("SSHPILOT_DAEMON_QUIET", "")).strip().lower() in {
+                "1", "true", "yes"
+            }
+        self._quiet = bool(quiet) and not self._verbose
 
     @staticmethod
     def _ensure_gtk_askpass_log_forwarder() -> None:
@@ -173,6 +180,7 @@ class DaemonLauncher:
                     raise self._classify_handshake_error(error) from error
             else:
                 self._ensure_gtk_askpass_log_forwarder()
+                self._ensure_daemon_log_forwarder()
                 return DaemonLaunchResult(client=client, process=None)
 
             command = (
@@ -182,8 +190,8 @@ class DaemonLauncher:
                 "--socket",
                 str(self.socket_path),
                 *(("--verbose",) if self._verbose else ()),
+                *(("--quiet",) if self._quiet else ()),
             )
-            daemon_log_marker = self._daemon_log_marker()
             try:
                 process = self._popen(
                     list(command),
@@ -205,68 +213,14 @@ class DaemonLauncher:
                 client = self._wait_until_ready(process)
             except BaseException as error:
                 self._stop_failed_child(process)
-                self._forward_daemon_log(daemon_log_marker)
                 logger.debug(
                     "Daemon launch attempt failed type=%s",
                     type(error).__name__,
                 )
                 raise
             self._ensure_gtk_askpass_log_forwarder()
+            self._ensure_daemon_log_forwarder()
             return DaemonLaunchResult(client=client, process=handle)
-
-    def _daemon_log_marker(self) -> Optional[Tuple[Path, int]]:
-        """Remember where this verbose launch's daemon diagnostics begin."""
-
-        if not self._verbose:
-            return None
-        try:
-            from sshpilot.platform_utils import get_state_dir
-
-            path = Path(get_state_dir()) / "daemon.log"
-            try:
-                offset = path.stat().st_size
-            except FileNotFoundError:
-                offset = 0
-            return path, offset
-        except Exception as error:
-            logger.debug(
-                "Could not locate daemon log type=%s",
-                type(error).__name__,
-            )
-            return None
-
-    @staticmethod
-    def _forward_daemon_log(marker: Optional[Tuple[Path, int]]) -> None:
-        """Forward bounded diagnostics from a failed verbose daemon launch."""
-
-        if marker is None:
-            return
-        path, offset = marker
-        try:
-            end = path.stat().st_size
-            start = offset if end >= offset else 0
-            start = max(start, end - 64 * 1024)
-            with path.open("r", encoding="utf-8", errors="replace") as stream:
-                stream.seek(start)
-                if start > offset:
-                    stream.readline()
-                lines = stream.read().splitlines()
-        except FileNotFoundError:
-            logger.debug("Daemon produced no file diagnostics")
-            return
-        except Exception as error:
-            logger.debug(
-                "Could not read daemon diagnostics type=%s",
-                type(error).__name__,
-            )
-            return
-
-        if not lines:
-            logger.debug("Daemon produced no new file diagnostics")
-            return
-        logger.debug("Daemon diagnostics from %s:", path)
-        for line in lines:
-            logger.debug("daemon | %s", line)
 
     def _connect(self, timeout: float) -> DaemonClient:
         # ``timeout`` here is the launcher probe budget for socket connect only.
@@ -321,6 +275,20 @@ class DaemonLauncher:
             client.close()
             raise DaemonLaunchError(DaemonStartupFailure.MISSING_CAPABILITY)
         return client
+
+    def _ensure_daemon_log_forwarder(self) -> None:
+        if not self._verbose:
+            return
+        try:
+            from sshpilot.logging_support import ensure_daemon_log_forwarder
+            from sshpilot.platform_utils import get_state_dir
+
+            ensure_daemon_log_forwarder(
+                Path(get_state_dir()) / "daemon.log",
+                enabled=True,
+            )
+        except Exception:
+            logger.debug("Could not start daemon log forwarder", exc_info=True)
 
     def _wait_until_ready(self, process: subprocess.Popen) -> DaemonClient:
         deadline = time.monotonic() + self.startup_timeout

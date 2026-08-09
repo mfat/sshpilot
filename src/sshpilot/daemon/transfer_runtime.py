@@ -44,6 +44,7 @@ from sshpilot.api.models.transfers import (
     TransferState,
     TransferSummary,
 )
+from sshpilot.logging_support import log_context
 from sshpilot.api.remote_path import remote_path_dirname, remote_path_join
 from sshpilot.api.transfer_identity import new_transfer_id
 from sshpilot.sftp import protocol as sftp_proto
@@ -499,7 +500,12 @@ class TransferRuntime:
             else:
                 self._fail(record, error.code, error.message)
         except Exception:
-            logger.exception("Transfer %s failed", transfer_id)
+            with log_context(
+                transfer=transfer_id,
+                client=record.owner_client_id,
+                sftp_service=record.sftp_service_id,
+            ):
+                logger.exception("transfer failed")
             self._fail(record, ErrorCode.TRANSFER_IO_FAILED, "The transfer failed")
         else:
             self._finish_completed(record)

@@ -29,6 +29,8 @@ documented model surface.
 | `ForwardId` | Forward identity | `forward-<n>` | Daemon implemented |
 | `ClientId` | Handshaken frontend identity | `client-<n>` or opaque string | Daemon implemented |
 | `AttachmentId` | Logical session attachment identity | `attachment-<n>` | Daemon implemented |
+| `DaemonLogLevel` | Strict daemon logging level: `warning`, `info`, or `debug` | Daemon implemented |
+| `SetDaemonLogLevelRequest` | Typed daemon logging-level control request | Daemon implemented |
 
 The aliases are `typing.NewType` wrappers over `str`; they add static intent,
 not runtime serialization. Consumers must not parse their contents.

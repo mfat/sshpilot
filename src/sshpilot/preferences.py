@@ -6082,15 +6082,62 @@ class PreferencesWindow(Adw.NavigationPage):
         # Apply immediately to the running process so the user sees the
         # change without restarting. CLI overrides still win if the app was
         # launched with --verbose / --quiet.
+        quiet = False
+        verbose = False
+        application = None
         try:
             import logging as _logging
-            target = _logging.DEBUG if level == 'debug' else _logging.INFO
-            _logging.getLogger().setLevel(target)
-            for h in _logging.getLogger().handlers:
-                h.setLevel(target)
+            from .logging_support import set_managed_handler_level
+
+            try:
+                application = self.parent_window.get_application()
+            except Exception:
+                application = None
+            quiet = bool(getattr(application, 'quiet_override', False))
+            verbose = bool(getattr(application, 'verbose_override', False))
+            effective = 'warning' if quiet else 'debug' if verbose else level
+            target = set_managed_handler_level(effective)
             _logging.getLogger('sshpilot').setLevel(target)
         except Exception as exc:
             logger.debug("Could not apply log level on the fly: %s", exc)
+
+        # The daemon owns its handlers. Forward the typed request through the
+        # existing GTK client bridge so a transient/unavailable daemon does not
+        # turn a successful preference save into an operational failure.
+        owner = self.parent_window
+        client = getattr(self, 'client', None) or getattr(owner, 'client', None)
+        bridge = getattr(self, 'client_bridge', None) or getattr(owner, 'client_bridge', None)
+        if client is None:
+            selection = getattr(application, '_api_client_selection', None)
+            client = getattr(selection, 'client', None)
+        if bridge is None:
+            bridge = getattr(application, '_api_client_bridge', None)
+        if client is not None and bridge is not None and hasattr(client, 'set_daemon_log_level'):
+            try:
+                from .api.models.daemon import DaemonLogLevel, SetDaemonLogLevelRequest
+
+                daemon_level = (
+                    DaemonLogLevel.WARNING
+                    if quiet
+                    else DaemonLogLevel.DEBUG
+                    if verbose
+                    else DaemonLogLevel(level)
+                )
+                bridge.submit(
+                    lambda: client.set_daemon_log_level(
+                        SetDaemonLogLevelRequest(level=daemon_level)
+                    ),
+                    on_success=lambda _result: None,
+                    on_error=lambda error: logger.debug(
+                        "Daemon log level update unavailable type=%s",
+                        type(error).__name__,
+                    ),
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Could not schedule daemon log level update type=%s",
+                    type(exc).__name__,
+                )
 
     def on_check_updates_changed(self, switch, *args):
         """Handle check for updates on startup setting change"""

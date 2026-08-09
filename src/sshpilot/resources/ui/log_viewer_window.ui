@@ -30,7 +30,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child type="end">
               <object class="GtkButton" id="copy_btn">
                 <property name="label" translatable="yes">Copy log output</property>
-                <property name="tooltip-text" translatable="yes">Copy platform info and recent log lines to the clipboard, formatted for pasting into a bug report. Always uses the master log regardless of the current view selection.</property>
+                <property name="tooltip-text" translatable="yes">Copy platform info and recent frontend, daemon, askpass, and crash diagnostics to the clipboard for a bug report.</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -111,7 +111,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkDropDown" id="category_dropdown">
-                    <property name="tooltip-text" translatable="yes">Which log file to view. The bug-report bundle always uses the complete master log regardless of this selection.</property>
+                    <property name="tooltip-text" translatable="yes">Which local process log to view. Bug-report output keeps each process in a labelled section.</property>
                   </object>
                 </child>
                 <child>

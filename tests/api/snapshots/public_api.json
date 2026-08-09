@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.23",
+  "api_implementation_version": "0.24",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -507,6 +507,10 @@
       "capability": "terminal.input",
       "status": "daemon-only"
     },
+    "set_daemon_log_level": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
     "sftp_chmod": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
@@ -757,6 +761,7 @@
     "save_ssh_config_text",
     "send_interaction_secret",
     "send_terminal_input",
+    "set_daemon_log_level",
     "set_group_color",
     "sftp_chmod",
     "sftp_copy",
@@ -1853,6 +1858,16 @@
       ],
       "return": "None"
     },
+    "set_daemon_log_level": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SetDaemonLogLevelRequest"
+        }
+      ],
+      "return": "None"
+    },
     "set_group_color": {
       "parameters": [
         {
@@ -2326,6 +2341,9 @@
       "capability": "daemon.status"
     },
     "daemon.restart": {
+      "capability": "daemon.control"
+    },
+    "daemon.set_log_level": {
       "capability": "daemon.control"
     },
     "daemon.status": {
@@ -2863,6 +2881,7 @@
     "DaemonDisconnectReason",
     "DaemonIdleInfo",
     "DaemonLifecycleState",
+    "DaemonLogLevel",
     "DaemonResourceCounts",
     "DaemonStatus",
     "DaemonStopResult",
@@ -2979,6 +2998,7 @@
     "SessionId",
     "SessionState",
     "SessionSummary",
+    "SetDaemonLogLevelRequest",
     "SetGroupColorRequest",
     "SftpChmodRequest",
     "SftpCopyRequest",
@@ -3736,6 +3756,9 @@
       "failure",
       "attachment_count"
     ],
+    "SetDaemonLogLevelRequest": [
+      "level"
+    ],
     "SetGroupColorRequest": [
       "group_id",
       "color"
@@ -4051,6 +4074,11 @@
       "stopping",
       "stopped",
       "failed"
+    ],
+    "DaemonLogLevel": [
+      "warning",
+      "info",
+      "debug"
     ],
     "ErrorCode": [
       "unsupported_capability",

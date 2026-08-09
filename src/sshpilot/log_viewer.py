@@ -22,6 +22,7 @@ from typing import List, Optional
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from .platform_utils import get_state_dir
+from .logging_support import sanitize_log_text
 from .shortcut_utils import install_esc_to_close, install_search_esc
 
 
@@ -236,29 +237,39 @@ def _resolve_crash_path(explicit: Optional[str] = None) -> str:
 
 
 def build_report_bundle(crash_path: Optional[str] = None, tail_lines: int = 400) -> str:
-    """Clipboard-ready bug report: platform info + master log tail + crash report.
+    try:
+        from .startup_info import StartupInfo
+        summary = StartupInfo(verbose=True).info
+    except Exception:
+        summary = {}
 
-    Reuses the master-log diagnostic bundle and, when a crash report exists,
-    appends its tail inside the same code block so a single paste carries
-    everything a maintainer needs.
-    """
-    master_path = _resolve_log_path(_CATEGORY_MASTER)
-    master_lines, master_total = _tail_file(master_path, tail_lines)
-    bundle = _build_diagnostic_bundle(master_lines, master_total, master_path)
-
+    state = get_state_dir()
+    sources = [
+        ("Frontend log", os.path.join(state, "sshpilot.log"), tail_lines, True),
+        ("Daemon log", os.path.join(state, "daemon.log"), tail_lines, True),
+    ]
+    try:
+        from .askpass_utils import get_askpass_log_path
+        sources.append(("Askpass diagnostics", get_askpass_log_path(), 200, False))
+    except Exception:
+        pass
     crash = _resolve_crash_path(crash_path)
-    if not crash:
-        return bundle
+    if crash:
+        sources.append(("Crash report", crash, 200, False))
 
-    crash_lines, crash_total = _tail_file(crash, 200)
-    extra: List[str] = ["", "```"]
-    extra.append(f"Crash report: {crash}")
-    if crash_total and len(crash_lines) < crash_total:
-        extra.append(f"Showing last {len(crash_lines)} of {crash_total} lines")
-    extra.append("-" * 48)
-    extra.extend(crash_lines or ["(crash report is empty or unreadable)"])
-    extra.append("```")
-    return bundle + "\n" + "\n".join(extra)
+    lines = [chr(96) * 3, "System / runtime summary", sanitize_log_text(json.dumps(summary, default=str))]
+    for label, path, limit, required in sources:
+        values, total = _tail_file(path, limit)
+        lines.extend(["", f"=== {label} ==="])
+        lines.append(f"source: {sanitize_log_text(path)}")
+        if total and len(values) < total:
+            lines.append(f"showing last {len(values)} of {total} lines")
+        if values:
+            lines.extend(sanitize_log_text(value) for value in values)
+        elif required:
+            lines.append("(log is empty, missing, or unreadable)")
+    lines.append(chr(96) * 3)
+    return "\n".join(lines)
 
 
 # Keys whose values are redacted from the config copy in the diagnostics ZIP.
@@ -352,19 +363,28 @@ def build_diagnostics_zip(dest_path: str) -> str:
                      'crash.log', 'crash.log.previous'):
             path = os.path.join(state, name)
             if os.path.isfile(path):
-                zf.write(path, arcname='logs/' + name)
+                with open(path, encoding='utf-8', errors='replace') as handle:
+                    zf.writestr('logs/' + name, sanitize_log_text(handle.read()))
                 seen.add(path)
         try:
             from .askpass_utils import get_askpass_log_path
             askpass_path = get_askpass_log_path()
             if askpass_path and os.path.isfile(askpass_path):
-                zf.write(askpass_path, arcname='logs/sshpilot-askpass.log')
+                with open(askpass_path, encoding='utf-8', errors='replace') as handle:
+                    zf.writestr(
+                        'logs/sshpilot-askpass.log',
+                        sanitize_log_text(handle.read()),
+                    )
                 seen.add(askpass_path)
         except Exception:
             pass
         for path in sorted(glob.glob(os.path.join(state, '*.log.*'))):
             if path not in seen and os.path.isfile(path):
-                zf.write(path, arcname='logs/' + os.path.basename(path))
+                with open(path, encoding='utf-8', errors='replace') as handle:
+                    zf.writestr(
+                        'logs/' + os.path.basename(path),
+                        sanitize_log_text(handle.read()),
+                    )
 
         # System / runtime info. verbose=True for full storage/tool probing.
         try:
@@ -1041,9 +1061,9 @@ class LogViewerWindow(Adw.Window):
     def _on_copy_clicked(self, _btn) -> None:
         """Build the diagnostic bundle and put it on the clipboard.
 
-        Always sources from the master ``sshpilot.log`` (plus the crash report
-        if present) so bug reports contain the full picture, regardless of which
-        category the user is currently viewing.
+        Keep each local process source in its own labelled section so bug
+        reports contain the full picture without inventing a cross-process
+        ordering, regardless of which category the user is currently viewing.
         """
         bundle = build_report_bundle()
         try:

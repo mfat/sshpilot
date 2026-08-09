@@ -5,6 +5,8 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.24`; `PROTOCOL_VERSION` stays `1.0`.
+  Added typed `daemon.set_log_level` control for `warning`, `info`, and `debug`.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.23`; `PROTOCOL_VERSION` stays `1.0`.
 - Added `terminal.broadcast_input` and `BroadcastTerminalInputRequest` for
   writing a command to the existing daemon-owned interactive sessions. The
