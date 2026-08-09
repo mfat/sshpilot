@@ -11,6 +11,8 @@ numeric allowlist.
 from __future__ import annotations
 
 import ast
+import re
+from collections import Counter
 from pathlib import Path
 
 
@@ -151,6 +153,45 @@ PLUGIN_FACADE_CLASSES = frozenset(
     {identity.split(".", 1)[0] for identity in PLUGIN_FACADE_SURFACE}
 )
 
+# Supporting implementation identities are kept separate from the 53 public
+# facade identities.  They are still closure blockers and must remain visible
+# to the guard until the corresponding facade capability is migrated.
+PLUGIN_SUPPORTING_IMPLEMENTATIONS = {
+    "PluginHost.delete_key": "migration required",
+    "PluginHost.list_sessions": "migration required",
+    "PluginHost.read_terminal": "migration required",
+    "PluginHost.send_terminal": "migration required",
+    "PluginContext._spawn_stream": "migration required",
+    "PluginContext._finish_stream_early": "migration required",
+}
+
+SEMANTIC_BLOCKER_GROUPS = {
+    "P7-PLUGIN-COMMAND": {"PluginContext.run_command"},
+    "P7-PLUGIN-STREAM": {"PluginContext.run_command_stream"},
+    "P7-PLUGIN-MUX": {
+        "PluginContext.acquire_multiplex",
+        "PluginContext.release_multiplex",
+    },
+    "P7-PLUGIN-SETTINGS": {"_SettingStore.get", "_SettingStore.set"},
+    "P7-PLUGIN-IDENTITIES": {
+        "_IdentityView.list",
+        "_IdentityView.is_agent_available",
+    },
+    "P7-PLUGIN-KEY-DELETE": {"PluginContext.delete_key"},
+    "P7-PLUGIN-SESSION-VIEW": {
+        "PluginContext.list_sessions",
+        "PluginContext.read_terminal",
+        "PluginContext.send_terminal",
+    },
+}
+
+AUDIT_FACADE_CLASSIFICATION_START = "<!-- plugin-facade-classification:start -->"
+AUDIT_FACADE_CLASSIFICATION_END = "<!-- plugin-facade-classification:end -->"
+AUDIT_SUPPORTING_CLASSIFICATION_START = "<!-- plugin-supporting-classification:start -->"
+AUDIT_SUPPORTING_CLASSIFICATION_END = "<!-- plugin-supporting-classification:end -->"
+AUDIT_REPORT_START = "<!-- phase7-plugin-report:start -->"
+AUDIT_REPORT_END = "<!-- phase7-plugin-report:end -->"
+
 
 def _frontend_files():
     for path in sorted(SOURCE.rglob("*.py")):
@@ -173,6 +214,98 @@ def _function_names(tree: ast.AST):
         node.name
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _class_method_nodes(path: Path, class_names: set[str]):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name not in class_names:
+            continue
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found[f"{node.name}.{child.name}"] = child
+    return found
+
+
+def _plugin_implementation_nodes():
+    return {
+        **_class_method_nodes(SOURCE / "plugins" / "api.py", {"PluginContext"}),
+        **_class_method_nodes(SOURCE / "plugins" / "host.py", {"PluginHost"}),
+    }
+
+
+def _attribute_names(node: ast.AST) -> set[str]:
+    return {
+        child.attr
+        for child in ast.walk(node)
+        if isinstance(child, ast.Attribute)
+    }
+
+
+def _audit_block(text: str, start: str, end: str) -> list[str]:
+    try:
+        body = text.split(start, 1)[1].split(end, 1)[0]
+    except IndexError as exc:
+        raise AssertionError(f"missing audit block {start}") from exc
+    return [line.strip() for line in body.splitlines() if line.strip()]
+
+
+def _parse_classification_block(text: str, start: str, end: str) -> dict[str, str]:
+    rows = {}
+    for line in _audit_block(text, start, end):
+        match = re.fullmatch(r"`([^`]+)`\s*\|\s*`([^`]+)`", line)
+        if match is None:
+            raise AssertionError(f"malformed classification row: {line}")
+        identity, status = match.groups()
+        if identity in rows:
+            raise AssertionError(f"duplicate classification identity: {identity}")
+        rows[identity] = status
+    return rows
+
+
+def _parse_report_block(text: str) -> dict[str, int]:
+    report = {}
+    for line in _audit_block(text, AUDIT_REPORT_START, AUDIT_REPORT_END):
+        match = re.fullmatch(r"([a-z /-]+):\s*(\d+)", line)
+        if match is None:
+            raise AssertionError(f"malformed report row: {line}")
+        key, value = match.groups()
+        report[key] = int(value)
+    return report
+
+
+def _derived_plugin_report() -> dict[str, int]:
+    allowed_statuses = {
+        "API/daemon owned",
+        "legitimate frontend/platform-local",
+        "migration required",
+        "dead/unreachable code",
+    }
+    assert set(PLUGIN_FACADE_SURFACE.values()) <= allowed_statuses
+    counts = Counter(PLUGIN_FACADE_SURFACE.values())
+    migration_identities = {
+        identity
+        for identity, status in PLUGIN_FACADE_SURFACE.items()
+        if status == "migration required"
+    }
+    grouped_identities = set().union(*SEMANTIC_BLOCKER_GROUPS.values())
+    assert grouped_identities == migration_identities
+    assert all(
+        PLUGIN_FACADE_SURFACE[identity] == "migration required"
+        for identity in grouped_identities
+    )
+    assert sum(counts.values()) == len(PLUGIN_FACADE_SURFACE)
+    return {
+        "plugin capabilities audited": len(PLUGIN_FACADE_SURFACE),
+        "api/daemon owned": counts["API/daemon owned"],
+        "legitimate frontend/platform-local": counts[
+            "legitimate frontend/platform-local"
+        ],
+        "dead/unreachable compatibility": counts["dead/unreachable code"],
+        "migration-required public identities": len(migration_identities),
+        "semantic migration capabilities": len(SEMANTIC_BLOCKER_GROUPS),
     }
 
 
@@ -238,9 +371,80 @@ def test_plugin_facade_surface_has_an_explicit_classification():
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     assert _plugin_facade_surface(tree) == set(PLUGIN_FACADE_SURFACE)
     text = AUDIT.read_text(encoding="utf-8")
-    for identity, status in PLUGIN_FACADE_SURFACE.items():
-        assert f"`{identity}`" in text, identity
-        assert status in {"API/daemon owned", "legitimate frontend/platform-local", "migration required", "dead/unreachable code"}
+    assert _parse_classification_block(
+        text,
+        AUDIT_FACADE_CLASSIFICATION_START,
+        AUDIT_FACADE_CLASSIFICATION_END,
+    ) == PLUGIN_FACADE_SURFACE
+
+
+def test_plugin_supporting_implementations_keep_explicit_ownership_edges():
+    implementation_nodes = _plugin_implementation_nodes()
+    assert set(PLUGIN_SUPPORTING_IMPLEMENTATIONS) <= set(implementation_nodes)
+    text = AUDIT.read_text(encoding="utf-8")
+    assert _parse_classification_block(
+        text,
+        AUDIT_SUPPORTING_CLASSIFICATION_START,
+        AUDIT_SUPPORTING_CLASSIFICATION_END,
+    ) == PLUGIN_SUPPORTING_IMPLEMENTATIONS
+
+    host_nodes = {
+        identity: node
+        for identity, node in implementation_nodes.items()
+        if identity.startswith("PluginHost.")
+    }
+    # These exact GTK/widget ownership edges are the reason the host methods
+    # remain blockers.  A new adjacent method with one of these edges also
+    # fails the identity check instead of becoming invisible.
+    host_edges = {
+        identity
+        for identity, node in host_nodes.items()
+        if (
+            "get_content" in _attribute_names(node)
+            or "feed_child_data" in _attribute_names(node)
+            or {"remove", "realpath"} <= _attribute_names(node)
+            or "unlink" in _attribute_names(node)
+        )
+    }
+    assert host_edges == {
+        "PluginHost.delete_key",
+        "PluginHost.read_terminal",
+        "PluginHost.send_terminal",
+    }
+    session_bookkeeping_edges = {
+        identity
+        for identity, node in host_nodes.items()
+        if "_terminal_sessions" in _attribute_names(node)
+    }
+    assert session_bookkeeping_edges == {
+        "PluginHost.__init__",
+        "PluginHost.dispatch_session_opened",
+        "PluginHost.dispatch_session_closed",
+        "PluginHost.list_sessions",
+    }
+    assert "stop" in _attribute_names(
+        implementation_nodes["PluginContext._finish_stream_early"]
+    )
+
+    api_nodes = {
+        identity: node
+        for identity, node in implementation_nodes.items()
+        if identity.startswith("PluginContext.")
+    }
+    stream_process_edges = {
+        identity
+        for identity, node in api_nodes.items()
+        if "Popen" in _attribute_names(node)
+    }
+    assert stream_process_edges == {
+        "PluginContext._spawn_stream",
+        "PluginContext.ensure_local_forward",
+    }
+
+
+def test_phase7_plugin_report_counts_are_derived_from_registry():
+    text = AUDIT.read_text(encoding="utf-8")
+    assert _parse_report_block(text) == _derived_plugin_report()
 
 
 def test_active_frontend_has_no_direct_backend_process_or_secret_ownership():

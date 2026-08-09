@@ -83,6 +83,78 @@ update both this audit and `tests/architecture/test_frontend_closure.py`.
 | Plugin-local files and HTTP | plugin data/cache and external provider integrations | `_FilesFacade.path`, `_FilesFacade.exists`, `_FilesFacade.read_text`, `_FilesFacade.read_bytes`, `_FilesFacade.write_text`, `_FilesFacade.write_bytes`, `_HttpFacade.get`, `_HttpFacade.post`, `PluginContext.data_dir` | Plugin-private XDG data and OS/network adapters | plugin facade and built-in plugin tests | legitimate frontend/platform-local | These do not mutate SSH Pilot backend state, remote files, transfers, or daemon-owned configuration. |
 | UI and event registration | plugin activation and panels | `_EventsFacade.subscribe`, `_EventsFacade.unsubscribe`, `_UiFacade.register_page`, `_UiFacade.open_page`, `_UiFacade.notify`, `_UiFacade.register_connection_action`, `_UiFacade.open_web_tab`, `PluginContext.run_on_ui_thread` | GTK/UI event bus and desktop presentation | plugin host/UI tests | legitimate frontend/platform-local | Registration, notifications, browser tabs, and UI-thread scheduling are presentation behavior. |
 
+The following machine-readable classification is the synchronization source
+checked by the closure guard.  It intentionally contains one row per public
+identity; the prose matrix above remains the human-readable operation audit.
+
+<!-- plugin-facade-classification:start -->
+`PluginContext.for_spawn` | `API/daemon owned`
+`PluginContext.register_protocol` | `API/daemon owned`
+`PluginContext.add_connection` | `API/daemon owned`
+`PluginContext.update_connection` | `API/daemon owned`
+`PluginContext.list_connections` | `API/daemon owned`
+`PluginContext.open_connection` | `API/daemon owned`
+`PluginContext.open_command_terminal` | `API/daemon owned`
+`PluginContext.open_local_command_terminal` | `legitimate frontend/platform-local`
+`PluginContext.create_group` | `API/daemon owned`
+`PluginContext.add_connection_to_group` | `API/daemon owned`
+`PluginContext.add_connection_group` | `API/daemon owned`
+`PluginContext.generate_key` | `API/daemon owned`
+`PluginContext.list_keys` | `API/daemon owned`
+`PluginContext.delete_key` | `migration required`
+`PluginContext.run_command` | `migration required`
+`PluginContext.run_local_command` | `legitimate frontend/platform-local`
+`PluginContext.run_command_stream` | `migration required`
+`PluginContext.run_local_command_stream` | `legitimate frontend/platform-local`
+`PluginContext.acquire_multiplex` | `migration required`
+`PluginContext.release_multiplex` | `migration required`
+`PluginContext.ensure_local_forward` | `API/daemon owned`
+`PluginContext.get_effective_ssh_config` | `dead/unreachable code`
+`PluginContext.copy_key_to_host` | `dead/unreachable code`
+`PluginContext.list_sessions` | `migration required`
+`PluginContext.read_terminal` | `migration required`
+`PluginContext.send_terminal` | `migration required`
+`PluginContext.data_dir` | `legitimate frontend/platform-local`
+`PluginContext.run_on_ui_thread` | `legitimate frontend/platform-local`
+`PluginContext.get_secret` | `API/daemon owned`
+`PluginContext.set_secret` | `API/daemon owned`
+`PluginContext.delete_secret` | `API/daemon owned`
+`_EventsFacade.subscribe` | `legitimate frontend/platform-local`
+`_EventsFacade.unsubscribe` | `legitimate frontend/platform-local`
+`_UiFacade.register_page` | `legitimate frontend/platform-local`
+`_UiFacade.open_page` | `legitimate frontend/platform-local`
+`_UiFacade.notify` | `legitimate frontend/platform-local`
+`_UiFacade.register_connection_action` | `legitimate frontend/platform-local`
+`_UiFacade.open_web_tab` | `legitimate frontend/platform-local`
+`_SecretStore.get` | `API/daemon owned`
+`_SecretStore.set` | `API/daemon owned`
+`_SecretStore.delete` | `API/daemon owned`
+`_IdentityView.list` | `migration required`
+`_IdentityView.is_agent_available` | `migration required`
+`_SettingStore.get` | `migration required`
+`_SettingStore.set` | `migration required`
+`_FilesFacade.path` | `legitimate frontend/platform-local`
+`_FilesFacade.exists` | `legitimate frontend/platform-local`
+`_FilesFacade.read_text` | `legitimate frontend/platform-local`
+`_FilesFacade.read_bytes` | `legitimate frontend/platform-local`
+`_FilesFacade.write_text` | `legitimate frontend/platform-local`
+`_FilesFacade.write_bytes` | `legitimate frontend/platform-local`
+`_HttpFacade.get` | `legitimate frontend/platform-local`
+`_HttpFacade.post` | `legitimate frontend/platform-local`
+<!-- plugin-facade-classification:end -->
+
+Supporting implementation identities are synchronized separately because they
+are not part of the 53 public facade count:
+
+<!-- plugin-supporting-classification:start -->
+`PluginHost.delete_key` | `migration required`
+`PluginHost.list_sessions` | `migration required`
+`PluginHost.read_terminal` | `migration required`
+`PluginHost.send_terminal` | `migration required`
+`PluginContext._spawn_stream` | `migration required`
+`PluginContext._finish_stream_early` | `migration required`
+<!-- plugin-supporting-classification:end -->
+
 ## Debt identity audit
 
 The Phase 5 debt ratchet remains unchanged and is not being bypassed.  The
@@ -122,7 +194,7 @@ prevents silently broadening the exception. `CORE_DEBT` is empty.
 
 ## Closure blockers and next semantic APIs
 
-Remaining migration blockers: **8 semantic capabilities** (**12 public facade
+Remaining migration blockers: **7 semantic capabilities** (**12 public facade
 identities**, plus the supporting `PluginHost`/stream implementation
 identities listed below).
 
@@ -161,13 +233,17 @@ contract is designed and tested headlessly.
 
 ## Required Phase 7 report
 
-* plugin capabilities audited: **53** public PluginContext/facade identities;
-* API/daemon owned: **19**;
-* legitimate frontend/platform-local: **20**;
-* dead/unreachable compatibility: **2**;
-* migration blockers: **12 public identities / 8 semantic capabilities**.
+<!-- phase7-plugin-report:start -->
+plugin capabilities audited: 53
+api/daemon owned: 19
+legitimate frontend/platform-local: 20
+dead/unreachable compatibility: 2
+migration-required public identities: 12
+semantic migration capabilities: 7
+<!-- phase7-plugin-report:end -->
 
-The counts are identity-based and deliberately include the mixed settings
+These counts are derived from the classification registry by the closure
+guard.  They are identity-based and deliberately include the mixed settings
 facade as migration-required because it is used for operational state. No
 final plugin migration is implemented in this correction.
 
