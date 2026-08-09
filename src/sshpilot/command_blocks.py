@@ -35,7 +35,11 @@ _INTERACTIVE_DEFAULT_IDS = frozenset({"c-dlogs", "c-dexec", "c-syslog", "c-journ
 def _execution_mode(command: dict) -> str:
     """Return an explicit mode; legacy seeded interactive commands stay interactive."""
     mode = command.get("execution_mode")
-    if mode == EXECUTION_MODE_INTERACTIVE_TERMINAL or command.get("id") in _INTERACTIVE_DEFAULT_IDS:
+    if mode == EXECUTION_MODE_INTERACTIVE_TERMINAL:
+        return EXECUTION_MODE_INTERACTIVE_TERMINAL
+    if mode == EXECUTION_MODE_ONE_SHOT:
+        return EXECUTION_MODE_ONE_SHOT
+    if command.get("id") in _INTERACTIVE_DEFAULT_IDS:
         return EXECUTION_MODE_INTERACTIVE_TERMINAL
     return EXECUTION_MODE_ONE_SHOT
 

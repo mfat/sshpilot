@@ -18,10 +18,19 @@ def test_streaming_and_pty_defaults_are_explicitly_interactive():
     assert _execution_mode(by_id["c-dps"]) == EXECUTION_MODE_ONE_SHOT
 
 
-def test_legacy_seeded_interactive_ids_remain_interactive_without_text_parsing():
-    assert _execution_mode({"id": "c-dexec", "command": "changed by user"}) == (
+def test_legacy_interactive_default_without_mode_stays_interactive():
+    assert _execution_mode({"id": "c-dexec"}) == (
         EXECUTION_MODE_INTERACTIVE_TERMINAL
     )
+
+
+def test_explicit_one_shot_overrides_legacy_interactive_default():
+    assert _execution_mode(
+        {"id": "c-dexec", "execution_mode": EXECUTION_MODE_ONE_SHOT}
+    ) == EXECUTION_MODE_ONE_SHOT
+
+
+def test_command_text_does_not_infer_interactive_execution():
     assert _execution_mode({"id": "custom", "command": "tail -f anything"}) == (
         EXECUTION_MODE_ONE_SHOT
     )
