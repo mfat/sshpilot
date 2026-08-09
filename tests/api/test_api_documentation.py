@@ -359,15 +359,26 @@ def test_api_version_baseline_acceptance_and_ratchet(tmp_path):
         version="0.25",
         baseline_dir=tmp_path,
     )
+    original_baseline = (tmp_path / "0.25.json").read_text(encoding="utf-8")
+    assert (
+        generator.write_version_baseline(
+            surface,
+            version="0.25",
+            baseline_dir=tmp_path,
+        )
+        == tmp_path / "0.25.json"
+    )
+    assert (tmp_path / "0.25.json").read_text(encoding="utf-8") == original_baseline
 
     changed = dict(surface)
     changed["client_methods"] = list(surface["client_methods"]) + ["new_public_method"]
     with pytest.raises(ValueError, match="surface changed"):
-        generator.validate_version_baseline(
+        generator.write_version_baseline(
             changed,
             version="0.25",
             baseline_dir=tmp_path,
         )
+    assert (tmp_path / "0.25.json").read_text(encoding="utf-8") == original_baseline
 
     with pytest.raises(ValueError, match="No accepted public API baseline"):
         generator.validate_version_baseline(

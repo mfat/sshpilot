@@ -1002,6 +1002,16 @@ def write_version_baseline(
     baseline_dir: Path = VERSION_BASELINE_DIR,
 ) -> Path:
     path = version_baseline_path(version, baseline_dir=baseline_dir)
+    if path.exists():
+        # Acceptance is intentionally create-only.  An existing reviewed
+        # baseline may be accepted again, but never replaced under the same
+        # implementation version.
+        validate_version_baseline(
+            surface,
+            version=version,
+            baseline_dir=baseline_dir,
+        )
+        return path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_json_text(surface), encoding="utf-8")
     try:
