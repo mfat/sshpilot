@@ -90,22 +90,24 @@ def test_title_is_used_only_until_native_cwd_arrives():
     assert terminal._current_remote_directory == "/title/path"
 
 
-def test_spawn_async_uses_documented_pygobject_argument_layout(monkeypatch):
-    calls = []
+def test_spawn_async_uses_modern_pygobject_keyword_layout(monkeypatch):
+    calls = {}
     backend = object.__new__(VTETerminalBackend)
-    backend.vte = types.SimpleNamespace(spawn_async=lambda *args: calls.append(args))
+    backend.vte = types.SimpleNamespace(
+        spawn_async=lambda *args, **kwargs: calls.update(args=args, kwargs=kwargs)
+    )
     monkeypatch.setattr(terminal_backends.Vte, "PtyFlags",
                         types.SimpleNamespace(DEFAULT=0), raising=False)
     callback = object()
     user_data = object()
     backend.spawn_async(["/bin/sh"], cwd="/tmp", callback=callback,
                         user_data=user_data)
-    args = calls[0]
-    assert len(args) == 10
-    assert args[5] is None       # child_setup
-    assert args[6] == -1         # timeout follows child_setup directly
-    assert args[8] is callback
-    assert args[9] is user_data
+    assert calls["args"] == ()
+    assert calls["kwargs"]["working_directory"] == "/tmp"
+    assert calls["kwargs"]["child_setup"] is None
+    assert calls["kwargs"]["timeout"] == -1
+    assert calls["kwargs"]["callback"] is not callback
+    assert calls["kwargs"]["user_data"] is user_data
 
 
 def test_modern_vte_does_not_connect_deprecated_title_signal(monkeypatch):

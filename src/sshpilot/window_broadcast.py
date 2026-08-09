@@ -149,6 +149,7 @@ class WindowBroadcastMixin:
         """Hide the broadcast banner"""
         self._cancel_broadcast_hide_timeout()
         self.broadcast_banner.set_reveal_child(False)
+        self.broadcast_banner.set_visible(False)
         self.broadcast_entry_dirty = False
         self._suppress_broadcast_entry_changed = True
         try:
@@ -171,6 +172,7 @@ class WindowBroadcastMixin:
     def show_broadcast_banner(self):
         """Show the broadcast banner"""
         self._cancel_broadcast_hide_timeout()
+        self.broadcast_banner.set_visible(True)
         self.broadcast_banner.set_reveal_child(True)
         self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
 

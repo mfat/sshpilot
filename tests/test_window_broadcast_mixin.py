@@ -10,6 +10,7 @@ WindowActions in the MRO so its on_broadcast_command_action wins over the
 
 import sys
 import types
+from pathlib import Path
 
 
 def _window_module():

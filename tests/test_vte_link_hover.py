@@ -96,4 +96,12 @@ def test_native_context_menu_handles_show_and_none_dismissal(monkeypatch):
     assert backend.vte.menus == [menu]
     assert lifecycle == [True, False]
     backend.clear_native_context_menu()
-    assert backend.vte.menus == [menu, None]
+    assert backend.vte.menus == [menu]
+
+
+def test_native_context_menu_is_capability_gated_for_older_vte(monkeypatch):
+    monkeypatch.setattr(terminal_backends.Vte, "EventContext", object, raising=False)
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = types.SimpleNamespace()
+
+    assert backend.supports_feature("native_context_menu") is False

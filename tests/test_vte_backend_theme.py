@@ -152,3 +152,51 @@ def test_optional_vte_configuration_and_links_are_non_fatal(monkeypatch):
     backend.setup_link_handling(lambda *_a: None, lambda *_a: None, lambda *_a: None)
 
     assert backend.supports_feature("hyperlinks") is False
+
+
+def test_vte_spawn_uses_modern_binding_and_normalizes_callback_user_data():
+    captured = {}
+
+    def spawn_async(*args, **kwargs):
+        captured.update(args=args, kwargs=kwargs)
+
+    vte = types.SimpleNamespace(spawn_async=spawn_async)
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = vte
+    completed = []
+    callback = lambda *args: completed.append(args)
+    user_data = object()
+
+    backend.spawn_async(["/bin/sh"], callback=callback, user_data=user_data)
+
+    assert captured["args"] == ()
+    assert captured["kwargs"]["callback"] is not callback
+    assert captured["kwargs"]["cancellable"] is None
+    assert captured["kwargs"]["user_data"] is user_data
+    captured["kwargs"]["callback"](vte, 123, None, "native-user-data")
+    assert completed == [(vte, 123, None, user_data)]
+
+
+def test_vte_spawn_falls_back_to_legacy_child_setup_data_binding():
+    calls = []
+
+    class LegacyVte:
+        def spawn_async(self, *args, **kwargs):
+            if kwargs:
+                raise TypeError("legacy binding does not accept keywords")
+            calls.append(args)
+
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = LegacyVte()
+    completed = []
+    callback = lambda *args: completed.append(args)
+    user_data = object()
+
+    backend.spawn_async(["/bin/sh"], callback=callback, user_data=user_data)
+
+    assert len(calls) == 1
+    assert calls[0][6] is None  # legacy child_setup_data
+    assert calls[0][9] is not None  # normalized callback closure
+    assert calls[0][10] is user_data  # native callback user_data
+    calls[0][9](backend.vte, 456, None, "native-user-data")
+    assert completed == [(backend.vte, 456, None, user_data)]

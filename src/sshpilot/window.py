@@ -2911,8 +2911,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Create broadcast command banner (custom banner-like widget)
         self.broadcast_banner = Gtk.Revealer()
+        self.broadcast_banner.set_visible(False)
         self.broadcast_banner.set_reveal_child(False)
-        self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.NONE)
         self.broadcast_hide_timeout_id: Optional[int] = None
         self.broadcast_entry_dirty = False
         self._suppress_broadcast_entry_changed = False
