@@ -10,6 +10,7 @@ WindowActions in the MRO so its on_broadcast_command_action wins over the
 
 import sys
 import types
+from pathlib import Path
 
 
 def _window_module():
@@ -65,3 +66,14 @@ def test_dead_broadcast_copy_removed_from_window_actions():
     wm = _window_module()
     actions_cls = next(c for c in wm.MainWindow.__mro__ if c.__name__ == "WindowActions")
     assert "on_broadcast_command_action" not in vars(actions_cls)
+
+
+def test_broadcast_banner_uses_discrete_visibility_lifecycle():
+    root = Path(__file__).parents[1]
+    window_source = (root / "src/sshpilot/window.py").read_text()
+    mixin_source = (root / "src/sshpilot/window_broadcast.py").read_text()
+
+    assert "self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.NONE)" in window_source
+    assert "self.broadcast_banner.set_visible(False)" in window_source
+    assert "self.broadcast_banner.set_visible(True)" in mixin_source
+    assert "self.broadcast_banner.set_visible(False)" in mixin_source
