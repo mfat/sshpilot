@@ -77,21 +77,21 @@ def test_context_and_click_queries_are_exact_one_shot():
     assert calls == [(12, 34)]
 
 
-def test_native_context_menu_uses_event_context_coordinates(monkeypatch):
+def test_native_context_menu_handles_show_and_none_dismissal(monkeypatch):
     monkeypatch.setattr(terminal_backends.Vte, "EventContext", object, raising=False)
     class NativeVte:
         def __init__(self): self.callback = None; self.menu = None
         def set_context_menu(self, menu): self.menu = menu
         def connect(self, signal, callback):
             assert signal == "setup-context-menu"; self.callback = callback; return 3
-    class Context:
-        def get_coordinates(self): return True, 21.5, 42.25
     backend = object.__new__(VTETerminalBackend)
     backend.vte = NativeVte()
     backend._native_context_handler = None
-    coordinates = []
+    lifecycle = []
     menu = object()
-    assert backend.setup_native_context_menu(menu, lambda x, y: coordinates.append((x, y)))
-    backend.vte.callback(backend.vte, Context())
+    assert backend.setup_native_context_menu(menu, lifecycle.append)
+    context = object()
+    backend.vte.callback(backend.vte, context)
+    backend.vte.callback(backend.vte, None)
     assert backend.vte.menu is menu
-    assert coordinates == [(21.5, 42.25)]
+    assert lifecycle == [True, False]

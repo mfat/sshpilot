@@ -632,25 +632,29 @@ class VTETerminalBackend:
             env_list,
             GLib.SpawnFlags.DEFAULT,
             child_setup,
-            user_data,
             -1,
             None,
             callback,
-            (),
+            user_data,
         )
 
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         return self.vte.connect("child-exited", callback)
 
     def connect_title_changed(self, callback: Callable[[Gtk.Widget, str], None]) -> Any:
+        # VTE 0.78+ reports titles through XTERM_TITLE termprops.  Keep the
+        # deprecated signal only as the legacy 0.70--0.76 fallback.
+        if hasattr(Vte, "PropertyId") and hasattr(
+                self.vte, "get_termprop_string_by_id"):
+            return None
         return self.vte.connect("window-title-changed", callback)
 
     def connect_termprops_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """Snapshot modern termprops and defer delivery outside VTE's signal.
 
-        The changed values are numeric ``PropertyId`` members, while getters
-        take the string property names.  VTE restricts synchronous work in
-        this signal, hence the idle delivery of the plain Python snapshot.
+        The changed values and modern getter arguments are numeric
+        ``PropertyId`` members. VTE restricts synchronous work in this signal,
+        hence the idle delivery of the plain Python snapshot.
         """
         try:
             def _on_changed(terminal, ids, _user_data=None):
@@ -659,34 +663,39 @@ class VTETerminalBackend:
                 property_id = Vte.PropertyId
                 if property_id.XTERM_TITLE in changed:
                     try:
-                        ok, value = terminal.get_termprop_string(Vte.TERMPROP_XTERM_TITLE)
-                        if ok:
+                        value, _length = terminal.get_termprop_string_by_id(
+                            property_id.XTERM_TITLE)
+                        if value is not None:
                             event["title"] = value
                     except Exception:
                         pass
                 if property_id.CURRENT_DIRECTORY_URI in changed:
                     try:
-                        ok, value = terminal.get_termprop_uri(
-                            Vte.TERMPROP_CURRENT_DIRECTORY_URI)
-                        if ok:
-                            event["cwd_uri"] = value
+                        if hasattr(terminal, "ref_termprop_uri_by_id"):
+                            value = terminal.ref_termprop_uri_by_id(
+                                property_id.CURRENT_DIRECTORY_URI)
+                        else:
+                            value = terminal.get_termprop_value_by_id(
+                                property_id.CURRENT_DIRECTORY_URI)
+                            if (isinstance(value, tuple) and len(value) == 2
+                                    and isinstance(value[0], bool)):
+                                value = value[1] if value[0] else None
+                            if hasattr(value, "get_boxed"):
+                                value = value.get_boxed()
+                        if value is not None:
+                            event["cwd_uri"] = (
+                                value.to_string()
+                                if hasattr(value, "to_string") else str(value))
                     except Exception:
-                        # Some GI versions expose URI termprops as strings.
-                        try:
-                            ok, value = terminal.get_termprop_string(
-                                Vte.TERMPROP_CURRENT_DIRECTORY_URI)
-                            if ok:
-                                event["cwd_uri"] = value
-                        except Exception:
-                            pass
+                        pass
                 if property_id.SHELL_PREEXEC in changed:
                     event["preexec"] = True
                 if property_id.SHELL_PRECMD in changed:
                     event["precmd"] = True
                 if property_id.SHELL_POSTEXEC in changed:
                     try:
-                        ok, value = terminal.get_termprop_uint(
-                            Vte.TERMPROP_SHELL_POSTEXEC)
+                        ok, value = terminal.get_termprop_uint_by_id(
+                            property_id.SHELL_POSTEXEC)
                         if ok:
                             event["postexec"] = value
                     except Exception:
@@ -709,7 +718,12 @@ class VTETerminalBackend:
         return self._termprops_handler
 
     def setup_native_context_menu(self, menu: Any, callback: Callable) -> bool:
-        """Install VTE 0.76+'s native context-menu integration."""
+        """Install VTE 0.76+'s native context-menu lifecycle.
+
+        ``EventContext.get_coordinates()`` only exposes a boolean through the
+        Python binding.  The owner records mouse coordinates in a capture-phase
+        GTK gesture instead; this callback reports show/dismiss lifecycle only.
+        """
         if not (hasattr(self.vte, "set_context_menu")
                 and hasattr(Vte, "EventContext")):
             return False
@@ -717,14 +731,9 @@ class VTETerminalBackend:
             self.vte.set_context_menu(menu)
             if getattr(self, "_native_context_handler", None) is None:
                 def _on_setup(_terminal, context):
-                    coordinates = context.get_coordinates()
-                    if len(coordinates) == 3:
-                        valid, x, y = coordinates
-                        if not valid:
-                            return
-                    else:
-                        x, y = coordinates
-                    callback(float(x), float(y))
+                    # VTE emits a final setup-context-menu with None after the
+                    # menu is dismissed. Never dereference that sentinel.
+                    callback(context is not None)
                 self._native_context_handler = self.vte.connect(
                     "setup-context-menu", _on_setup)
             return True
@@ -922,7 +931,7 @@ class VTETerminalBackend:
                         and hasattr(Vte, "EventContext"))
         if feature == "termprops":
             return bool(hasattr(Vte, "PropertyId")
-                        and hasattr(self.vte, "get_termprop_string"))
+                        and hasattr(self.vte, "get_termprop_string_by_id"))
         return feature in supported
 
     def get_pty(self) -> Optional[Any]:

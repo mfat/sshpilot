@@ -3190,9 +3190,9 @@ class TerminalWidget(Gtk.Box):
                 self._menu_popover.set_parent(parent_widget)
             self._menu_parent_widget = parent_widget
 
-            def _prepare_context_menu(x, y):
+            def _prepare_context_menu(x=None, y=None):
                 """Snapshot the URI at the actual invocation coordinates."""
-                uri = self._vte_uri_at(x, y)
+                uri = self._vte_uri_at(x, y) if x is not None and y is not None else None
                 self._context_menu_hyperlink_uri = uri
                 has_link = bool(uri)
                 in_menu = getattr(self, '_link_section_in_menu', False)
@@ -3205,17 +3205,30 @@ class TerminalWidget(Gtk.Box):
 
             self._native_vte_context_menu = False
             if self.backend.supports_feature("native_context_menu"):
+                def _on_native_context_menu(showing):
+                    if showing:
+                        coordinates = getattr(
+                            self, '_pending_context_menu_coordinates', None)
+                        if coordinates is None:
+                            # Keyboard invocation has no meaningful mouse cell.
+                            _prepare_context_menu()
+                        else:
+                            _prepare_context_menu(*coordinates)
+                    else:
+                        self._pending_context_menu_coordinates = None
                 self._native_vte_context_menu = self.backend.setup_native_context_menu(
-                    self._menu_popover, _prepare_context_menu)
+                    self._menu_popover, _on_native_context_menu)
 
             self._menu_needs_manual_dismiss = not self.backend.supports_feature("hyperlinks")
             if self._menu_needs_manual_dismiss:
                 self._menu_popover.set_autohide(False)
                 self._install_manual_menu_dismissal(parent_widget)
 
-            # Right-click gesture to open the context menu (BUBBLE phase is fine for right-click)
+            # Capture records coordinates before VTE handles the event; it
+            # claims only the paste-on-right-click policy case.
             gesture = Gtk.GestureClick()
             gesture.set_button(0)
+            gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             def _on_pressed(gest, n_press, x, y):
                 try:
                     btn = 0
@@ -3231,6 +3244,11 @@ class TerminalWidget(Gtk.Box):
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
+                    if getattr(self, '_native_vte_context_menu', False):
+                        # EventContext coordinates are not exposed by the GI
+                        # binding. Record only plain Python numbers; VTE still
+                        # owns recognition, placement and popup lifecycle.
+                        self._pending_context_menu_coordinates = (float(x), float(y))
                     # Paste-on-right-click: when enabled, a plain right-click
                     # pastes the clipboard; Shift+right-click still opens the menu.
                     try:
@@ -3246,6 +3264,7 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         shift_held = False
                     if paste_on_rc and not shift_held:
+                        self._pending_context_menu_coordinates = None
                         gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         try:
                             if self.backend:

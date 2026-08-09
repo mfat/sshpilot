@@ -14,11 +14,12 @@ class FakeTerminal:
         assert signal == "termprops-changed"
         self.handler = callback
         return 9
-    def get_termprop_string(self, prop):
-        self.reads.append(("string", prop)); return True, "shell title"
-    def get_termprop_uri(self, prop):
-        self.reads.append(("uri", prop)); return True, "file:///srv/app"
-    def get_termprop_uint(self, prop):
+    def get_termprop_string_by_id(self, prop):
+        self.reads.append(("string", prop)); return "shell title", 11
+    def ref_termprop_uri_by_id(self, prop):
+        self.reads.append(("uri", prop))
+        return types.SimpleNamespace(to_string=lambda: "file:///srv/app")
+    def get_termprop_uint_by_id(self, prop):
         self.reads.append(("uint", prop)); return True, 23
 
 
@@ -34,9 +35,6 @@ def test_termprops_use_ids_valueless_events_and_defer_callback(monkeypatch):
     ids = types.SimpleNamespace(XTERM_TITLE=1, CURRENT_DIRECTORY_URI=2,
                                 SHELL_PREEXEC=3, SHELL_PRECMD=4, SHELL_POSTEXEC=5)
     monkeypatch.setattr(terminal_backends.Vte, "PropertyId", ids, raising=False)
-    for name in ("XTERM_TITLE", "CURRENT_DIRECTORY_URI", "SHELL_PREEXEC",
-                 "SHELL_PRECMD", "SHELL_POSTEXEC"):
-        monkeypatch.setattr(terminal_backends.Vte, f"TERMPROP_{name}", name.lower(), raising=False)
     queued = []
     monkeypatch.setattr(terminal_backends.GLib, "idle_add",
                         lambda callback, *args: queued.append((callback, args)) or 1)
@@ -45,9 +43,7 @@ def test_termprops_use_ids_valueless_events_and_defer_callback(monkeypatch):
     backend.connect_termprops_changed(lambda *args: delivered.append(args))
     backend.vte.handler(backend.vte, [1, 2, 3, 4, 5])
     assert delivered == []
-    assert backend.vte.reads == [("string", "xterm_title"),
-                                 ("uri", "current_directory_uri"),
-                                 ("uint", "shell_postexec")]
+    assert backend.vte.reads == [("string", 1), ("uri", 2), ("uint", 5)]
     callback, args = queued.pop()
     callback(*args)
     event = delivered[0][1]
@@ -92,3 +88,30 @@ def test_title_is_used_only_until_native_cwd_arrives():
     )
     TerminalWidget._on_termprops_changed(terminal, None, {"title": "a title"})
     assert terminal._current_remote_directory == "/title/path"
+
+
+def test_spawn_async_uses_documented_pygobject_argument_layout(monkeypatch):
+    calls = []
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = types.SimpleNamespace(spawn_async=lambda *args: calls.append(args))
+    monkeypatch.setattr(terminal_backends.Vte, "PtyFlags",
+                        types.SimpleNamespace(DEFAULT=0), raising=False)
+    callback = object()
+    user_data = object()
+    backend.spawn_async(["/bin/sh"], cwd="/tmp", callback=callback,
+                        user_data=user_data)
+    args = calls[0]
+    assert len(args) == 10
+    assert args[5] is None       # child_setup
+    assert args[6] == -1         # timeout follows child_setup directly
+    assert args[8] is callback
+    assert args[9] is user_data
+
+
+def test_modern_vte_does_not_connect_deprecated_title_signal(monkeypatch):
+    monkeypatch.setattr(terminal_backends.Vte, "PropertyId", object, raising=False)
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = types.SimpleNamespace(
+        get_termprop_string_by_id=lambda *_args: None,
+        connect=lambda *_args: pytest.fail("legacy title signal was connected"))
+    assert backend.connect_title_changed(lambda *_args: None) is None
