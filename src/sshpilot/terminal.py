@@ -142,6 +142,7 @@ class TerminalWidget(Gtk.Box):
         self._daemon_interaction_dialogs = None
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
+        self._daemon_exit_handled = False
         self._view_only_overlay = None
         self._reconnect_handler = None
 
@@ -1050,6 +1051,7 @@ class TerminalWidget(Gtk.Box):
 
             # Mark as daemon mode
             self._daemon_mode = True
+            self._daemon_exit_handled = False
 
             # Create view ID
             view_id = f"gtk-{self.session_id}"
@@ -1117,6 +1119,7 @@ class TerminalWidget(Gtk.Box):
             )
 
             self._daemon_mode = True
+            self._daemon_exit_handled = False
             view_id = f"gtk-{self.session_id}"
             resolved_connection_id = connection_id
             if resolved_connection_id is None and self._daemon_tab_state is not None:
@@ -1542,12 +1545,72 @@ class TerminalWidget(Gtk.Box):
                 if old_connected:
                     GLib.idle_add(self.emit, 'connection-lost')
 
+                if daemon_state == TerminalSessionState.CLOSED:
+                    # The daemon session ended underneath the tab (remote
+                    # reboot, killed connection, or the user typing exit).
+                    self._handle_daemon_session_exit(old_connected)
+
             elif daemon_state == TerminalSessionState.DETACHED:
                 # Keep connected state but update reason
                 self.connection_state_reason = 'Detached'
 
         except Exception as e:
             logger.error(f"Failed to update daemon connection state: {e}")
+
+    def _handle_daemon_session_exit(self, was_connected):
+        """React to a daemon-initiated session end (reboot, dropped link, exit).
+
+        Mirrors the legacy child-exit handling: a clean exit (the user typed
+        exit) closes the tab; any other exit shows the reconnect banner.
+        Runs at most once per daemon session.
+        """
+        if getattr(self, '_daemon_exit_handled', False):
+            return
+        self._daemon_exit_handled = True
+
+        try:
+            exit_info = getattr(self._daemon_controller, 'exit_info', None)
+            exit_code = getattr(exit_info, 'exit_code', None) if exit_info else None
+            signal = getattr(exit_info, 'signal', None) if exit_info else None
+
+            if exit_info is not None and exit_code == 0 and not signal:
+                # Clean exit: close the tab (mirrors _handle_child_exit_cleanup).
+                root = self.get_root() if hasattr(self, 'get_root') else None
+                if root and hasattr(root, 'tab_view'):
+                    # Safe lookup: this terminal may be embedded in a
+                    # split-view pane (not in the main tab_view).
+                    if hasattr(root, '_page_for_child'):
+                        page = root._page_for_child(self)
+                    else:
+                        page = root.tab_view.get_page(self)
+                    if page:
+                        try:
+                            setattr(root, '_suppress_close_confirmation', True)
+                            root.tab_view.close_page(page)
+                        finally:
+                            try:
+                                setattr(root, '_suppress_close_confirmation', False)
+                            except Exception:
+                                pass
+                return
+
+            # Unexpected end (remote reboot, killed connection, ...): show the
+            # reconnect banner, classified the same way as the legacy path.
+            exit_state, exit_reason = self._classify_exit(exit_code, was_connected, '')
+            self.connection_state = exit_state
+            self.connection_state_reason = exit_reason or 'Session ended'
+            banner_text = self.last_error_message or exit_reason
+            if not banner_text:
+                if exit_code:
+                    banner_text = _('SSH exited with status {code}').format(code=exit_code)
+                elif signal:
+                    banner_text = _('Session terminated by signal {sig}').format(sig=signal)
+                else:
+                    banner_text = _('Session ended.')
+            self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
+            self._set_disconnected_banner_visible(True, banner_text)
+        except Exception as e:
+            logger.error(f"Failed to handle daemon session exit: {e}")
 
     def _connect_ssh(self):
         """Connect to SSH host"""

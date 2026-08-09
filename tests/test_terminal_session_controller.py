@@ -382,7 +382,194 @@ def test_missing_capabilities_helper():
     client.get_capabilities.return_value = capabilities
     
     missing = daemon_terminal_capabilities_missing(client)
-    
+
     # Should return all required capabilities as missing
     required = required_daemon_terminal_capabilities()
     assert missing == required
+
+
+def _run_submit(fn, on_success=None, on_error=None, **kwargs):
+    """Bridge stub that executes the operation synchronously."""
+    try:
+        result = fn()
+    except Exception as exc:  # pragma: no cover - defensive
+        if on_error is not None:
+            on_error(exc)
+        return
+    if on_success is not None:
+        on_success(result)
+
+
+@pytest.fixture
+def active_session(mock_client, mock_bridge, connection_id):
+    """Controller on a live daemon session with its event callback captured.
+
+    Returns (controller, on_event, on_state_changed) where on_event is the
+    callback the controller registered via client.subscribe_events.
+    """
+    on_state_changed = Mock()
+    controller = DaemonTerminalSessionController(
+        client=mock_client,
+        bridge=mock_bridge,
+        connection_id=connection_id,
+        view_id="test-view",
+        on_state_changed=on_state_changed,
+    )
+    mock_client.subscribe_events = Mock(return_value=Mock(unsubscribe=Mock()))
+    mock_bridge.submit.side_effect = _run_submit
+    session_id = SessionId("test-session")
+    controller._tab_state.session_id = session_id
+    controller._tab_state.state = TerminalSessionState.ACTIVE
+    controller._subscribe_session_events(session_id)
+    on_event = mock_client.subscribe_events.call_args[0][0]
+    return controller, on_event, on_state_changed
+
+
+def _session_event(event_type, payload, session_id):
+    from sshpilot.api.events import CoreEvent
+
+    return CoreEvent(
+        type=event_type,
+        payload=payload,
+        sequence=1,
+        session_id=session_id,
+    )
+
+
+def test_session_exited_event_closes_tab_state(active_session):
+    """Remote exit (e.g. host reboot) must close the tab state and notify."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import SessionExitInfo
+
+    controller, on_event, on_state_changed = active_session
+    info = SessionExitInfo(exit_code=255, reason="process_exit")
+
+    on_event(_session_event(EventType.SESSION_EXITED, info, controller.tab_state.session_id))
+
+    assert controller.state == TerminalSessionState.CLOSED
+    assert controller.exit_info == info
+    on_state_changed.assert_called_once()
+
+
+def test_session_exited_clean_exit_records_exit_code(active_session):
+    """A clean exit (user typed exit) is reported with exit code 0."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import SessionExitInfo
+
+    controller, on_event, on_state_changed = active_session
+    info = SessionExitInfo(exit_code=0, reason="process_exit")
+
+    on_event(_session_event(EventType.SESSION_EXITED, info, controller.tab_state.session_id))
+
+    assert controller.state == TerminalSessionState.CLOSED
+    assert controller.exit_info is not None
+    assert controller.exit_info.exit_code == 0
+    on_state_changed.assert_called_once()
+
+
+def test_session_closed_event_closes_tab_state(active_session):
+    """SESSION_CLOSED carries a SessionSummary and must also notify."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import SessionState, SessionSummary
+
+    controller, on_event, on_state_changed = active_session
+    summary = SessionSummary(
+        id=controller.tab_state.session_id,
+        connection_id=ConnectionId("test-connection"),
+        state=SessionState.CLOSED,
+    )
+
+    on_event(_session_event(EventType.SESSION_CLOSED, summary, controller.tab_state.session_id))
+
+    assert controller.state == TerminalSessionState.CLOSED
+    on_state_changed.assert_called_once()
+
+
+def test_exited_then_closed_notifies_once(active_session):
+    """The daemon sends EXITED then CLOSED; the tab must be notified once."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import (
+        SessionExitInfo,
+        SessionState,
+        SessionSummary,
+    )
+
+    controller, on_event, on_state_changed = active_session
+    info = SessionExitInfo(exit_code=255, reason="process_exit")
+
+    on_event(_session_event(EventType.SESSION_EXITED, info, controller.tab_state.session_id))
+    on_event(
+        _session_event(
+            EventType.SESSION_CLOSED,
+            SessionSummary(
+                id=controller.tab_state.session_id,
+                connection_id=ConnectionId("test-connection"),
+                state=SessionState.CLOSED,
+                exit_info=info,
+            ),
+            controller.tab_state.session_id,
+        )
+    )
+
+    assert controller.state == TerminalSessionState.CLOSED
+    assert controller.exit_info == info
+    on_state_changed.assert_called_once()
+
+
+def test_session_events_after_close_ignored(active_session):
+    """User-initiated close must not be overwritten by late daemon events."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import SessionExitInfo
+
+    controller, on_event, on_state_changed = active_session
+    controller.close()
+
+    on_event(
+        _session_event(
+            EventType.SESSION_EXITED,
+            SessionExitInfo(exit_code=255, reason="process_exit"),
+            controller.tab_state.session_id,
+        )
+    )
+
+    assert controller.exit_info is None
+    on_state_changed.assert_not_called()
+
+
+def test_session_state_changed_non_terminal_ignored(active_session):
+    """Non-terminal session states must not disturb the tab."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import SessionState, SessionSummary
+
+    controller, on_event, on_state_changed = active_session
+    summary = SessionSummary(
+        id=controller.tab_state.session_id,
+        connection_id=ConnectionId("test-connection"),
+        state=SessionState.RUNNING,
+    )
+
+    on_event(_session_event(EventType.SESSION_STATE_CHANGED, summary, controller.tab_state.session_id))
+
+    assert controller.state == TerminalSessionState.ACTIVE
+    on_state_changed.assert_not_called()
+
+
+def test_session_closed_event_with_wrong_payload_ignored(active_session):
+    """Malformed SESSION_CLOSED payloads must not affect the tab."""
+    from types import SimpleNamespace
+
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import SessionState
+
+    controller, on_event, on_state_changed = active_session
+
+    on_event(
+        SimpleNamespace(
+            type=EventType.SESSION_CLOSED,
+            payload=Mock(state=SessionState.CLOSED),
+            session_id=controller.tab_state.session_id,
+        )
+    )
+
+    assert controller.state == TerminalSessionState.ACTIVE
+    on_state_changed.assert_not_called()

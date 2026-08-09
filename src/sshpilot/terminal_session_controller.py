@@ -16,6 +16,8 @@ from .api.models.sessions import (
     CloseSessionRequest,
     DetachSessionRequest,
     OpenSessionRequest,
+    SessionExitInfo,
+    SessionSummary,
     SessionState,
 )
 from .api.models.terminal import (
@@ -51,6 +53,7 @@ class DaemonTerminalTabState:
     expected_sequence: int = 0
     input_owner: bool = False
     state: TerminalSessionState = TerminalSessionState.IDLE
+    exit_info: Optional[SessionExitInfo] = None
 
 
 class TerminalSessionController(Protocol):
@@ -192,6 +195,11 @@ class DaemonTerminalSessionController:
     def input_owner(self) -> bool:
         """Whether this controller owns input."""
         return self._tab_state.input_owner
+
+    @property
+    def exit_info(self) -> Optional[SessionExitInfo]:
+        """Exit details once the daemon session has exited, if reported."""
+        return self._tab_state.exit_info
 
     def open(
         self,
@@ -430,15 +438,25 @@ class DaemonTerminalSessionController:
         def _on_event(event) -> None:
             if self._closed or event.session_id != session_id:
                 return
-            if event.type is not EventType.SESSION_STATE_CHANGED:
-                return
             payload = event.payload
-            state = getattr(payload, "state", None)
-            if state not in {
-                SessionState.FAILED,
-                SessionState.EXITED,
-                SessionState.CLOSED,
-            }:
+            if event.type is EventType.SESSION_STATE_CHANGED:
+                state = getattr(payload, "state", None)
+                if state not in {
+                    SessionState.FAILED,
+                    SessionState.EXITED,
+                    SessionState.CLOSED,
+                }:
+                    return
+            elif event.type is EventType.SESSION_EXITED:
+                # The daemon emits SESSION_EXITED (SessionExitInfo payload) for
+                # process exit — e.g. a remote reboot killing ssh or the user
+                # typing exit — instead of SESSION_STATE_CHANGED.
+                if not isinstance(payload, SessionExitInfo):
+                    return
+            elif event.type is EventType.SESSION_CLOSED:
+                if not isinstance(payload, SessionSummary) or payload.state is not SessionState.CLOSED:
+                    return
+            else:
                 return
             try:
                 self._bridge.submit(
@@ -470,6 +488,16 @@ class DaemonTerminalSessionController:
         """Apply asynchronous daemon session failure/exit to the open tab."""
         if self._closed:
             return
+        if isinstance(summary, SessionExitInfo):
+            # SESSION_EXITED carries the exit details directly.
+            self._tab_state.exit_info = summary
+            if self._tab_state.state not in {
+                TerminalSessionState.CLOSING,
+                TerminalSessionState.CLOSED,
+            }:
+                self._tab_state.state = TerminalSessionState.CLOSED
+                self._notify_state_changed()
+            return
         state = getattr(summary, "state", None)
         if state is SessionState.FAILED:
             self._tab_state.state = TerminalSessionState.FAILED
@@ -490,11 +518,15 @@ class DaemonTerminalSessionController:
                 )
             )
         elif state in {SessionState.EXITED, SessionState.CLOSED}:
+            exit_info = getattr(summary, "exit_info", None)
+            if isinstance(exit_info, SessionExitInfo):
+                self._tab_state.exit_info = exit_info
             if self._tab_state.state not in {
                 TerminalSessionState.CLOSING,
                 TerminalSessionState.CLOSED,
             }:
                 self._tab_state.state = TerminalSessionState.CLOSED
+                self._notify_state_changed()
 
     def _on_session_attached(self, result) -> None:
         """Handle session attach completion."""
