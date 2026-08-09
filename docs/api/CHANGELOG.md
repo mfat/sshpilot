@@ -13,6 +13,11 @@ Broadcast command execution is daemon-owned one-shot native SSH execution
 against saved connection IDs. It does not inject input into existing terminal
 sessions and does not use a local shell.
 
+Command Blocks distinguish one-shot execution from explicitly interactive
+terminal execution. Commands requiring a PTY, streaming output, or user input
+remain terminal-session actions and are rejected by the headless Broadcast
+Command action.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.21`; `PROTOCOL_VERSION` stays `1.0`.
   Closes out the SFTP operation-lifecycle integration:
   - Recursive `sftp.copy`/`sftp.remove` and `sftp.directory_size` now enforce

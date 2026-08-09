@@ -36,10 +36,26 @@ def test_connection_targeted_command_blocks_have_no_terminal_fanout_helpers():
     source = Path("src/sshpilot/command_blocks.py").read_text(encoding="utf-8")
     assert "_feed_connections_in_split_view" not in source
     assert "_feed_specific_terminal" not in source
-    assert "connection-established" not in source
-    # feed_child_data remains valid only for the active-terminal interactive
-    # insertion path; it must occur exactly once in this module.
-    assert source.count("feed_child_data") == 1
+    tree = ast.parse(source)
+    methods = [
+        node
+        for cls in tree.body
+        if isinstance(cls, ast.ClassDef)
+        for node in cls.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    feed_owners = {
+        node.name
+        for node in methods
+        if any(
+            isinstance(child, ast.Call)
+            and getattr(child.func, "attr", "") == "feed_child_data"
+            for child in ast.walk(node)
+        )
+    }
+    # Terminal input exists only for ordinary active-terminal insertion and
+    # commands explicitly marked interactive_terminal.
+    assert feed_owners == {"_feed_terminal", "_feed_interactive_when_connected"}
 
 
 def test_daemon_broadcast_service_is_gtk_free():

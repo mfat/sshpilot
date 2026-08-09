@@ -27,6 +27,18 @@ logger = logging.getLogger(__name__)
 from gettext import gettext as _
 from .api.connection_identity import connection_id_for
 
+EXECUTION_MODE_ONE_SHOT = "one_shot"
+EXECUTION_MODE_INTERACTIVE_TERMINAL = "interactive_terminal"
+_INTERACTIVE_DEFAULT_IDS = frozenset({"c-dlogs", "c-dexec", "c-syslog", "c-journal"})
+
+
+def _execution_mode(command: dict) -> str:
+    """Return an explicit mode; legacy seeded interactive commands stay interactive."""
+    mode = command.get("execution_mode")
+    if mode == EXECUTION_MODE_INTERACTIVE_TERMINAL or command.get("id") in _INTERACTIVE_DEFAULT_IDS:
+        return EXECUTION_MODE_INTERACTIVE_TERMINAL
+    return EXECUTION_MODE_ONE_SHOT
+
 # ---------------------------------------------------------------------------
 # Default content (seeded once into an empty store)
 # ---------------------------------------------------------------------------
@@ -186,6 +198,7 @@ DEFAULT_COMMANDS = [
         "folder_id": "f-docker",
         "is_favorite": False,
         "has_placeholders": True,
+        "execution_mode": EXECUTION_MODE_INTERACTIVE_TERMINAL,
     },
     {
         "id": "c-dexec",
@@ -196,6 +209,7 @@ DEFAULT_COMMANDS = [
         "folder_id": "f-docker",
         "is_favorite": False,
         "has_placeholders": True,
+        "execution_mode": EXECUTION_MODE_INTERACTIVE_TERMINAL,
     },
     {
         "id": "c-dstats",
@@ -309,6 +323,7 @@ DEFAULT_COMMANDS = [
         "folder_id": "f-logs",
         "is_favorite": False,
         "has_placeholders": False,
+        "execution_mode": EXECUTION_MODE_INTERACTIVE_TERMINAL,
     },
     {
         "id": "c-journal",
@@ -319,6 +334,7 @@ DEFAULT_COMMANDS = [
         "folder_id": "f-logs",
         "is_favorite": False,
         "has_placeholders": False,
+        "execution_mode": EXECUTION_MODE_INTERACTIVE_TERMINAL,
     },
     {
         "id": "c-errlogs",
@@ -429,6 +445,7 @@ class CommandBlockStore:
                 "use_count": 0,
                 "last_used": None,
                 "has_placeholders": bool(c.get("has_placeholders", False)),
+                "execution_mode": c.get("execution_mode", EXECUTION_MODE_ONE_SHOT),
                 "created_at": _now_iso(),
             }
             if not any(x["id"] == entry["id"] for x in data.get("commands", [])):
@@ -496,6 +513,7 @@ class CommandBlockStore:
             "use_count": 0,
             "last_used": None,
             "has_placeholders": bool(kwargs.get("has_placeholders", False)),
+            "execution_mode": kwargs.get("execution_mode", EXECUTION_MODE_ONE_SHOT),
             "created_at": _now_iso(),
         }
         self._data().setdefault("commands", []).append(entry)
@@ -511,6 +529,7 @@ class CommandBlockStore:
             "folder_id",
             "is_favorite",
             "has_placeholders",
+            "execution_mode",
         }
         for cmd in self._data().get("commands", []):
             if cmd["id"] == cmd_id:
@@ -992,6 +1011,16 @@ class CommandEditDialog(Adw.Window):
             self._favorite_row.set_active(self._cmd.get("is_favorite", False))
         opts_group.add(self._favorite_row)
 
+        self._interactive_row = Adw.SwitchRow(
+            title=_("Interactive Terminal"),
+            subtitle=_("Open terminal sessions for commands that require a PTY or Ctrl+C"),
+        )
+        if self._cmd:
+            self._interactive_row.set_active(
+                _execution_mode(self._cmd) == EXECUTION_MODE_INTERACTIVE_TERMINAL
+            )
+        opts_group.add(self._interactive_row)
+
     def _on_save(self, *_) -> None:
         name = self._name_row.get_text().strip()
         buf = self._cmd_view.get_buffer()
@@ -1018,6 +1047,11 @@ class CommandEditDialog(Adw.Window):
                 folder_id=folder_id,
                 has_placeholders=self._placeholder_row.get_active(),
                 is_favorite=self._favorite_row.get_active(),
+                execution_mode=(
+                    EXECUTION_MODE_INTERACTIVE_TERMINAL
+                    if self._interactive_row.get_active()
+                    else EXECUTION_MODE_ONE_SHOT
+                ),
             )
             saved = next(
                 (c for c in self._store.get_commands() if c["id"] == self._cmd["id"]), None
@@ -1031,6 +1065,11 @@ class CommandEditDialog(Adw.Window):
                 folder_id=folder_id,
                 has_placeholders=self._placeholder_row.get_active(),
                 is_favorite=self._favorite_row.get_active(),
+                execution_mode=(
+                    EXECUTION_MODE_INTERACTIVE_TERMINAL
+                    if self._interactive_row.get_active()
+                    else EXECUTION_MODE_ONE_SHOT
+                ),
             )
 
         self.emit("saved", saved)
@@ -1528,6 +1567,12 @@ class CommandBlocksPanel(Gtk.Box):
             self._feed_terminal(cmd.get("command", ""), cmd.get("id"))
 
     def _broadcast_command(self, cmd: dict) -> None:
+        if _execution_mode(cmd) == EXECUTION_MODE_INTERACTIVE_TERMINAL:
+            self._show_toast(
+                _("Interactive terminal commands cannot use headless broadcast"),
+                timeout=4,
+            )
+            return
         if cmd.get("has_placeholders"):
             dlg = PlaceholderDialog(self.window, cmd)
             dlg.connect("send", lambda d, filled: self._do_broadcast(filled, cmd.get("id")))
@@ -1746,6 +1791,7 @@ class CommandBlocksPanel(Gtk.Box):
                 lambda d, filled: self._dispatch_to_target(
                     filled,
                     cmd.get("id"),
+                    execution_mode=_execution_mode(cmd),
                     connection=connection,
                     group=group,
                     connections=connections,
@@ -1756,20 +1802,35 @@ class CommandBlocksPanel(Gtk.Box):
             self._dispatch_to_target(
                 cmd.get("command", ""),
                 cmd.get("id"),
+                execution_mode=_execution_mode(cmd),
                 connection=connection,
                 group=group,
                 connections=connections,
             )
 
     def _dispatch_to_target(
-        self, command_text: str, cmd_id=None, *, connection=None, group=None, connections=None
+        self,
+        command_text: str,
+        cmd_id=None,
+        *,
+        execution_mode=EXECUTION_MODE_ONE_SHOT,
+        connection=None,
+        group=None,
+        connections=None,
     ) -> None:
+        selected = []
         if connections:
-            self._submit_connections(list(connections), command_text, cmd_id)
+            selected = list(connections)
         elif connection is not None:
-            self._submit_connections([connection], command_text, cmd_id)
+            selected = [connection]
         elif group is not None:
-            self._feed_group(group, command_text, cmd_id)
+            selected = self._group_connections(group)
+        if not selected:
+            return
+        if execution_mode == EXECUTION_MODE_INTERACTIVE_TERMINAL:
+            self._run_interactive_connections(selected, command_text, cmd_id)
+        else:
+            self._submit_connections(selected, command_text, cmd_id)
 
     def _show_custom_command_dialog(self, *, connection=None, group=None, connections=None) -> None:
         dlg = Adw.AlertDialog(
@@ -1813,14 +1874,65 @@ class CommandBlocksPanel(Gtk.Box):
         if cmd.get("has_placeholders"):
             dlg = PlaceholderDialog(self.window, cmd)
             dlg.connect(
-                "send", lambda d, filled: self._connect_and_feed(connection, filled, cmd.get("id"))
+                "send",
+                lambda d, filled: self._dispatch_to_target(
+                    filled,
+                    cmd.get("id"),
+                    execution_mode=_execution_mode(cmd),
+                    connection=connection,
+                ),
             )
             dlg.present()
         else:
-            self._connect_and_feed(connection, cmd.get("command", ""), cmd.get("id"))
+            self._dispatch_to_target(
+                cmd.get("command", ""),
+                cmd.get("id"),
+                execution_mode=_execution_mode(cmd),
+                connection=connection,
+            )
 
-    def _connect_and_feed(self, connection, command_text: str, cmd_id: str | None = None) -> None:
-        self._submit_connections([connection], command_text, cmd_id)
+    def _run_interactive_connections(
+        self, connections: list, command_text: str, cmd_id: str | None = None
+    ) -> None:
+        """Open PTY terminal sessions for explicitly interactive commands."""
+        from .split_view import SplitViewTab
+
+        if len(connections) == 1:
+            manager = getattr(self.window, "terminal_manager", None)
+            if manager is None:
+                return
+            active = getattr(self.window, "active_terminals", {})
+            connection = connections[0]
+            manager.connect_to_host(connection, force_new=True)
+            terminal = active.get(connection)
+            if terminal is not None:
+                self._feed_interactive_when_connected(terminal, command_text)
+        else:
+            split = SplitViewTab(self.window)
+            page = self.window.tab_view.append(split)
+            page.set_title(_("Interactive Command"))
+            split._tab_page = page
+            split.populate(connections)
+            self.window.show_tab_view()
+            self.window.tab_view.set_selected_page(page)
+            for terminal in split.get_all_terminals():
+                self._feed_interactive_when_connected(terminal, command_text)
+        if cmd_id:
+            self.store.record_use(cmd_id)
+
+    @staticmethod
+    def _feed_interactive_when_connected(terminal, command_text: str) -> None:
+        data = (command_text + "\n").encode("utf-8")
+        if getattr(terminal, "is_connected", False):
+            terminal.feed_child_data(data)
+            return
+        handler_id = [None]
+
+        def connected(widget):
+            GObject.signal_handler_disconnect(widget, handler_id[0])
+            widget.feed_child_data(data)
+
+        handler_id[0] = terminal.connect("connection-established", connected)
 
     def _submit_connections(
         self, connections: list, command_text: str, cmd_id: str | None = None
@@ -1952,21 +2064,38 @@ class CommandBlocksPanel(Gtk.Box):
     def _run_command_for_group(self, cmd: dict, group: dict) -> None:
         if cmd.get("has_placeholders"):
             dlg = PlaceholderDialog(self.window, cmd)
-            dlg.connect("send", lambda d, filled: self._feed_group(group, filled, cmd.get("id")))
+            dlg.connect(
+                "send",
+                lambda d, filled: self._dispatch_to_target(
+                    filled,
+                    cmd.get("id"),
+                    execution_mode=_execution_mode(cmd),
+                    group=group,
+                ),
+            )
             dlg.present()
         else:
-            self._feed_group(group, cmd.get("command", ""), cmd.get("id"))
+            self._dispatch_to_target(
+                cmd.get("command", ""),
+                cmd.get("id"),
+                execution_mode=_execution_mode(cmd),
+                group=group,
+            )
 
     def _feed_group(self, group: dict, command_text: str, cmd_id: str | None = None) -> None:
+        connections = self._group_connections(group)
+        if connections:
+            self._submit_connections(connections, command_text, cmd_id)
+
+    def _group_connections(self, group: dict) -> list:
         cm = getattr(self.window, "connection_manager", None)
         if cm is None:
-            return
+            return []
         nicknames = set(group.get("connections", []))
         connections = [c for c in cm.connections if c.nickname in nicknames]
         if not connections:
             self._show_toast(_("No connections in group"))
-            return
-        self._submit_connections(connections, command_text, cmd_id)
+        return connections
 
     # ------------------------------------------------------------------
     # Context menu

@@ -26,6 +26,7 @@ from sshpilot.api.models.common import ClientId, ConnectionId
 from sshpilot.api.models.operations import (
     OperationId,
     OperationKind,
+    OperationState,
     ServiceFailure,
 )
 from sshpilot.daemon.operation_runtime import OperationCancelled, OperationHandle, OperationRuntime
@@ -139,6 +140,7 @@ class BroadcastCommandService:
         self._targets: Dict[OperationId, list[HostCommandResult]] = {}
         self._cancels: Dict[OperationId, threading.Event] = {}
         self._processes: Dict[OperationId, set[object]] = {}
+        self._entered: set[OperationId] = set()
         self._terminal_records: OrderedDict[OperationId, None] = OrderedDict()
         self._terminal_retention = terminal_retention
 
@@ -192,10 +194,25 @@ class BroadcastCommandService:
         # Target workers own terminate -> grace -> kill -> reap.  The request
         # dispatcher must never wait serially on every running SSH process.
         operation = self._operations.cancel_operation(operation_id)
+        if operation.state is OperationState.CANCELLED:
+            with self._lock:
+                if operation_id not in self._entered:
+                    self._targets[operation_id] = [
+                        replace(target, state=HostCommandState.CANCELLED)
+                        if target.state is HostCommandState.PENDING
+                        else target
+                        for target in self._targets.get(operation_id, ())
+                    ]
+                    self._remember_terminal_locked(operation_id)
+                    current = BroadcastCommandSummary(
+                        operation, tuple(self._targets.get(operation_id, ()))
+                    )
         return BroadcastCommandSummary(operation, current.targets)
 
     def _execute(self, handle: OperationHandle, request: BroadcastCommandRequest) -> str:
         operation_id = handle.operation_id
+        with self._lock:
+            self._entered.add(operation_id)
         # start_operation can schedule immediately, before start() records the DTOs.
         while operation_id not in self._targets:
             time.sleep(0.001)
@@ -363,13 +380,18 @@ class BroadcastCommandService:
     def _remember_terminal(self, operation_id: OperationId) -> None:
         """Bound retained target output alongside OperationRuntime retention."""
         with self._lock:
-            self._terminal_records.pop(operation_id, None)
-            self._terminal_records[operation_id] = None
-            while len(self._terminal_records) > self._terminal_retention:
-                expired, _ = self._terminal_records.popitem(last=False)
-                self._targets.pop(expired, None)
-                self._cancels.pop(expired, None)
-                self._processes.pop(expired, None)
+            self._remember_terminal_locked(operation_id)
+
+    def _remember_terminal_locked(self, operation_id: OperationId) -> None:
+        """Record terminal retention while ``self._lock`` is held."""
+        self._terminal_records.pop(operation_id, None)
+        self._terminal_records[operation_id] = None
+        while len(self._terminal_records) > self._terminal_retention:
+            expired, _ = self._terminal_records.popitem(last=False)
+            self._targets.pop(expired, None)
+            self._cancels.pop(expired, None)
+            self._processes.pop(expired, None)
+            self._entered.discard(expired)
 
     @staticmethod
     def _result_wire(result):

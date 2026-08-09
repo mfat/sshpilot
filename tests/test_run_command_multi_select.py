@@ -1,70 +1,63 @@
-"""Routing tests for Run Command on multi-selected hosts."""
+"""Typed routing tests for Run Command on saved host selections."""
 
 import pytest
 
-# Import manually instead of importorskip: when sibling tests have replaced
-# the Gtk stub in sys.modules, these imports raise AttributeError (not
-# ImportError), which importorskip would report as a collection error.
 try:
     import sshpilot.command_blocks as command_blocks
-    import sshpilot.window as window_mod
-except Exception:  # pragma: no cover - depends on test execution order
-    command_blocks = window_mod = None
+except Exception:  # pragma: no cover - depends on GTK test stubs
+    command_blocks = None
 
-pytestmark = pytest.mark.skipif(
-    command_blocks is None or window_mod is None,
-    reason="GTK stubs unavailable or polluted by sibling tests",
-)
+pytestmark = pytest.mark.skipif(command_blocks is None, reason="GTK stubs unavailable")
 
 
-def _panel_with_recorders():
+def _panel_with_recorders(group_connections=None):
     panel = command_blocks.CommandBlocksPanel.__new__(command_blocks.CommandBlocksPanel)
     calls = []
-    panel._connect_and_feed = lambda conn, text, cmd_id=None: calls.append(
-        ('single', conn, text, cmd_id))
-    panel._feed_connections_in_split_view = lambda conns, title, text, cmd_id=None: calls.append(
-        ('split', list(conns), title, text, cmd_id))
-    panel._feed_group_in_split_view = lambda group, text, cmd_id=None: calls.append(
-        ('group', group, text, cmd_id))
+    panel._submit_connections = lambda conns, text, cmd_id=None: calls.append(
+        ("one_shot", list(conns), text, cmd_id)
+    )
+    panel._run_interactive_connections = lambda conns, text, cmd_id=None: calls.append(
+        ("interactive", list(conns), text, cmd_id)
+    )
+    panel._group_connections = lambda _group: list(group_connections or [])
     return panel, calls
 
 
-def test_dispatch_multiple_connections_opens_split_view():
+def test_multiple_connections_submit_one_daemon_operation():
     panel, calls = _panel_with_recorders()
     c1, c2 = object(), object()
-    panel._dispatch_to_target('uptime', 'cmd1', connections=[c1, c2])
-    assert len(calls) == 1
-    kind, conns, title, text, cmd_id = calls[0]
-    assert kind == 'split'
-    assert conns == [c1, c2]
-    assert title
-    assert text == 'uptime'
-    assert cmd_id == 'cmd1'
+    panel._dispatch_to_target("uptime", "cmd1", connections=[c1, c2])
+    assert calls == [("one_shot", [c1, c2], "uptime", "cmd1")]
 
 
-def test_dispatch_single_item_list_degrades_to_one_tab():
+def test_single_connection_uses_same_one_shot_service():
     panel, calls = _panel_with_recorders()
-    c1 = object()
-    panel._dispatch_to_target('uptime', None, connections=[c1])
-    assert calls == [('single', c1, 'uptime', None)]
+    connection = object()
+    panel._dispatch_to_target("uptime", "cmd1", connection=connection)
+    assert calls == [("one_shot", [connection], "uptime", "cmd1")]
 
 
-def test_dispatch_single_connection_unchanged():
+def test_group_resolves_once_then_submits_one_daemon_operation():
+    c1, c2 = object(), object()
+    panel, calls = _panel_with_recorders([c1, c2])
+    panel._dispatch_to_target("uptime", None, group={"name": "prod"})
+    assert calls == [("one_shot", [c1, c2], "uptime", None)]
+
+
+def test_explicit_interactive_mode_uses_terminal_session_route():
     panel, calls = _panel_with_recorders()
-    c1 = object()
-    panel._dispatch_to_target('uptime', 'cmd1', connection=c1)
-    assert calls == [('single', c1, 'uptime', 'cmd1')]
+    c1, c2 = object(), object()
+    panel._dispatch_to_target(
+        "journalctl -f",
+        "cmd-live",
+        execution_mode=command_blocks.EXECUTION_MODE_INTERACTIVE_TERMINAL,
+        connections=[c1, c2],
+    )
+    assert calls == [("interactive", [c1, c2], "journalctl -f", "cmd-live")]
 
 
-def test_dispatch_group_unchanged():
+def test_empty_connections_falls_through_to_connection():
     panel, calls = _panel_with_recorders()
-    group = {'name': 'prod', 'connections': ['a', 'b']}
-    panel._dispatch_to_target('uptime', None, group=group)
-    assert calls == [('group', group, 'uptime', None)]
-
-
-def test_dispatch_empty_connections_falls_through_to_connection():
-    panel, calls = _panel_with_recorders()
-    c1 = object()
-    panel._dispatch_to_target('uptime', None, connections=[], connection=c1)
-    assert calls == [('single', c1, 'uptime', None)]
+    connection = object()
+    panel._dispatch_to_target("uptime", None, connections=[], connection=connection)
+    assert calls == [("one_shot", [connection], "uptime", None)]

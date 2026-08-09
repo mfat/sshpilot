@@ -20,6 +20,9 @@ class WindowBroadcastMixin:
 
     def on_broadcast_send_clicked(self, button):
         """Handle broadcast banner send button click"""
+        if getattr(self, "_active_broadcast_operation_id", None):
+            logger.info("Ignored overlapping broadcast submission while one is active")
+            return
         command = self.broadcast_entry.get_text().strip()
         if command:
             self.terminal_manager.broadcast_command(
@@ -39,6 +42,7 @@ class WindowBroadcastMixin:
     def _on_broadcast_started(self, summary):
         """Poll retained daemon truth until the operation becomes terminal."""
         self._active_broadcast_operation_id = summary.operation.operation_id
+        self.broadcast_send_button.set_sensitive(False)
         logger.info("Broadcast command accepted for %d targets", len(summary.targets))
         self._broadcast_poll_pending = False
         self._broadcast_poll_source = GLib.timeout_add(250, self._poll_broadcast)
@@ -70,6 +74,7 @@ class WindowBroadcastMixin:
         ):
             return
         self._active_broadcast_operation_id = None
+        self.broadcast_send_button.set_sensitive(True)
         succeeded = sum(target.state.value == "succeeded" for target in summary.targets)
         failed = sum(target.state.value == "failed" for target in summary.targets)
         cancelled = sum(target.state.value == "cancelled" for target in summary.targets)
@@ -86,7 +91,13 @@ class WindowBroadcastMixin:
     def _on_broadcast_failed(self, error):
         self._broadcast_poll_pending = False
         self._active_broadcast_operation_id = None
+        self.broadcast_send_button.set_sensitive(True)
         logger.warning("Broadcast command request was not accepted: %s", error)
+
+    def _on_broadcast_cancelled(self, _summary):
+        self._active_broadcast_operation_id = None
+        self._broadcast_poll_pending = False
+        self.broadcast_send_button.set_sensitive(True)
 
     def on_broadcast_cancel_clicked(self, button):
         """Handle broadcast banner cancel button click"""
@@ -96,7 +107,7 @@ class WindowBroadcastMixin:
         if operation_id and client is not None and bridge is not None:
             bridge.submit(
                 lambda: client.cancel_broadcast_command(operation_id),
-                on_success=lambda _summary: setattr(self, "_active_broadcast_operation_id", None),
+                on_success=self._on_broadcast_cancelled,
                 on_error=self._on_broadcast_failed,
             )
         self.hide_broadcast_banner()

@@ -65,3 +65,25 @@ def test_dead_broadcast_copy_removed_from_window_actions():
     wm = _window_module()
     actions_cls = next(c for c in wm.MainWindow.__mro__ if c.__name__ == "WindowActions")
     assert "on_broadcast_command_action" not in vars(actions_cls)
+
+
+def test_send_ignores_overlapping_active_broadcast():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    window._active_broadcast_operation_id = "operation-active"
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    window.terminal_manager.broadcast_command.assert_not_called()
+
+
+def test_cancel_completion_reenables_send_action():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    window._active_broadcast_operation_id = "operation-active"
+    window.broadcast_send_button = Mock()
+    WindowBroadcastMixin._on_broadcast_cancelled(window, Mock())
+    assert window._active_broadcast_operation_id is None
+    window.broadcast_send_button.set_sensitive.assert_called_once_with(True)

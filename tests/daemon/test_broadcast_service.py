@@ -11,7 +11,13 @@ from sshpilot.api.models.broadcast import (
     HostCommandState,
 )
 from sshpilot.api.models.common import ClientId, ConnectionId
-from sshpilot.api.models.operations import OperationState
+from sshpilot.api.models.operations import (
+    OperationId,
+    OperationKind,
+    OperationState,
+    OperationSummary,
+)
+from sshpilot.api.models.common import utc_now
 from sshpilot.daemon.broadcast_service import BroadcastCommandService
 from sshpilot.daemon.operation_runtime import OperationRuntime
 
@@ -201,3 +207,54 @@ def test_cancel_rpc_only_signals_and_workers_finish_cancellation():
     assert result.operation.state is OperationState.CANCELLED
     assert all(item.state is HostCommandState.CANCELLED for item in result.targets)
     runtime.shutdown()
+
+
+class QueuedRuntime:
+    """Operation runtime double whose worker has not entered its body."""
+
+    def __init__(self):
+        self.summary = None
+
+    def start_operation(self, kind, body, *, owner_client_id, message):
+        self.summary = OperationSummary(
+            operation_id=OperationId("operation-queued"),
+            kind=kind,
+            state=OperationState.QUEUED,
+            message=message,
+            created_at=utc_now(),
+            owner_client_id=owner_client_id,
+        )
+        return self.summary
+
+    def get_operation(self, operation_id):
+        assert operation_id == self.summary.operation_id
+        return self.summary
+
+    def cancel_operation(self, operation_id):
+        assert operation_id == self.summary.operation_id
+        self.summary = OperationSummary(
+            operation_id=self.summary.operation_id,
+            kind=OperationKind.BROADCAST_COMMAND,
+            state=OperationState.CANCELLED,
+            message="cancelled",
+            created_at=self.summary.created_at,
+            finished_at=utc_now(),
+            owner_client_id=self.summary.owner_client_id,
+        )
+        return self.summary
+
+
+def test_cancel_before_operation_body_finalizes_pending_targets_and_retention():
+    runtime = QueuedRuntime()
+    service = BroadcastCommandService(
+        runtime, LaunchProvider(), interaction_broker=Broker(), runner=Runner()
+    )
+    owner = ClientId("client-owner")
+    started = service.start(
+        BroadcastCommandRequest((ConnectionId("one"), ConnectionId("two")), "true"),
+        owner_client_id=owner,
+    )
+    cancelled = service.cancel(started.operation.operation_id, client_id=owner)
+    assert cancelled.operation.state is OperationState.CANCELLED
+    assert all(target.state is HostCommandState.CANCELLED for target in cancelled.targets)
+    assert started.operation.operation_id in service._terminal_records
