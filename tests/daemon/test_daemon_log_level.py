@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from sshpilot.api.daemon_client import DaemonClient
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.daemon import DaemonLogLevel, SetDaemonLogLevelRequest
 from sshpilot.daemon.launcher import DaemonLauncher
 from sshpilot.logging_support import close_managed_handlers, configure_daemon_logging
@@ -77,6 +78,35 @@ def test_explicit_launcher_level_overrides_reused_daemon(tmp_path, daemon_factor
         quiet_result = quiet.connect_or_start()
         assert logging.getLogger().level == logging.WARNING
         quiet_result.client.close()
+    finally:
+        server.shutdown()
+        assert server.wait_stopped()
+        close_managed_handlers()
+
+
+def test_reused_daemon_level_sync_failure_is_non_fatal(
+    tmp_path, daemon_factory, monkeypatch
+):
+    close_managed_handlers()
+    configure_daemon_logging(tmp_path, "info")
+    server, _manager = daemon_factory(idle_shutdown_seconds=0.0)
+
+    def fail_sync(_self, _request):
+        raise SshPilotError(ErrorCode.TRANSPORT_TIMEOUT, "diagnostic sync timed out")
+
+    monkeypatch.setattr(DaemonClient, "set_daemon_log_level", fail_sync)
+    try:
+        launcher = DaemonLauncher(
+            socket_path=server.socket_path,
+            verbose=True,
+            popen=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("reused daemon must not spawn")
+            ),
+        )
+        result = launcher.connect_or_start()
+        assert result.process is None
+        assert result.client.get_capabilities().supported
+        result.client.close()
     finally:
         server.shutdown()
         assert server.wait_stopped()

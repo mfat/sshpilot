@@ -308,7 +308,18 @@ class DaemonLauncher:
         from sshpilot.api.models.daemon import DaemonLogLevel, SetDaemonLogLevelRequest
 
         level = DaemonLogLevel.DEBUG if self._verbose else DaemonLogLevel.WARNING
-        setter(SetDaemonLogLevelRequest(level=level))
+        try:
+            setter(SetDaemonLogLevelRequest(level=level))
+        except SshPilotError as error:
+            logger.warning(
+                "Could not synchronize daemon log level code=%s",
+                error.code.value,
+            )
+        except Exception as error:
+            logger.debug(
+                "Could not synchronize daemon log level type=%s",
+                type(error).__name__,
+            )
 
     def _wait_until_ready(self, process: subprocess.Popen) -> DaemonClient:
         deadline = time.monotonic() + self.startup_timeout
