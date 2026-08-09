@@ -131,7 +131,20 @@ class BaseTerminalBackend(Protocol):
         """Install hyperlink interaction callbacks when supported."""
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
-        """Return a hyperlink at widget coordinates, if supported."""
+        """Return a hyperlink at widget coordinates, if supported.
+
+        Full point lookup (OSC 8 + plain-text regex); intended for one-shot
+        queries such as Ctrl+click. High-frequency hover tracking must use
+        the ``hyperlink-hover-uri-changed`` signal (OSC 8) plus
+        :meth:`plain_text_link_at` (regex fallback) instead.
+        """
+
+    def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
+        """Return the plain-text regex match at widget coordinates, if any.
+
+        Deliberately excludes OSC 8 hyperlinks so it can run on every
+        pointer-motion event without probing VTE's hyperlink state.
+        """
 
     def set_pointer_over_link(self, over_link: bool) -> None:
         """Update pointer feedback for a hyperlink, if supported."""
@@ -227,6 +240,7 @@ class VTETerminalBackend:
         self._selection_foreground = None
         self._destroyed = False
         self._hover_handler: Optional[int] = None
+        self._motion_controller: Optional[Any] = None
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -342,18 +356,38 @@ class VTETerminalBackend:
             self.vte.match_set_cursor_name(tag, "pointer")
         except Exception:
             logger.debug("VTE plain-text hyperlink matching unavailable", exc_info=True)
+        # setup_terminal() can run more than once on the same backend widget
+        # (construction, then setup_local_shell()); remove the previously
+        # installed controller/handler instead of stacking duplicates that
+        # would each re-probe on every pointer event.
+        previous_controller = getattr(self, "_motion_controller", None)
+        if previous_controller is not None:
+            try:
+                self.vte.remove_controller(previous_controller)
+            except Exception:
+                pass
+            self._motion_controller = None
         try:
             controller = Gtk.EventControllerMotion()
             controller.connect("motion", motion_callback)
             controller.connect("enter", enter_callback)
             self.vte.add_controller(controller)
+            self._motion_controller = controller
         except Exception:
             logger.debug("VTE hyperlink motion controller unavailable", exc_info=True)
+            self._motion_controller = None
         # VTE tracks the hovered OSC 8 hyperlink itself and notifies on change
         # (since 0.50); prefer it over polling check_hyperlink_at() on every
         # pointer move. The uri/bbox arguments are owned by VTE, so the handler
         # must not retain them beyond the call.
         if hover_callback is not None:
+            previous_handler = getattr(self, "_hover_handler", None)
+            if previous_handler is not None:
+                try:
+                    self.vte.disconnect(previous_handler)
+                except Exception:
+                    pass
+                self._hover_handler = None
             try:
                 def _on_hover(_terminal, uri, _bbox):
                     hover_callback(uri)
@@ -370,12 +404,25 @@ class VTETerminalBackend:
                 logger.debug("VTE %s signal unavailable", signal, exc_info=True)
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        """Full point lookup for one-shot queries (Ctrl+click).
+
+        The motion path must not use this: ``check_hyperlink_at`` dereferences
+        VTE screen state on every call and segfaulted from the motion handler
+        in #1104. OSC 8 hover arrives via the native
+        ``hyperlink-hover-uri-changed`` signal instead.
+        """
         if getattr(self, "_destroyed", False):
             return None
         if hasattr(self.vte, "check_hyperlink_at"):
             uri = self.vte.check_hyperlink_at(x, y)
             if uri:
                 return uri
+        return self.plain_text_link_at(x, y)
+
+    def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
+        """Plain-text regex match only — safe for the high-frequency motion path."""
+        if getattr(self, "_destroyed", False):
+            return None
         if hasattr(self.vte, "check_match_at"):
             result = self.vte.check_match_at(x, y)
         elif hasattr(self.vte, "match_check"):
@@ -1001,6 +1048,10 @@ class PyXtermTerminalBackend:
         return None
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        return None
+
+    def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
+        """xterm.js handles links in its WebLinks addon."""
         return None
 
     def set_pointer_over_link(self, over_link: bool) -> None:

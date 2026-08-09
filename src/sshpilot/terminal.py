@@ -2445,6 +2445,11 @@ class TerminalWidget(Gtk.Box):
         self.backend.configure({"encoding": encoding, "scrollback_lines": 10000})
         self.backend.apply_theme()
         self._hovered_hyperlink_uri = None
+        # Hover state has two independent sources that must not clear each
+        # other: OSC 8 links arrive via VTE's hyperlink-hover-uri-changed
+        # signal, plain-text URLs via the motion handler's regex-only probe.
+        self._hovered_osc8_uri = None
+        self._hovered_plaintext_uri = None
         # This also installs backend-neutral selection/content callbacks. The
         # backend treats hyperlink-specific pieces as optional capabilities.
         self.backend.setup_link_handling(
@@ -2473,12 +2478,34 @@ class TerminalWidget(Gtk.Box):
         """
 
     def _vte_uri_at(self, x: float, y: float) -> Optional[str]:
-        """Return the URI at widget coordinates through the backend."""
+        """Return the URI at widget coordinates through the backend.
+
+        Full one-shot lookup (OSC 8 + plain-text regex) — used by the
+        Ctrl+click gesture only. Hover tracking must not use this on every
+        motion event; see _on_vte_motion.
+        """
         if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
             return None
         if not self.backend.supports_feature("hyperlinks"):
             return None
         return self.backend.hyperlink_at(x, y)
+
+    def _update_hover_state(self) -> None:
+        """Merge the two hover sources into the effective hovered URI.
+
+        OSC 8 hover comes from VTE's native signal, plain-text URLs from the
+        motion handler's regex-only probe; tracking them separately keeps one
+        source from clearing the other when the pointer sits on an OSC 8 link
+        that does not match the plain-text regex (or vice versa).
+        """
+        self._hovered_hyperlink_uri = (
+            getattr(self, '_hovered_osc8_uri', None)
+            or getattr(self, '_hovered_plaintext_uri', None)
+        )
+        try:
+            self.backend.set_pointer_over_link(bool(self._hovered_hyperlink_uri))
+        except Exception:
+            pass
 
     def _on_vte_hyperlink_hover(self, uri):
         """Handle VTE's native hyperlink hover notification (OSC 8, since 0.50).
@@ -2490,11 +2517,8 @@ class TerminalWidget(Gtk.Box):
         """
         if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
             return
-        self._hovered_hyperlink_uri = uri or None
-        try:
-            self.backend.set_pointer_over_link(bool(uri))
-        except Exception:
-            pass
+        self._hovered_osc8_uri = uri or None
+        self._update_hover_state()
 
     @staticmethod
     def _click_has_link_modifier(state) -> bool:
@@ -2509,41 +2533,44 @@ class TerminalWidget(Gtk.Box):
         return bool(state & Gdk.ModifierType.CONTROL_MASK)
 
     def _on_vte_motion(self, controller, x, y):
-        """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
+        """Detect plain-text URLs under the mouse cursor (regex fallback).
+
+        This is the high-frequency path: it runs on every pointer move, so it
+        deliberately performs the plain-text regex probe only and NEVER calls
+        check_hyperlink_at() — that native probe dereferences VTE screen state
+        and is what segfaulted in #1104 from this very handler. OSC 8 hover is
+        tracked by VTE's native hyperlink-hover-uri-changed signal instead
+        (_on_vte_hyperlink_hover); the Ctrl+click gesture still performs a full
+        one-shot lookup at click time.
+        """
         # Never touch the VTE screen state while the terminal is being torn
         # down: the motion controller may still deliver events while VTE's
-        # internal ring is freed, and a raw check_hyperlink_at()/check_match_at()
-        # dereferences that state (segfault). The native hyperlink-hover-uri-
-        # changed signal already tracks OSC 8 hover; this handler drives cursor
-        # feedback and the plain-text regex fallback, and is a no-op during
-        # teardown.
+        # internal ring is freed, and even check_match_at() dereferences that
+        # state. This handler is a no-op during teardown.
         if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
             return
         try:
-            uri = self._vte_uri_at(x, y)
+            uri = None
+            if self.backend.supports_feature("hyperlinks"):
+                uri = self.backend.plain_text_link_at(x, y)
             event = controller.get_current_event()
 
             # Only update when we have a definitive answer; never clear via a
-            # missing event (the cursor may still be on the same link)
+            # missing event (the cursor may still be on the same link). Cursor
+            # shape is driven from the merged hover state so an active OSC 8
+            # hover is not clobbered by a regex miss on the same cell.
             if uri or event:
-                self._hovered_hyperlink_uri = uri or None
-
-            # VTE's internal hover state (underline + cursor shape) is only
-            # updated when VTE processes its own GDK events.  After a paste the
-            # mouse may not have moved, so VTE never runs that path and the
-            # visual feedback is missing even though match_check() works fine.
-            # Manually driving the widget cursor here gives us an independent
-            # fallback that doesn't depend on VTE's internal bookkeeping.
-            try:
-                if uri:
-                    self.backend.set_pointer_over_link(True)
-                elif event:
-                    # set_cursor(None) would inherit the parent's default arrow;
-                    # restore VTE's own I-beam explicitly so terminal text shows
-                    # the text cursor like other terminals.
-                    self.backend.set_pointer_over_link(False)
-            except Exception:
-                pass
+                self._hovered_plaintext_uri = uri or None
+                # VTE's internal hover state (underline + cursor shape) is only
+                # updated when VTE processes its own GDK events.  After a paste
+                # the mouse may not have moved, so VTE never runs that path and
+                # the visual feedback is missing even though match_check()
+                # works fine.  Manually driving the widget cursor here gives us
+                # an independent fallback that doesn't depend on VTE's internal
+                # bookkeeping.  (set_pointer_over_link also restores the I-beam
+                # explicitly: set_cursor(None) would inherit the parent's
+                # default arrow.)
+                self._update_hover_state()
         except Exception as e:
             logger.debug(f"URL hover error: {e}")
 
