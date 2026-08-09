@@ -1288,14 +1288,6 @@ class FileListEditor(Adw.PreferencesGroup):
         pass_entry.remove_css_class('error')
         return True
 
-    @staticmethod
-    def _secret_backend_needs_unlock() -> bool:
-        try:
-            from .secret_storage import get_secret_manager
-            return bool(get_secret_manager().selected_needs_unlock())
-        except Exception:
-            return False
-
     def _passphrase_rows(self):
         """(entry, path, norm) for each key row that carries a passphrase entry."""
         out = []
@@ -3594,11 +3586,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         secret_plan = secret_plan or {}
         operations = []
         previous_identity = secret_plan.get('previous_identity')
-        manager = getattr(self, 'connection_manager', None)
-        if manager is None:
-            manager = getattr(getattr(self, 'parent_window', None),
-                              'connection_manager', None)
-
         password = secret_plan.get('password') or ''
         if secret_plan.get('password_changed'):
             operations.append(('password', 'store' if password else 'delete', '', password))
@@ -3635,25 +3622,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._set_secret_save_busy(False)
                 self.close()
             return
-        if manager is None:
-            self._set_secret_save_busy(False)
-            self.show_error(_("Secure storage is unavailable."))
-            return
-
-        from .secret_storage import get_secret_manager
         from .secret_unlock_dialog import _friendly_backend_name, _spinner_dialog
 
-        secret_manager = get_secret_manager()
-        backend = secret_manager.selected_backend()
-        backend_name = _friendly_backend_name(backend)
-        _set_status, close_spinner, spinner = _spinner_dialog(
-            self,
-            _("Saving to {backend}").format(backend=backend_name),
-            _("Saving passwords and passphrases to secure storage…"),
-        )
-        self._set_secret_save_busy(True, stage='CONFIG_PENDING')
-
-        # Check if we should route through daemon RPCs.
         parent = getattr(self, 'parent_window', None)
         client = getattr(parent, 'client', None)
         bridge = getattr(parent, 'client_bridge', None)
@@ -3664,6 +3634,22 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             and client is not None
             and hasattr(client, 'store_connection_password')
         )
+        if not use_daemon:
+            self._set_secret_save_busy(False)
+            self.show_error(_("Secure storage is unavailable."))
+            return
+        try:
+            backend_name = _friendly_backend_name(
+                self._secret_backend_state().selected_backend
+            )
+        except Exception:
+            backend_name = _friendly_backend_name("")
+        _set_status, close_spinner, spinner = _spinner_dialog(
+            self,
+            _("Saving to {backend}").format(backend=backend_name),
+            _("Saving passwords and passphrases to secure storage…"),
+        )
+        self._set_secret_save_busy(True, stage='CONFIG_PENDING')
 
         pipeline = self.SaveRequest(lambda *_args: None)
         pipeline.claim()
@@ -3673,7 +3659,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             try:
                 for secret_type, action, key, value in operations:
                     if secret_type == 'password':
-                        username = connection_data.get('username') or ''
                         if use_daemon:
                             # Route through daemon RPCs
                             from .api.models.connections import (
@@ -3704,20 +3689,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                     previous_username=previous_identity.get('username', '') if previous_identity else '',
                                 )
                                 ok = client.delete_connection_password(req)
-                        else:
-                            # Direct local storage
-                            if action == 'store':
-                                ok = bool(manager.store_connection_password(
-                                    connection_data, value, username=username,
-                                    previous_connection=previous_identity))
-                            else:
-                                manager.delete_connection_passwords(
-                                    connection_data, username=username)
-                                if previous_identity:
-                                    previous_user = previous_identity.get('username') or username
-                                    manager.delete_connection_passwords(
-                                        previous_identity, username=previous_user)
-                                ok = True
                     elif action == 'store':
                         if use_daemon:
                             key_manager = getattr(parent, 'key_manager', None)
@@ -3732,15 +3703,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 secret[:] = b'\0' * len(secret)
                                 secret.clear()
                         else:
-                            ok = bool(manager.store_key_passphrase(key, value))
+                            raise RuntimeError(
+                                "Daemon key passphrase storage is unavailable"
+                            )
                     else:
                         if use_daemon:
                             from .api.models.connections import DeleteKeyPassphraseRequest
                             req = DeleteKeyPassphraseRequest(key_path=key)
                             ok = client.delete_key_passphrase(req)
                         else:
-                            manager.delete_key_passphrase(key)
-                            ok = True
+                            raise RuntimeError(
+                                "Daemon key passphrase deletion is unavailable"
+                            )
                     if not ok:
                         break
             except Exception:
@@ -3836,20 +3810,31 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         passphrase — and the selected session backend (Bitwarden/Vaultwarden) is locked
         or not signed in, so it should be unlocked before the secret I/O runs."""
         try:
-            from .secret_storage import get_secret_manager
-            if not get_secret_manager().selected_needs_unlock():
-                return False
             pw = secret_plan.get('password')
-            if pw and str(pw).strip():
-                return True
+            has_secret_operation = bool(pw and str(pw).strip())
             # Clearing a stored password is a vault delete, which a locked
             # session backend silently skips — unlock for it too.
-            if secret_plan.get('password_changed'):
-                return True
+            has_secret_operation = has_secret_operation or bool(
+                secret_plan.get('password_changed')
+            )
             editor = getattr(self, 'key_editor', None)
-            return bool(editor is not None and editor.has_pending_passphrases())
+            has_secret_operation = has_secret_operation or bool(
+                editor is not None and editor.has_pending_passphrases()
+            )
+            if not has_secret_operation:
+                return False
+            state = self._secret_backend_state()
+            return state is None or bool(state.needs_unlock or state.login_required)
         except Exception:
-            return False
+            return True
+
+    def _secret_backend_state(self):
+        """Read secret-backend metadata through the daemon-owned controller."""
+        parent = getattr(self, 'parent_window', None)
+        controller = getattr(parent, 'secrets_controller', None)
+        if controller is None:
+            return None
+        return controller.load_state()
 
     def show_error(self, message):
         """Show error message"""

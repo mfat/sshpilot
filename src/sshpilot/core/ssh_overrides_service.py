@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Callable, Dict, Optional, Sequence
 
 from ..api.errors import ErrorCode, SshPilotError
 from ..api.models.settings import (
@@ -67,12 +67,16 @@ class SshOverridesService:
         settings_path: Path | str,
         *,
         controlmaster_extra: Optional[Sequence[str]] = None,
+        on_mutation: Optional[Callable[[], None]] = None,
     ) -> None:
         self._path = Path(settings_path)
         self._lock = threading.Lock()
         self._controlmaster_extra = (
             tuple(controlmaster_extra) if controlmaster_extra is not None else None
         )
+        # The daemon may inject a post-persistence runtime hook.  Core owns the
+        # mutation; it never imports or manages the runtime implementation.
+        self._on_mutation = on_mutation
 
     # ------------------------------------------------------------------
     # Public API
@@ -126,7 +130,9 @@ class SshOverridesService:
                 semantic = self._normalize(config)
                 self._write_semantic(config, semantic)
                 self._compose_and_persist(config)
-                return self._snapshot(config)
+                snapshot = self._snapshot(config)
+            self._notify_mutation()
+            return snapshot
 
     def reset(
         self,
@@ -154,7 +160,18 @@ class SshOverridesService:
 
                 self._reset_defaults(config)
                 self._compose_and_persist(config)
-                return self._snapshot(config)
+                snapshot = self._snapshot(config)
+            self._notify_mutation()
+            return snapshot
+
+    def _notify_mutation(self) -> None:
+        """Notify the daemon runtime after a successful persisted mutation."""
+        if self._on_mutation is None:
+            return
+        try:
+            self._on_mutation()
+        except Exception:
+            logger.debug("SSH override runtime refresh failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Settings view (for DaemonConnectionLaunchProvider)

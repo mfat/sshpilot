@@ -5327,14 +5327,6 @@ class PreferencesWindow(Adw.NavigationPage):
                         exc_info=True,
                     )
 
-            # The daemon mutation succeeded; retire live ControlMasters so new
-            # connections negotiate fresh transports with the new options.
-            try:
-                from .ssh_multiplex import expire_all_masters
-                expire_all_masters()
-            except Exception:
-                logger.debug('Master expiry skipped', exc_info=True)
-
             manager = None
             if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
                 manager = self.parent_window.connection_manager
@@ -5430,15 +5422,6 @@ class PreferencesWindow(Adw.NavigationPage):
                         "Failed to reload config cache after SSH overrides reset",
                         exc_info=True,
                     )
-
-            # The daemon mutation succeeded (or there was nothing to reset);
-            # retire live ControlMasters so new connections negotiate fresh
-            # transports with the new options.
-            try:
-                from .ssh_multiplex import expire_all_masters
-                expire_all_masters()
-            except Exception:
-                logger.debug('Master expiry skipped', exc_info=True)
 
             manager = None
             if self.parent_window and hasattr(self.parent_window, 'connection_manager'):

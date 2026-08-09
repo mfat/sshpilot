@@ -248,19 +248,18 @@ def test_filelisteditor_defers_passphrase_when_unlocked(monkeypatch):
 
 def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     import sshpilot.connection_dialog as dialog_module
-    import sshpilot.secret_storage as ss
     import sshpilot.secret_unlock_dialog as unlock_dialog
 
     calls = []
 
-    class Manager(DummyConnectionManager):
-        def store_connection_password(self, connection, password, username=None,
-                                      previous_connection=None):
-            calls.append(('password', connection['hostname'], username, password))
+    class Client:
+        def store_connection_password(self, request):
+            calls.append(('password', request.password))
             return True
 
+    class KeyManager:
         def store_key_passphrase(self, key_path, value):
-            calls.append((key_path, value))
+            calls.append((key_path, bytes(value)))
             return True
 
     class Spinner:
@@ -273,11 +272,6 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
         unlock_dialog,
         '_spinner_dialog',
         lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
-    )
-    monkeypatch.setattr(
-        ss.get_secret_manager(),
-        'selected_backend',
-        lambda: types.SimpleNamespace(name='bitwarden'),
     )
     monkeypatch.setattr(
         dialog_module.GLib,
@@ -298,9 +292,20 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     monkeypatch.setattr(dialog_module.threading, 'Thread', DeferredThread)
 
     dialog = ConnectionDialog.__new__(ConnectionDialog)
-    dialog.connection_manager = Manager()
+    dialog.parent_window = types.SimpleNamespace(
+        client=Client(),
+        client_bridge=object(),
+        key_manager=KeyManager(),
+        secrets_controller=types.SimpleNamespace(
+            load_state=lambda: types.SimpleNamespace(
+                selected_backend='bitwarden', needs_unlock=False, login_required=False
+            )
+        ),
+        _daemon_mode_active=lambda: True,
+    )
     dialog.key_editor = types.SimpleNamespace(
         pending_passphrase_operations=lambda: [('store', '/key', 'key-secret')])
+    dialog._save_mutation_result = types.SimpleNamespace(connection_id='conn-1')
     dialog._save_buttons = []
     emitted = []
     closed = []
@@ -337,10 +342,7 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
 
     pending_threads[0].target()
 
-    assert calls == [
-        ('password', 'example.com', 'demo', 'host-secret'),
-        ('/key', 'key-secret'),
-    ]
+    assert calls == [('password', 'host-secret'), ('/key', b'key-secret')]
     assert closed == [True]
 
 
@@ -432,12 +434,14 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     # A new connection saved with an empty password queues a delete; nothing
     # stored to delete is the desired end state, not a storage failure.
     import sshpilot.connection_dialog as dialog_module
-    import sshpilot.secret_storage as ss
     import sshpilot.secret_unlock_dialog as unlock_dialog
 
-    class Manager(DummyConnectionManager):
-        def delete_connection_passwords(self, connection, username=None):
-            return False  # nothing was stored
+    class Client:
+        def store_connection_password(self, _request):
+            return True
+
+        def delete_connection_password(self, _request):
+            return True
 
     class Spinner:
         def connect(self, signal, callback):
@@ -448,11 +452,6 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
         unlock_dialog,
         '_spinner_dialog',
         lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
-    )
-    monkeypatch.setattr(
-        ss.get_secret_manager(),
-        'selected_backend',
-        lambda: types.SimpleNamespace(name='bitwarden'),
     )
     monkeypatch.setattr(
         dialog_module.GLib,
@@ -470,7 +469,17 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     monkeypatch.setattr(dialog_module.threading, 'Thread', InlineThread)
 
     dialog = ConnectionDialog.__new__(ConnectionDialog)
-    dialog.connection_manager = Manager()
+    dialog.parent_window = types.SimpleNamespace(
+        client=Client(),
+        client_bridge=object(),
+        secrets_controller=types.SimpleNamespace(
+            load_state=lambda: types.SimpleNamespace(
+                selected_backend='bitwarden', needs_unlock=False, login_required=False
+            )
+        ),
+        _daemon_mode_active=lambda: True,
+    )
+    dialog._save_mutation_result = types.SimpleNamespace(connection_id='conn-1')
     dialog.key_editor = None
     dialog._save_buttons = []
     closed = []
@@ -535,13 +544,12 @@ def test_has_pending_passphrases_detects_cleared_entry():
 
 
 def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
-    import sshpilot.secret_storage as ss
-
     dialog = ConnectionDialog.__new__(ConnectionDialog)
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
-    sm = ss.get_secret_manager()
-
-    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: True)
+    state = types.SimpleNamespace(needs_unlock=True, login_required=False)
+    dialog.parent_window = types.SimpleNamespace(
+        secrets_controller=types.SimpleNamespace(load_state=lambda: state)
+    )
     assert dialog._needs_secret_unlock_before_save({'password': ''}) is True   # passphrase
     assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is True  # password
 
@@ -554,7 +562,7 @@ def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
         {'password': '', 'password_changed': True}) is True
 
     # Unlocked -> never needs a prompt.
-    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
+    state.needs_unlock = False
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
     assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is False
 

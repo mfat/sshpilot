@@ -79,22 +79,13 @@ class TerminalManager:
         the user can unlock for this connection. After that one re-prompt we proceed
         regardless (the user cancelling their own prompt falls back to SSH's own prompt)."""
         try:
-            from .secret_storage import get_secret_manager
-
-            manager = get_secret_manager()
-
-            # rbw is passive (session_backed=False), so selected_needs_unlock() skips it —
-            # but a locked rbw-agent silently yields no secret on connect. Nudge through
-            # rbw's own pinentry (rbw_setup runs `rbw unlock` + sync), then retry regardless
-            # of the result (a cancel falls back to ssh's own prompt, like the bw path).
-            rbw = manager.selected_backend()
-            if getattr(rbw, "name", "") == "rbw" and rbw.is_available() and not rbw.is_unlocked():
-                from .rbw_setup import ensure_rbw_ready
-
-                ensure_rbw_ready(self.window, lambda _ready: retry())
-                return True
-
-            if not manager.selected_needs_unlock():
+            controller = getattr(self.window, "secrets_controller", None)
+            if controller is None:
+                # A missing daemon controller is not permission to inspect or
+                # unlock a frontend-owned backend.
+                return False
+            state = controller.load_state()
+            if not state.needs_unlock and not state.login_required:
                 return False
             from .secret_unlock_dialog import prompt_unlock
 
@@ -102,7 +93,8 @@ class TerminalManager:
                 def _on_done(_success):
                     still_locked = False
                     try:
-                        still_locked = get_secret_manager().selected_needs_unlock()
+                        current = controller.load_state()
+                        still_locked = bool(current.needs_unlock or current.login_required)
                     except Exception:
                         still_locked = False
                     if (
@@ -117,12 +109,13 @@ class TerminalManager:
                 owned = [True]
                 owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
 
-            # Locked. A vault that isn't signed in can't be unlocked, so decide off the
-            # main thread (``selected_needs_login`` spawns a slow ``bw`` process): when
-            # not signed in, skip the doomed "Unlock vault" dialog and just proceed with
-            # the connection (SSH prompts for auth itself); otherwise show the unlock prompt.
+            # A vault that isn't signed in can't be unlocked. Re-read that
+            # daemon-owned state before deciding whether to show the prompt.
             def _probe():
-                needs_login = manager.selected_needs_login()
+                try:
+                    needs_login = bool(controller.load_state().login_required)
+                except Exception:
+                    needs_login = False
                 GLib.idle_add(lambda: (_after_probe(needs_login), False)[1])
 
             def _after_probe(needs_login):

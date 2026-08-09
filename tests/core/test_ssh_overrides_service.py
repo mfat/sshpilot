@@ -39,6 +39,19 @@ def _semantic(config):
     return normalize_ssh_overrides(config.get("ssh", {}))
 
 
+def test_successful_mutations_notify_daemon_runtime_hook(tmp_path):
+    calls = []
+    service = SshOverridesService(
+        tmp_path / "config.json",
+        on_mutation=lambda: calls.append("runtime"),
+    )
+
+    service.update(UpdateGlobalSshOverridesRequest({"connect_timeout": 30}))
+    service.reset()
+
+    assert calls == ["runtime", "runtime"]
+
+
 # ---------------------------------------------------------------------------
 # Strict load behavior
 # ---------------------------------------------------------------------------

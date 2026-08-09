@@ -69,10 +69,18 @@ class _ServiceClient:
         return self._service.get()
 
     def update_global_ssh_overrides(self, request):
-        return self._service.update(request)
+        result = self._service.update(request)
+        # Mirror the daemon's injected post-persistence runtime hook.  The
+        # GTK controller must not call this helper itself.
+        from sshpilot.ssh_multiplex import expire_all_masters
+        expire_all_masters()
+        return result
 
     def reset_global_ssh_overrides(self, expected_revision=None):
-        return self._service.reset(expected_revision=expected_revision)
+        result = self._service.reset(expected_revision=expected_revision)
+        from sshpilot.ssh_multiplex import expire_all_masters
+        expire_all_masters()
+        return result
 
 
 class _FailingClient(_ServiceClient):
@@ -252,7 +260,8 @@ def test_save_without_controller_does_not_persist_daemon_fields(
     assert "ssh_overrides" not in on_disk["ssh"]
     # Config-owned rows still persist through Config.
     assert on_disk["ssh"]["apply_default_keepalive"] is True
-    assert expires == [True]
+    # No daemon mutation occurred, so there is no daemon runtime hook to run.
+    assert expires == []
 
 
 # ---------------------------------------------------------------------------

@@ -288,7 +288,7 @@ def _production_core_services():
     )
     def _build_ssh_overrides_service():
         from sshpilot.core.ssh_overrides_service import SshOverridesService
-        from sshpilot.ssh_multiplex import controlmaster_args
+        from sshpilot.ssh_multiplex import controlmaster_args, expire_all_masters
 
         # The multiplex args are always injected so the daemon composes the
         # ControlMaster fragment based on the *currently loaded* value of
@@ -301,6 +301,7 @@ def _production_core_services():
         return SshOverridesService(
             get_config_dir() / "config.json",
             controlmaster_extra=multiplex_extra,
+            on_mutation=expire_all_masters,
         )
 
     overrides_service = _build_ssh_overrides_service()
