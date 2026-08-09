@@ -35,10 +35,13 @@ class TerminalSearch:
     # -- UI construction --------------------------------------------------------
 
     def _build_ui(self):
-        # Search overlay elements (revealer styled like other banners)
+        # Search controls use normal layout flow in TerminalWidget.  Do not
+        # animate the terminal viewport: a slide transition would continuously
+        # resize the PTY/backend while the revealer is opening or closing.
         self.search_revealer = Gtk.Revealer()
+        self.search_revealer.set_visible(False)
         self.search_revealer.set_reveal_child(False)
-        self.search_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.search_revealer.set_transition_type(Gtk.RevealerTransitionType.NONE)
         self.search_revealer.set_halign(Gtk.Align.FILL)
         self.search_revealer.set_valign(Gtk.Align.START)
         self.search_revealer.set_hexpand(True)
@@ -207,6 +210,7 @@ class TerminalSearch:
         try:
             if not hasattr(self, 'search_revealer') or not self.search_revealer:
                 return
+            self.search_revealer.set_visible(True)
             self._apply_search_highlight_colors()
             self.search_revealer.set_reveal_child(True)
             if hasattr(self, 'search_entry') and self.search_entry:
@@ -225,6 +229,7 @@ class TerminalSearch:
         try:
             if hasattr(self, 'search_revealer') and self.search_revealer:
                 self.search_revealer.set_reveal_child(False)
+                self.search_revealer.set_visible(False)
             self._set_search_error_state(False)
             self._update_search_count_label(-1, 0)
             if self.t.backend and hasattr(self.t.backend, "clear_search_decorations"):

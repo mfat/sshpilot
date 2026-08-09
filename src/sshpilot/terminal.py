@@ -228,14 +228,14 @@ class TerminalWidget(Gtk.Box):
 
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
-        # Float search revealer over the terminal so toggling it does not
-        # change the terminal's allocated height (which would cause VTE to
-        # send a resize/SIGWINCH and make the content flicker).
-        self.overlay.add_overlay(self.search_revealer)
 
         self.terminal_stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.terminal_stack.set_hexpand(True)
         self.terminal_stack.set_vexpand(True)
+        # Search participates in normal layout so both terminal backends get a
+        # viewport that excludes the visible controls.  Keep it above the
+        # terminal overlay; reconnect and save banners remain below it.
+        self.terminal_stack.append(self.search_revealer)
         self.terminal_stack.append(self.overlay)
 
         # Set up drag and drop for SCP upload

@@ -7,6 +7,7 @@ clear/hide reset. Built via ``__new__`` with a stubbed terminal back-reference
 (``s.t``) and stubbed widgets.
 """
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -209,9 +210,13 @@ def test_hide_search_overlay_resets_error_and_count():
     class _Revealer:
         def __init__(self):
             self.revealed = True
+            self.visible = True
 
         def set_reveal_child(self, v):
             self.revealed = v
+
+        def set_visible(self, v):
+            self.visible = v
 
     class _Backend:
         def clear_search_decorations(self):
@@ -223,6 +228,7 @@ def test_hide_search_overlay_resets_error_and_count():
 
     s._hide_search_overlay()
     assert s.search_revealer.revealed is False
+    assert s.search_revealer.visible is False
     assert "error" not in s.search_entry.classes
     assert s.search_count_label.text == ""
     assert calls == {"decorations": 1, "focus": 1}
@@ -237,3 +243,27 @@ def test_show_search_highlight_uses_backend_without_vte_escape_hatch():
 
     assert calls == [True]
     assert not hasattr(s.t, "vte")
+
+
+def test_search_layout_is_shared_and_keeps_backend_viewport_truthful():
+    """The shared stack, not either emulator, owns search viewport layout."""
+    root = Path(__file__).parents[1]
+    terminal_source = (root / "src/sshpilot/terminal.py").read_text()
+    search_source = (root / "src/sshpilot/terminal_search.py").read_text()
+
+    assert "self.overlay.add_overlay(self.search_revealer)" not in terminal_source
+    assert "Gtk.RevealerTransitionType.NONE" in search_source
+
+    stack_start = terminal_source.index("self.terminal_stack = Gtk.Box")
+    stack_end = terminal_source.index("# Container for terminal stack only", stack_start)
+    stack_source = terminal_source[stack_start:stack_end]
+    flow_children = (
+        "self.search_revealer",
+        "self.overlay",
+        "self.disconnected_revealer",
+        "self.save_connection_revealer",
+    )
+    positions = [stack_source.index(f"append({child})") for child in flow_children]
+    assert positions == sorted(positions)
+    assert "Vte." not in stack_source
+    assert "PyXterm" not in stack_source
