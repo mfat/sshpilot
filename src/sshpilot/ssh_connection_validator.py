@@ -15,6 +15,8 @@ import subprocess
 
 from gettext import gettext as _
 
+from .askpass_utils import get_ssh_env_with_askpass, staged_session_passphrase
+
 logger = logging.getLogger(__name__)
 
 
@@ -191,10 +193,36 @@ class SSHConnectionValidator:
             return False
 
         try:
-            # Run ssh-keygen -y to test the passphrase
-            result = subprocess.run([
-                'ssh-keygen', '-y', '-P', passphrase, '-f', key_path
-            ], capture_output=True, text=True, timeout=10)
+            # Run ssh-keygen -y with the existing AskPass helper. The secret is
+            # staged in a scoped file and never placed in argv or the env.
+            cmd = ['ssh-keygen', '-y', '-f', key_path]
+            if passphrase:
+                env = get_ssh_env_with_askpass("force")
+                with staged_session_passphrase(passphrase) as passphrase_file:
+                    env["SSHPILOT_SESSION_PASSPHRASE_FILE"] = passphrase_file
+                    result = subprocess.run(
+                        cmd,
+                        env=env,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+            else:
+                result = subprocess.run(
+                    [
+                        "ssh-keygen",
+                        "-y",
+                        "-P",
+                        "",
+                        "-f",
+                        key_path,
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
 
             # Exit code 0 means the passphrase is valid
             return result.returncode == 0
@@ -205,5 +233,8 @@ class SSHConnectionValidator:
             # This shouldn't happen since we're capturing output, but handle it
             return False
         except Exception as e:
-            logger.error(f"Error verifying passphrase for key {key_path}: {e}")
+            if passphrase:
+                logger.error("Error verifying passphrase for key %s", key_path)
+            else:
+                logger.error("Error checking unencrypted key %s: %s", key_path, e)
             return False

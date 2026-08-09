@@ -1,5 +1,6 @@
 # askpass_utils.py
 import atexit
+from contextlib import contextmanager
 import logging
 import os
 import re
@@ -192,7 +193,9 @@ def _sweep_stale_session_files(directory: "str | None") -> None:
     try:
         now = time.time()
         for name in os.listdir(directory or tempfile.gettempdir()):
-            if not name.startswith('sshpilot-pw-'):
+            if not name.startswith(
+                ("sshpilot-pw-", "sshpilot-passphrase-")
+            ):
                 continue
             path = os.path.join(directory or tempfile.gettempdir(), name)
             try:
@@ -283,6 +286,40 @@ def stage_session_password(password: str) -> "dict[str, str]":
     path = _stage_session_password_file(password)
     return {"SSHPILOT_SESSION_PASSWORD_FILE": path} if path else {}
 
+@contextmanager
+def staged_session_passphrase(passphrase: str):
+    """Stage *passphrase* in a scoped 0600 file for repeated AskPass reads."""
+    if not passphrase:
+        raise ValueError("A non-empty passphrase is required")
+
+    directory = _session_password_dir()
+    _sweep_stale_session_files(directory)
+
+    fd, path = tempfile.mkstemp(
+        prefix="sshpilot-passphrase-",
+        dir=directory,
+        text=False,
+    )
+
+    try:
+        try:
+            os.write(fd, passphrase.encode())
+        finally:
+            os.close(fd)
+
+        os.chmod(path, 0o600)
+        yield path
+
+    finally:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            logger.debug(
+                "Unable to remove staged passphrase file: %s",
+                path,
+            )
 
 def lookup_ssh_password(host: str, username: str) -> str:
     """Look up a stored SSH login password via the selected secret backend."""
@@ -1079,23 +1116,26 @@ def _handle_password_prompt(prompt: str, log_fn) -> "str | None":
     )
 
 
-def _resolve_passphrase_for_askpass(key_path: str, log_fn) -> "str | None":
-    """Resolve a key passphrase from session file, local store, or main-app IPC."""
-    # Check one-shot session passphrase written by the main app
+def _read_staged_session_passphrase(log_fn) -> "str | None":
+    """Read a scoped session passphrase exactly, without consuming its file."""
     session_passphrase_file = os.environ.get("SSHPILOT_SESSION_PASSPHRASE_FILE", "")
     if session_passphrase_file and os.path.exists(session_passphrase_file):
         try:
-            with open(session_passphrase_file, encoding="utf-8") as f:
-                session_passphrase = f.read().strip()
+            with open(session_passphrase_file, "rb") as f:
+                session_passphrase = f.read().decode()
             if session_passphrase:
                 log_fn("ASKPASS: Found session passphrase from secure temp file")
-                try:
-                    os.unlink(session_passphrase_file)
-                except Exception:
-                    pass
                 return session_passphrase
         except Exception as exc:
             log_fn(f"ASKPASS: Error reading session passphrase file: {exc}")
+    return None
+
+
+def _resolve_passphrase_for_askpass(key_path: str, log_fn) -> "str | None":
+    """Resolve a key passphrase from session file, local store, or main-app IPC."""
+    session_passphrase = _read_staged_session_passphrase(log_fn)
+    if session_passphrase is not None:
+        return session_passphrase
 
     # Resolve from storage. Two routes:
     #   * local — read the selected backend in this subprocess. Instant for the
@@ -1243,6 +1283,13 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         )
 
     key_path = _extract_key_path(prompt)
+    # New-key generation prompts do not include a key path and occur twice.
+    # A scoped session file is authoritative for this subprocess and remains
+    # available until its parent command exits.
+    if os.environ.get("SSHPILOT_SESSION_PASSPHRASE_FILE"):
+        session_passphrase = _read_staged_session_passphrase(_log)
+        if session_passphrase is not None:
+            return session_passphrase
     if not key_path:
         _log("ASKPASS: Could not extract key path from prompt")
         return None
@@ -1584,6 +1631,7 @@ def get_ssh_env_with_askpass(
         env.pop("SSHPILOT_PASSWORD_HOSTS", None)
     env.pop("SSHPILOT_SESSION_PASSWORD_ID", None)
     env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
+    env.pop("SSHPILOT_SESSION_PASSPHRASE_FILE", None)
     if session_password:
         env.update(stage_session_password(session_password))
     return env

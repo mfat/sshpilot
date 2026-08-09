@@ -9,6 +9,7 @@ from typing import Optional, List, Dict
 
 from gi.repository import GObject
 
+from .askpass_utils import get_ssh_env_with_askpass, staged_session_passphrase
 from .platform_utils import get_ssh_dir
 from .key_utils import _SKIPPED_FILENAMES as _SHARED_SKIPPED_FILENAMES, _is_private_key
 
@@ -164,10 +165,28 @@ class KeyManager(GObject.Object):
             cmd += ["-C", comment]
 
             cmd += ["-f", str(key_path)]
-            cmd += ["-N", passphrase or ""]  # empty => no passphrase
-
-            logger.debug("Running ssh-keygen: %s", " ".join(cmd))
-            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            logger.debug("Running ssh-keygen for key path: %s", key_path)
+            if passphrase:
+                env = get_ssh_env_with_askpass("force")
+                with staged_session_passphrase(passphrase) as passphrase_file:
+                    env["SSHPILOT_SESSION_PASSPHRASE_FILE"] = passphrase_file
+                    completed = subprocess.run(
+                        cmd,
+                        env=env,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+            else:
+                # An explicit empty value keeps unencrypted generation
+                # non-interactive without exposing a secret.
+                completed = subprocess.run(
+                    [*cmd, "-N", ""],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
 
             if completed.returncode != 0:
                 # Surface stderr as the UI message
@@ -189,6 +208,12 @@ class KeyManager(GObject.Object):
             return key
 
         except Exception as e:
-            logger.error("Key generation failed: %s", e, exc_info=True)
+            if passphrase:
+                # Exception messages from encoding/process boundaries are not
+                # trusted to exclude their input. Never route a passphrase-adjacent
+                # exception through logging.
+                logger.error("Passphrase-protected key generation failed")
+            else:
+                logger.error("Key generation failed: %s", e, exc_info=True)
             # Re-raise the exception so the UI can handle it properly
             raise
