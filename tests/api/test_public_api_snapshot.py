@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+from sshpilot.api.models.connections import ConnectionValidationResult
+
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR_PATH = ROOT / "scripts" / "generate_api_artifacts.py"
@@ -84,3 +86,17 @@ def test_snapshot_records_pre_wire_client_signature_shapes():
         ],
         "return": "ReplayResult",
     }
+
+
+def test_generated_model_purpose_ignores_dataclass_signature_docstrings():
+    generator = _load_generator()
+
+    assert generator._model_purpose(ConnectionValidationResult) == (
+        "Frontend-neutral `ConnectionValidationResult` record."
+    )
+
+
+def test_normalize_sorts_unordered_collections():
+    generator = _load_generator()
+
+    assert generator._normalize(frozenset({"zeta", "alpha"})) == ["alpha", "zeta"]

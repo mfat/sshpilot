@@ -62,7 +62,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** AttachSessionRequest(session_id: sshpilot.api.models.common.SessionId, request_input: bool = True, want_terminal_output: bool = False, from_sequence: int = 0)
+**Purpose:** Frontend-neutral `AttachSessionRequest` record.
 
 **Related methods:** `attach_session`
 **Related events:** None
@@ -90,7 +90,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** AttachSessionResult(session: sshpilot.api.models.sessions.SessionSummary, attachment: sshpilot.api.models.sessions.AttachmentInfo, available_start: int = 0, live_sequence: int = 0, replay_truncated: bool = False, eof: bool = False)
+**Purpose:** Frontend-neutral `AttachSessionResult` record.
 
 **Related methods:** `attach_session`
 **Related events:** None
@@ -139,7 +139,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** AttachSftpRequest(service_id: 'SftpServiceId')
+**Purpose:** Frontend-neutral `AttachSftpRequest` record.
 
 **Related methods:** `attach_sftp`
 **Related events:** None
@@ -161,7 +161,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** AttachmentInfo(id: sshpilot.api.models.common.AttachmentId, session_id: sshpilot.api.models.common.SessionId, client_id: sshpilot.api.models.common.ClientId, input_owner: bool)
+**Purpose:** Frontend-neutral `AttachmentInfo` record.
 
 **Related methods:** None
 **Related events:** None
@@ -189,7 +189,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** CancelTransferRequest(transfer_id: 'TransferId')
+**Purpose:** Frontend-neutral `CancelTransferRequest` record.
 
 **Related methods:** `cancel_transfer`
 **Related events:** None
@@ -255,7 +255,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ChallengePrompt(text: str, attempt: int)
+**Purpose:** Frontend-neutral `ChallengePrompt` record.
 
 **Related methods:** None
 **Related events:** None
@@ -279,7 +279,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ClaimForwardRequest(forward_id: 'ForwardId')
+**Purpose:** Frontend-neutral `ClaimForwardRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -301,7 +301,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ClaimTerminalInputRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId)
+**Purpose:** Frontend-neutral `ClaimTerminalInputRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -351,7 +351,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** CloseForwardRequest(forward_id: 'ForwardId')
+**Purpose:** Frontend-neutral `CloseForwardRequest` record.
 
 **Related methods:** `close_forward`
 **Related events:** None
@@ -373,7 +373,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** CloseSessionRequest(session_id: sshpilot.api.models.common.SessionId)
+**Purpose:** Frontend-neutral `CloseSessionRequest` record.
 
 **Related methods:** `close_session`
 **Related events:** None
@@ -395,7 +395,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** CloseSftpRequest(service_id: 'SftpServiceId')
+**Purpose:** Frontend-neutral `CloseSftpRequest` record.
 
 **Related methods:** `close_sftp`
 **Related events:** None
@@ -443,7 +443,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ConfirmationPrompt(text: str)
+**Purpose:** Frontend-neutral `ConfirmationPrompt` record.
 
 **Related methods:** None
 **Related events:** None
@@ -776,7 +776,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ConnectionValidationError(field: str, code: str, message: str)
+**Purpose:** Frontend-neutral `ConnectionValidationError` record.
 
 **Related methods:** None
 **Related events:** None
@@ -802,7 +802,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ConnectionValidationResult(valid: bool, errors: Tuple[sshpilot.api.models.connections.ConnectionValidationError, ...] = ())
+**Purpose:** Frontend-neutral `ConnectionValidationResult` record.
 
 **Related methods:** None
 **Related events:** None
@@ -850,7 +850,7 @@ Synthetic representation:
 
 **Status:** Partially implemented
 **Introduced:** Protocol v1
-**Purpose:** CoreEvent(type: sshpilot.api.events.EventType, payload: ~PayloadT, sequence: int, timestamp: datetime.datetime = <factory>, request_id: sshpilot.api.models.common.RequestId | None = None, connection_id: sshpilot.api.models.common.ConnectionId | None = None, session_id: sshpilot.api.models.common.SessionId | None = None)
+**Purpose:** Frontend-neutral `CoreEvent` record.
 
 **Related methods:** `subscribe_events`
 **Related events:** `connection.created`, `connection.updated`, `connection.deleted`, `connection_store.changed`, `session.created`, `session.state_changed`, `session.output`, `session.interaction_requested`, `session.exited`, `session.closed`, `interaction.created`, `interaction.state_changed`, `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`, `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`, `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`, `operation.created`, `operation.state_changed`, `daemon.state_changed`, `error.occurred`
@@ -910,7 +910,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** CreateConnectionRequest(nickname: str, hostname: str, username: str = '', port: int = 22, protocol: str = 'ssh', config_patch: Mapping[str, Any] = <factory>, plugin_data: Mapping[str, Any] = <factory>)
+**Purpose:** Frontend-neutral `CreateConnectionRequest` record.
 
 **Related methods:** `create_connection`
 **Related events:** None
@@ -970,7 +970,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** DaemonDiagnostics(status: 'DaemonStatus', uptime_seconds: 'float', executor_queue_depth: 'int' = 0, thread_counts_by_role: 'Mapping[str, int]' = <factory>, open_descriptor_count: 'Optional[int]' = None, rss_bytes: 'Optional[int]' = None, socket_bound: 'bool' = True, keep_alive_lease: 'bool' = False)
+**Purpose:** Frontend-neutral `DaemonDiagnostics` record.
 
 **Related methods:** `get_daemon_diagnostics`
 **Related events:** None
@@ -1006,7 +1006,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** DaemonIdleInfo(idle_shutdown_enabled: 'bool', idle_shutdown_seconds: 'Optional[float]', idle_since: 'Optional[datetime]' = None, idle_deadline: 'Optional[datetime]' = None, idle_blockers: 'Tuple[str, ...]' = ())
+**Purpose:** Frontend-neutral `DaemonIdleInfo` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1036,7 +1036,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** DaemonResourceCounts(clients: 'int' = 0, sessions_active: 'int' = 0, sessions_retained: 'int' = 0, sftp_active: 'int' = 0, sftp_retained: 'int' = 0, transfers_queued: 'int' = 0, transfers_starting: 'int' = 0, transfers_running: 'int' = 0, transfers_retained: 'int' = 0, forwards_active: 'int' = 0, forwards_retained: 'int' = 0, interactions_pending: 'int' = 0)
+**Purpose:** Frontend-neutral `DaemonResourceCounts` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1080,7 +1080,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** DaemonStatus(state: 'DaemonLifecycleState', server_instance_id: 'str', started_at: 'datetime', protocol_version: 'str', api_implementation_version: 'str', daemon_version: 'str', development_revision: 'str', resources: 'DaemonResourceCounts', idle: 'DaemonIdleInfo', shutdown_deadline: 'Optional[datetime]' = None, disconnect_reason: 'Optional[str]' = None, restart_requested: 'bool' = False)
+**Purpose:** Frontend-neutral `DaemonStatus` record.
 
 **Related methods:** `get_daemon_status`
 **Related events:** None
@@ -1124,7 +1124,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** DaemonStopResult(accepted: 'bool', state: 'DaemonLifecycleState', resources: 'DaemonResourceCounts', will_lose: 'Tuple[str, ...]' = (), confirmation: 'Optional[str]' = None, message: 'str' = '', restart_requested: 'bool' = False)
+**Purpose:** Frontend-neutral `DaemonStopResult` record.
 
 **Related methods:** `stop_daemon`, `restart_daemon`
 **Related events:** None
@@ -1186,7 +1186,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** DeleteConnectionRequest(connection_id: sshpilot.api.models.common.ConnectionId)
+**Purpose:** Frontend-neutral `DeleteConnectionRequest` record.
 
 **Related methods:** `delete_connection`
 **Related events:** None
@@ -1208,7 +1208,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** DeleteConnectionResult(connection_id: sshpilot.api.models.common.ConnectionId, deleted: bool)
+**Purpose:** Frontend-neutral `DeleteConnectionResult` record.
 
 **Related methods:** `delete_connection`
 **Related events:** None
@@ -1276,7 +1276,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** DeletePluginSecretRequest(plugin_id: str, key: str)
+**Purpose:** Frontend-neutral `DeletePluginSecretRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1300,7 +1300,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** DetachSessionRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId)
+**Purpose:** Frontend-neutral `DetachSessionRequest` record.
 
 **Related methods:** `detach_session`
 **Related events:** None
@@ -1415,7 +1415,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** ForwardSummary(id: 'ForwardId', connection_id: 'ConnectionId', type: 'ForwardType', state: 'ForwardState', bind_host: 'str', bind_port: 'int', destination_host: 'Optional[str]' = None, destination_port: 'Optional[int]' = None, created_at: 'datetime' = <factory>, active_at: 'Optional[datetime]' = None, closed_at: 'Optional[datetime]' = None, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None, session_id: 'Optional[SessionId]' = None)
+**Purpose:** Frontend-neutral `ForwardSummary` record.
 
 **Related methods:** `list_forwards`, `get_forward`, `open_forward`
 **Related events:** `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`
@@ -1559,7 +1559,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** GetPluginSecretRequest(plugin_id: str, key: str)
+**Purpose:** Frontend-neutral `GetPluginSecretRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1583,7 +1583,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** GroupReference(id: str, name: str = '')
+**Purpose:** Frontend-neutral `GroupReference` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1711,7 +1711,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** HostKeyPrompt(hostname: str, port: int, key_type: str, fingerprint: str, status: sshpilot.api.models.interactions.HostKeyStatus)
+**Purpose:** Frontend-neutral `HostKeyPrompt` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1741,7 +1741,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InputOwner(client_id: sshpilot.api.models.common.ClientId, attachment_id: sshpilot.api.models.common.AttachmentId)
+**Purpose:** Frontend-neutral `InputOwner` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1765,7 +1765,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionCancellation(interaction_id: sshpilot.api.models.common.InteractionId, reason: str = '')
+**Purpose:** Frontend-neutral `InteractionCancellation` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1789,7 +1789,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionClaim(interaction_id: sshpilot.api.models.common.InteractionId, responder_client_id: sshpilot.api.models.common.ClientId, nonce: str, expires_at: datetime.datetime)
+**Purpose:** Frontend-neutral `InteractionClaim` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1817,7 +1817,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionDecisionRequest(interaction_id: sshpilot.api.models.common.InteractionId, host_key_decision: sshpilot.api.models.interactions.HostKeyDecision | None = None, secret_decision: sshpilot.api.models.interactions.SecretDecision | None = None, remember_policy: sshpilot.api.models.interactions.RememberPolicy = <RememberPolicy.DO_NOT_STORE: 'do_not_store'>)
+**Purpose:** Frontend-neutral `InteractionDecisionRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1845,7 +1845,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionRejection(interaction_id: sshpilot.api.models.common.InteractionId, reason: str)
+**Purpose:** Frontend-neutral `InteractionRejection` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1869,7 +1869,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionRequest(id: sshpilot.api.models.common.InteractionId, request_id: sshpilot.api.models.common.RequestId, kind: sshpilot.api.models.interactions.InteractionKind, message: str, secret: bool, allow_empty: bool = False, choices: Tuple[str, ...] = (), session_id: sshpilot.api.models.common.SessionId | None = None, originating_client_id: sshpilot.api.models.common.ClientId | None = None, created_at: datetime.datetime = <factory>, expires_at: datetime.datetime | None = None, status: sshpilot.api.models.interactions.InteractionStatus = <InteractionStatus.PENDING: 'pending'>)
+**Purpose:** Frontend-neutral `InteractionRequest` record.
 
 **Related methods:** None
 **Related events:** `session.interaction_requested`
@@ -1913,7 +1913,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionResponse(interaction_id: sshpilot.api.models.common.InteractionId, status: sshpilot.api.models.interactions.InteractionStatus, value: str | None = None, choice: str | None = None)
+**Purpose:** Frontend-neutral `InteractionResponse` record.
 
 **Related methods:** `respond_to_interaction`
 **Related events:** None
@@ -1941,7 +1941,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionSummary(id: sshpilot.api.models.common.InteractionId, session_id: sshpilot.api.models.common.SessionId, connection_id: sshpilot.api.models.common.ConnectionId, type: sshpilot.api.models.interactions.InteractionType, state: sshpilot.api.models.interactions.InteractionState, created_at: datetime.datetime, expires_at: datetime.datetime, attempt: int, prompt: sshpilot.api.models.interactions.HostKeyPrompt | sshpilot.api.models.interactions.PasswordPrompt | sshpilot.api.models.interactions.PassphrasePrompt | sshpilot.api.models.interactions.ChallengePrompt | sshpilot.api.models.interactions.PresencePrompt | sshpilot.api.models.interactions.ConfirmationPrompt, responder_client_id: sshpilot.api.models.common.ClientId | None = None)
+**Purpose:** Frontend-neutral `InteractionSummary` record.
 
 **Related methods:** None
 **Related events:** None
@@ -1987,7 +1987,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** InteractionTimeout(interaction_id: sshpilot.api.models.common.InteractionId, expired_at: datetime.datetime = <factory>)
+**Purpose:** Frontend-neutral `InteractionTimeout` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2141,7 +2141,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** ListDirectoryRequest(connection_id: 'ConnectionId', path: 'str', service_id: 'Optional[SftpServiceId]' = None, cursor: 'Optional[str]' = None, limit: 'Optional[int]' = None)
+**Purpose:** Frontend-neutral `ListDirectoryRequest` record.
 
 **Related methods:** `sftp_list_directory`
 **Related events:** None
@@ -2171,7 +2171,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** ListDirectoryResult(path: 'str', entries: 'Tuple[RemoteFileEntry, ...]', truncated: 'bool' = False, next_cursor: 'Optional[str]' = None)
+**Purpose:** Frontend-neutral `ListDirectoryResult` record.
 
 **Related methods:** `sftp_list_directory`
 **Related events:** None
@@ -2277,7 +2277,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** OpenForwardRequest(connection_id: 'ConnectionId', type: 'ForwardType', bind_host: 'str', bind_port: 'int', destination_host: 'Optional[str]' = None, destination_port: 'Optional[int]' = None)
+**Purpose:** Frontend-neutral `OpenForwardRequest` record.
 
 **Related methods:** `open_forward`
 **Related events:** None
@@ -2309,7 +2309,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** OpenSessionRequest(connection_id: sshpilot.api.models.common.ConnectionId, dimensions: sshpilot.api.models.terminal.TerminalDimensions | None = None)
+**Purpose:** Frontend-neutral `OpenSessionRequest` record.
 
 **Related methods:** `open_session`
 **Related events:** None
@@ -2333,7 +2333,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** OpenSftpRequest(connection_id: 'ConnectionId')
+**Purpose:** Frontend-neutral `OpenSftpRequest` record.
 
 **Related methods:** `open_sftp`
 **Related events:** None
@@ -2399,7 +2399,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PassphrasePrompt(key_display_name: str, key_fingerprint: str | None, attempt: int, can_remember: bool, stored_secret_available: bool)
+**Purpose:** Frontend-neutral `PassphrasePrompt` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2429,7 +2429,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PasswordPrompt(username: str, hostname: str, port: int, attempt: int, can_remember: bool, stored_secret_available: bool)
+**Purpose:** Frontend-neutral `PasswordPrompt` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2515,7 +2515,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PluginOperationRequest(request_id: 'RequestId', plugin_id: 'str', operation: 'str', arguments: 'Tuple[PluginArgument, ...]' = ())
+**Purpose:** Frontend-neutral `PluginOperationRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2543,7 +2543,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PluginOperationResult(request_id: 'RequestId', plugin_id: 'str', values: 'Tuple[Tuple[str, str], ...]' = ())
+**Purpose:** Frontend-neutral `PluginOperationResult` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2605,7 +2605,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** PresencePrompt(text: str)
+**Purpose:** Frontend-neutral `PresencePrompt` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2675,7 +2675,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ReleaseTerminalInputRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId)
+**Purpose:** Frontend-neutral `ReleaseTerminalInputRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2699,7 +2699,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** RemoteFileEntry(name: 'str', path: 'str', file_type: 'RemoteFileType', size: 'Optional[int]' = None, mode: 'Optional[int]' = None, uid: 'Optional[int]' = None, gid: 'Optional[int]' = None, modified_at: 'Optional[datetime]' = None, link_target: 'Optional[str]' = None)
+**Purpose:** Frontend-neutral `RemoteFileEntry` record.
 
 **Related methods:** `sftp_list_directory`, `sftp_stat`, `sftp_lstat`
 **Related events:** None
@@ -2861,7 +2861,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ReplayBounds(earliest_sequence: int, latest_sequence: int, retained_bytes: int)
+**Purpose:** Frontend-neutral `ReplayBounds` record.
 
 **Related methods:** None
 **Related events:** None
@@ -2887,7 +2887,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ReplayRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId | None = None, after_sequence: int | None = None, max_bytes: int = 1048576)
+**Purpose:** Frontend-neutral `ReplayRequest` record.
 
 **Related methods:** `replay_terminal`
 **Related events:** None
@@ -2915,7 +2915,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ReplayResult(session_id: sshpilot.api.models.common.SessionId, first_sequence: int, next_sequence: int, bounds: sshpilot.api.models.terminal.ReplayBounds, data: bytes = b'', truncated: bool = False, eof: bool = False)
+**Purpose:** Frontend-neutral `ReplayResult` record.
 
 **Related methods:** `replay_terminal`
 **Related events:** None
@@ -2983,7 +2983,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** ResizeTerminalRequest(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId, dimensions: sshpilot.api.models.terminal.TerminalDimensions)
+**Purpose:** Frontend-neutral `ResizeTerminalRequest` record.
 
 **Related methods:** `resize_terminal`
 **Related events:** None
@@ -3012,7 +3012,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** RestartDaemonRequest(force: 'bool' = False, confirmation: 'Optional[str]' = None)
+**Purpose:** Frontend-neutral `RestartDaemonRequest` record.
 
 **Related methods:** `restart_daemon`
 **Related events:** None
@@ -3088,7 +3088,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SessionCapabilities(supported: FrozenSet[str] = frozenset())
+**Purpose:** Frontend-neutral `SessionCapabilities` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3110,7 +3110,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SessionExitInfo(exit_code: int | None = None, signal: int | None = None, reason: str = '')
+**Purpose:** Frontend-neutral `SessionExitInfo` record.
 
 **Related methods:** None
 **Related events:** `session.exited`
@@ -3136,7 +3136,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SessionFailure(code: str, message: str)
+**Purpose:** Frontend-neutral `SessionFailure` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3160,7 +3160,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SessionSummary(id: sshpilot.api.models.common.SessionId, connection_id: sshpilot.api.models.common.ConnectionId, state: sshpilot.api.models.sessions.SessionState, created_at: datetime.datetime = <factory>, input_owner: sshpilot.api.models.sessions.InputOwner | None = None, capabilities: sshpilot.api.models.sessions.SessionCapabilities = <factory>, exit_info: sshpilot.api.models.sessions.SessionExitInfo | None = None, failure: sshpilot.api.models.sessions.SessionFailure | None = None, attachment_count: int = 0)
+**Purpose:** Frontend-neutral `SessionSummary` record.
 
 **Related methods:** `list_sessions`, `get_session`, `open_session`, `attach_session`
 **Related events:** `session.created`, `session.state_changed`, `session.closed`
@@ -3224,7 +3224,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SftpChmodRequest(service_id: 'SftpServiceId', path: 'str', mode: 'int')
+**Purpose:** Frontend-neutral `SftpChmodRequest` record.
 
 **Related methods:** `sftp_chmod`
 **Related events:** None
@@ -3308,7 +3308,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpCreateFileResult(path: 'str', mode: 'int' = 420)
+**Purpose:** Frontend-neutral `SftpCreateFileResult` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3356,7 +3356,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpDirectorySizeResult(path: 'str', size_bytes: 'int', file_count: 'int', directory_count: 'int')
+**Purpose:** Frontend-neutral `SftpDirectorySizeResult` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3412,7 +3412,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SftpPathRequest(service_id: 'SftpServiceId', path: 'str', recursive: 'bool' = False)
+**Purpose:** Frontend-neutral `SftpPathRequest` record.
 
 **Related methods:** `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink`, `sftp_mkdir`, `sftp_rmdir`, `sftp_remove`
 **Related events:** None
@@ -3438,7 +3438,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpReadFileRequest(target: 'SftpFileTarget', path: 'str', service_id: 'Optional[SftpServiceId]' = None, access: 'SftpFileAccess' = <SftpFileAccess.NORMAL: 'normal'>)
+**Purpose:** Frontend-neutral `SftpReadFileRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3466,7 +3466,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpReadFileResult(target: 'SftpFileTarget', path: 'str', content: 'str', exists: 'bool', revision: 'str', size: 'int', mode: 'Optional[int]' = None)
+**Purpose:** Frontend-neutral `SftpReadFileResult` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3500,7 +3500,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SftpRenameRequest(service_id: 'SftpServiceId', source_path: 'str', destination_path: 'str', overwrite: 'bool' = False)
+**Purpose:** Frontend-neutral `SftpRenameRequest` record.
 
 **Related methods:** `sftp_rename`
 **Related events:** None
@@ -3528,7 +3528,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpReplaceFileRequest(target: 'SftpFileTarget', path: 'str', content: 'str', expected_revision: 'str', backup: 'bool' = True, service_id: 'Optional[SftpServiceId]' = None, access: 'SftpFileAccess' = <SftpFileAccess.NORMAL: 'normal'>)
+**Purpose:** Frontend-neutral `SftpReplaceFileRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3562,7 +3562,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** SftpReplaceFileResult(target: 'SftpFileTarget', path: 'str', revision: 'str', size: 'int', backup_path: 'Optional[str]' = None)
+**Purpose:** Frontend-neutral `SftpReplaceFileResult` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3592,7 +3592,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SftpServiceSummary(id: 'SftpServiceId', connection_id: 'ConnectionId', state: 'SftpServiceState', created_at: 'datetime' = <factory>, started_at: 'Optional[datetime]' = None, closed_at: 'Optional[datetime]' = None, attachment_count: 'int' = 0, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None)
+**Purpose:** Frontend-neutral `SftpServiceSummary` record.
 
 **Related methods:** `list_sftp_services`, `get_sftp_service`, `open_sftp`, `attach_sftp`
 **Related events:** `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`
@@ -3630,7 +3630,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** SftpSymlinkRequest(service_id: 'SftpServiceId', target_path: 'str', link_path: 'str')
+**Purpose:** Frontend-neutral `SftpSymlinkRequest` record.
 
 **Related methods:** `sftp_symlink`
 **Related events:** None
@@ -3734,7 +3734,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** StartScpTransferRequest(connection_id: 'ConnectionId', direction: 'TransferDirection', sources: 'Tuple[str, ...]', destination: 'str', conflict_policy: 'TransferConflictPolicy' = <TransferConflictPolicy.OVERWRITE: 'overwrite'>, recursive: 'bool' = False)
+**Purpose:** Frontend-neutral `StartScpTransferRequest` record.
 
 **Related methods:** `start_scp_transfer`
 **Related events:** None
@@ -3766,7 +3766,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** StartTransferRequest(connection_id: 'ConnectionId', sftp_service_id: 'SftpServiceId', direction: 'TransferDirection', remote_path: 'str', local_path: 'str', conflict_policy: 'TransferConflictPolicy' = <TransferConflictPolicy.FAIL: 'fail'>, recursive: 'bool' = False, local_mode: 'TransferLocalMode' = <TransferLocalMode.DAEMON_PATH: 'daemon_path'>)
+**Purpose:** Frontend-neutral `StartTransferRequest` record.
 
 **Related methods:** `start_transfer`
 **Related events:** None
@@ -3802,7 +3802,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** StopDaemonRequest(force: 'bool' = False, confirmation: 'Optional[str]' = None)
+**Purpose:** Frontend-neutral `StopDaemonRequest` record.
 
 **Related methods:** `stop_daemon`
 **Related events:** None
@@ -3880,7 +3880,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** StorePluginSecretRequest(plugin_id: str, key: str, value: str)
+**Purpose:** Frontend-neutral `StorePluginSecretRequest` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3932,7 +3932,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** TerminalDimensions(rows: int, columns: int)
+**Purpose:** Frontend-neutral `TerminalDimensions` record.
 
 **Related methods:** None
 **Related events:** None
@@ -3956,7 +3956,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** TerminalInput(session_id: sshpilot.api.models.common.SessionId, attachment_id: sshpilot.api.models.common.AttachmentId, data: bytes)
+**Purpose:** Frontend-neutral `TerminalInput` record.
 
 **Related methods:** `send_terminal_input`
 **Related events:** None
@@ -3982,7 +3982,7 @@ Synthetic representation:
 
 **Status:** Schema only
 **Introduced:** Protocol v1
-**Purpose:** TerminalOutput(session_id: sshpilot.api.models.common.SessionId, sequence: int, data: bytes, created_at: datetime.datetime = <factory>, replay: bool = False, eof: bool = False)
+**Purpose:** Frontend-neutral `TerminalOutput` record.
 
 **Related methods:** None
 **Related events:** `session.output`
@@ -4014,7 +4014,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** TransferSummary(id: 'TransferId', connection_id: 'ConnectionId', sftp_service_id: 'Optional[SftpServiceId]', direction: 'TransferDirection', state: 'TransferState', source_display: 'str', destination_display: 'str', backend: 'TransferBackend' = <TransferBackend.SFTP: 'sftp'>, bytes_total: 'Optional[int]' = None, bytes_completed: 'int' = 0, created_at: 'datetime' = <factory>, started_at: 'Optional[datetime]' = None, completed_at: 'Optional[datetime]' = None, owner_client_id: 'Optional[ClientId]' = None, failure: 'Optional[ServiceFailure]' = None, bytes_transferred: 'Optional[int]' = None, total_bytes: 'Optional[int]' = None)
+**Purpose:** Frontend-neutral `TransferSummary` record.
 
 **Related methods:** `list_transfers`, `get_transfer`, `start_transfer`, `start_scp_transfer`
 **Related events:** `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`
