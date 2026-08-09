@@ -126,7 +126,7 @@ class BaseTerminalBackend(Protocol):
 
     def setup_link_handling(
         self, motion_callback: Callable, enter_callback: Callable,
-        selection_callback: Callable,
+        selection_callback: Callable, hover_callback: Optional[Callable] = None,
     ) -> None:
         """Install hyperlink interaction callbacks when supported."""
 
@@ -225,6 +225,8 @@ class VTETerminalBackend:
         self._css_class = f"terminal-bg-{id(self)}"
         self._selection_background = None
         self._selection_foreground = None
+        self._destroyed = False
+        self._hover_handler: Optional[int] = None
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -330,7 +332,7 @@ class VTETerminalBackend:
         except Exception:
             logger.debug("Could not configure VTE word selection", exc_info=True)
 
-    def setup_link_handling(self, motion_callback, enter_callback, selection_callback) -> None:
+    def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
         """Install optional VTE URL behavior without making startup depend on it."""
         try:
             pattern = (r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
@@ -347,6 +349,19 @@ class VTETerminalBackend:
             self.vte.add_controller(controller)
         except Exception:
             logger.debug("VTE hyperlink motion controller unavailable", exc_info=True)
+        # VTE tracks the hovered OSC 8 hyperlink itself and notifies on change
+        # (since 0.50); prefer it over polling check_hyperlink_at() on every
+        # pointer move. The uri/bbox arguments are owned by VTE, so the handler
+        # must not retain them beyond the call.
+        if hover_callback is not None:
+            try:
+                def _on_hover(_terminal, uri, _bbox):
+                    hover_callback(uri)
+                self._hover_handler = self.vte.connect(
+                    "hyperlink-hover-uri-changed", _on_hover)
+            except Exception:
+                logger.debug("VTE hyperlink hover signal unavailable", exc_info=True)
+                self._hover_handler = None
         for signal, callback in (("contents-changed", lambda terminal: terminal.queue_draw()),
                                  ("selection-changed", selection_callback)):
             try:
@@ -355,6 +370,8 @@ class VTETerminalBackend:
                 logger.debug("VTE %s signal unavailable", signal, exc_info=True)
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        if getattr(self, "_destroyed", False):
+            return None
         if hasattr(self.vte, "check_hyperlink_at"):
             uri = self.vte.check_hyperlink_at(x, y)
             if uri:
@@ -369,6 +386,8 @@ class VTETerminalBackend:
         return result[0] if isinstance(result, tuple) else result
 
     def set_pointer_over_link(self, over_link: bool) -> None:
+        if getattr(self, "_destroyed", False):
+            return
         self.vte.set_cursor(Gdk.Cursor.new_from_name("pointer" if over_link else "text", None))
 
     def save_contents(self, stream: Any) -> None:
@@ -386,9 +405,15 @@ class VTETerminalBackend:
         self.vte.set_encoding(encoding)
 
     def destroy(self) -> None:
+        self._destroyed = True
         try:
             if self._termprops_handler is not None:
                 self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_hover_handler", None) is not None:
+                self.vte.disconnect(self._hover_handler)  # type: ignore[arg-type]
         except Exception:
             pass
         self._remove_background_provider()
@@ -971,7 +996,7 @@ class PyXtermTerminalBackend:
         """PyXtermBridgeBackend uses output hooks instead of a widget signal."""
         return None
 
-    def setup_link_handling(self, motion_callback, enter_callback, selection_callback) -> None:
+    def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
         """xterm.js handles links in its WebLinks addon."""
         return None
 

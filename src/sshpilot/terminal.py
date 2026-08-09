@@ -115,6 +115,7 @@ class TerminalWidget(Gtk.Box):
         self._connect_failure_hint = ''  # failure line scraped while connecting
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
+        self._destroyed = False  # Flag to suppress VTE interactions during teardown
         self.last_error_message = None  # Store last SSH error for reporting
         self._last_error_detail = None  # Structured context for the Details dialog
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
@@ -2450,6 +2451,7 @@ class TerminalWidget(Gtk.Box):
             self._on_vte_motion,
             self._on_vte_pointer_enter,
             self._on_selection_changed,
+            self._on_vte_hyperlink_hover,
         )
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
@@ -2472,9 +2474,27 @@ class TerminalWidget(Gtk.Box):
 
     def _vte_uri_at(self, x: float, y: float) -> Optional[str]:
         """Return the URI at widget coordinates through the backend."""
+        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
+            return None
         if not self.backend.supports_feature("hyperlinks"):
             return None
         return self.backend.hyperlink_at(x, y)
+
+    def _on_vte_hyperlink_hover(self, uri):
+        """Handle VTE's native hyperlink hover notification (OSC 8, since 0.50).
+
+        VTE emits this when the hovered hyperlink changes; it carries the URI
+        only, not widget coordinates, so we do not need a raw position probe on
+        every pointer move. ``uri`` is owned by VTE and only valid during the
+        callback, so the string is copied into our own state immediately.
+        """
+        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
+            return
+        self._hovered_hyperlink_uri = uri or None
+        try:
+            self.backend.set_pointer_over_link(bool(uri))
+        except Exception:
+            pass
 
     @staticmethod
     def _click_has_link_modifier(state) -> bool:
@@ -2490,6 +2510,15 @@ class TerminalWidget(Gtk.Box):
 
     def _on_vte_motion(self, controller, x, y):
         """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
+        # Never touch the VTE screen state while the terminal is being torn
+        # down: the motion controller may still deliver events while VTE's
+        # internal ring is freed, and a raw check_hyperlink_at()/check_match_at()
+        # dereferences that state (segfault). The native hyperlink-hover-uri-
+        # changed signal already tracks OSC 8 hover; this handler drives cursor
+        # feedback and the plain-text regex fallback, and is a no-op during
+        # teardown.
+        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
+            return
         try:
             uri = self._vte_uri_at(x, y)
             event = controller.get_current_event()
@@ -3345,6 +3374,8 @@ class TerminalWidget(Gtk.Box):
                     try:
                         if n_press != 1:
                             return
+                        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
+                            return
                         # Plain click must reach VTE for cursor placement /
                         # selection — only Ctrl+click (Cmd+click on macOS)
                         # activates links, matching GNOME Terminal.
@@ -3810,6 +3841,9 @@ class TerminalWidget(Gtk.Box):
     def _on_destroy(self, widget):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
+        # Suppress any in-flight VTE interactions (motion/enter callbacks still
+        # queued on the motion controller) before the screen state is released.
+        self._destroyed = True
 
         # Disconnect backend signal handlers first to prevent callbacks on destroyed objects
         if hasattr(self, 'backend') and self.backend is not None:
