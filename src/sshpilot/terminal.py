@@ -3186,8 +3186,6 @@ class TerminalWidget(Gtk.Box):
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
             self._menu_popover.set_has_arrow(True)
             parent_widget = self.backend.widget if self.backend else self.terminal_widget
-            if parent_widget:
-                self._menu_popover.set_parent(parent_widget)
             self._menu_parent_widget = parent_widget
 
             def _prepare_context_menu(x=None, y=None):
@@ -3218,6 +3216,11 @@ class TerminalWidget(Gtk.Box):
                         self._pending_context_menu_coordinates = None
                 self._native_vte_context_menu = self.backend.setup_native_context_menu(
                     self._menu_popover, _on_native_context_menu)
+
+            # VTE parents, positions, presents and unparents native context
+            # menus itself. Only the legacy/WebView popover is application-owned.
+            if not self._native_vte_context_menu and parent_widget:
+                self._menu_popover.set_parent(parent_widget)
 
             self._menu_needs_manual_dismiss = not self.backend.supports_feature("hyperlinks")
             if self._menu_needs_manual_dismiss:
@@ -3419,11 +3422,18 @@ class TerminalWidget(Gtk.Box):
                 popover.popdown()
             except Exception:
                 pass
-            try:
-                popover.set_parent(None)
-            except Exception:
-                pass
+            if getattr(self, '_native_vte_context_menu', False):
+                try:
+                    self.backend.clear_native_context_menu()
+                except Exception:
+                    pass
+            else:
+                try:
+                    popover.set_parent(None)
+                except Exception:
+                    pass
             self._menu_popover = None
+        self._native_vte_context_menu = False
 
     def _install_manual_menu_dismissal(self, focus_widget):
         """Dismiss the non-autohide WebView context menu on focus-out and Escape.

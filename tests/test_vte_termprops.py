@@ -115,3 +115,35 @@ def test_modern_vte_does_not_connect_deprecated_title_signal(monkeypatch):
         get_termprop_string_by_id=lambda *_args: None,
         connect=lambda *_args: pytest.fail("legacy title signal was connected"))
     assert backend.connect_title_changed(lambda *_args: None) is None
+
+
+def test_cwd_uses_generic_boxed_uri_when_ref_accessor_is_not_exposed(monkeypatch):
+    ids = types.SimpleNamespace(XTERM_TITLE=1, CURRENT_DIRECTORY_URI=2,
+                                SHELL_PREEXEC=3, SHELL_PRECMD=4, SHELL_POSTEXEC=5)
+    monkeypatch.setattr(terminal_backends.Vte, "PropertyId", ids, raising=False)
+    queued = []
+    monkeypatch.setattr(terminal_backends.GLib, "idle_add",
+                        lambda callback, *args: queued.append((callback, args)) or 1)
+
+    uri = types.SimpleNamespace(to_string=lambda: "file:///generic/cwd")
+    boxed = types.SimpleNamespace(get_boxed=lambda: uri)
+    class GenericValueTerminal:
+        def connect(self, signal, callback):
+            self.handler = callback
+            return 10
+        def get_termprop_value_by_id(self, prop):
+            assert prop == ids.CURRENT_DIRECTORY_URI
+            return boxed
+
+    delivered = []
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = GenericValueTerminal()
+    backend.widget = object()
+    backend._termprops_handler = None
+    backend.connect_termprops_changed(lambda _widget, event: delivered.append(event))
+    backend.vte.handler(backend.vte, [ids.CURRENT_DIRECTORY_URI])
+
+    assert delivered == []
+    callback, args = queued.pop()
+    callback(*args)
+    assert delivered == [{"cwd_uri": "file:///generic/cwd"}]

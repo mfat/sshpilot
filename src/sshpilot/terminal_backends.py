@@ -133,6 +133,9 @@ class BaseTerminalBackend(Protocol):
     def setup_native_context_menu(self, menu: Any, callback: Callable) -> bool:
         """Let the emulator own context-menu presentation when supported."""
 
+    def clear_native_context_menu(self) -> None:
+        """Release a native context menu previously given to the emulator."""
+
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
         """Return a hyperlink at widget coordinates, if supported.
 
@@ -243,6 +246,7 @@ class VTETerminalBackend:
         self._link_match_tag: Optional[int] = None
         self._selection_handler: Optional[int] = None
         self._native_context_handler: Optional[int] = None
+        self._native_context_callback: Optional[Callable[[bool], None]] = None
         self._initialized = False
 
     def initialize(self) -> None:
@@ -405,6 +409,7 @@ class VTETerminalBackend:
 
     def destroy(self) -> None:
         self._destroyed = True
+        self.clear_native_context_menu()
         try:
             if self._termprops_handler is not None:
                 self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
@@ -729,17 +734,30 @@ class VTETerminalBackend:
             return False
         try:
             self.vte.set_context_menu(menu)
+            self._native_context_callback = callback
             if getattr(self, "_native_context_handler", None) is None:
                 def _on_setup(_terminal, context):
                     # VTE emits a final setup-context-menu with None after the
                     # menu is dismissed. Never dereference that sentinel.
-                    callback(context is not None)
+                    current_callback = getattr(
+                        self, "_native_context_callback", None)
+                    if current_callback is not None:
+                        current_callback(context is not None)
                 self._native_context_handler = self.vte.connect(
                     "setup-context-menu", _on_setup)
             return True
         except Exception:
             logger.debug("VTE native context menu unavailable", exc_info=True)
             return False
+
+    def clear_native_context_menu(self) -> None:
+        """Return ownership of the configured popover to GTK/VTE cleanup."""
+        self._native_context_callback = None
+        if hasattr(self.vte, "set_context_menu"):
+            try:
+                self.vte.set_context_menu(None)
+            except Exception:
+                logger.debug("Could not clear VTE native context menu", exc_info=True)
 
     def disconnect(self, handler_id: Any) -> None:
         try:

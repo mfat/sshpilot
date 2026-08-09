@@ -80,8 +80,8 @@ def test_context_and_click_queries_are_exact_one_shot():
 def test_native_context_menu_handles_show_and_none_dismissal(monkeypatch):
     monkeypatch.setattr(terminal_backends.Vte, "EventContext", object, raising=False)
     class NativeVte:
-        def __init__(self): self.callback = None; self.menu = None
-        def set_context_menu(self, menu): self.menu = menu
+        def __init__(self): self.callback = None; self.menus = []
+        def set_context_menu(self, menu): self.menus.append(menu)
         def connect(self, signal, callback):
             assert signal == "setup-context-menu"; self.callback = callback; return 3
     backend = object.__new__(VTETerminalBackend)
@@ -93,5 +93,7 @@ def test_native_context_menu_handles_show_and_none_dismissal(monkeypatch):
     context = object()
     backend.vte.callback(backend.vte, context)
     backend.vte.callback(backend.vte, None)
-    assert backend.vte.menu is menu
+    assert backend.vte.menus == [menu]
     assert lifecycle == [True, False]
+    backend.clear_native_context_menu()
+    assert backend.vte.menus == [menu, None]
