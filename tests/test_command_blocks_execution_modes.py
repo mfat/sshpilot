@@ -1,6 +1,6 @@
 """Explicit Command Blocks one-shot versus interactive-terminal routing."""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from sshpilot.command_blocks import (
     CommandBlocksPanel,
@@ -64,3 +64,62 @@ def test_interactive_command_is_rejected_by_headless_broadcast_action():
     )
     panel._show_toast.assert_called_once()
     panel._do_broadcast.assert_not_called()
+
+
+def test_interactive_target_insertion_preserves_insert_only():
+    terminal = Mock(is_connected=True)
+    CommandBlocksPanel._feed_interactive_when_connected(
+        terminal, "vim file", insert_only=True
+    )
+    terminal.feed_child_data.assert_called_once_with(b"vim file")
+
+
+def test_interactive_target_execution_appends_newline_when_not_insert_only():
+    terminal = Mock(is_connected=True)
+    CommandBlocksPanel._feed_interactive_when_connected(
+        terminal, "tail -f file", insert_only=False
+    )
+    terminal.feed_child_data.assert_called_once_with(b"tail -f file\n")
+
+
+def test_delayed_interactive_target_preserves_insert_only_after_connection():
+    terminal = Mock(is_connected=False)
+    CommandBlocksPanel._feed_interactive_when_connected(
+        terminal, "vim file", insert_only=True
+    )
+    connected = terminal.connect.call_args.args[1]
+    with patch("sshpilot.command_blocks.GObject.signal_handler_disconnect"):
+        connected(terminal)
+    terminal.feed_child_data.assert_called_once_with(b"vim file")
+
+
+def test_custom_command_dialog_exposes_explicit_interactive_choice():
+    from sshpilot import command_blocks
+
+    panel = object.__new__(CommandBlocksPanel)
+    panel.window = Mock()
+    panel._dispatch_to_target = Mock()
+    dialog = Mock()
+    entry = Mock()
+    entry.get_text.return_value = "top"
+    interactive = Mock()
+    interactive.get_active.return_value = True
+
+    with (
+        patch.object(command_blocks.Adw, "AlertDialog", return_value=dialog),
+        patch.object(command_blocks.Adw, "SwitchRow", return_value=interactive),
+        patch.object(command_blocks.Gtk, "Entry", return_value=entry),
+        patch.object(command_blocks.Gtk, "Box", return_value=Mock()),
+    ):
+        panel._show_custom_command_dialog(connection="host")
+
+    response = next(call.args[1] for call in dialog.connect.call_args_list if call.args[0] == "response")
+    response(dialog, "run")
+    panel._dispatch_to_target.assert_called_once_with(
+        "top",
+        None,
+        execution_mode=EXECUTION_MODE_INTERACTIVE_TERMINAL,
+        connection="host",
+        group=None,
+        connections=None,
+    )

@@ -16,7 +16,8 @@ sessions and does not use a local shell.
 Command Blocks distinguish one-shot execution from explicitly interactive
 terminal execution. Commands requiring a PTY, streaming output, or user input
 remain terminal-session actions and are rejected by the headless Broadcast
-Command action.
+Command action. Saved and ad-hoc custom commands expose the choice explicitly;
+interactive insertion continues to honor the `insert_only` preference.
 
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.21`; `PROTOCOL_VERSION` stays `1.0`.
   Closes out the SFTP operation-lifecycle integration:

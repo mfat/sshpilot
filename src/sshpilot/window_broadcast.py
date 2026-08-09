@@ -20,16 +20,27 @@ class WindowBroadcastMixin:
 
     def on_broadcast_send_clicked(self, button):
         """Handle broadcast banner send button click"""
-        if getattr(self, "_active_broadcast_operation_id", None):
-            logger.info("Ignored overlapping broadcast submission while one is active")
+        if getattr(self, "_broadcast_submission_pending", False) or getattr(
+            self, "_active_broadcast_operation_id", None
+        ):
+            logger.info("Ignored overlapping broadcast submission")
             return
         command = self.broadcast_entry.get_text().strip()
         if command:
-            self.terminal_manager.broadcast_command(
-                command,
-                on_success=self._on_broadcast_started,
-                on_error=self._on_broadcast_failed,
-            )
+            self._broadcast_submission_pending = True
+            self.broadcast_send_button.set_sensitive(False)
+            try:
+                submitted = self.terminal_manager.broadcast_command(
+                    command,
+                    on_success=self._on_broadcast_started,
+                    on_error=self._on_broadcast_failed,
+                )
+            except Exception as error:
+                self._on_broadcast_failed(error)
+                return
+            if submitted is None:
+                self._broadcast_submission_pending = False
+                self.broadcast_send_button.set_sensitive(True)
 
             # Update banner message with result (we'll need to find the title label)
             # For now, just hide the banner after sending
@@ -41,6 +52,7 @@ class WindowBroadcastMixin:
 
     def _on_broadcast_started(self, summary):
         """Poll retained daemon truth until the operation becomes terminal."""
+        self._broadcast_submission_pending = False
         self._active_broadcast_operation_id = summary.operation.operation_id
         self.broadcast_send_button.set_sensitive(False)
         logger.info("Broadcast command accepted for %d targets", len(summary.targets))
@@ -89,12 +101,14 @@ class WindowBroadcastMixin:
             overlay.add_toast(toast)
 
     def _on_broadcast_failed(self, error):
+        self._broadcast_submission_pending = False
         self._broadcast_poll_pending = False
         self._active_broadcast_operation_id = None
         self.broadcast_send_button.set_sensitive(True)
         logger.warning("Broadcast command request was not accepted: %s", error)
 
     def _on_broadcast_cancelled(self, _summary):
+        self._broadcast_submission_pending = False
         self._active_broadcast_operation_id = None
         self._broadcast_poll_pending = False
         self.broadcast_send_button.set_sensitive(True)

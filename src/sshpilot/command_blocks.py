@@ -1839,7 +1839,14 @@ class CommandBlocksPanel(Gtk.Box):
         )
         entry = Gtk.Entry()
         entry.set_activates_default(True)
-        dlg.set_extra_child(entry)
+        custom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        custom_box.append(entry)
+        interactive = Adw.SwitchRow(
+            title=_("Interactive Terminal"),
+            subtitle=_("Use a PTY for interactive or streaming commands"),
+        )
+        custom_box.append(interactive)
+        dlg.set_extra_child(custom_box)
         dlg.add_response("cancel", _("Cancel"))
         dlg.add_response("run", _("Run"))
         dlg.set_default_response("run")
@@ -1850,7 +1857,16 @@ class CommandBlocksPanel(Gtk.Box):
                 text = entry.get_text().strip()
                 if text:
                     self._dispatch_to_target(
-                        text, None, connection=connection, group=group, connections=connections
+                        text,
+                        None,
+                        execution_mode=(
+                            EXECUTION_MODE_INTERACTIVE_TERMINAL
+                            if interactive.get_active()
+                            else EXECUTION_MODE_ONE_SHOT
+                        ),
+                        connection=connection,
+                        group=group,
+                        connections=connections,
                     )
 
         dlg.connect("response", _on_response)
@@ -1897,6 +1913,10 @@ class CommandBlocksPanel(Gtk.Box):
         """Open PTY terminal sessions for explicitly interactive commands."""
         from .split_view import SplitViewTab
 
+        insert_only = bool(
+            self.store._config.get_setting("command_blocks.insert_only", False)
+        )
+
         if len(connections) == 1:
             manager = getattr(self.window, "terminal_manager", None)
             if manager is None:
@@ -1906,7 +1926,9 @@ class CommandBlocksPanel(Gtk.Box):
             manager.connect_to_host(connection, force_new=True)
             terminal = active.get(connection)
             if terminal is not None:
-                self._feed_interactive_when_connected(terminal, command_text)
+                self._feed_interactive_when_connected(
+                    terminal, command_text, insert_only=insert_only
+                )
         else:
             split = SplitViewTab(self.window)
             page = self.window.tab_view.append(split)
@@ -1916,13 +1938,21 @@ class CommandBlocksPanel(Gtk.Box):
             self.window.show_tab_view()
             self.window.tab_view.set_selected_page(page)
             for terminal in split.get_all_terminals():
-                self._feed_interactive_when_connected(terminal, command_text)
+                self._feed_interactive_when_connected(
+                    terminal, command_text, insert_only=insert_only
+                )
         if cmd_id:
             self.store.record_use(cmd_id)
 
     @staticmethod
-    def _feed_interactive_when_connected(terminal, command_text: str) -> None:
-        data = (command_text + "\n").encode("utf-8")
+    def _feed_interactive_when_connected(
+        terminal, command_text: str, *, insert_only: bool
+    ) -> None:
+        data = (
+            command_text.encode("utf-8")
+            if insert_only
+            else (command_text + "\n").encode("utf-8")
+        )
         if getattr(terminal, "is_connected", False):
             terminal.feed_child_data(data)
             return
