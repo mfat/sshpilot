@@ -364,6 +364,44 @@ class DaemonSftpManager(GObject.GObject):
         future.cancel = cancel_with_cleanup
         return future
 
+    def _operation_cancellable(self, future: Future) -> tuple:
+        """Wire ``future.cancel()`` to the daemon's ``operations.cancel``.
+
+        The daemon operation id is only known once the start RPC returns, so
+        this tracks a pending-cancel flag: if ``future.cancel()`` is called
+        before the id arrives, the cancel is issued as soon as it does
+        (``on_operation_started``), instead of being silently dropped.
+        """
+        state: Dict[str, Any] = {"operation_id": None, "cancel_requested": False}
+
+        def _on_operation_started(operation_id) -> None:
+            state["operation_id"] = operation_id
+            if state["cancel_requested"]:
+                self._sftp_controller.cancel_operation(operation_id)
+
+        def cancel_with_cleanup() -> bool:
+            if future.done():
+                return False
+            state["cancel_requested"] = True
+            if state["operation_id"] is not None:
+                self._sftp_controller.cancel_operation(state["operation_id"])
+            return True
+
+        future.cancel = cancel_with_cleanup
+        return future, _on_operation_started
+
+    @staticmethod
+    def _resolve_operation_exception(exc: BaseException) -> BaseException:
+        """Map a cancelled daemon operation onto the file-manager's cancel type.
+
+        Mirrors ``_finish_transfer``'s ``TransferCancelledException`` handling
+        so operation-backed futures (directory size, recursive copy/move,
+        recursive remove) look the same to callers as transfer futures.
+        """
+        if isinstance(exc, SshPilotError) and exc.code is ErrorCode.OPERATION_CANCELLED:
+            return TransferCancelledException(str(exc) or "Operation was cancelled")
+        return exc
+
     # -- directory listing ------------------------------------------------
     def listdir(self, path: str) -> None:
         target = self._expand(path)
@@ -434,16 +472,27 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
+        future, on_operation_started = self._operation_cancellable(future)
+
         def _on_success(result) -> None:
             self._safe_set(future, result=result.size_bytes)
 
         def _on_error(exc) -> None:
-            self._safe_set(future, exc=exc)
+            self._safe_set(future, exc=self._resolve_operation_exception(exc))
+
+        def _on_progress(summary) -> None:
+            self.emit(
+                "progress",
+                summary.progress or 0.0,
+                summary.message or "Measuring directory…",
+            )
 
         self._sftp_controller.directory_size(
             target,
             on_success=_on_success,
             on_error=_on_error,
+            on_operation_started=on_operation_started,
+            on_progress=_on_progress,
         )
         return future
 
@@ -573,13 +622,28 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
+        on_operation_started = None
+        on_progress = None
+        if recursive:
+            future, on_operation_started = self._operation_cancellable(future)
+            verb = "Moving" if move else "Copying"
+
+            def on_progress(summary) -> None:
+                self.emit(
+                    "progress", summary.progress or 0.0, summary.message or f"{verb}…"
+                )
+
         self._sftp_controller.copy(
             source,
             destination,
             recursive=recursive,
             move=move,
             on_success=lambda _result: self._safe_set(future, result=None),
-            on_error=lambda exc: self._safe_set(future, exc=exc),
+            on_error=lambda exc: self._safe_set(
+                future, exc=self._resolve_operation_exception(exc)
+            ),
+            on_operation_started=on_operation_started,
+            on_progress=on_progress,
         )
         return future
 
@@ -592,11 +656,22 @@ class DaemonSftpManager(GObject.GObject):
             future.set_exception(exc)
             return future
 
+        future, on_operation_started = self._operation_cancellable(future)
+
+        def _on_progress(summary) -> None:
+            self.emit(
+                "progress", summary.progress or 0.0, summary.message or "Deleting…"
+            )
+
         self._sftp_controller.remove(
             target,
             recursive=True,
             on_success=lambda _result: self._safe_set(future, result=None),
-            on_error=lambda exc: self._safe_set(future, exc=exc),
+            on_error=lambda exc: self._safe_set(
+                future, exc=self._resolve_operation_exception(exc)
+            ),
+            on_operation_started=on_operation_started,
+            on_progress=_on_progress,
         )
         return future
 

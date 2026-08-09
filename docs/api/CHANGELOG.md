@@ -5,6 +5,33 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.21`; `PROTOCOL_VERSION` stays `1.0`.
+  Closes out the SFTP operation-lifecycle integration:
+  - Recursive `sftp.copy`/`sftp.remove` and `sftp.directory_size` now enforce
+    the no-follow symlink policy at the tree *root*, not just for entries
+    encountered mid-walk: the root is `lstat`-ed (never `stat`-ed), a
+    directory-symlink root is rejected for recursive copy/move instead of
+    being walked, `directory_size` rejects a non-directory/symlink root, and
+    move cleanup now reuses the same lstat-based no-follow walker as
+    `sftp.remove` instead of a separate tree-delete helper that could follow a
+    symlinked root into its target.
+  - `get_operation`/`cancel_operation` and the wire methods `operations.get` /
+    `operations.cancel` moved off `identity.read`/`identity.operate` onto new
+    generic `operations.read`/`operations.control` capabilities, gated on the
+    shared `OperationRuntime` rather than the identity service. An SFTP-only
+    daemon with no identity service now correctly advertises the capabilities
+    it needs to poll and cancel its own `sftp_directory_size` /
+    `sftp_copy_tree` / `sftp_remove_tree` operations.
+  - `operations.get`/`operations.cancel` are now owner-gated: a client may
+    only inspect or cancel an operation it started (including one recorded
+    with no owner at all); any other client gets `service_owner_required`.
+  - The GTK file-manager backend (`DaemonSftpManager`) now wires
+    `Future.cancel()` on directory-size/recursive-copy-or-move/recursive-remove
+    futures through to `operations.cancel` (including the race where Cancel is
+    pressed before the start RPC has returned the operation id), and surfaces
+    polled operation progress through the existing `progress` signal instead
+    of only resolving on the terminal state.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.20`; `PROTOCOL_VERSION` stays `1.0`.
   Recursive remote size, copy, and delete now run through the daemon operation
   lifecycle instead of blocking the per-service SFTP command stream:

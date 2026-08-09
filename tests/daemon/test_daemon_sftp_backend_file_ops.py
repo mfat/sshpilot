@@ -23,7 +23,16 @@ class _Controller:
         self.create_calls.append(path)
         on_success(SimpleNamespace(path=path))
 
-    def remove(self, path, *, recursive, on_success, on_error):
+    def remove(
+        self,
+        path,
+        *,
+        recursive,
+        on_success,
+        on_error,
+        on_operation_started=None,
+        on_progress=None,
+    ):
         self.remove_calls.append((path, recursive))
         on_success(None)
 

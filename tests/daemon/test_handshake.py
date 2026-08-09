@@ -90,6 +90,8 @@ def test_successful_protocol_v1_handshake(raw_peer):
             Capability.SFTP_EVENTS.value,
             Capability.SFTP_METADATA.value,
             Capability.SFTP_MUTATE.value,
+            Capability.OPERATIONS_READ.value,
+            Capability.OPERATIONS_CONTROL.value,
             Capability.TRANSFERS_READ.value,
             Capability.TRANSFERS_WRITE.value,
             Capability.TRANSFERS_EVENTS.value,

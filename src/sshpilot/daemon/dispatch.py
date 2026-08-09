@@ -32,7 +32,7 @@ from sshpilot.api.models.connections import (
     get_plugin_secret_request_from_wire,
     store_plugin_secret_request_from_wire,
 )
-from sshpilot.api.models.operations import SftpFileAccess
+from sshpilot.api.models.operations import OperationSummary, SftpFileAccess
 from sshpilot.api.transport.codec import (
     assign_connection_to_group_request_from_wire,
     agent_key_list_to_wire,
@@ -251,8 +251,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "identity.deploy_key": Capability.IDENTITY_OPERATE,
     "authorized_keys.list": Capability.IDENTITY_READ,
     "authorized_keys.remove": Capability.IDENTITY_OPERATE,
-    "operations.get": Capability.IDENTITY_READ,
-    "operations.cancel": Capability.IDENTITY_OPERATE,
+    "operations.get": Capability.OPERATIONS_READ,
+    "operations.cancel": Capability.OPERATIONS_CONTROL,
     "ssh_overrides.get": Capability.SSH_OVERRIDES_READ,
     "ssh_overrides.update": Capability.SSH_OVERRIDES_WRITE,
     "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
@@ -886,6 +886,7 @@ class RequestDispatcher:
                 ssh_overrides=self._ssh_overrides_service is not None,
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
+                operations=self._operation_runtime is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -2571,20 +2572,43 @@ class RequestDispatcher:
     def _handle_get_operation(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> dict:
         operation_id = operation_id_request_from_wire(request.params)
         runtime = self._required_operation_runtime()
-        return operation_summary_to_wire(runtime.get_operation(operation_id))
+        client_id = self._required_client_id(state)
+        summary = runtime.get_operation(operation_id)
+        self._require_operation_owner(summary, client_id)
+        return operation_summary_to_wire(summary)
 
     def _handle_cancel_operation(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> dict:
         operation_id = operation_id_request_from_wire(request.params)
         runtime = self._required_operation_runtime()
+        client_id = self._required_client_id(state)
+        self._require_operation_owner(runtime.get_operation(operation_id), client_id)
         return operation_summary_to_wire(runtime.cancel_operation(operation_id))
+
+    @staticmethod
+    def _require_operation_owner(
+        summary: OperationSummary,
+        client_id: ClientId,
+    ) -> None:
+        """Only the client that started an operation may inspect or cancel it.
+
+        Now that operations can represent a destructive recursive delete or
+        move, a different daemon client must never be able to see or cancel
+        another client's operation -- including one recorded with no owner at
+        all, which is never treated as the requester's own.
+        """
+        if summary.owner_client_id != client_id:
+            raise SshPilotError(
+                ErrorCode.SERVICE_OWNER_REQUIRED,
+                "Only the originating client may inspect or cancel this operation",
+            )
 
     def _capabilities_for(self, state: ClientProtocolState) -> Capabilities:
         metadata = state.client_info
@@ -2630,6 +2654,7 @@ class RequestDispatcher:
                 ssh_overrides=self._ssh_overrides_service is not None,
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
+                operations=self._operation_runtime is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -2664,6 +2689,7 @@ class RequestDispatcher:
         ssh_overrides: bool = False,
         secrets: bool = False,
         identity: bool = False,
+        operations: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -2788,6 +2814,18 @@ class RequestDispatcher:
                     Capability.IDENTITY_READ,
                     Capability.IDENTITY_WRITE,
                     Capability.IDENTITY_OPERATE,
+                }
+            )
+        if operations:
+            # Generic operation-lifecycle capabilities: an SFTP-only daemon
+            # (no identity service at all) can still create and own
+            # long-running operations (directory size, recursive copy/move,
+            # recursive remove), so these are gated on OperationRuntime
+            # presence, never on the identity service.
+            daemon_capabilities |= frozenset(
+                {
+                    Capability.OPERATIONS_READ,
+                    Capability.OPERATIONS_CONTROL,
                 }
             )
         return daemon_capabilities

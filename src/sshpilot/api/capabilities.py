@@ -67,6 +67,8 @@ class Capability(str, Enum):
     IDENTITY_READ = "identity.read"
     IDENTITY_WRITE = "identity.write"
     IDENTITY_OPERATE = "identity.operate"
+    OPERATIONS_READ = "operations.read"
+    OPERATIONS_CONTROL = "operations.control"
     SSH_OVERRIDES_READ = "ssh_overrides.read"
     SSH_OVERRIDES_WRITE = "ssh_overrides.write"
     PLUGINS = "plugins"

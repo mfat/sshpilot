@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.20",
+  "api_implementation_version": "0.21",
   "capabilities": [
     "connections.config.read",
     "connections.config.write",
@@ -49,6 +49,8 @@
     "keys.write",
     "known_hosts.read",
     "known_hosts.write",
+    "operations.control",
+    "operations.read",
     "plugins",
     "port_forwarding",
     "secrets",
@@ -143,7 +145,7 @@
       "status": "daemon-only"
     },
     "cancel_operation": {
-      "capability": "identity.operate",
+      "capability": "operations.control",
       "status": "daemon-only"
     },
     "cancel_transfer": {
@@ -267,7 +269,7 @@
       "status": "daemon-only"
     },
     "get_operation": {
-      "capability": "identity.read",
+      "capability": "operations.read",
       "status": "daemon-only"
     },
     "get_plugin_secret": {
@@ -2357,10 +2359,10 @@
       "capability": "known_hosts.write"
     },
     "operations.cancel": {
-      "capability": "identity.operate"
+      "capability": "operations.control"
     },
     "operations.get": {
-      "capability": "identity.read"
+      "capability": "operations.read"
     },
     "secrets.backends.get": {
       "capability": "secrets.read"
@@ -3920,6 +3922,8 @@
       "identity.read",
       "identity.write",
       "identity.operate",
+      "operations.read",
+      "operations.control",
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",

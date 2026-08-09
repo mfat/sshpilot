@@ -78,6 +78,12 @@ def required_daemon_sftp_capabilities() -> frozenset:
             Capability.SFTP_EVENTS,
             Capability.SFTP_METADATA,
             Capability.SFTP_MUTATE,
+            # Directory size and recursive copy/move/remove always run as
+            # daemon operations (see SftpServiceRuntime.start_directory_size /
+            # start_copy / start_remove), so a daemon usable as an SFTP
+            # backend must also support inspecting and cancelling them.
+            Capability.OPERATIONS_READ,
+            Capability.OPERATIONS_CONTROL,
         }
     )
 
@@ -325,11 +331,15 @@ class DaemonSftpServiceController:
         *,
         on_success: Callable[[SftpDirectorySizeResult], None],
         on_error: Callable[[BaseException], None],
+        on_operation_started: Optional[Callable[[OperationId], None]] = None,
+        on_progress: Optional[Callable[[OperationSummary], None]] = None,
     ) -> None:
         """Measure a remote directory tree through a daemon operation.
 
         The walk runs on the daemon operation worker; the result is decoded
-        from the succeeded operation summary's typed payload.
+        from the succeeded operation summary's typed payload. ``on_operation_started``
+        is invoked as soon as the operation id is known (so a caller can wire
+        cancellation), and ``on_progress`` receives each non-terminal poll.
         """
         service_id = self._ready_service_id_or_error(on_error)
         if service_id is None:
@@ -341,12 +351,15 @@ class DaemonSftpServiceController:
             )
 
         def _on_started(summary) -> None:
+            if on_operation_started is not None:
+                on_operation_started(summary.operation_id)
             self._watch_operation(
                 summary.operation_id,
                 on_terminal=lambda done: self._resolve_size_result(
                     done, on_success=on_success, on_error=on_error
                 ),
                 on_error=on_error,
+                on_progress=on_progress,
             )
 
         self._submit(_op, on_success=_on_started, on_error=on_error)
@@ -418,6 +431,8 @@ class DaemonSftpServiceController:
         move: bool = False,
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
+        on_operation_started: Optional[Callable[[OperationId], None]] = None,
+        on_progress: Optional[Callable[[OperationSummary], None]] = None,
     ) -> None:
         service_id = self._ready_service_id_or_error(on_error)
         if service_id is None:
@@ -436,12 +451,15 @@ class DaemonSftpServiceController:
 
         if recursive:
             def _on_started(summary) -> None:
+                if on_operation_started is not None:
+                    on_operation_started(summary.operation_id)
                 self._watch_operation(
                     summary.operation_id,
                     on_terminal=lambda done: self._resolve_tree_operation(
                         done, on_success=on_success, on_error=on_error
                     ),
                     on_error=on_error,
+                    on_progress=on_progress,
                 )
 
             self._submit(_op, on_success=_on_started, on_error=on_error)
@@ -461,9 +479,17 @@ class DaemonSftpServiceController:
         recursive: bool = False,
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
+        on_operation_started: Optional[Callable[[OperationId], None]] = None,
+        on_progress: Optional[Callable[[OperationSummary], None]] = None,
     ) -> None:
         if recursive:
-            self._recursive_remove(path, on_success=on_success, on_error=on_error)
+            self._recursive_remove(
+                path,
+                on_success=on_success,
+                on_error=on_error,
+                on_operation_started=on_operation_started,
+                on_progress=on_progress,
+            )
         else:
             self._path_mutation(
                 "sftp_remove",
@@ -472,7 +498,15 @@ class DaemonSftpServiceController:
                 on_error=on_error,
             )
 
-    def _recursive_remove(self, path, *, on_success, on_error) -> None:
+    def _recursive_remove(
+        self,
+        path,
+        *,
+        on_success,
+        on_error,
+        on_operation_started: Optional[Callable[[OperationId], None]] = None,
+        on_progress: Optional[Callable[[OperationSummary], None]] = None,
+    ) -> None:
         service_id = self._ready_service_id_or_error(on_error)
         if service_id is None:
             return
@@ -483,12 +517,15 @@ class DaemonSftpServiceController:
             )
 
         def _on_started(summary) -> None:
+            if on_operation_started is not None:
+                on_operation_started(summary.operation_id)
             self._watch_operation(
                 summary.operation_id,
                 on_terminal=lambda done: self._resolve_tree_operation(
                     done, on_success=on_success, on_error=on_error
                 ),
                 on_error=on_error,
+                on_progress=on_progress,
             )
 
         self._submit(_op, on_success=_on_started, on_error=on_error)
@@ -880,15 +917,38 @@ class DaemonSftpServiceController:
         *,
         on_terminal: Callable[[OperationSummary], None],
         on_error: Callable[[BaseException], None],
+        on_progress: Optional[Callable[[OperationSummary], None]] = None,
     ) -> None:
         """Track a daemon operation and resolve its callbacks once terminal.
 
         Polls ``get_operation`` on a short GLib timeout (the same pattern the
         SSH key-copy window uses) rather than blocking the single bridge
-        worker; each poll is a quick independent RPC.
+        worker; each poll is a quick independent RPC. ``on_progress``, when
+        given, is called with every non-terminal summary so callers can
+        surface the daemon-reported ``progress``/``message``.
         """
-        self._operation_watchers[operation_id] = (on_terminal, on_error)
+        self._operation_watchers[operation_id] = (on_terminal, on_error, on_progress)
         self._ensure_operation_poller()
+
+    def cancel_operation(
+        self,
+        operation_id: OperationId,
+        *,
+        on_success: Optional[Callable[[OperationSummary], None]] = None,
+        on_error: Optional[Callable[[BaseException], None]] = None,
+    ) -> None:
+        """Request daemon-side cancellation of a running operation.
+
+        Safe to call even if the operation has already reached a terminal
+        state or the operation id is otherwise stale; the daemon treats
+        cancelling a finished/unknown operation as a no-op rather than an
+        error the caller must handle specially.
+        """
+        self._submit(
+            lambda: self._client.cancel_operation(operation_id),
+            on_success=on_success or (lambda _summary: None),
+            on_error=on_error or (lambda _exc: None),
+        )
 
     def _ensure_operation_poller(self) -> None:
         if self._operation_poll_id is None:
@@ -916,20 +976,27 @@ class DaemonSftpServiceController:
         return True
 
     def _on_operation_polled(self, operation_id, summary) -> None:
-        callbacks = self._operation_watchers.pop(operation_id, None)
+        callbacks = self._operation_watchers.get(operation_id)
         if callbacks is None:
             return
-        on_terminal, _on_error = callbacks
+        on_terminal, _on_error, on_progress = callbacks
         if not is_terminal_operation_state(summary.state):
-            self._operation_watchers[operation_id] = callbacks
+            if on_progress is not None:
+                try:
+                    on_progress(summary)
+                except Exception:
+                    logger.debug(
+                        "SFTP operation progress callback failed", exc_info=True
+                    )
             return
+        self._operation_watchers.pop(operation_id, None)
         on_terminal(summary)
 
     def _fail_operation_watch(self, operation_id, error) -> None:
         callbacks = self._operation_watchers.pop(operation_id, None)
         if callbacks is None:
             return
-        _on_terminal, on_error = callbacks
+        _on_terminal, on_error, _on_progress = callbacks
         on_error(error)
 
     def _stop_operation_poller(self) -> None:
@@ -942,7 +1009,7 @@ class DaemonSftpServiceController:
                 pass
         pending = self._operation_watchers
         self._operation_watchers = {}
-        for _operation_id, (_on_terminal, on_error) in pending.items():
+        for _operation_id, (_on_terminal, on_error, _on_progress) in pending.items():
             try:
                 on_error(
                     SshPilotError(
@@ -955,6 +1022,11 @@ class DaemonSftpServiceController:
 
     @staticmethod
     def _operation_failure(summary: OperationSummary) -> BaseException:
+        if summary.state is OperationState.CANCELLED:
+            return SshPilotError(
+                ErrorCode.OPERATION_CANCELLED,
+                summary.message or "The operation was cancelled",
+            )
         message = (
             summary.failure.message if summary.failure else summary.message
         ) or "The operation failed"

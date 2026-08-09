@@ -844,6 +844,48 @@ class _TreeSftpClient(_RemoteSftpClient):
         super().__init__()
         self.entries = {}
         self.raise_on_list = {}
+        self.symlink_roots = set()
+
+    def lstat(self, path):
+        """Root-symlink-policy check target: a plain in-tree directory or
+        file never resolves as a symlink here (no top-level link fixtures
+        are exercised by these tests), so this mirrors ``stat`` for the
+        paths this double actually knows about."""
+        self._enter_op()
+        try:
+            if path in self.symlink_roots:
+                return SimpleNamespace(
+                    st_size=0,
+                    st_mode=0o120777,
+                    st_uid=0,
+                    st_gid=0,
+                    st_mtime=0,
+                    is_dir=lambda: False,
+                    is_symlink=lambda: True,
+                )
+            if path in self.entries:
+                return SimpleNamespace(
+                    st_size=0,
+                    st_mode=0o040755,
+                    st_uid=0,
+                    st_gid=0,
+                    st_mtime=0,
+                    is_dir=lambda: True,
+                    is_symlink=lambda: False,
+                )
+            if path in self.files:
+                return SimpleNamespace(
+                    st_size=len(self.files[path]),
+                    st_mode=0o100644,
+                    st_uid=0,
+                    st_gid=0,
+                    st_mtime=0,
+                    is_dir=lambda: False,
+                    is_symlink=lambda: False,
+                )
+            raise _sftp_proto.SFTPError(_sftp_proto.FX_NO_SUCH_FILE)
+        finally:
+            self._exit_op()
 
     def listdir_attr(self, path):
         self._enter_op()
@@ -934,6 +976,22 @@ def test_directory_size_missing_root_raises_structured_error():
             client_id=ClientId("client:owner"),
         )
     assert raised.value.code is ErrorCode.REMOTE_PATH_NOT_FOUND
+
+
+def test_directory_size_rejects_a_root_that_is_itself_a_symlink():
+    """The no-follow policy applies to the root, not just entries under it:
+    a directory-symlink root must never be classified as a directory and
+    walked, even though ``stat`` (unlike ``lstat``) would happily follow it.
+    """
+    client = _directory_size_fixture()
+    client.symlink_roots.add("/link-root")
+    runtime, _, summary = _privileged_runtime(client)
+    with pytest.raises(SshPilotError) as raised:
+        runtime.directory_size(
+            SftpDirectorySizeRequest(summary.id, "/link-root"),
+            client_id=ClientId("client:owner"),
+        )
+    assert raised.value.code is ErrorCode.VALIDATION_FAILED
 
 
 class _FxFailureMkdirClient(_RemoteSftpClient):

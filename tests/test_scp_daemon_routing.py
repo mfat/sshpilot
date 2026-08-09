@@ -270,6 +270,8 @@ def _sftp_capabilities():
             Capability.SFTP_EVENTS,
             Capability.SFTP_METADATA,
             Capability.SFTP_MUTATE,
+            Capability.OPERATIONS_READ,
+            Capability.OPERATIONS_CONTROL,
         }
     )
     return SimpleNamespace(

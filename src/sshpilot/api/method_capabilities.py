@@ -108,6 +108,6 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "deploy_key": Capability.IDENTITY_OPERATE,
     "list_authorized_keys": Capability.IDENTITY_READ,
     "remove_authorized_key": Capability.IDENTITY_OPERATE,
-    "get_operation": Capability.IDENTITY_READ,
-    "cancel_operation": Capability.IDENTITY_OPERATE,
+    "get_operation": Capability.OPERATIONS_READ,
+    "cancel_operation": Capability.OPERATIONS_CONTROL,
 }

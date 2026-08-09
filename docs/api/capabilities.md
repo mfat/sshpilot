@@ -57,6 +57,8 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: sftp.events -->
 <!-- api-daemon-runtime-capability: sftp.metadata -->
 <!-- api-daemon-runtime-capability: sftp.mutate -->
+<!-- api-daemon-runtime-capability: operations.read -->
+<!-- api-daemon-runtime-capability: operations.control -->
 <!-- api-daemon-runtime-capability: transfers.read -->
 <!-- api-daemon-runtime-capability: transfers.write -->
 <!-- api-daemon-runtime-capability: transfers.events -->
@@ -515,9 +517,28 @@ implemented but pending its separate frontend-neutral phase review.
 ## `identity.operate`
 
 Implemented in the daemon identity provider service. Runs agent-key mutations,
-key deployment, authorized-key removal, and operation cancellation. Native
-OpenSSH behavior remains authoritative. This capability is implemented but
-pending its separate frontend-neutral phase review.
+key deployment, and authorized-key removal. Native OpenSSH behavior remains
+authoritative. This capability is implemented but pending its separate
+frontend-neutral phase review.
+
+<!-- api-capability: operations.read -->
+## `operations.read`
+
+Implemented whenever the daemon's shared `OperationRuntime` is available --
+independently of the identity service. Returns a typed `OperationSummary` for
+any operation the requesting client owns (`operations.get`). Backs key
+deployment/authorized-key removal (identity) as well as SFTP's
+`sftp.directory_size` and recursive `sftp.copy`/`sftp.remove`, so an
+SFTP-capable daemon with no identity service installed can still poll its own
+tree operations.
+
+<!-- api-capability: operations.control -->
+## `operations.control`
+
+Implemented whenever the daemon's shared `OperationRuntime` is available --
+independently of the identity service. Requests cooperative cancellation of an
+operation the requesting client owns (`operations.cancel`). A different
+client's operation is neither visible nor cancellable.
 
 <!-- api-capability: ssh_overrides.read -->
 ## `ssh_overrides.read`

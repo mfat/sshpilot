@@ -216,11 +216,11 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method: add_tag_to_connections -->
 <!-- api-method: sftp_copy -->
 <!-- api-method-contract: add_agent_key status=daemon-only capability=identity.operate -->
-<!-- api-method-contract: cancel_operation status=daemon-only capability=identity.operate -->
+<!-- api-method-contract: cancel_operation status=daemon-only capability=operations.control -->
 <!-- api-method-contract: deploy_key status=daemon-only capability=identity.operate -->
 <!-- api-method-contract: get_identity_providers status=daemon-only capability=identity.read -->
 <!-- api-method-contract: get_identity_state status=daemon-only capability=identity.read -->
-<!-- api-method-contract: get_operation status=daemon-only capability=identity.read -->
+<!-- api-method-contract: get_operation status=daemon-only capability=operations.read -->
 <!-- api-method-contract: list_agent_keys status=daemon-only capability=identity.read -->
 <!-- api-method-contract: list_authorized_keys status=daemon-only capability=identity.read -->
 <!-- api-method-contract: remove_agent_key status=daemon-only capability=identity.operate -->
@@ -499,8 +499,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: identity.providers.get capability=identity.read -->
 <!-- api-daemon-method: identity.selection.update capability=identity.write -->
 <!-- api-daemon-method: identity.state.get capability=identity.read -->
-<!-- api-daemon-method: operations.cancel capability=identity.operate -->
-<!-- api-daemon-method: operations.get capability=identity.read -->
+<!-- api-daemon-method: operations.cancel capability=operations.control -->
+<!-- api-daemon-method: operations.get capability=operations.read -->
 
 Unknown wire methods return `unsupported_method`. Terminal output and input use
 the negotiated binary frame path; resize and replay metadata use the two
@@ -1629,7 +1629,11 @@ finally:
 - **Status / review:** Shared `OperationRuntime` lifecycle is completed and
   reviewed; identity operation producers remain pending their separate phase
   review.
-- **Capability / purpose:** `identity.read`; inspect safe operation state.
+- **Capability / purpose:** `operations.read`; inspect safe operation state.
+  Gated on the shared `OperationRuntime`, never on the identity service, so an
+  SFTP-only daemon (directory size, recursive copy/move/remove) can poll its
+  own operations without identity support. Only the operation's owning client
+  may inspect it; any other client gets `service_owner_required`.
 - **Parameters / return:** `OperationId`; returns `OperationSummary`.
 
 <!-- api-method: cancel_operation -->
@@ -1638,7 +1642,10 @@ finally:
 - **Status / review:** Shared `OperationRuntime` lifecycle is completed and
   reviewed; identity operation producers remain pending their separate phase
   review.
-- **Capability / purpose:** `identity.operate`; cancel a cancellable operation.
+- **Capability / purpose:** `operations.control`; cancel a cancellable
+  operation. Gated on the shared `OperationRuntime`, never on the identity
+  service. Only the operation's owning client may cancel it; any other client
+  gets `service_owner_required`.
 - **Parameters / return:** `OperationId`; returns `OperationSummary`.
 
 <!-- api-method: get_global_ssh_overrides -->

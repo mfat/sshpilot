@@ -1314,10 +1314,22 @@ class SftpServiceRuntime:
         path = _validate_path(request.path)
         client = record.handle.client
         try:
+            try:
+                root_attr = client.lstat(path)
+            except Exception as exc:
+                raise self._map_error(exc, record) from exc
+            if root_attr.is_symlink() or not root_attr.is_dir():
+                raise SshPilotError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "Directory size requires a real directory path, not a symbolic link",
+                    details={"service_id": record.service_id},
+                )
             total, file_count, directory_count = self._walk_directory_size(
                 client, path, progress=progress, cancel=cancel
             )
         except OperationCancelled:
+            raise
+        except SshPilotError:
             raise
         except Exception as exc:
             raise self._map_error(exc, record) from exc
@@ -1513,17 +1525,31 @@ class SftpServiceRuntime:
                 raise OperationCancelled()
             client.mkdir(destination_path)
             entries = client.listdir_attr(source_path)
-            pending_files += sum(1 for entry in entries if not entry.is_dir())
+            pending_files += sum(
+                1 for entry in entries if not (entry.is_dir() and not entry.is_symlink())
+            )
             for entry in entries:
                 child_source = posixpath.join(source_path, entry.filename)
                 child_destination = posixpath.join(destination_path, entry.filename)
-                if entry.is_dir():
+                if entry.is_dir() and not entry.is_symlink():
                     _copy_directory(child_source, child_destination)
                 else:
                     _copy_file(child_source, child_destination)
 
         try:
-            source_attr = client.stat(source)
+            # lstat (never stat) the root: a symlink must never be classified
+            # as a directory here, otherwise a directory-symlink source would
+            # be walked as a real tree and (for a move) the cleanup pass would
+            # delete through the link into its target, violating the no-follow
+            # policy. A non-recursive copy of a symlink still falls through to
+            # ``_copy_file`` below, matching prior single-entry link handling.
+            source_attr = client.lstat(source)
+            if source_attr.is_symlink() and request.recursive:
+                raise SshPilotError(
+                    ErrorCode.VALIDATION_FAILED,
+                    "Recursive copy of a symbolic link is not supported",
+                    details={"service_id": record.service_id},
+                )
             try:
                 client.stat(destination)
             except Exception as exc:
@@ -1558,7 +1584,9 @@ class SftpServiceRuntime:
                 progress(1.0)
             if request.move:
                 if source_attr.is_dir():
-                    self._remove_tree(client, source, cancel=cancel)
+                    # Same lstat-based, no-follow walker used by ``remove()``,
+                    # so move cleanup can never descend through a symlink.
+                    self._remove_recursive(client, source, cancel=cancel)
                 else:
                     client.remove(source)
         except OperationCancelled:
@@ -1621,18 +1649,6 @@ class SftpServiceRuntime:
             owner_client_id=client_id,
             message=f"{'Moving' if request.move else 'Copying'} {source}",
         )
-
-    @staticmethod
-    def _remove_tree(client, path: str, *, cancel: Optional[Callable[[], bool]] = None) -> None:
-        for entry in client.listdir_attr(path):
-            if cancel is not None and cancel():
-                raise OperationCancelled()
-            child = posixpath.join(path, entry.filename)
-            if entry.is_dir():
-                SftpServiceRuntime._remove_tree(client, child, cancel=cancel)
-            else:
-                client.remove(child)
-        client.rmdir(path)
 
     def remove(
         self,

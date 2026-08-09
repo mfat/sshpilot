@@ -66,6 +66,8 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.SFTP_EVENTS,
             Capability.SFTP_METADATA,
             Capability.SFTP_MUTATE,
+            Capability.OPERATIONS_READ,
+            Capability.OPERATIONS_CONTROL,
             Capability.TRANSFERS_READ,
             Capability.TRANSFERS_WRITE,
             Capability.TRANSFERS_EVENTS,

@@ -68,14 +68,23 @@ class _FileHandle:
 
 
 class _FsClient:
-    """In-memory remote filesystem double for tree walks and copies."""
+    """In-memory remote filesystem double for tree walks and copies.
+
+    ``links`` marks a path as a symlink; an optional ``link_targets`` entry
+    lets ``stat`` (follow) resolve it to a real target, mirroring how a real
+    SFTP server's ``stat`` differs from ``lstat`` for a symlink. Without a
+    registered target a link is just a dangling/opaque leaf, as before.
+    """
 
     def __init__(self):
         self.files = {}
         self.dirs = {}
         self.links = set()
+        self.link_targets = {}
 
-    def _attr(self, path):
+    def _attr(self, path, *, follow=False):
+        if follow and path in self.link_targets:
+            return self._attr(self.link_targets[path], follow=follow)
         is_link = path in self.links
         if path in self.files:
             return SimpleNamespace(
@@ -83,21 +92,21 @@ class _FsClient:
                 is_dir=lambda: False,
                 is_symlink=lambda: is_link,
             )
-        if path in self.links:
+        if is_link:
             return SimpleNamespace(
                 st_size=0, is_dir=lambda: False, is_symlink=lambda: True
             )
         if path in self.dirs:
             return SimpleNamespace(
-                st_size=0, is_dir=lambda: True, is_symlink=lambda: is_link
+                st_size=0, is_dir=lambda: True, is_symlink=lambda: False
             )
         raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE)
 
     def lstat(self, path):
-        return self._attr(path)
+        return self._attr(path, follow=False)
 
     def stat(self, path):
-        return self._attr(path)
+        return self._attr(path, follow=True)
 
     def listdir_attr(self, path):
         if path not in self.dirs:
@@ -147,8 +156,10 @@ class _FsClient:
     def add_file(self, path, content=b""):
         self.files[path] = content
 
-    def add_link(self, path):
+    def add_link(self, path, target=None):
         self.links.add(path)
+        if target is not None:
+            self.link_targets[path] = target
 
 
 class _CoreClient:
@@ -338,3 +349,58 @@ def test_copy_tree_operation_rejects_descendant_destination():
             client_id=OWNER,
         )
     assert raised.value.code is ErrorCode.VALIDATION_FAILED
+
+
+def _root_symlink_client():
+    """``/link`` is a symlink whose target, ``/important-data``, is a real
+    directory with real content -- the no-follow regression scenario: naive
+    root classification via a following ``stat()`` would see ``/link`` as a
+    directory and walk straight into someone else's tree.
+    """
+    fs = _FsClient()
+    fs.add_dir("/important-data", {"secret.txt"})
+    fs.add_file("/important-data/secret.txt", b"do-not-delete")
+    fs.add_link("/link", target="/important-data")
+    return fs
+
+
+def test_copy_tree_operation_rejects_recursive_root_symlink():
+    fs = _root_symlink_client()
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/link", "/destination", recursive=True, move=False),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.FAILED
+    assert done.failure.code == ErrorCode.VALIDATION_FAILED.value
+    assert "/destination" not in fs.dirs
+    assert fs.files["/important-data/secret.txt"] == b"do-not-delete"
+
+
+def test_move_tree_operation_rejects_root_symlink_and_never_touches_target():
+    fs = _root_symlink_client()
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/link", "/destination", recursive=True, move=True),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.FAILED
+    assert done.failure.code == ErrorCode.VALIDATION_FAILED.value
+    # The real target directory must survive untouched: the no-follow policy
+    # means the root symlink is rejected before any walk, so move cleanup
+    # never gets a chance to delete through the link into /important-data.
+    assert fs.dirs["/important-data"] == {"secret.txt"}
+    assert fs.files["/important-data/secret.txt"] == b"do-not-delete"
+
+
+def test_directory_size_operation_rejects_root_symlink():
+    fs = _root_symlink_client()
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_directory_size(
+        SftpDirectorySizeRequest(summary.id, "/link"), client_id=OWNER
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.FAILED
+    assert done.failure.code == ErrorCode.VALIDATION_FAILED.value

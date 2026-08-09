@@ -1,6 +1,7 @@
 """DaemonSftpServiceController: not-ready errors go through on_error, not raises."""
 
 import types
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -17,6 +18,7 @@ from sshpilot.api.models.operations import (
 from sshpilot.api.transport.codec import sftp_directory_size_result_to_wire
 from sshpilot.daemon_sftp_backend import DaemonSftpManager
 from sshpilot.file_manager.common import FileEntry
+from sshpilot.file_manager.exceptions import TransferCancelledException
 from sshpilot.sftp_service_controller import (
     DaemonSftpServiceController,
     SftpControllerState,
@@ -124,6 +126,51 @@ def test_directory_size_starts_operation_and_resolves_result(controller, mock_cl
     assert seen == [result]
 
 
+def test_directory_size_operation_progress_is_polled_and_delivered(
+    controller, mock_client, mock_bridge
+):
+    """Non-terminal polls must reach ``on_progress`` (not only the terminal
+    ``on_terminal`` callback), so the file-manager progress dialog can show
+    live daemon progress instead of just resolving at the end."""
+    _mark_ready(controller)
+    started = OperationSummary(
+        operation_id=OperationId("operation-progress-1"),
+        kind=OperationKind.SFTP_DIRECTORY_SIZE,
+        state=OperationState.RUNNING,
+        message="Measuring /tree",
+        created_at=utc_now(),
+        owner_client_id=ClientId("client-1"),
+    )
+    running_progress = OperationSummary(
+        operation_id=started.operation_id,
+        kind=OperationKind.SFTP_DIRECTORY_SIZE,
+        state=OperationState.RUNNING,
+        message="Measuring /tree",
+        created_at=started.created_at,
+        owner_client_id=ClientId("client-1"),
+        progress=0.4,
+    )
+    mock_client.sftp_directory_size.return_value = started
+    mock_bridge.submit.side_effect = (
+        lambda factory, on_success=None, on_error=None: on_success(factory())
+    )
+
+    progress_events = []
+    controller.directory_size(
+        "/tree",
+        on_success=lambda _s: None,
+        on_error=lambda e: pytest.fail(f"unexpected error: {e}"),
+        on_progress=progress_events.append,
+    )
+
+    mock_client.get_operation.return_value = running_progress
+    controller._poll_operations()
+
+    assert progress_events == [running_progress]
+    # Still tracked -- not terminal, so it must stay in the watcher table.
+    assert started.operation_id in controller._operation_watchers
+
+
 def test_directory_size_not_ready_calls_on_error(controller, mock_bridge):
     errors = []
     controller.directory_size(
@@ -158,11 +205,17 @@ def test_daemon_manager_directory_size_delegates_to_daemon():
         DaemonSftpManager._require_ready_service_id.__get__(manager)
     )
     manager._safe_set = DaemonSftpManager._safe_set
+    manager._operation_cancellable = (
+        DaemonSftpManager._operation_cancellable.__get__(manager)
+    )
+    manager.emit = lambda *_args, **_kwargs: None
     result = SftpDirectorySizeResult(
         path="/home/alice/tree", size_bytes=777, file_count=2, directory_count=1
     )
     controller.directory_size.side_effect = (
-        lambda path, on_success=None, on_error=None: on_success(result)
+        lambda path, on_success=None, on_error=None, on_operation_started=None, on_progress=None: on_success(
+            result
+        )
     )
 
     total = DaemonSftpManager.directory_size(manager, "/tree").result(timeout=5)
@@ -173,6 +226,197 @@ def test_daemon_manager_directory_size_delegates_to_daemon():
         manager, "~/tree"
     ).result(timeout=5) == 777
     assert controller.directory_size.call_args[0][0] == "/home/alice/tree"
+
+
+def _bound_manager(controller):
+    """Same SimpleNamespace-self pattern as the directory-size delegation
+    test above, extended with the operation-cancel wiring bound methods."""
+    manager = types.SimpleNamespace(
+        _sftp_controller=controller,
+        _home="/home/alice",
+        _closed=False,
+    )
+    manager._expand = DaemonSftpManager._expand.__get__(manager)
+    manager._require_ready_service_id = (
+        DaemonSftpManager._require_ready_service_id.__get__(manager)
+    )
+    manager._safe_set = DaemonSftpManager._safe_set
+    manager._operation_cancellable = (
+        DaemonSftpManager._operation_cancellable.__get__(manager)
+    )
+    manager._resolve_operation_exception = DaemonSftpManager._resolve_operation_exception
+    manager.emit = Mock()
+    return manager
+
+
+def test_directory_size_future_cancel_calls_operations_cancel():
+    """``future.cancel()`` must reach ``operations.cancel``, not just mark the
+    local ``Future`` -- otherwise the daemon keeps measuring/copying/deleting
+    after the user presses Cancel."""
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    captured = {}
+
+    def _directory_size(path, *, on_success=None, on_error=None, on_operation_started=None, on_progress=None):
+        captured["on_operation_started"] = on_operation_started
+        on_operation_started(OperationId("operation-1"))
+
+    controller.directory_size.side_effect = _directory_size
+
+    future = DaemonSftpManager.directory_size(manager, "/tree")
+    assert future.cancel() is True
+    controller.cancel_operation.assert_called_once_with(OperationId("operation-1"))
+
+
+def test_directory_size_future_cancel_before_operation_id_is_known_still_cancels():
+    """Cancel pressed before the start RPC returns its operation id must not
+    be silently dropped -- it must fire as soon as the id becomes known."""
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+    captured = {}
+
+    def _directory_size(path, *, on_success=None, on_error=None, on_operation_started=None, on_progress=None):
+        # The start RPC is still in flight: don't deliver the operation id yet.
+        captured["on_operation_started"] = on_operation_started
+
+    controller.directory_size.side_effect = _directory_size
+
+    future = DaemonSftpManager.directory_size(manager, "/tree")
+    assert future.cancel() is True
+    controller.cancel_operation.assert_not_called()
+
+    captured["on_operation_started"](OperationId("operation-2"))
+    controller.cancel_operation.assert_called_once_with(OperationId("operation-2"))
+
+
+def test_directory_size_progress_is_surfaced_through_progress_signal():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    def _directory_size(path, *, on_success=None, on_error=None, on_operation_started=None, on_progress=None):
+        on_progress(SimpleNamespace(progress=0.5, message="Measuring directory"))
+
+    controller.directory_size.side_effect = _directory_size
+    DaemonSftpManager.directory_size(manager, "/tree")
+    manager.emit.assert_called_once_with("progress", 0.5, "Measuring directory")
+
+
+def test_directory_size_cancelled_operation_resolves_as_transfer_cancelled():
+    """A CANCELLED terminal operation must resolve the future the same way a
+    cancelled transfer does, not as an opaque ``sftp_command_failed``."""
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    def _directory_size(path, *, on_success=None, on_error=None, on_operation_started=None, on_progress=None):
+        on_error(SshPilotError(ErrorCode.OPERATION_CANCELLED, "The operation was cancelled"))
+
+    controller.directory_size.side_effect = _directory_size
+    future = DaemonSftpManager.directory_size(manager, "/tree")
+    with pytest.raises(TransferCancelledException):
+        future.result(timeout=1)
+
+
+def test_recursive_remove_future_cancel_calls_operations_cancel():
+    """Cancelling a recursive-remove future must reach ``operations.cancel``
+    -- this is the highest-risk case, since an uncancelled daemon delete
+    keeps destroying the tree after the user gives up on it."""
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    def _remove(path, *, recursive, on_success=None, on_error=None, on_operation_started=None, on_progress=None):
+        on_operation_started(OperationId("operation-remove-1"))
+
+    controller.remove.side_effect = _remove
+
+    future = DaemonSftpManager.remove(manager, "/tree")
+    assert future.cancel() is True
+    controller.cancel_operation.assert_called_once_with(OperationId("operation-remove-1"))
+
+
+def test_recursive_remove_cancel_propagates_end_to_end_through_controller(
+    controller, mock_client, mock_bridge
+):
+    """Full round trip through the real ``DaemonSftpServiceController``:
+
+    start recursive remove -> Future returned -> ``future.cancel()`` ->
+    ``operations.cancel`` called -> daemon reaches CANCELLED -> the frontend
+    Future terminates as cancelled (``TransferCancelledException``), matching
+    a cancelled transfer.
+    """
+    _mark_ready(controller)
+    manager = _bound_manager(controller)
+
+    started = OperationSummary(
+        operation_id=OperationId("operation-remove-9"),
+        kind=OperationKind.SFTP_REMOVE_TREE,
+        state=OperationState.RUNNING,
+        message="Deleting /tree",
+        created_at=utc_now(),
+        owner_client_id=ClientId("client-1"),
+    )
+    cancelled = OperationSummary(
+        operation_id=started.operation_id,
+        kind=OperationKind.SFTP_REMOVE_TREE,
+        state=OperationState.CANCELLED,
+        message="The operation was cancelled",
+        created_at=started.created_at,
+        owner_client_id=ClientId("client-1"),
+    )
+    mock_client.sftp_remove.return_value = started
+    mock_bridge.submit.side_effect = (
+        lambda factory, on_success=None, on_error=None: on_success(factory())
+    )
+
+    future = DaemonSftpManager.remove(manager, "/tree")
+
+    assert future.cancel() is True
+    mock_client.cancel_operation.assert_called_once_with(started.operation_id)
+
+    mock_client.get_operation.return_value = cancelled
+    controller._poll_operations()
+
+    with pytest.raises(TransferCancelledException):
+        future.result(timeout=1)
+
+
+def test_recursive_move_future_cancel_calls_operations_cancel():
+    controller = Mock()
+    controller.state = SftpControllerState.READY
+    controller.service_id = SftpServiceId("svc-1")
+    manager = _bound_manager(controller)
+
+    def _copy(
+        source_path,
+        destination_path,
+        *,
+        recursive,
+        move,
+        on_success=None,
+        on_error=None,
+        on_operation_started=None,
+        on_progress=None,
+    ):
+        assert recursive is True
+        assert move is True
+        on_operation_started(OperationId("operation-move-1"))
+
+    controller.copy.side_effect = _copy
+
+    future = DaemonSftpManager.copy_remote(
+        manager, "/tree", "/dest", recursive=True, move=True
+    )
+    assert future.cancel() is True
+    controller.cancel_operation.assert_called_once_with(OperationId("operation-move-1"))
 
 
 def test_count_pass_skips_when_closed():

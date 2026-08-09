@@ -392,8 +392,8 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "deploy_key": Capability.IDENTITY_OPERATE,
     "list_authorized_keys": Capability.IDENTITY_READ,
     "remove_authorized_key": Capability.IDENTITY_OPERATE,
-    "get_operation": Capability.IDENTITY_READ,
-    "cancel_operation": Capability.IDENTITY_OPERATE,
+    "get_operation": Capability.OPERATIONS_READ,
+    "cancel_operation": Capability.OPERATIONS_CONTROL,
 }
 
 
@@ -2340,7 +2340,7 @@ class DaemonClient:
     def get_operation(self, operation_id):
         from sshpilot.api.models.operations import OperationId
 
-        self._require_capability(Capability.IDENTITY_READ)
+        self._require_capability(Capability.OPERATIONS_READ)
         from sshpilot.api.transport.codec import (
             operation_id_request_to_wire,
             operation_summary_from_wire,
@@ -2357,7 +2357,7 @@ class DaemonClient:
     def cancel_operation(self, operation_id):
         from sshpilot.api.models.operations import OperationId
 
-        self._require_capability(Capability.IDENTITY_OPERATE)
+        self._require_capability(Capability.OPERATIONS_CONTROL)
         from sshpilot.api.transport.codec import (
             operation_id_request_to_wire,
             operation_summary_from_wire,
