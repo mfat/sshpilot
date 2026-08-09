@@ -9,6 +9,7 @@ import hashlib
 import zipfile
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
@@ -3010,24 +3011,63 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("Failed to update secret rows visibility: %s", exc)
 
     def _refresh_forget_master_row(self):
-        """Reflect whether a master password is currently saved (daemon-owned)."""
+        """Reflect whether a master password is currently saved (daemon-owned).
+
+        The state query is a daemon RPC, so it runs on a worker thread: the
+        controller rejects overlapping guarded operations, and the backend
+        availability probe that runs when this page opens can hold the
+        controller for seconds — a synchronous call here would both freeze
+        Settings and lose that race. A refresh requested while one is in
+        flight is coalesced and re-run once the in-flight one applies.
+        """
         if not hasattr(self, 'forget_master_row'):
             return
-        saved = False
         controller = self._resolve_secrets_controller()
-        if controller is not None:
-            try:
-                state = controller.load_state()
-                saved = bool(getattr(state, 'remember_in_keyring', False))
-            except Exception:
-                logger.debug("remembered-master state query failed", exc_info=True)
-                saved = False
-        self.forget_master_row.set_subtitle(
-            _("Remembered in your system keyring.") if saved
-            else _("Not saved. Use “Remember master password” when unlocking.")
-        )
+        if controller is None:
+            self._apply_forget_master_row(False)
+            return
+        if getattr(self, '_forget_master_probe_in_flight', False):
+            self._forget_master_probe_pending = True
+            return
+        self._forget_master_probe_in_flight = True
+
+        def worker():
+            saved = None
+            for _attempt in range(40):
+                try:
+                    state = controller.load_state()
+                    saved = bool(getattr(state, 'remember_in_keyring', False))
+                    break
+                except RuntimeError:
+                    # Another guarded op (e.g. the availability probe) holds the
+                    # controller; wait it out off the main thread.
+                    time.sleep(0.25)
+                except Exception:
+                    logger.debug("remembered-master state query failed", exc_info=True)
+                    break
+            GLib.idle_add(self._apply_forget_master_row, saved)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_forget_master_row(self, saved):
+        """Apply a remembered-master query result to the row (main thread)."""
+        self._forget_master_probe_in_flight = False
+        if getattr(self, '_forget_master_probe_pending', False):
+            self._forget_master_probe_pending = False
+            self._refresh_forget_master_row()
+            return False
+        if saved is None:
+            # The query never succeeded; leave the row untouched rather than
+            # showing a wrong "Not saved" state.
+            return False
+        if hasattr(self, 'forget_master_row'):
+            self.forget_master_row.set_subtitle(
+                _("Remembered in your system keyring.") if saved
+                else _("Not saved. Use “Remember master password” when unlocking.")
+            )
         if hasattr(self, '_forget_master_btn'):
             self._forget_master_btn.set_sensitive(saved)
+        return False
 
     def on_forget_master_password(self, _button):
         """Delete the remembered master password from the OS keyring (daemon-owned)."""
